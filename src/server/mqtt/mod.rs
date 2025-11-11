@@ -9,6 +9,7 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use crate::state::server::{ConnectionState, ConnectionStatus, ProtocolConnectionInfo};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 use anyhow::Result;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -17,7 +18,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// MQTT broker
 pub struct MqttServer;
@@ -141,7 +141,9 @@ async fn handle_mqtt_connection(
         status_changed_at: now,
         protocol_info: ProtocolConnectionInfo::new(mqtt_info),
     };
-    app_state.add_connection_to_server(server_id, conn_state).await;
+    app_state
+        .add_connection_to_server(server_id, conn_state)
+        .await;
     let _ = status_tx.send("__UPDATE_UI__".to_string());
 
     // Send CONNACK (connection acknowledgment)

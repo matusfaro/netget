@@ -38,7 +38,7 @@ mod ollama_client_tests {
 
         // Create client that lists available models
         let client_config = NetGetConfig::new(
-            "Connect to Ollama at http://localhost:11434 and list all available models"
+            "Connect to Ollama at http://localhost:11434 and list all available models",
         );
 
         let mut client = start_netget_client(client_config).await?;
@@ -56,9 +56,9 @@ mod ollama_client_tests {
         // Verify we got models response
         assert!(
             client.output_contains("models").await
-            || client.output_contains("model").await
-            || client.output_contains("found").await
-            || client.output_contains("received").await,
+                || client.output_contains("model").await
+                || client.output_contains("found").await
+                || client.output_contains("received").await,
             "Client should show models response. Output: {:?}",
             client.get_output().await
         );
@@ -80,7 +80,7 @@ mod ollama_client_tests {
         // Create client that generates text
         let client_config = NetGetConfig::new(
             "Connect to Ollama at http://localhost:11434 and generate text: \
-            'Say hello in exactly 2 words' using model qwen2.5-coder:0.5b"
+            'Say hello in exactly 2 words' using model qwen2.5-coder:0.5b",
         );
 
         let mut client = start_netget_client(client_config).await?;
@@ -98,8 +98,8 @@ mod ollama_client_tests {
         // Verify we got a response
         assert!(
             client.output_contains("response").await
-            || client.output_contains("generate").await
-            || client.output_contains("received").await,
+                || client.output_contains("generate").await
+                || client.output_contains("received").await,
             "Client should show generation response. Output: {:?}",
             client.get_output().await
         );
@@ -121,8 +121,7 @@ mod ollama_client_tests {
         // Create client that sends chat request
         let client_config = NetGetConfig::new(
             "Connect to Ollama at http://localhost:11434 and send a chat message: \
-            'What is 2+2?' using model qwen2.5-coder:0.5b"
-
+            'What is 2+2?' using model qwen2.5-coder:0.5b",
         );
 
         let mut client = start_netget_client(client_config).await?;
@@ -131,13 +130,16 @@ mod ollama_client_tests {
         tokio::time::sleep(Duration::from_secs(5)).await;
 
         // Verify client is Ollama protocol
-        assert_eq!(client.protocol, "Ollama", "Client should be Ollama protocol");
+        assert_eq!(
+            client.protocol, "Ollama",
+            "Client should be Ollama protocol"
+        );
 
         // Verify we got a chat response
         assert!(
             client.output_contains("chat").await
-            || client.output_contains("message").await
-            || client.output_contains("response").await,
+                || client.output_contains("message").await
+                || client.output_contains("response").await,
             "Client should show chat response. Output: {:?}",
             client.get_output().await
         );
@@ -157,10 +159,8 @@ mod ollama_client_tests {
         require_ollama().await;
 
         // Test with explicit endpoint
-        let client_config = NetGetConfig::new(
-            "Connect to Ollama API at http://localhost:11434 and list models"
-
-        );
+        let client_config =
+            NetGetConfig::new("Connect to Ollama API at http://localhost:11434 and list models");
 
         let mut client = start_netget_client(client_config).await?;
 
@@ -169,8 +169,8 @@ mod ollama_client_tests {
         // Verify client connected
         assert!(
             client.output_contains("localhost:11434").await
-            || client.output_contains("11434").await
-            || client.output_contains("Ollama").await,
+                || client.output_contains("11434").await
+                || client.output_contains("Ollama").await,
             "Client should show connection to custom endpoint. Output: {:?}",
             client.get_output().await
         );
@@ -188,10 +188,8 @@ mod ollama_client_tests {
     #[tokio::test]
     async fn test_ollama_client_error_handling() -> E2EResult<()> {
         // Use an invalid endpoint
-        let client_config = NetGetConfig::new(
-            "Connect to Ollama at http://localhost:99999 and list models"
-
-        );
+        let client_config =
+            NetGetConfig::new("Connect to Ollama at http://localhost:99999 and list models");
 
         let mut client = start_netget_client(client_config).await?;
 
@@ -200,9 +198,9 @@ mod ollama_client_tests {
         // Verify client shows error or connection issue
         assert!(
             client.output_contains("ERROR").await
-            || client.output_contains("error").await
-            || client.output_contains("failed").await
-            || client.output_contains("connect").await,
+                || client.output_contains("error").await
+                || client.output_contains("failed").await
+                || client.output_contains("connect").await,
             "Client should show error for invalid endpoint. Output: {:?}",
             client.get_output().await
         );

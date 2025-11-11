@@ -15,7 +15,7 @@ use std::sync::LazyLock;
 pub static DHCP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "dhcp_connected",
-        "DHCP client initialized and ready to send requests"
+        "DHCP client initialized and ready to send requests",
     )
     .with_parameters(vec![
         Parameter {
@@ -66,8 +66,8 @@ impl DhcpClientProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for DhcpClientProtocol {
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            vec![
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        vec![
                 ActionDefinition {
                     name: "dhcp_discover".to_string(),
                     description: "Send DHCP DISCOVER message to find DHCP servers".to_string(),
@@ -166,38 +166,38 @@ impl Protocol for DhcpClientProtocol {
                     }),
                 },
             ]
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                ActionDefinition {
-                    name: "wait_for_more".to_string(),
-                    description: "Wait for more DHCP responses before taking action".to_string(),
-                    parameters: vec![],
-                    example: json!({
-                        "type": "wait_for_more"
-                    }),
-                },
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "DHCP"
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>UDP>DHCP"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            vec![
-                DHCP_CLIENT_CONNECTED_EVENT.clone(),
-                DHCP_CLIENT_RESPONSE_RECEIVED_EVENT.clone(),
-            ]
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["dhcp", "dhcp client", "connect to dhcp"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2, PrivilegeRequirement};
-    
-            ProtocolMetadataV2::builder()
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![ActionDefinition {
+            name: "wait_for_more".to_string(),
+            description: "Wait for more DHCP responses before taking action".to_string(),
+            parameters: vec![],
+            example: json!({
+                "type": "wait_for_more"
+            }),
+        }]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "DHCP"
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>UDP>DHCP"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        vec![
+            DHCP_CLIENT_CONNECTED_EVENT.clone(),
+            DHCP_CLIENT_RESPONSE_RECEIVED_EVENT.clone(),
+        ]
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["dhcp", "dhcp client", "connect to dhcp"]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{
+            DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2,
+        };
+
+        ProtocolMetadataV2::builder()
                 .state(DevelopmentState::Experimental)
                 .privilege_requirement(PrivilegeRequirement::PrivilegedPort(68))
                 .implementation("dhcproto v0.12 for DHCP protocol parsing")
@@ -205,67 +205,63 @@ impl Protocol for DhcpClientProtocol {
                 .e2e_testing("NetGet DHCP server as test target")
                 .notes("Requires elevated privileges to bind port 68. For testing only, does NOT configure OS network.")
                 .build()
-        }
-        fn description(&self) -> &'static str {
-            "DHCP client for IP address discovery and network testing"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Connect to DHCP server at 192.168.1.1 and send DISCOVER"
-        }
-        fn group_name(&self) -> &'static str {
-            "Core"
-        }
+    }
+    fn description(&self) -> &'static str {
+        "DHCP client for IP address discovery and network testing"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Connect to DHCP server at 192.168.1.1 and send DISCOVER"
+    }
+    fn group_name(&self) -> &'static str {
+        "Core"
+    }
 }
 
 // Implement Client trait (client-specific functionality)
 impl Client for DhcpClientProtocol {
-        fn connect(
-            &self,
-            ctx: crate::protocol::ConnectContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::client::dhcp::DhcpClient;
-                DhcpClient::connect_with_llm_actions(
-                    ctx.remote_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.client_id,
-                )
-                .await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "dhcp_discover" => {
-                    Ok(ClientActionResult::Custom {
-                        name: "dhcp_discover".to_string(),
-                        data: action,
-                    })
-                }
-                "dhcp_request" => {
-                    Ok(ClientActionResult::Custom {
-                        name: "dhcp_request".to_string(),
-                        data: action,
-                    })
-                }
-                "dhcp_inform" => {
-                    Ok(ClientActionResult::Custom {
-                        name: "dhcp_inform".to_string(),
-                        data: action,
-                    })
-                }
-                "disconnect" => Ok(ClientActionResult::Disconnect),
-                "wait_for_more" => Ok(ClientActionResult::WaitForMore),
-                _ => Err(anyhow::anyhow!("Unknown DHCP client action: {}", action_type)),
-            }
-        }
-}
+    fn connect(
+        &self,
+        ctx: crate::protocol::ConnectContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::client::dhcp::DhcpClient;
+            DhcpClient::connect_with_llm_actions(
+                ctx.remote_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.client_id,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
 
+        match action_type {
+            "dhcp_discover" => Ok(ClientActionResult::Custom {
+                name: "dhcp_discover".to_string(),
+                data: action,
+            }),
+            "dhcp_request" => Ok(ClientActionResult::Custom {
+                name: "dhcp_request".to_string(),
+                data: action,
+            }),
+            "dhcp_inform" => Ok(ClientActionResult::Custom {
+                name: "dhcp_inform".to_string(),
+                data: action,
+            }),
+            "disconnect" => Ok(ClientActionResult::Disconnect),
+            "wait_for_more" => Ok(ClientActionResult::WaitForMore),
+            _ => Err(anyhow::anyhow!(
+                "Unknown DHCP client action: {}",
+                action_type
+            )),
+        }
+    }
+}

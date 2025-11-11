@@ -30,12 +30,12 @@
 //! let image_buffer = canvas.render();
 //! ```
 
-pub mod types;
+pub mod ascii;
 pub mod canvas;
 pub mod text;
-pub mod ascii;
+pub mod types;
 
-pub use types::{Color, Point, Rect, DisplayCommand};
+pub use ascii::AsciiRenderer;
 pub use canvas::DisplayCanvas;
 pub use text::TextRenderer;
-pub use ascii::AsciiRenderer;
+pub use types::{Color, DisplayCommand, Point, Rect};

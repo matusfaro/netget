@@ -1,6 +1,6 @@
 //! Helper utilities for Tor integration tests
 
-use super::super::helpers::{self, ServerConfig, E2EResult};
+use super::super::helpers::{self, ServerConfig};
 use anyhow::Result;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -79,7 +79,8 @@ impl TorTestNetwork {
              respond with this document:\n\n{}\n\nFor microdescriptor requests, return appropriate microdescriptors.",
             consensus
         );
-        let directory_config = ServerConfig::new_no_scripts(directory_prompt).with_log_level("info");
+        let directory_config =
+            ServerConfig::new_no_scripts(directory_prompt).with_log_level("info");
         let directory_server = helpers::start_netget_server(directory_config)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to start directory: {}", e))?;
@@ -109,8 +110,14 @@ impl TorTestNetwork {
 
     /// Shutdown the test network
     pub async fn shutdown(mut self) -> Result<()> {
-        self.relay.stop().await.map_err(|e| anyhow::anyhow!("Failed to stop relay: {}", e))?;
-        self.directory.stop().await.map_err(|e| anyhow::anyhow!("Failed to stop directory: {}", e))?;
+        self.relay
+            .stop()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to stop relay: {}", e))?;
+        self.directory
+            .stop()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to stop directory: {}", e))?;
         self.http_server_handle.abort();
         Ok(())
     }
@@ -146,7 +153,8 @@ async fn extract_relay_keys(server: &helpers::NetGetServer) -> Result<RelayKeys>
         }
     }
 
-    let fingerprint = fingerprint.ok_or_else(|| anyhow::anyhow!("Could not find relay fingerprint in output"))?;
+    let fingerprint =
+        fingerprint.ok_or_else(|| anyhow::anyhow!("Could not find relay fingerprint in output"))?;
 
     // For now, use placeholder values for Ed25519 and ntor keys
     // In a real implementation, these would be extracted from the relay's log output
@@ -191,8 +199,11 @@ async fn extract_authority_keys(server: &helpers::NetGetServer) -> Result<Author
         }
     }
 
-    let v3_identity_fingerprint = v3_ident.ok_or_else(|| anyhow::anyhow!("Could not find authority v3 identity fingerprint in output"))?;
-    let authority_fingerprint = fingerprint.ok_or_else(|| anyhow::anyhow!("Could not find authority fingerprint in output"))?;
+    let v3_identity_fingerprint = v3_ident.ok_or_else(|| {
+        anyhow::anyhow!("Could not find authority v3 identity fingerprint in output")
+    })?;
+    let authority_fingerprint = fingerprint
+        .ok_or_else(|| anyhow::anyhow!("Could not find authority fingerprint in output"))?;
 
     Ok(AuthorityKeys {
         v3_identity_fingerprint,

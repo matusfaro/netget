@@ -6,6 +6,7 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 use actions::WHOIS_QUERY_EVENT;
 use anyhow::Result;
 use std::net::SocketAddr;
@@ -14,7 +15,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 pub struct WhoisServer;
 
@@ -43,7 +43,8 @@ impl WhoisServer {
             loop {
                 match listener.accept().await {
                     Ok((socket, peer_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
 
                         // Add connection to ServerInstance
                         use crate::state::server::{
@@ -125,8 +126,7 @@ async fn handle_whois_connection(
             Ok(0) => {
                 // DEBUG: Connection closed
                 debug!("WHOIS client {} disconnected", peer_addr);
-                let _ = status_tx
-                    .send(format!("[DEBUG] WHOIS client {} disconnected", peer_addr));
+                let _ = status_tx.send(format!("[DEBUG] WHOIS client {} disconnected", peer_addr));
 
                 // Update connection status
                 use crate::state::server::ConnectionStatus;

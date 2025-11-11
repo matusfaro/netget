@@ -1,29 +1,36 @@
 # XMPP Protocol Implementation
 
 ## Overview
-XMPP (Extensible Messaging and Presence Protocol) server implementing core XMPP protocol for instant messaging and presence. The LLM controls XMPP stream initialization, authentication, and all stanza responses (message, presence, iq).
+
+XMPP (Extensible Messaging and Presence Protocol) server implementing core XMPP protocol for instant messaging and
+presence. The LLM controls XMPP stream initialization, authentication, and all stanza responses (message, presence, iq).
 
 **Status**: Experimental (Application Protocol)
 **RFC**: RFC 6120 (XMPP Core), RFC 6121 (XMPP IM), RFC 6122 (XMPP Address Format)
 **Port**: 5222 (default client-to-server), 5269 (server-to-server, not implemented)
 
 ## Library Choices
-- **No XMPP library** - Manual protocol implementation
-  - XMPP is XML-based streaming protocol
-  - Stanzas parsed from XML stream
-  - Responses constructed as XML strings
-  - Direct LLM control over all protocol elements
-- **tokio** - Async runtime and I/O
-  - `TcpListener` for accepting connections
-  - `AsyncReadExt`/`AsyncWriteExt` for byte I/O
-  - Persistent TCP connections with XML streaming
 
-**Rationale**: Manual implementation gives LLM full control over XMPP stream and stanzas. XMPP is more complex than IRC due to XML structure, but the streaming nature allows for incremental parsing. The LLM can handle XML construction and interpretation directly.
+- **No XMPP library** - Manual protocol implementation
+    - XMPP is XML-based streaming protocol
+    - Stanzas parsed from XML stream
+    - Responses constructed as XML strings
+    - Direct LLM control over all protocol elements
+- **tokio** - Async runtime and I/O
+    - `TcpListener` for accepting connections
+    - `AsyncReadExt`/`AsyncWriteExt` for byte I/O
+    - Persistent TCP connections with XML streaming
+
+**Rationale**: Manual implementation gives LLM full control over XMPP stream and stanzas. XMPP is more complex than IRC
+due to XML structure, but the streaming nature allows for incremental parsing. The LLM can handle XML construction and
+interpretation directly.
 
 ## Architecture Decisions
 
 ### 1. Action-Based LLM Control
+
 The LLM receives raw XML data and responds with structured actions:
+
 - `send_stream_header` - Send XML stream header to initiate connection
 - `send_stream_features` - Send available features (SASL mechanisms, etc.)
 - `send_message` - Send message stanza
@@ -37,7 +44,9 @@ The LLM receives raw XML data and responds with structured actions:
 - `close_stream` - Close XML stream and connection
 
 ### 2. XML Stream Processing
+
 XMPP message flow:
+
 1. Accept TCP connection
 2. Read bytes into buffer
 3. Parse XML from buffer (LLM interprets XML structure)
@@ -47,7 +56,9 @@ XMPP message flow:
 7. Loop for next data
 
 ### 3. Stream Lifecycle
+
 XMPP uses persistent XML streams:
+
 - **Stream init**: Client sends `<stream:stream>`, server responds with own header
 - **Features**: Server sends `<stream:features>` with SASL mechanisms
 - **Authentication**: Client sends `<auth>`, server validates and responds
@@ -56,7 +67,9 @@ XMPP uses persistent XML streams:
 - **Stream close**: Either side sends `</stream:stream>`
 
 ### 4. Client State Tracking
+
 `XmppProtocol` maintains per-connection state:
+
 ```rust
 struct XmppClientState {
     jid: Option<String>,           // Jabber ID (user@domain/resource)
@@ -66,15 +79,19 @@ struct XmppClientState {
 }
 ```
 
-**Note**: State tracking is basic. Full roster management, presence distribution, and multi-user chat are not implemented. The LLM maintains conversation context for session management.
+**Note**: State tracking is basic. Full roster management, presence distribution, and multi-user chat are not
+implemented. The LLM maintains conversation context for session management.
 
 ### 5. Dual Logging
+
 - **DEBUG**: Summary with byte count ("XMPP received 256 bytes on connection conn-123")
 - **TRACE**: Full XML data ("XMPP data (XML): <message from='alice@localhost' to='bob@localhost'>...")
 - Both go to netget.log and TUI Status panel
 
 ### 6. Connection Management
+
 Each XMPP client gets:
+
 - Unique `ConnectionId`
 - Entry in `ServerInstance.connections` with `ProtocolConnectionInfo::Xmpp`
 - Tracked bytes sent/received, packets sent/received
@@ -83,21 +100,26 @@ Each XMPP client gets:
 ## LLM Integration
 
 ### Event Type
+
 **`xmpp_data_received`** - Triggered when XMPP client sends XML data
 
 Event parameters:
+
 - `xml_data` (string) - The raw XML data received (may be partial stream)
 
 ### Available Actions
 
 #### `send_stream_header`
+
 Send XMPP stream header to initiate XML stream.
 
 Parameters:
+
 - `from` (optional) - Server domain name (default: "localhost")
 - `stream_id` (optional) - Unique stream identifier
 
 Example:
+
 ```json
 {
   "type": "send_stream_header",
@@ -106,15 +128,19 @@ Example:
 }
 ```
 
-Sends: `<?xml version='1.0'?><stream:stream xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams' from='localhost' id='stream-123' version='1.0'>`
+Sends:
+`<?xml version='1.0'?><stream:stream xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams' from='localhost' id='stream-123' version='1.0'>`
 
 #### `send_stream_features`
+
 Send stream features (authentication mechanisms, etc.).
 
 Parameters:
+
 - `mechanisms` (optional array) - SASL mechanisms (default: ["PLAIN"])
 
 Example:
+
 ```json
 {
   "type": "send_stream_features",
@@ -122,18 +148,22 @@ Example:
 }
 ```
 
-Sends: `<stream:features><mechanisms xmlns='urn:ietf:params:xml:ns:xmpp-sasl'><mechanism>PLAIN</mechanism><mechanism>SCRAM-SHA-1</mechanism></mechanisms></stream:features>`
+Sends:
+`<stream:features><mechanisms xmlns='urn:ietf:params:xml:ns:xmpp-sasl'><mechanism>PLAIN</mechanism><mechanism>SCRAM-SHA-1</mechanism></mechanisms></stream:features>`
 
 #### `send_message`
+
 Send XMPP message stanza.
 
 Parameters:
+
 - `from` (required) - Sender JID
 - `to` (required) - Recipient JID
 - `body` (required) - Message body text
 - `message_type` (optional) - Message type: chat, groupchat, headline, normal (default: "chat")
 
 Example:
+
 ```json
 {
   "type": "send_message",
@@ -146,15 +176,18 @@ Example:
 Sends: `<message from='bot@localhost' to='alice@localhost' type='chat'><body>Hello, Alice!</body></message>`
 
 #### `send_presence`
+
 Send XMPP presence stanza.
 
 Parameters:
+
 - `from` (optional) - Sender JID
 - `presence_type` (optional) - Presence type: available, unavailable, subscribe, etc.
 - `show` (optional) - Availability: away, chat, dnd, xa
 - `status` (optional) - Status message
 
 Example:
+
 ```json
 {
   "type": "send_presence",
@@ -167,14 +200,17 @@ Example:
 Sends: `<presence from='alice@localhost/desktop'><show>chat</show><status>Ready to chat</status></presence>`
 
 #### `send_iq_result`
+
 Send IQ result stanza.
 
 Parameters:
+
 - `id` (required) - IQ ID (must match request)
 - `to` (optional) - Recipient JID
 - `payload` (optional) - XML payload
 
 Example:
+
 ```json
 {
   "type": "send_iq_result",
@@ -187,9 +223,11 @@ Example:
 Sends: `<iq type='result' id='roster-1' to='alice@localhost'><query xmlns='jabber:iq:roster'/></iq>`
 
 #### `send_auth_success`
+
 Send SASL authentication success.
 
 Example:
+
 ```json
 {
   "type": "send_auth_success"
@@ -203,6 +241,7 @@ See `actions.rs` for complete action list including `send_iq_error`, `send_auth_
 ## Connection Management
 
 ### Connection Lifecycle
+
 1. **Accept**: TCP listener accepts connection
 2. **Register**: Connection added to `ServerInstance` with `ProtocolConnectionInfo::Xmpp`
 3. **Split**: Stream split into ReadHalf and WriteHalf
@@ -211,6 +250,7 @@ See `actions.rs` for complete action list including `send_iq_error`, `send_auth_
 6. **Close**: Connection removed when client closes or LLM sends `close_stream`
 
 ### State Management
+
 - `ProtocolState`: Idle/Processing/Accumulating (prevents concurrent LLM calls)
 - `queued_data`: XML data buffered while LLM is processing
 - Connection stays in ServerInstance until closed
@@ -219,6 +259,7 @@ See `actions.rs` for complete action list including `send_iq_error`, `send_auth_
 ## Known Limitations
 
 ### 1. No XML Streaming Parser
+
 - Current implementation buffers all XML data and sends to LLM
 - No incremental stanza parsing
 - Large XML streams may cause buffering issues
@@ -227,6 +268,7 @@ See `actions.rs` for complete action list including `send_iq_error`, `send_auth_
 **Future Enhancement**: Add minidom or quick-xml for proper XML stream parsing
 
 ### 2. No Roster Management
+
 - Server doesn't track contact lists (rosters)
 - No roster storage
 - IQ roster queries return empty or LLM-generated results
@@ -234,6 +276,7 @@ See `actions.rs` for complete action list including `send_iq_error`, `send_auth_
 **Workaround**: LLM can maintain pseudo-roster in conversation context
 
 ### 3. No Presence Distribution
+
 - Server doesn't broadcast presence to contacts
 - No presence tracking across connections
 - Each connection isolated
@@ -241,23 +284,27 @@ See `actions.rs` for complete action list including `send_iq_error`, `send_auth_
 **Workaround**: LLM can simulate presence distribution in conversation
 
 ### 4. Simplified Authentication
+
 - Only basic SASL framework
 - No actual credential verification
 - LLM decides authentication success/failure
 - No SCRAM-SHA-1 or other advanced mechanisms
 
 ### 5. No Server-to-Server (S2S)
+
 - Single-server only
 - No federation support
 - No server-to-server protocol (port 5269)
 - All JIDs must be on local domain
 
 ### 6. No Multi-User Chat (MUC)
+
 - No groupchat support (XEP-0045)
 - No room management
 - Message type="groupchat" treated as regular message
 
 ### 7. No TLS/STARTTLS
+
 - Plain TCP only
 - No encryption support
 - No STARTTLS negotiation
@@ -265,6 +312,7 @@ See `actions.rs` for complete action list including `send_iq_error`, `send_auth_
 **Workaround**: Use reverse proxy (e.g., nginx) for TLS termination
 
 ### 8. No Advanced XEPs
+
 - No file transfer (XEP-0096, XEP-0234)
 - No avatars (XEP-0084)
 - No PubSub (XEP-0060)
@@ -274,6 +322,7 @@ See `actions.rs` for complete action list including `send_iq_error`, `send_auth_
 ## Example Prompts
 
 ### Basic XMPP Server
+
 ```
 listen on port 5222 via xmpp
 When clients connect, send stream header and features (PLAIN auth)
@@ -282,6 +331,7 @@ Echo back any messages received
 ```
 
 ### Presence Server
+
 ```
 listen on port 5222 via xmpp
 Support presence stanzas (available, unavailable, away, etc.)
@@ -290,6 +340,7 @@ Track user status in conversation
 ```
 
 ### Simple Messaging Bot
+
 ```
 listen on port 5222 via xmpp
 Act as messaging bot named "NetBot@localhost"
@@ -298,6 +349,7 @@ Support commands: help, time, joke
 ```
 
 ### Echo Server
+
 ```
 listen on port 5222 via xmpp domain=localhost
 Echo all received messages back to sender
@@ -307,19 +359,23 @@ Prefix echoed messages with "Echo: "
 ## Performance Characteristics
 
 ### Latency
+
 - **Per Stanza (with scripting)**: Sub-millisecond
 - **Per Stanza (without scripting)**: 2-5 seconds (LLM call)
 - XML buffering: <1 microsecond
 - Stanza formatting: <1 microsecond
 
 ### Throughput
+
 - **With Scripting**: Thousands of stanzas per second
 - **Without Scripting**: ~0.2-0.5 stanzas per second (LLM-limited)
 - Concurrent connections: Unlimited (bounded by system resources)
 - Each connection processes independently
 
 ### Scripting Compatibility
+
 Good scripting candidate:
+
 - XML-based protocol (parseable with libraries)
 - Repetitive stanza patterns
 - State can be maintained in script
@@ -328,23 +384,27 @@ Good scripting candidate:
 ## XMPP Protocol References
 
 ### Core Stanzas
+
 - **message** - Instant messages
 - **presence** - Availability/status
 - **iq** - Info/Query (request-response)
 
 ### Common IQ Namespaces
+
 - **jabber:iq:roster** - Contact list management
 - **jabber:iq:auth** - Legacy authentication (pre-SASL)
 - **vcard-temp** - User profile (XEP-0054)
 - **disco#info** - Service discovery (XEP-0030)
 
 ### SASL Mechanisms
+
 - **PLAIN** - Username/password in base64
 - **SCRAM-SHA-1** - Challenge-response authentication
 - **ANONYMOUS** - Anonymous access
 - **EXTERNAL** - Certificate-based authentication
 
 ### Stream Format
+
 ```xml
 C: <stream:stream xmlns='jabber:client'
      xmlns:stream='http://etherx.jabber.org/streams'
@@ -396,6 +456,7 @@ S: </stream:stream>
 ```
 
 ## References
+
 - [RFC 6120: XMPP Core](https://datatracker.ietf.org/doc/html/rfc6120)
 - [RFC 6121: XMPP Instant Messaging and Presence](https://datatracker.ietf.org/doc/html/rfc6121)
 - [RFC 6122: XMPP Address Format](https://datatracker.ietf.org/doc/html/rfc6122)

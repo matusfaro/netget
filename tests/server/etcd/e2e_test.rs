@@ -2,7 +2,7 @@
 
 #![cfg(feature = "etcd")]
 
-use super::super::helpers::{start_netget_server, assert_stack_name, ServerConfig};
+use super::super::helpers::{assert_stack_name, start_netget_server, ServerConfig};
 use etcd_client::Client;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -97,7 +97,11 @@ Respond with appropriate etcd_range_response, etcd_put_response, etc. actions.
         .await
         .expect("Get operation failed");
 
-    assert_eq!(get_resp.kvs().len(), 0, "Expected empty result for non-existent key");
+    assert_eq!(
+        get_resp.kvs().len(),
+        0,
+        "Expected empty result for non-existent key"
+    );
     println!("✓ Non-existent key returned empty (correct behavior)");
 
     // Test 4: Put more keys for range query
@@ -110,7 +114,7 @@ Respond with appropriate etcd_range_response, etcd_put_response, etc. actions.
     // Test 5: Range query with prefix
     println!("\n[Test 5] Range query /config/ prefix");
     let range_resp = client
-        .get("/config/", None)  // Note: etcd-client handles prefix automatically
+        .get("/config/", None) // Note: etcd-client handles prefix automatically
         .await?;
 
     println!("Range returned {} keys", range_resp.kvs().len());
@@ -119,14 +123,15 @@ Respond with appropriate etcd_range_response, etcd_put_response, etc. actions.
     }
 
     // Should get at least the /config/database key
-    assert!(range_resp.kvs().len() >= 1, "Expected at least 1 key in /config/ range");
+    assert!(
+        range_resp.kvs().len() >= 1,
+        "Expected at least 1 key in /config/ range"
+    );
     println!("✓ Range query successful");
 
     // Test 6: Delete a key
     println!("\n[Test 6] Delete /config/timeout");
-    let del_resp = client
-        .delete("/config/timeout", None)
-        .await?;
+    let del_resp = client.delete("/config/timeout", None).await?;
 
     println!("Deleted {} keys", del_resp.deleted());
     assert!(del_resp.deleted() >= 0, "Delete should return count");
@@ -134,9 +139,7 @@ Respond with appropriate etcd_range_response, etcd_put_response, etc. actions.
 
     // Test 7: Verify delete (get should return empty)
     println!("\n[Test 7] Verify /config/timeout is deleted");
-    let get_resp = client
-        .get("/config/timeout", None)
-        .await?;
+    let get_resp = client.get("/config/timeout", None).await?;
 
     assert_eq!(get_resp.kvs().len(), 0, "Key should be deleted");
     println!("✓ Key successfully deleted");

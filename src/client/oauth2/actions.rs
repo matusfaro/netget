@@ -15,7 +15,7 @@ use std::sync::LazyLock;
 pub static OAUTH2_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "oauth2_connected",
-        "OAuth2 client initialized and ready to authenticate"
+        "OAuth2 client initialized and ready to authenticate",
     )
     .with_parameters(vec![
         Parameter {
@@ -37,7 +37,7 @@ pub static OAUTH2_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(||
 pub static OAUTH2_TOKEN_OBTAINED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "oauth2_token_obtained",
-        "OAuth2 access token successfully obtained"
+        "OAuth2 access token successfully obtained",
     )
     .with_parameters(vec![
         Parameter {
@@ -77,7 +77,7 @@ pub static OAUTH2_TOKEN_OBTAINED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 pub static OAUTH2_DEVICE_CODE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "oauth2_device_code_started",
-        "Device code flow initiated, user needs to visit URL"
+        "Device code flow initiated, user needs to visit URL",
     )
     .with_parameters(vec![
         Parameter {
@@ -109,11 +109,7 @@ pub static OAUTH2_DEVICE_CODE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// OAuth2 token error event
 pub static OAUTH2_ERROR_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "oauth2_error",
-        "OAuth2 authentication error occurred"
-    )
-    .with_parameters(vec![
+    EventType::new("oauth2_error", "OAuth2 authentication error occurred").with_parameters(vec![
         Parameter {
             name: "error".to_string(),
             type_hint: "string".to_string(),
@@ -140,47 +136,47 @@ impl OAuth2ClientProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for OAuth2ClientProtocol {
-        fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-            vec![
-                ParameterDefinition {
-                    name: "client_id".to_string(),
-                    description: "OAuth2 client ID".to_string(),
-                    type_hint: "string".to_string(),
-                    required: true,
-                    example: json!("my-client-id"),
-                },
-                ParameterDefinition {
-                    name: "client_secret".to_string(),
-                    description: "OAuth2 client secret".to_string(),
-                    type_hint: "string".to_string(),
-                    required: false,
-                    example: json!("my-client-secret"),
-                },
-                ParameterDefinition {
-                    name: "auth_url".to_string(),
-                    description: "OAuth2 authorization endpoint URL".to_string(),
-                    type_hint: "string".to_string(),
-                    required: false,
-                    example: json!("https://provider.com/oauth/authorize"),
-                },
-                ParameterDefinition {
-                    name: "token_url".to_string(),
-                    description: "OAuth2 token endpoint URL".to_string(),
-                    type_hint: "string".to_string(),
-                    required: true,
-                    example: json!("https://provider.com/oauth/token"),
-                },
-                ParameterDefinition {
-                    name: "scopes".to_string(),
-                    description: "OAuth2 scopes to request (space-separated or array)".to_string(),
-                    type_hint: "string".to_string(),
-                    required: false,
-                    example: json!("read write"),
-                },
-            ]
-        }
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            vec![
+    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
+        vec![
+            ParameterDefinition {
+                name: "client_id".to_string(),
+                description: "OAuth2 client ID".to_string(),
+                type_hint: "string".to_string(),
+                required: true,
+                example: json!("my-client-id"),
+            },
+            ParameterDefinition {
+                name: "client_secret".to_string(),
+                description: "OAuth2 client secret".to_string(),
+                type_hint: "string".to_string(),
+                required: false,
+                example: json!("my-client-secret"),
+            },
+            ParameterDefinition {
+                name: "auth_url".to_string(),
+                description: "OAuth2 authorization endpoint URL".to_string(),
+                type_hint: "string".to_string(),
+                required: false,
+                example: json!("https://provider.com/oauth/authorize"),
+            },
+            ParameterDefinition {
+                name: "token_url".to_string(),
+                description: "OAuth2 token endpoint URL".to_string(),
+                type_hint: "string".to_string(),
+                required: true,
+                example: json!("https://provider.com/oauth/token"),
+            },
+            ParameterDefinition {
+                name: "scopes".to_string(),
+                description: "OAuth2 scopes to request (space-separated or array)".to_string(),
+                type_hint: "string".to_string(),
+                required: false,
+                example: json!("read write"),
+            },
+        ]
+    }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        vec![
                 ActionDefinition {
                     name: "exchange_password".to_string(),
                     description: "Exchange username/password for access token (Resource Owner Password Credentials flow)".to_string(),
@@ -307,206 +303,208 @@ impl Protocol for OAuth2ClientProtocol {
                     }),
                 },
             ]
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            // OAuth2 is typically request-response, so sync actions are the same as async
-            vec![
-                ActionDefinition {
-                    name: "refresh_token".to_string(),
-                    description: "Refresh access token in response to token expiration".to_string(),
-                    parameters: vec![],
-                    example: json!({
-                        "type": "refresh_token"
-                    }),
-                },
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "OAuth2"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            vec![
-                EventType {
-                    id: "oauth2_connected".to_string(),
-                    description: "Triggered when OAuth2 client is initialized".to_string(),
-                    actions: vec![],
-                    parameters: vec![],
-                },
-                EventType {
-                    id: "oauth2_token_obtained".to_string(),
-                    description: "Triggered when access token is obtained".to_string(),
-                    actions: vec![],
-                    parameters: vec![],
-                },
-                EventType {
-                    id: "oauth2_device_code_started".to_string(),
-                    description: "Triggered when device code flow is initiated".to_string(),
-                    actions: vec![],
-                    parameters: vec![],
-                },
-                EventType {
-                    id: "oauth2_error".to_string(),
-                    description: "Triggered when OAuth2 error occurs".to_string(),
-                    actions: vec![],
-                    parameters: vec![],
-                },
-            ]
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>TCP>HTTP>OAuth2"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["oauth2", "oauth", "authentication", "access token", "oauth2 client"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
-    
-            ProtocolMetadataV2::builder()
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        // OAuth2 is typically request-response, so sync actions are the same as async
+        vec![ActionDefinition {
+            name: "refresh_token".to_string(),
+            description: "Refresh access token in response to token expiration".to_string(),
+            parameters: vec![],
+            example: json!({
+                "type": "refresh_token"
+            }),
+        }]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "OAuth2"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        vec![
+            EventType {
+                id: "oauth2_connected".to_string(),
+                description: "Triggered when OAuth2 client is initialized".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+            EventType {
+                id: "oauth2_token_obtained".to_string(),
+                description: "Triggered when access token is obtained".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+            EventType {
+                id: "oauth2_device_code_started".to_string(),
+                description: "Triggered when device code flow is initiated".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+            EventType {
+                id: "oauth2_error".to_string(),
+                description: "Triggered when OAuth2 error occurs".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+        ]
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>HTTP>OAuth2"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec![
+            "oauth2",
+            "oauth",
+            "authentication",
+            "access token",
+            "oauth2 client",
+        ]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
                 .state(DevelopmentState::Experimental)
                 .implementation("oauth2 crate for multiple OAuth2 flows")
                 .llm_control("Full control over OAuth2 flows (password, device code, client credentials, authorization code)")
                 .e2e_testing("Mock OAuth2 server or public OAuth2 provider")
                 .build()
-        }
-        fn description(&self) -> &'static str {
-            "OAuth2 client for authentication and token management"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Authenticate with OAuth2 using password flow: username 'user@example.com', password 'secret'"
-        }
-        fn group_name(&self) -> &'static str {
-            "Authentication"
-        }
+    }
+    fn description(&self) -> &'static str {
+        "OAuth2 client for authentication and token management"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Authenticate with OAuth2 using password flow: username 'user@example.com', password 'secret'"
+    }
+    fn group_name(&self) -> &'static str {
+        "Authentication"
+    }
 }
 
 // Implement Client trait (client-specific functionality)
 impl Client for OAuth2ClientProtocol {
-        fn connect(
-            &self,
-            ctx: crate::protocol::ConnectContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::client::oauth2::OAuth2Client;
-                OAuth2Client::connect_with_llm_actions(
-                    ctx.remote_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.client_id,
-                )
-                .await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "exchange_password" => {
-                    let username = action
-                        .get("username")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'username' field")?
-                        .to_string();
-    
-                    let password = action
-                        .get("password")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'password' field")?
-                        .to_string();
-    
-                    let scopes = action
-                        .get("scopes")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "oauth2_exchange_password".to_string(),
-                        data: json!({
-                            "username": username,
-                            "password": password,
-                            "scopes": scopes,
-                        }),
-                    })
-                }
-                "exchange_client_credentials" => {
-                    let scopes = action
-                        .get("scopes")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "oauth2_exchange_client_credentials".to_string(),
-                        data: json!({
-                            "scopes": scopes,
-                        }),
-                    })
-                }
-                "start_device_code_flow" => {
-                    let scopes = action
-                        .get("scopes")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "oauth2_start_device_code".to_string(),
-                        data: json!({
-                            "scopes": scopes,
-                        }),
-                    })
-                }
-                "poll_device_code" => {
-                    Ok(ClientActionResult::Custom {
-                        name: "oauth2_poll_device_code".to_string(),
-                        data: json!({}),
-                    })
-                }
-                "refresh_token" => {
-                    Ok(ClientActionResult::Custom {
-                        name: "oauth2_refresh_token".to_string(),
-                        data: json!({}),
-                    })
-                }
-                "generate_auth_url" => {
-                    let scopes = action
-                        .get("scopes")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-    
-                    let redirect_uri = action
-                        .get("redirect_uri")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "oauth2_generate_auth_url".to_string(),
-                        data: json!({
-                            "scopes": scopes,
-                            "redirect_uri": redirect_uri,
-                        }),
-                    })
-                }
-                "exchange_code" => {
-                    let code = action
-                        .get("code")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'code' field")?
-                        .to_string();
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "oauth2_exchange_code".to_string(),
-                        data: json!({
-                            "code": code,
-                        }),
-                    })
-                }
-                "disconnect" => Ok(ClientActionResult::Disconnect),
-                _ => Err(anyhow::anyhow!("Unknown OAuth2 client action: {}", action_type)),
-            }
-        }
-}
+    fn connect(
+        &self,
+        ctx: crate::protocol::ConnectContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::client::oauth2::OAuth2Client;
+            OAuth2Client::connect_with_llm_actions(
+                ctx.remote_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.client_id,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
 
+        match action_type {
+            "exchange_password" => {
+                let username = action
+                    .get("username")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'username' field")?
+                    .to_string();
+
+                let password = action
+                    .get("password")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'password' field")?
+                    .to_string();
+
+                let scopes = action
+                    .get("scopes")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                Ok(ClientActionResult::Custom {
+                    name: "oauth2_exchange_password".to_string(),
+                    data: json!({
+                        "username": username,
+                        "password": password,
+                        "scopes": scopes,
+                    }),
+                })
+            }
+            "exchange_client_credentials" => {
+                let scopes = action
+                    .get("scopes")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                Ok(ClientActionResult::Custom {
+                    name: "oauth2_exchange_client_credentials".to_string(),
+                    data: json!({
+                        "scopes": scopes,
+                    }),
+                })
+            }
+            "start_device_code_flow" => {
+                let scopes = action
+                    .get("scopes")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                Ok(ClientActionResult::Custom {
+                    name: "oauth2_start_device_code".to_string(),
+                    data: json!({
+                        "scopes": scopes,
+                    }),
+                })
+            }
+            "poll_device_code" => Ok(ClientActionResult::Custom {
+                name: "oauth2_poll_device_code".to_string(),
+                data: json!({}),
+            }),
+            "refresh_token" => Ok(ClientActionResult::Custom {
+                name: "oauth2_refresh_token".to_string(),
+                data: json!({}),
+            }),
+            "generate_auth_url" => {
+                let scopes = action
+                    .get("scopes")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                let redirect_uri = action
+                    .get("redirect_uri")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                Ok(ClientActionResult::Custom {
+                    name: "oauth2_generate_auth_url".to_string(),
+                    data: json!({
+                        "scopes": scopes,
+                        "redirect_uri": redirect_uri,
+                    }),
+                })
+            }
+            "exchange_code" => {
+                let code = action
+                    .get("code")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'code' field")?
+                    .to_string();
+
+                Ok(ClientActionResult::Custom {
+                    name: "oauth2_exchange_code".to_string(),
+                    data: json!({
+                        "code": code,
+                    }),
+                })
+            }
+            "disconnect" => Ok(ClientActionResult::Disconnect),
+            _ => Err(anyhow::anyhow!(
+                "Unknown OAuth2 client action: {}",
+                action_type
+            )),
+        }
+    }
+}

@@ -2,23 +2,27 @@
 
 ## Test Overview
 
-End-to-end tests for SIP (Session Initiation Protocol) server functionality. Tests spawn NetGet SIP server and validate text-based protocol compliance using raw UDP sockets and manual SIP message construction.
+End-to-end tests for SIP (Session Initiation Protocol) server functionality. Tests spawn NetGet SIP server and validate
+text-based protocol compliance using raw UDP sockets and manual SIP message construction.
 
 **Protocols Tested**: SIP REGISTER, INVITE, BYE, OPTIONS, ACK (RFC 3261)
 
 ## Test Strategy
 
 **Raw UDP Socket Approach**: Tests use `std::net::UdpSocket` (sync, blocking) for simplicity and precise control:
+
 - Direct text-based message construction
 - Line-based protocol validation
 - Easy debugging of SIP headers
 
 **Manual SIP Message Construction**: Helper functions build SIP requests as text strings:
+
 - Ensures RFC 3261 compliance
 - Tests exact wire format (headers + body)
 - Allows testing malformed messages
 
-**Black-Box Protocol Testing**: Tests validate only external behavior (request → response), not internal LLM prompts or implementation details.
+**Black-Box Protocol Testing**: Tests validate only external behavior (request → response), not internal LLM prompts or
+implementation details.
 
 **Comprehensive Single-Server Approach**: One server handles all test cases with scripting for maximum efficiency.
 
@@ -27,6 +31,7 @@ End-to-end tests for SIP (Session Initiation Protocol) server functionality. Tes
 ### Current Implementation
 
 **Single Comprehensive Test** (`test_sip_comprehensive`):
+
 - 1 server startup (with comprehensive scripting instructions) = **1-2 LLM calls**
 - 8 SIP requests (all handled by script) = **0 LLM calls**
 - **Total: 1-2 LLM calls** ✅ **Target met: < 10 calls**
@@ -34,6 +39,7 @@ End-to-end tests for SIP (Session Initiation Protocol) server functionality. Tes
 ### Test Breakdown
 
 The single test validates:
+
 1. REGISTER alice@localhost → 200 OK
 2. REGISTER bob@localhost → 200 OK
 3. REGISTER charlie@localhost → 403 Forbidden (rejection)
@@ -48,12 +54,14 @@ The single test validates:
 ## Scripting Usage
 
 **Scripting HEAVILY Used** ✅: SIP is PERFECT for scripting because:
+
 - **Deterministic**: Request method + From/To headers → predictable response
 - **Stateless server**: No complex session tracking required
 - **Limited methods**: 6 core methods (REGISTER, INVITE, ACK, BYE, OPTIONS, CANCEL)
 - **Well-defined status codes**: RFC 3261 Section 21 defines all codes
 
 **Script Logic** (conceptual):
+
 ```python
 def handle_sip_request(event):
     method = event['method']
@@ -89,11 +97,13 @@ def handle_sip_request(event):
     # No fallback needed - all cases covered
 ```
 
-**Why Scripting Works**: SIP responses are nearly identical to requests (copy headers, add status line). No per-request computation needed.
+**Why Scripting Works**: SIP responses are nearly identical to requests (copy headers, add status line). No per-request
+computation needed.
 
 ## Client Library
 
 **Manual Implementation** - Raw UDP socket with helper functions
+
 - **`UdpSocket::bind("127.0.0.1:0")`**: Sync UDP socket (blocking, simple)
 - **`send_to()`**: Send SIP request to server
 - **`recv_from()`**: Receive SIP response (with 10s timeout)
@@ -102,6 +112,7 @@ def handle_sip_request(event):
 **No External Libraries**: SIP protocol is text-based HTTP-like format, simple to implement inline (~150 lines).
 
 **Helper Functions**:
+
 ```rust
 fn build_sip_register(user: &str, from_tag: &str, server_addr: &SocketAddr) -> String;
 fn build_sip_options(server_addr: &SocketAddr) -> String;
@@ -114,6 +125,7 @@ fn build_sip_bye(from: &str, to: &str, server_addr: &SocketAddr, call_id: &str) 
 **Model**: qwen3-coder:30b (default NetGet model)
 
 **Runtime**: ~10-15 seconds for full test suite
+
 - Server startup: ~5-10 seconds (LLM generates script)
 - 8 SIP requests: <1 second (script execution, no LLM calls)
 - UDP request/response: <1ms per request (fast text protocol)
@@ -127,6 +139,7 @@ fn build_sip_bye(from: &str, to: &str, server_addr: &SocketAddr, call_id: &str) 
 **Historical Flakiness**: **Low** (~5%)
 
 **Why Stable**:
+
 - Text-based protocol: Easy to debug
 - Stateless server: No complex state management
 - Single server: No multi-server coordination issues
@@ -135,26 +148,27 @@ fn build_sip_bye(from: &str, to: &str, server_addr: &SocketAddr, call_id: &str) 
 **Rare Failure Modes**:
 
 1. **LLM Fails to Generate Script** (~3% of runs)
-   - Symptom: Server returns error responses or times out
-   - Cause: LLM doesn't understand scripting instructions in prompt
-   - Mitigation: Retry test; if persistent, simplify prompt
+    - Symptom: Server returns error responses or times out
+    - Cause: LLM doesn't understand scripting instructions in prompt
+    - Mitigation: Retry test; if persistent, simplify prompt
 
 2. **Script Generation Incomplete** (~2% of runs)
-   - Symptom: Some test cases pass, others fail (e.g., alice works, bob doesn't)
-   - Cause: LLM omits part of scripting logic
-   - Mitigation: Retry test; verify comprehensive prompt covers all cases
+    - Symptom: Some test cases pass, others fail (e.g., alice works, bob doesn't)
+    - Cause: LLM omits part of scripting logic
+    - Mitigation: Retry test; verify comprehensive prompt covers all cases
 
 3. **UDP Packet Loss** (<0.5% of runs, CI only)
-   - Symptom: recv_from() times out after 10 seconds
-   - Cause: High CI runner load drops UDP packet
-   - Mitigation: Extremely rare on localhost; retry succeeds
+    - Symptom: recv_from() times out after 10 seconds
+    - Cause: High CI runner load drops UDP packet
+    - Mitigation: Extremely rare on localhost; retry succeeds
 
 4. **SIP Parsing Errors** (<1% of runs)
-   - Symptom: Server logs parse errors, no response
-   - Cause: Manual SIP parser fails on edge case
-   - Mitigation: Indicates bug in parser, should fix if reproducible
+    - Symptom: Server logs parse errors, no response
+    - Cause: Manual SIP parser fails on edge case
+    - Mitigation: Indicates bug in parser, should fix if reproducible
 
 **Most Stable Aspects**:
+
 - REGISTER requests: Simple, well-defined
 - OPTIONS queries: Minimal logic
 - Rejection responses (403, 486): Negative cases are stable
@@ -164,48 +178,49 @@ fn build_sip_bye(from: &str, to: &str, server_addr: &SocketAddr, call_id: &str) 
 ### Registration
 
 1. **REGISTER alice@localhost** (successful)
-   - Validates 200 OK response
-   - Checks for Expires header
-   - Tests accepted user registration
+    - Validates 200 OK response
+    - Checks for Expires header
+    - Tests accepted user registration
 
 2. **REGISTER bob@localhost** (successful)
-   - Validates 200 OK response
-   - Tests second user registration
+    - Validates 200 OK response
+    - Tests second user registration
 
 3. **REGISTER charlie@localhost** (rejected)
-   - Validates 403 Forbidden response
-   - Tests rejection of unknown users
+    - Validates 403 Forbidden response
+    - Tests rejection of unknown users
 
 ### Capability Negotiation
 
 4. **OPTIONS Query**
-   - Validates 200 OK response
-   - Checks for Allow header with supported methods
-   - Tests server capability advertisement
+    - Validates 200 OK response
+    - Checks for Allow header with supported methods
+    - Tests server capability advertisement
 
 ### Call Setup and Termination
 
 5. **INVITE alice→bob** (accepted)
-   - Validates 200 OK response
-   - Checks for Content-Type: application/sdp header
-   - Validates SDP body present (v=0 line)
-   - Tests successful call setup with media negotiation
+    - Validates 200 OK response
+    - Checks for Content-Type: application/sdp header
+    - Validates SDP body present (v=0 line)
+    - Tests successful call setup with media negotiation
 
 6. **BYE to Terminate Call**
-   - Validates 200 OK response
-   - Tests call termination
+    - Validates 200 OK response
+    - Tests call termination
 
 7. **INVITE bob→alice** (rejected)
-   - Validates 486 Busy Here response
-   - Tests call rejection logic
+    - Validates 486 Busy Here response
+    - Tests call rejection logic
 
 8. **INVITE charlie→bob** (rejected)
-   - Validates 403 Forbidden response
-   - Tests rejection of calls from unknown users
+    - Validates 403 Forbidden response
+    - Tests rejection of calls from unknown users
 
 ### Coverage Gaps
 
 **Not Yet Tested**:
+
 - **ACK messages**: Client should send ACK after INVITE 200 OK (not critical for honeypot)
 - **CANCEL requests**: Cancel pending INVITE before final response
 - **Digest authentication**: 401 Unauthorized challenges (not implemented)
@@ -225,6 +240,7 @@ fn build_sip_bye(from: &str, to: &str, server_addr: &SocketAddr, call_id: &str) 
 ### Helper Functions
 
 **`build_sip_register(user, from_tag, server_addr)`**:
+
 ```rust
 fn build_sip_register(user: &str, from_tag: &str, server_addr: &SocketAddr) -> String {
     format!(
@@ -244,15 +260,18 @@ fn build_sip_register(user: &str, from_tag: &str, server_addr: &SocketAddr) -> S
 ```
 
 **`build_sip_options(server_addr)`**:
+
 - Builds OPTIONS request with minimal headers
 - Used for testing capability queries
 
 **`build_sip_invite(from, to, server_addr, call_id)`**:
+
 - Builds INVITE request with SDP body
 - Includes Content-Type: application/sdp header
 - SDP describes audio session (PCMU/8000)
 
 **`build_sip_bye(from, to, server_addr, call_id)`**:
+
 - Builds BYE request to terminate call
 - Matches From/To tags from INVITE
 
@@ -348,6 +367,7 @@ test_state.stop().await?;
 **Achievement**: ✅ **90% reduction** from naive approach
 
 **Naive Approach Would Be**:
+
 - 8 test cases × 1 LLM call per request = 8 LLM calls minimum
 - Plus server startup = 9 LLM calls total
 

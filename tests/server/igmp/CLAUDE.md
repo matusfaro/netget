@@ -2,7 +2,9 @@
 
 ## Test Strategy
 
-The IGMP E2E tests verify that the LLM-controlled IGMP server correctly handles multicast group membership protocol operations. Since there's no standard Rust IGMP client library, tests manually construct IGMP packets and verify responses.
+The IGMP E2E tests verify that the LLM-controlled IGMP server correctly handles multicast group membership protocol
+operations. Since there's no standard Rust IGMP client library, tests manually construct IGMP packets and verify
+responses.
 
 ## Test Organization
 
@@ -15,6 +17,7 @@ All tests are in `tests/server/igmp/e2e_test.rs` with feature gate `#[cfg(all(te
 **Purpose**: Verify server responds to general membership queries for joined groups
 
 **Test Flow**:
+
 1. Start server with instruction to join 239.255.255.250
 2. Send IGMPv2 Membership Query with group address 0.0.0.0 (general query)
 3. Verify server responds with Membership Report (type 0x16) for 239.255.255.250
@@ -24,6 +27,7 @@ All tests are in `tests/server/igmp/e2e_test.rs` with feature gate `#[cfg(all(te
 **Expected Runtime**: ~5 seconds
 
 **Validation**:
+
 - Response message type is 0x16 (Membership Report)
 - Group address in report is 239.255.255.250
 
@@ -32,6 +36,7 @@ All tests are in `tests/server/igmp/e2e_test.rs` with feature gate `#[cfg(all(te
 **Purpose**: Verify server only responds to queries for joined groups
 
 **Test Flow**:
+
 1. Start server with instruction to join 224.0.1.1 and 239.1.2.3
 2. Send group-specific query for 224.0.1.1 (joined group)
 3. Verify server responds with report
@@ -43,6 +48,7 @@ All tests are in `tests/server/igmp/e2e_test.rs` with feature gate `#[cfg(all(te
 **Expected Runtime**: ~7 seconds
 
 **Validation**:
+
 - Server responds to queries for joined groups
 - Server ignores or handles queries for non-joined groups gracefully
 
@@ -51,6 +57,7 @@ All tests are in `tests/server/igmp/e2e_test.rs` with feature gate `#[cfg(all(te
 **Purpose**: Verify server accepts IGMP reports from other hosts
 
 **Test Flow**:
+
 1. Start server with instruction to join 224.1.1.1
 2. Send Membership Report from "peer" for 224.1.1.1
 3. Verify server accepts packet without errors
@@ -60,6 +67,7 @@ All tests are in `tests/server/igmp/e2e_test.rs` with feature gate `#[cfg(all(te
 **Expected Runtime**: ~5 seconds
 
 **Validation**:
+
 - Server accepts peer reports
 - No crashes or errors
 - (Optional) Server may suppress own reports per IGMP spec
@@ -69,6 +77,7 @@ All tests are in `tests/server/igmp/e2e_test.rs` with feature gate `#[cfg(all(te
 **Purpose**: Comprehensive test with multiple groups and general query
 
 **Test Flow**:
+
 1. Start server with instruction to join 224.0.0.251 (mDNS) and 239.255.255.250 (SSDP)
 2. Send general membership query
 3. Verify server sends at least one report
@@ -78,6 +87,7 @@ All tests are in `tests/server/igmp/e2e_test.rs` with feature gate `#[cfg(all(te
 **Expected Runtime**: ~8 seconds
 
 **Validation**:
+
 - Receives at least 1 membership report
 - Reports are for joined groups
 
@@ -94,6 +104,7 @@ All tests are in `tests/server/igmp/e2e_test.rs` with feature gate `#[cfg(all(te
 ### Packet Construction
 
 Tests manually construct IGMPv2 packets:
+
 - `build_igmp_query()` - Membership Query (type 0x11)
 - `build_igmp_report()` - Membership Report (type 0x16)
 - `calculate_checksum()` - RFC 1071 Internet Checksum
@@ -115,6 +126,7 @@ Tests manually construct IGMPv2 packets:
 **Implementation**: IGMP server uses raw IP sockets (IPPROTO_IGMP)
 
 **Testing**: Tests use `std::net::UdpSocket` for simplicity
+
 - Tests send raw IGMP packets via UDP to server port
 - Server implementation uses actual raw sockets with root privileges
 - Test approach validates protocol logic without requiring root for test execution
@@ -128,6 +140,7 @@ Tests manually construct IGMPv2 packets:
 **Note**: Tests use UDP sockets while server uses raw IP sockets
 
 **Reason**:
+
 - Avoids requiring root privileges for test execution
 - Simplifies test setup and CI/CD integration
 - Server still receives/processes packets correctly
@@ -159,16 +172,19 @@ Tests manually construct IGMPv2 packets:
 ## Running Tests
 
 ### Run all IGMP tests:
+
 ```bash
 ./cargo-isolated.sh test --no-default-features --features igmp --test server::igmp::e2e_test
 ```
 
 ### Run specific test:
+
 ```bash
 ./cargo-isolated.sh test --no-default-features --features igmp --test server::igmp::e2e_test -- test_igmp_general_query_response
 ```
 
 ### Prerequisites:
+
 1. Build release binary first:
    ```bash
    ./cargo-isolated.sh build --release --features igmp
@@ -179,11 +195,13 @@ Tests manually construct IGMPv2 packets:
 ## Test Reliability
 
 **Timeouts**:
+
 - Server initialization: 3 seconds
 - Response wait: 5 seconds (first attempt), 2 seconds (subsequent)
 - Total per test: 5-8 seconds
 
 **Failure Modes**:
+
 - LLM doesn't understand IGMP protocol → Bad response format
 - LLM doesn't join groups → No reports sent
 - LLM responds to wrong queries → Assertion failures
@@ -193,6 +211,7 @@ Tests manually construct IGMPv2 packets:
 ## Privacy & Offline
 
 All tests use:
+
 - Localhost only (127.0.0.1)
 - No external connections
 - Multicast groups are standard (mDNS, SSDP) or test addresses
@@ -228,16 +247,19 @@ Tests work completely offline after Ollama model is downloaded.
 ## Debugging
 
 ### Enable trace logging:
+
 ```bash
 RUST_LOG=trace ./cargo-isolated.sh test --features igmp -- test_igmp_general_query_response --nocapture
 ```
 
 ### Inspect packets:
+
 ```rust
 println!("Packet hex: {}", hex::encode(&packet));
 ```
 
 ### Common issues:
+
 - **No response**: LLM didn't join group or didn't understand query
 - **Wrong group**: LLM joined different group than expected
 - **Invalid packet**: Checksum error or malformed response

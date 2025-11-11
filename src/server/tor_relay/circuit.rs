@@ -9,13 +9,13 @@ use tokio::sync::Mutex;
 use tracing::{debug, trace};
 
 // Crypto imports
-use x25519_dalek::{EphemeralSecret, PublicKey as X25519PublicKey};
-use ed25519_dalek::SigningKey;
-use sha2::{Sha256, Digest};
-use hmac::{Hmac, Mac};
-use hkdf::Hkdf;
 use aes::Aes128;
 use ctr::cipher::{KeyIvInit, StreamCipher};
+use ed25519_dalek::SigningKey;
+use hkdf::Hkdf;
+use hmac::{Hmac, Mac};
+use sha2::{Digest, Sha256};
+use x25519_dalek::{EphemeralSecret, PublicKey as X25519PublicKey};
 
 type HmacSha256 = Hmac<Sha256>;
 type Aes128Ctr = ctr::Ctr128BE<Aes128>;
@@ -172,7 +172,11 @@ impl Circuit {
     /// Process received circuit-level SENDME - increment package window
     pub fn process_circuit_sendme(&mut self) {
         self.package_window += CIRCUIT_WINDOW_INCREMENT;
-        trace!("Circuit {} package window increased to {}", self.id.as_u32(), self.package_window);
+        trace!(
+            "Circuit {} package window increased to {}",
+            self.id.as_u32(),
+            self.package_window
+        );
     }
 
     /// Check if we can send RELAY cells (package window > 0)
@@ -185,7 +189,6 @@ impl Circuit {
         self.package_window = self.package_window.saturating_sub(1);
     }
 }
-
 
 /// Circuit crypto state (AES-CTR for encryption/decryption)
 pub struct CircuitCrypto {
@@ -320,7 +323,10 @@ impl NtorServer {
     ///
     /// Input: client's public key X from CREATE2 cell (32 bytes)
     /// Output: (server's ephemeral public key Y, auth hash H, key material)
-    pub fn server_handshake(&self, client_x: &[u8; 32]) -> Result<([u8; 32], [u8; 32], KeyMaterial)> {
+    pub fn server_handshake(
+        &self,
+        client_x: &[u8; 32],
+    ) -> Result<([u8; 32], [u8; 32], KeyMaterial)> {
         use rand::rngs::OsRng;
 
         // Parse client's public key X
@@ -355,15 +361,13 @@ impl NtorServer {
 
         // Derive KEY_SEED using HMAC-SHA256
         // KEY_SEED = H(secret_input, t_key)
-        let mut mac = HmacSha256::new_from_slice(T_KEY)
-            .context("Failed to create HMAC")?;
+        let mut mac = HmacSha256::new_from_slice(T_KEY).context("Failed to create HMAC")?;
         mac.update(&secret_input);
         let key_seed = mac.finalize().into_bytes();
 
         // Derive verify using HMAC-SHA256
         // verify = H(secret_input, t_verify)
-        let mut mac = HmacSha256::new_from_slice(T_VERIFY)
-            .context("Failed to create HMAC")?;
+        let mut mac = HmacSha256::new_from_slice(T_VERIFY).context("Failed to create HMAC")?;
         mac.update(&secret_input);
         let verify = mac.finalize().into_bytes();
 
@@ -380,15 +384,14 @@ impl NtorServer {
 
         // Compute AUTH using HMAC-SHA256
         // AUTH = H(auth_input, t_mac)
-        let mut mac = HmacSha256::new_from_slice(T_MAC)
-            .context("Failed to create HMAC")?;
+        let mut mac = HmacSha256::new_from_slice(T_MAC).context("Failed to create HMAC")?;
         mac.update(&auth_input);
         let auth = mac.finalize().into_bytes();
 
         // Derive key material using HKDF-SHA256
         // Use KEY_SEED as input key material
         let hkdf = Hkdf::<Sha256>::new(Some(T_KEY), &key_seed);
-        let mut okm = [0u8; 72];  // Kf(16) + Kb(16) + Df(20) + Db(20) = 72 bytes
+        let mut okm = [0u8; 72]; // Kf(16) + Kb(16) + Df(20) + Db(20) = 72 bytes
         hkdf.expand(M_EXPAND, &mut okm)
             .map_err(|_| anyhow::anyhow!("Failed to expand key material"))?;
 
@@ -400,7 +403,10 @@ impl NtorServer {
             db: okm[52..72].try_into().unwrap(),
         };
 
-        debug!("ntor handshake completed, derived {} bytes of key material", okm.len());
+        debug!(
+            "ntor handshake completed, derived {} bytes of key material",
+            okm.len()
+        );
 
         // Return (Y, AUTH, key_material)
         let mut y_bytes = [0u8; 32];
@@ -470,19 +476,25 @@ impl CircuitManager {
     }
 
     /// Decrypt relay cell for circuit
-    pub async fn decrypt_relay_cell(&self, circuit_id: CircuitId, payload: &mut [u8]) -> Result<()> {
+    pub async fn decrypt_relay_cell(
+        &self,
+        circuit_id: CircuitId,
+        payload: &mut [u8],
+    ) -> Result<()> {
         let mut circuits = self.circuits.lock().await;
-        let circuit = circuits.get_mut(&circuit_id)
-            .context("Circuit not found")?;
+        let circuit = circuits.get_mut(&circuit_id).context("Circuit not found")?;
 
         circuit.decrypt_relay_cell(payload)
     }
 
     /// Encrypt relay cell for circuit
-    pub async fn encrypt_relay_cell(&self, circuit_id: CircuitId, payload: &mut [u8]) -> Result<()> {
+    pub async fn encrypt_relay_cell(
+        &self,
+        circuit_id: CircuitId,
+        payload: &mut [u8],
+    ) -> Result<()> {
         let mut circuits = self.circuits.lock().await;
-        let circuit = circuits.get_mut(&circuit_id)
-            .context("Circuit not found")?;
+        let circuit = circuits.get_mut(&circuit_id).context("Circuit not found")?;
 
         circuit.encrypt_relay_cell(payload)
     }
@@ -501,21 +513,31 @@ impl CircuitManager {
     }
 
     /// Create stream in circuit
-    pub async fn create_stream(&self, circuit_id: CircuitId, stream_id: StreamId, target: String) -> Result<()> {
+    pub async fn create_stream(
+        &self,
+        circuit_id: CircuitId,
+        stream_id: StreamId,
+        target: String,
+    ) -> Result<()> {
         let mut circuits = self.circuits.lock().await;
-        let circuit = circuits.get_mut(&circuit_id)
-            .context("Circuit not found")?;
+        let circuit = circuits.get_mut(&circuit_id).context("Circuit not found")?;
 
         circuit.stream_manager.create_stream(stream_id, target)
     }
 
     /// Set stream as active with TCP connection
-    pub async fn set_stream_active(&self, circuit_id: CircuitId, stream_id: StreamId, connection: tokio::net::TcpStream) -> Result<()> {
+    pub async fn set_stream_active(
+        &self,
+        circuit_id: CircuitId,
+        stream_id: StreamId,
+        connection: tokio::net::TcpStream,
+    ) -> Result<()> {
         let mut circuits = self.circuits.lock().await;
-        let circuit = circuits.get_mut(&circuit_id)
-            .context("Circuit not found")?;
+        let circuit = circuits.get_mut(&circuit_id).context("Circuit not found")?;
 
-        let stream = circuit.stream_manager.get_mut(stream_id)
+        let stream = circuit
+            .stream_manager
+            .get_mut(stream_id)
             .context("Stream not found")?;
 
         stream.set_active(connection);
@@ -523,12 +545,17 @@ impl CircuitManager {
     }
 
     /// Get stream connection
-    pub async fn get_stream_connection(&self, circuit_id: CircuitId, stream_id: StreamId) -> Result<Option<Arc<tokio::sync::Mutex<tokio::net::TcpStream>>>> {
+    pub async fn get_stream_connection(
+        &self,
+        circuit_id: CircuitId,
+        stream_id: StreamId,
+    ) -> Result<Option<Arc<tokio::sync::Mutex<tokio::net::TcpStream>>>> {
         let circuits = self.circuits.lock().await;
-        let circuit = circuits.get(&circuit_id)
-            .context("Circuit not found")?;
+        let circuit = circuits.get(&circuit_id).context("Circuit not found")?;
 
-        let stream = circuit.stream_manager.get(stream_id)
+        let stream = circuit
+            .stream_manager
+            .get(stream_id)
             .context("Stream not found")?;
 
         Ok(stream.connection())
@@ -537,8 +564,7 @@ impl CircuitManager {
     /// Close stream
     pub async fn close_stream(&self, circuit_id: CircuitId, stream_id: StreamId) -> Result<()> {
         let mut circuits = self.circuits.lock().await;
-        let circuit = circuits.get_mut(&circuit_id)
-            .context("Circuit not found")?;
+        let circuit = circuits.get_mut(&circuit_id).context("Circuit not found")?;
 
         circuit.stream_manager.remove(stream_id);
         Ok(())
@@ -618,25 +644,26 @@ impl CircuitManager {
     /// Record RELAY cell received for circuit - returns true if SENDME needed
     pub async fn record_relay_received(&self, circuit_id: CircuitId) -> Result<bool> {
         let mut circuits = self.circuits.lock().await;
-        let circuit = circuits.get_mut(&circuit_id)
-            .context("Circuit not found")?;
+        let circuit = circuits.get_mut(&circuit_id).context("Circuit not found")?;
         Ok(circuit.record_relay_received())
     }
 
     /// Process circuit-level SENDME
     pub async fn process_circuit_sendme(&self, circuit_id: CircuitId) -> Result<()> {
         let mut circuits = self.circuits.lock().await;
-        let circuit = circuits.get_mut(&circuit_id)
-            .context("Circuit not found")?;
+        let circuit = circuits.get_mut(&circuit_id).context("Circuit not found")?;
         circuit.process_circuit_sendme();
         Ok(())
     }
 
     /// Record DATA cell received for stream - returns true if SENDME needed
-    pub async fn record_stream_data_received(&self, circuit_id: CircuitId, stream_id: StreamId) -> Result<bool> {
+    pub async fn record_stream_data_received(
+        &self,
+        circuit_id: CircuitId,
+        stream_id: StreamId,
+    ) -> Result<bool> {
         let mut circuits = self.circuits.lock().await;
-        let circuit = circuits.get_mut(&circuit_id)
-            .context("Circuit not found")?;
+        let circuit = circuits.get_mut(&circuit_id).context("Circuit not found")?;
 
         if let Some(stream) = circuit.stream_manager.get_mut(stream_id) {
             Ok(stream.record_data_received())
@@ -646,10 +673,13 @@ impl CircuitManager {
     }
 
     /// Process stream-level SENDME
-    pub async fn process_stream_sendme(&self, circuit_id: CircuitId, stream_id: StreamId) -> Result<()> {
+    pub async fn process_stream_sendme(
+        &self,
+        circuit_id: CircuitId,
+        stream_id: StreamId,
+    ) -> Result<()> {
         let mut circuits = self.circuits.lock().await;
-        let circuit = circuits.get_mut(&circuit_id)
-            .context("Circuit not found")?;
+        let circuit = circuits.get_mut(&circuit_id).context("Circuit not found")?;
 
         if let Some(stream) = circuit.stream_manager.get_mut(stream_id) {
             stream.process_sendme();
@@ -657,4 +687,3 @@ impl CircuitManager {
         Ok(())
     }
 }
-

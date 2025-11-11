@@ -4,7 +4,10 @@
 //! 1. User input handler - interprets user commands and manages the server
 //! 2. Network event handler - handles incoming network events based on instructions
 
-use crate::llm::actions::{generate_base_stack_documentation, get_all_tool_actions, get_user_input_common_actions, ActionDefinition};
+use crate::llm::actions::{
+    generate_base_stack_documentation, get_all_tool_actions, get_user_input_common_actions,
+    ActionDefinition,
+};
 use crate::llm::ollama_client::Message;
 use crate::llm::template_engine::{TemplateDataBuilder, TEMPLATE_ENGINE};
 use crate::state::app_state::AppState;
@@ -212,7 +215,8 @@ Your response must be **pure JSON** only:
     /// This is a short system message added at the end of the conversation
     /// to remind the LLM about the required response format.
     pub fn build_format_reminder() -> String {
-        r#"**REMINDER:** Respond with valid JSON only: `{"actions": [{"type": "...", ...}]}`"#.to_string()
+        r#"**REMINDER:** Respond with valid JSON only: `{"actions": [{"type": "...", ...}]}`"#
+            .to_string()
     }
 
     /// Filter actions based on scripting mode
@@ -293,62 +297,76 @@ Your response must be **pure JSON** only:
         let include_disabled = state.get_include_disabled_protocols().await;
 
         // Split actions into tools and regular actions and convert to JSON
-        let (tool_actions_raw, regular_actions_raw): (Vec<_>, Vec<_>) = filtered_actions
-            .iter()
-            .partition(|a| a.is_tool());
+        let (tool_actions_raw, regular_actions_raw): (Vec<_>, Vec<_>) =
+            filtered_actions.iter().partition(|a| a.is_tool());
 
         // Convert actions to JSON for templates
-        let tool_actions: Vec<serde_json::Value> = tool_actions_raw.iter().map(|a| {
-            let mut params_map = serde_json::Map::new();
-            for param in &a.parameters {
-                params_map.insert(param.name.clone(), serde_json::json!({
-                    "type": param.type_hint,
-                    "description": param.description,
-                    "required": param.required
-                }));
-            }
+        let tool_actions: Vec<serde_json::Value> = tool_actions_raw
+            .iter()
+            .map(|a| {
+                let mut params_map = serde_json::Map::new();
+                for param in &a.parameters {
+                    params_map.insert(
+                        param.name.clone(),
+                        serde_json::json!({
+                            "type": param.type_hint,
+                            "description": param.description,
+                            "required": param.required
+                        }),
+                    );
+                }
 
-            serde_json::json!({
-                "name": a.name,
-                "description": a.description,
-                "is_tool": a.is_tool(),
-                "parameters": params_map,
-                "example": a.example.to_string()
+                serde_json::json!({
+                    "name": a.name,
+                    "description": a.description,
+                    "is_tool": a.is_tool(),
+                    "parameters": params_map,
+                    "example": a.example.to_string()
+                })
             })
-        }).collect();
+            .collect();
 
-        let regular_actions: Vec<serde_json::Value> = regular_actions_raw.iter().map(|a| {
-            let mut params_map = serde_json::Map::new();
-            for param in &a.parameters {
-                params_map.insert(param.name.clone(), serde_json::json!({
-                    "type": param.type_hint,
-                    "description": param.description,
-                    "required": param.required
-                }));
-            }
+        let regular_actions: Vec<serde_json::Value> = regular_actions_raw
+            .iter()
+            .map(|a| {
+                let mut params_map = serde_json::Map::new();
+                for param in &a.parameters {
+                    params_map.insert(
+                        param.name.clone(),
+                        serde_json::json!({
+                            "type": param.type_hint,
+                            "description": param.description,
+                            "required": param.required
+                        }),
+                    );
+                }
 
-            serde_json::json!({
-                "name": a.name,
-                "description": a.description,
-                "is_tool": a.is_tool(),
-                "parameters": params_map,
-                "example": a.example.to_string()
+                serde_json::json!({
+                    "name": a.name,
+                    "description": a.description,
+                    "is_tool": a.is_tool(),
+                    "parameters": params_map,
+                    "example": a.example.to_string()
+                })
             })
-        }).collect();
+            .collect();
 
         // Get system capabilities
         let system_caps = state.get_system_capabilities().await;
 
         // Convert servers to simple objects for templates
-        let servers_data: Vec<serde_json::Value> = servers.iter().map(|s| {
-            serde_json::json!({
-                "id": s.id.as_u32(),
-                "protocol_name": s.protocol_name,
-                "port": s.port,
-                "status": s.status.to_string(),
-                "memory": s.memory
+        let servers_data: Vec<serde_json::Value> = servers
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "id": s.id.as_u32(),
+                    "protocol_name": s.protocol_name,
+                    "port": s.port,
+                    "status": s.status.to_string(),
+                    "memory": s.memory
+                })
             })
-        }).collect();
+            .collect();
 
         let active_server_data = server_id.and_then(|id| {
             servers.iter().find(|s| s.id == id).map(|s| {
@@ -372,19 +390,35 @@ Your response must be **pure JSON** only:
             .field("include_disabled_protocols", include_disabled)
             .field("scripting_enabled", has_scripting)
             .field("selected_scripting_mode", selected_mode.as_str())
-            .field("event_handler_mode", state.get_event_handler_mode().await.as_str())
+            .field(
+                "event_handler_mode",
+                state.get_event_handler_mode().await.as_str(),
+            )
             .field("mode", state.get_mode().await.as_str())
             .field("servers", &servers_data)
             .optional_field("active_server", active_server_data)
-            .field("tool_examples", if state.get_web_search_mode().await != crate::state::app_state::WebSearchMode::Off {
-                "`read_file` and `web_search`"
-            } else {
-                "`read_file`"
-            })
-            .field("base_stack_docs", Self::build_base_stack_docs_section(include_disabled))
-            .field("current_state", Self::build_current_state_section(state, server_id).await)
+            .field(
+                "tool_examples",
+                if state.get_web_search_mode().await != crate::state::app_state::WebSearchMode::Off
+                {
+                    "`read_file` and `web_search`"
+                } else {
+                    "`read_file`"
+                },
+            )
+            .field(
+                "base_stack_docs",
+                Self::build_base_stack_docs_section(include_disabled),
+            )
+            .field(
+                "current_state",
+                Self::build_current_state_section(state, server_id).await,
+            )
             .field("scripting_environment", selected_mode.as_str())
-            .field("can_bind_privileged_ports", system_caps.can_bind_privileged_ports)
+            .field(
+                "can_bind_privileged_ports",
+                system_caps.can_bind_privileged_ports,
+            )
             .field("has_raw_socket_access", system_caps.has_raw_socket_access)
             .build();
 
@@ -415,7 +449,12 @@ Your response must be **pure JSON** only:
         // Initially disable open_server and open_client - they will be enabled after read_base_stack_docs is called
         let is_open_server_enabled = false;
         let is_open_client_enabled = false;
-        let mut actions = get_user_input_common_actions(selected_mode, &scripting_env, is_open_server_enabled, is_open_client_enabled);
+        let mut actions = get_user_input_common_actions(
+            selected_mode,
+            &scripting_env,
+            is_open_server_enabled,
+            is_open_client_enabled,
+        );
 
         // Add tool actions
         let web_search_mode = state.get_web_search_mode().await;
@@ -448,7 +487,15 @@ Understand what the user wants and respond with the appropriate actions to make 
             tool_examples
         );
 
-        Self::build_action_prompt(state, None, &instructions, actions, true, conversation_history).await
+        Self::build_action_prompt(
+            state,
+            None,
+            &instructions,
+            actions,
+            true,
+            conversation_history,
+        )
+        .await
     }
 
     /// Convert a prompt string to conversation messages
@@ -503,8 +550,15 @@ Understand what the user wants and respond with the appropriate actions to make 
 
         // Network events don't need base stack docs (server already running, handling specific event)
         // Network events don't use conversation history
-        Self::build_action_prompt(state, Some(server_id), &instructions_str, all_actions, false, None)
-            .await
+        Self::build_action_prompt(
+            state,
+            Some(server_id),
+            &instructions_str,
+            all_actions,
+            false,
+            None,
+        )
+        .await
     }
 
     /// Build event trigger message for network events
@@ -556,7 +610,12 @@ Understand what the user wants and respond with the appropriate actions to make 
                 // Initially disable open_server and open_client (tasks don't use tool calling loop)
                 let is_open_server_enabled = false;
                 let is_open_client_enabled = false;
-                let mut actions = get_user_input_common_actions(selected_mode, &scripting_env, is_open_server_enabled, is_open_client_enabled);
+                let mut actions = get_user_input_common_actions(
+                    selected_mode,
+                    &scripting_env,
+                    is_open_server_enabled,
+                    is_open_client_enabled,
+                );
 
                 // Add tool actions
                 let web_search_mode = state.get_web_search_mode().await;
@@ -767,7 +826,7 @@ Return: [{{"type": "show_message", "message": "Task '{}' cancelled - client no l
             &instructions_with_error,
             actions,
             false, // Don't include base stack docs for tasks
-            None, // Tasks don't use conversation history
+            None,  // Tasks don't use conversation history
         )
         .await;
 

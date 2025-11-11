@@ -19,8 +19,8 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 use serde_json::{json, Value};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// JSON-RPC 2.0 request message
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -82,26 +82,20 @@ impl McpClient {
             .context("Failed to build HTTP client")?;
 
         // Store client data
-        let base_url = if remote_addr.starts_with("http://") || remote_addr.starts_with("https://") {
+        let base_url = if remote_addr.starts_with("http://") || remote_addr.starts_with("https://")
+        {
             remote_addr.clone()
         } else {
             format!("http://{}", remote_addr)
         };
 
-        app_state.with_client_mut(client_id, |client| {
-            client.set_protocol_field(
-                "base_url".to_string(),
-                serde_json::json!(base_url),
-            );
-            client.set_protocol_field(
-                "request_id".to_string(),
-                serde_json::json!(1),
-            );
-            client.set_protocol_field(
-                "initialized".to_string(),
-                serde_json::json!(false),
-            );
-        }).await;
+        app_state
+            .with_client_mut(client_id, |client| {
+                client.set_protocol_field("base_url".to_string(), serde_json::json!(base_url));
+                client.set_protocol_field("request_id".to_string(), serde_json::json!(1));
+                client.set_protocol_field("initialized".to_string(), serde_json::json!(false));
+            })
+            .await;
 
         // Phase 1: Send initialize request
         let init_response = Self::send_initialize_request(
@@ -110,65 +104,69 @@ impl McpClient {
             client_id,
             &app_state,
             &status_tx,
-        ).await?;
+        )
+        .await?;
 
         // Parse server info from response
-        let server_info = init_response.get("serverInfo")
+        let server_info = init_response
+            .get("serverInfo")
             .and_then(|v| v.as_object())
             .context("Missing serverInfo in initialize response")?;
 
-        let server_name = server_info.get("name")
+        let server_name = server_info
+            .get("name")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
 
-        let server_version = server_info.get("version")
+        let server_version = server_info
+            .get("version")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
 
-        let capabilities = init_response.get("capabilities")
+        let capabilities = init_response
+            .get("capabilities")
             .cloned()
             .unwrap_or(json!({}));
 
         // Store server capabilities
-        app_state.with_client_mut(client_id, |client| {
-            client.set_protocol_field(
-                "server_info".to_string(),
-                json!(server_info),
-            );
-            client.set_protocol_field(
-                "capabilities".to_string(),
-                capabilities.clone(),
-            );
-        }).await;
+        app_state
+            .with_client_mut(client_id, |client| {
+                client.set_protocol_field("server_info".to_string(), json!(server_info));
+                client.set_protocol_field("capabilities".to_string(), capabilities.clone());
+            })
+            .await;
 
         // Phase 2: Send initialized notification
-        Self::send_initialized_notification(
-            &http_client,
-            &base_url,
-            &status_tx,
-        ).await?;
+        Self::send_initialized_notification(&http_client, &base_url, &status_tx).await?;
 
         // Mark as initialized
-        app_state.with_client_mut(client_id, |client| {
-            client.set_protocol_field(
-                "initialized".to_string(),
-                serde_json::json!(true),
-            );
-        }).await;
+        app_state
+            .with_client_mut(client_id, |client| {
+                client.set_protocol_field("initialized".to_string(), serde_json::json!(true));
+            })
+            .await;
 
         // Update status to connected
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] MCP client {} initialized with server {}", client_id, server_name));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] MCP client {} initialized with server {}",
+            client_id, server_name
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         info!("MCP client {} initialization complete", client_id);
 
         // Create connected event and call LLM
-        let event = Event::new(&MCP_CLIENT_CONNECTED_EVENT, json!({
-            "server_name": server_name,
-            "server_version": server_version,
-            "capabilities": capabilities,
-        }));
+        let event = Event::new(
+            &MCP_CLIENT_CONNECTED_EVENT,
+            json!({
+                "server_name": server_name,
+                "server_version": server_version,
+                "capabilities": capabilities,
+            }),
+        );
 
         // Spawn task to handle LLM interactions
         let http_client_clone = http_client.clone();
@@ -176,8 +174,14 @@ impl McpClient {
             let protocol = Arc::new(McpClientProtocol::new());
 
             // Get instruction and memory
-            let instruction = app_state.get_instruction_for_client(client_id).await.unwrap_or_default();
-            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+            let instruction = app_state
+                .get_instruction_for_client(client_id)
+                .await
+                .unwrap_or_default();
+            let memory = app_state
+                .get_memory_for_client(client_id)
+                .await
+                .unwrap_or_default();
 
             // Initial LLM call with connected event
             match call_llm_for_client(
@@ -189,7 +193,9 @@ impl McpClient {
                 Some(&event),
                 protocol.as_ref(),
                 &status_tx,
-            ).await {
+            )
+            .await
+            {
                 Ok(result) => {
                     // Update memory
                     if let Some(mem) = result.memory_updates {
@@ -205,7 +211,9 @@ impl McpClient {
                         &app_state,
                         &status_tx,
                         protocol.clone(),
-                    ).await {
+                    )
+                    .await
+                    {
                         error!("Failed to execute LLM actions: {}", e);
                         let _ = status_tx.send(format!("[ERROR] Failed to execute actions: {}", e));
                     }
@@ -238,13 +246,17 @@ impl McpClient {
         app_state: &Arc<AppState>,
         status_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<Value> {
-        let request_id: i64 = app_state.with_client_mut(client_id, |client| {
-            let id = client.get_protocol_field("request_id")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(1);
-            client.set_protocol_field("request_id".to_string(), json!(id + 1));
-            id
-        }).await.context("Client not found")?;
+        let request_id: i64 = app_state
+            .with_client_mut(client_id, |client| {
+                let id = client
+                    .get_protocol_field("request_id")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(1);
+                client.set_protocol_field("request_id".to_string(), json!(id + 1));
+                id
+            })
+            .await
+            .context("Client not found")?;
 
         let request = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -277,20 +289,29 @@ impl McpClient {
         let status = response.status();
         let response_text = response.text().await?;
 
-        debug!("Initialize response status: {}, body: {}", status, response_text);
+        debug!(
+            "Initialize response status: {}, body: {}",
+            status, response_text
+        );
 
         if !status.is_success() {
             return Err(anyhow::anyhow!("HTTP error {}: {}", status, response_text));
         }
 
-        let json_response: JsonRpcResponse = serde_json::from_str(&response_text)
-            .context("Failed to parse initialize response")?;
+        let json_response: JsonRpcResponse =
+            serde_json::from_str(&response_text).context("Failed to parse initialize response")?;
 
         if let Some(error) = json_response.error {
-            return Err(anyhow::anyhow!("JSON-RPC error {}: {}", error.code, error.message));
+            return Err(anyhow::anyhow!(
+                "JSON-RPC error {}: {}",
+                error.code,
+                error.message
+            ));
         }
 
-        json_response.result.context("Missing result in initialize response")
+        json_response
+            .result
+            .context("Missing result in initialize response")
     }
 
     /// Send initialized notification to MCP server
@@ -329,88 +350,107 @@ impl McpClient {
         protocol: Arc<McpClientProtocol>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
         Box::pin(async move {
-        for action in actions {
-            debug!("Executing action: {:?}", action);
+            for action in actions {
+                debug!("Executing action: {:?}", action);
 
-            // Parse action
-            let action_result = protocol.as_ref().execute_action(action.clone())?;
+                // Parse action
+                let action_result = protocol.as_ref().execute_action(action.clone())?;
 
-            match action_result {
-                ClientActionResult::Disconnect => {
-                    info!("Disconnecting MCP client {}", client_id);
-                    app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                    let _ = status_tx.send(format!("[CLIENT] MCP client {} disconnected", client_id));
-                    break;
-                }
-                ClientActionResult::Custom { name, data } => {
-                    // Execute MCP-specific action
-                    match Self::execute_mcp_action(
-                        client_id,
-                        &name,
-                        &data,
-                        http_client,
-                        app_state,
-                        status_tx,
-                    ).await {
-                        Ok(response) => {
-                            // Create response event
-                            let event = Event::new(&MCP_CLIENT_RESPONSE_RECEIVED_EVENT, json!({
-                                "method": name,
-                                "result": response,
-                            }));
+                match action_result {
+                    ClientActionResult::Disconnect => {
+                        info!("Disconnecting MCP client {}", client_id);
+                        app_state
+                            .update_client_status(client_id, ClientStatus::Disconnected)
+                            .await;
+                        let _ = status_tx
+                            .send(format!("[CLIENT] MCP client {} disconnected", client_id));
+                        break;
+                    }
+                    ClientActionResult::Custom { name, data } => {
+                        // Execute MCP-specific action
+                        match Self::execute_mcp_action(
+                            client_id,
+                            &name,
+                            &data,
+                            http_client,
+                            app_state,
+                            status_tx,
+                        )
+                        .await
+                        {
+                            Ok(response) => {
+                                // Create response event
+                                let event = Event::new(
+                                    &MCP_CLIENT_RESPONSE_RECEIVED_EVENT,
+                                    json!({
+                                        "method": name,
+                                        "result": response,
+                                    }),
+                                );
 
-                            // Get instruction and memory
-                            let instruction = app_state.get_instruction_for_client(client_id).await.unwrap_or_default();
-                            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                                // Get instruction and memory
+                                let instruction = app_state
+                                    .get_instruction_for_client(client_id)
+                                    .await
+                                    .unwrap_or_default();
+                                let memory = app_state
+                                    .get_memory_for_client(client_id)
+                                    .await
+                                    .unwrap_or_default();
 
-                            // Call LLM with response
-                            match call_llm_for_client(
-                                llm_client,
-                                app_state,
-                                client_id.to_string(),
-                                &instruction,
-                                &memory,
-                                Some(&event),
-                                protocol.as_ref(),
-                                status_tx,
-                            ).await {
-                                Ok(result) => {
-                                    // Update memory
-                                    if let Some(mem) = result.memory_updates {
-                                        app_state.set_memory_for_client(client_id, mem).await;
+                                // Call LLM with response
+                                match call_llm_for_client(
+                                    llm_client,
+                                    app_state,
+                                    client_id.to_string(),
+                                    &instruction,
+                                    &memory,
+                                    Some(&event),
+                                    protocol.as_ref(),
+                                    status_tx,
+                                )
+                                .await
+                                {
+                                    Ok(result) => {
+                                        // Update memory
+                                        if let Some(mem) = result.memory_updates {
+                                            app_state.set_memory_for_client(client_id, mem).await;
+                                        }
+
+                                        // Recursively execute more actions
+                                        if let Err(e) = Self::execute_llm_actions(
+                                            client_id,
+                                            result.actions,
+                                            http_client,
+                                            llm_client,
+                                            app_state,
+                                            status_tx,
+                                            protocol.clone(),
+                                        )
+                                        .await
+                                        {
+                                            error!("Failed to execute nested actions: {}", e);
+                                        }
                                     }
-
-                                    // Recursively execute more actions
-                                    if let Err(e) = Self::execute_llm_actions(
-                                        client_id,
-                                        result.actions,
-                                        http_client,
-                                        llm_client,
-                                        app_state,
-                                        status_tx,
-                                        protocol.clone(),
-                                    ).await {
-                                        error!("Failed to execute nested actions: {}", e);
+                                    Err(e) => {
+                                        error!("Failed to call LLM: {}", e);
                                     }
-                                }
-                                Err(e) => {
-                                    error!("Failed to call LLM: {}", e);
                                 }
                             }
-                        }
-                        Err(e) => {
-                            error!("Failed to execute MCP action {}: {}", name, e);
-                            let _ = status_tx.send(format!("[ERROR] Failed to execute {}: {}", name, e));
+                            Err(e) => {
+                                error!("Failed to execute MCP action {}: {}", name, e);
+                                let _ = status_tx
+                                    .send(format!("[ERROR] Failed to execute {}: {}", name, e));
+                            }
                         }
                     }
-                }
-                _ => {
-                    debug!("Ignoring non-custom action result");
+                    _ => {
+                        debug!("Ignoring non-custom action result");
+                    }
                 }
             }
-        }
 
-        Ok(())
+            Ok(())
         })
     }
 
@@ -423,50 +463,64 @@ impl McpClient {
         app_state: &Arc<AppState>,
         status_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<Value> {
-        let (base_url, request_id): (String, i64) = app_state.with_client_mut(client_id, |client| {
-            let url = client.get_protocol_field("base_url")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-                .expect("Missing base_url");
+        let (base_url, request_id): (String, i64) = app_state
+            .with_client_mut(client_id, |client| {
+                let url = client
+                    .get_protocol_field("base_url")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .expect("Missing base_url");
 
-            let id = client.get_protocol_field("request_id")
-                .and_then(|v| v.as_i64())
-                .expect("Missing request_id");
+                let id = client
+                    .get_protocol_field("request_id")
+                    .and_then(|v| v.as_i64())
+                    .expect("Missing request_id");
 
-            client.set_protocol_field("request_id".to_string(), json!(id + 1));
+                client.set_protocol_field("request_id".to_string(), json!(id + 1));
 
-            (url, id)
-        }).await.context("Client not found")?;
+                (url, id)
+            })
+            .await
+            .context("Client not found")?;
 
         let (method, params) = match action_name {
             "mcp_list_resources" => ("resources/list".to_string(), None),
             "mcp_read_resource" => {
-                let uri = data.get("uri")
+                let uri = data
+                    .get("uri")
                     .and_then(|v| v.as_str())
                     .context("Missing uri in read_resource")?;
                 ("resources/read".to_string(), Some(json!({"uri": uri})))
             }
             "mcp_list_tools" => ("tools/list".to_string(), None),
             "mcp_call_tool" => {
-                let name = data.get("name")
+                let name = data
+                    .get("name")
                     .and_then(|v| v.as_str())
                     .context("Missing name in call_tool")?;
                 let arguments = data.get("arguments").cloned().unwrap_or(json!({}));
-                ("tools/call".to_string(), Some(json!({
-                    "name": name,
-                    "arguments": arguments
-                })))
+                (
+                    "tools/call".to_string(),
+                    Some(json!({
+                        "name": name,
+                        "arguments": arguments
+                    })),
+                )
             }
             "mcp_list_prompts" => ("prompts/list".to_string(), None),
             "mcp_get_prompt" => {
-                let name = data.get("name")
+                let name = data
+                    .get("name")
                     .and_then(|v| v.as_str())
                     .context("Missing name in get_prompt")?;
                 let arguments = data.get("arguments").cloned();
-                ("prompts/get".to_string(), Some(json!({
-                    "name": name,
-                    "arguments": arguments
-                })))
+                (
+                    "prompts/get".to_string(),
+                    Some(json!({
+                        "name": name,
+                        "arguments": arguments
+                    })),
+                )
             }
             _ => return Err(anyhow::anyhow!("Unknown MCP action: {}", action_name)),
         };
@@ -497,13 +551,19 @@ impl McpClient {
             return Err(anyhow::anyhow!("HTTP error {}: {}", status, response_text));
         }
 
-        let json_response: JsonRpcResponse = serde_json::from_str(&response_text)
-            .context("Failed to parse MCP response")?;
+        let json_response: JsonRpcResponse =
+            serde_json::from_str(&response_text).context("Failed to parse MCP response")?;
 
         if let Some(error) = json_response.error {
-            return Err(anyhow::anyhow!("JSON-RPC error {}: {}", error.code, error.message));
+            return Err(anyhow::anyhow!(
+                "JSON-RPC error {}: {}",
+                error.code,
+                error.message
+            ));
         }
 
-        json_response.result.context("Missing result in MCP response")
+        json_response
+            .result
+            .context("Missing result in MCP response")
     }
 }

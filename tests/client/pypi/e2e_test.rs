@@ -58,7 +58,10 @@ mod pypi_client_tests {
         // Verify output mentions files or wheels
         let output = client.get_output().await;
         assert!(
-            output.contains("whl") || output.contains("tar.gz") || output.contains("file") || output.contains("wheel"),
+            output.contains("whl")
+                || output.contains("tar.gz")
+                || output.contains("file")
+                || output.contains("wheel"),
             "Client should show package files information. Output: {:?}",
             output
         );
@@ -88,7 +91,10 @@ mod pypi_client_tests {
         // Verify client handled error gracefully
         let output = client.get_output().await;
         assert!(
-            output.contains("ERROR") || output.contains("not found") || output.contains("404") || output.contains("failed"),
+            output.contains("ERROR")
+                || output.contains("not found")
+                || output.contains("404")
+                || output.contains("failed"),
             "Client should show error for non-existent package. Output: {:?}",
             output
         );

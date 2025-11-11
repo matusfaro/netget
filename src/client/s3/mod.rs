@@ -3,20 +3,20 @@ pub mod actions;
 
 pub use actions::S3ClientProtocol;
 
-use anyhow::{Context, Result};
 use crate::llm::actions::client_trait::Client;
+use anyhow::{Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
+use crate::client::s3::actions::S3_CLIENT_RESPONSE_RECEIVED_EVENT;
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::s3::actions::S3_CLIENT_RESPONSE_RECEIVED_EVENT;
 
 /// S3 client that interacts with AWS S3 or S3-compatible services
 pub struct S3Client;
@@ -33,30 +33,43 @@ impl S3Client {
         info!("S3 client {} initializing for {}", client_id, remote_addr);
 
         // Parse endpoint URL and region from startup parameters
-        let (endpoint_url, region, access_key_id, secret_access_key) =
-            app_state.with_client_mut(client_id, |client| {
-                let endpoint = client.get_protocol_field("endpoint_url")
+        let (endpoint_url, region, access_key_id, secret_access_key) = app_state
+            .with_client_mut(client_id, |client| {
+                let endpoint = client
+                    .get_protocol_field("endpoint_url")
                     .and_then(|v| v.as_str())
                     .unwrap_or(&remote_addr)
                     .to_string();
 
-                let region = client.get_protocol_field("region")
+                let region = client
+                    .get_protocol_field("region")
                     .and_then(|v| v.as_str())
                     .unwrap_or("us-east-1")
                     .to_string();
 
-                let access_key = client.get_protocol_field("access_key_id")
+                let access_key = client
+                    .get_protocol_field("access_key_id")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
 
-                let secret_key = client.get_protocol_field("secret_access_key")
+                let secret_key = client
+                    .get_protocol_field("secret_access_key")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
 
                 (endpoint, region, access_key, secret_key)
-            }).await.unwrap_or_else(|| (remote_addr.clone(), "us-east-1".to_string(), String::new(), String::new()));
+            })
+            .await
+            .unwrap_or_else(|| {
+                (
+                    remote_addr.clone(),
+                    "us-east-1".to_string(),
+                    String::new(),
+                    String::new(),
+                )
+            });
 
         // Build AWS SDK configuration
         use aws_config::BehaviorVersion;
@@ -84,32 +97,33 @@ impl S3Client {
         let _s3_client = aws_sdk_s3::Client::from_conf(config);
 
         // Store client metadata
-        app_state.with_client_mut(client_id, |client| {
-            client.set_protocol_field(
-                "s3_client_initialized".to_string(),
-                serde_json::json!(true),
-            );
-            client.set_protocol_field(
-                "endpoint".to_string(),
-                serde_json::json!(endpoint_url),
-            );
-            client.set_protocol_field(
-                "region".to_string(),
-                serde_json::json!(region),
-            );
-            client.set_protocol_field(
-                "access_key_id".to_string(),
-                serde_json::json!(access_key_id),
-            );
-            client.set_protocol_field(
-                "secret_access_key".to_string(),
-                serde_json::json!(secret_access_key),
-            );
-        }).await;
+        app_state
+            .with_client_mut(client_id, |client| {
+                client.set_protocol_field(
+                    "s3_client_initialized".to_string(),
+                    serde_json::json!(true),
+                );
+                client.set_protocol_field("endpoint".to_string(), serde_json::json!(endpoint_url));
+                client.set_protocol_field("region".to_string(), serde_json::json!(region));
+                client.set_protocol_field(
+                    "access_key_id".to_string(),
+                    serde_json::json!(access_key_id),
+                );
+                client.set_protocol_field(
+                    "secret_access_key".to_string(),
+                    serde_json::json!(secret_access_key),
+                );
+            })
+            .await;
 
         // Update status
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] S3 client {} ready for {}", client_id, remote_addr));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] S3 client {} ready for {}",
+            client_id, remote_addr
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Call LLM initially with connected event
@@ -140,7 +154,10 @@ impl S3Client {
                 }),
             );
 
-            let memory = app_state_clone.get_memory_for_client(client_id).await.unwrap_or_default();
+            let memory = app_state_clone
+                .get_memory_for_client(client_id)
+                .await
+                .unwrap_or_default();
 
             match call_llm_for_client(
                 &llm_client_clone,
@@ -151,8 +168,13 @@ impl S3Client {
                 Some(&event),
                 protocol.as_ref(),
                 &status_tx_clone,
-            ).await {
-                Ok(ClientLlmResult { actions, memory_updates }) => {
+            )
+            .await
+            {
+                Ok(ClientLlmResult {
+                    actions,
+                    memory_updates,
+                }) => {
                     // Update memory
                     if let Some(mem) = memory_updates {
                         app_state_clone.set_memory_for_client(client_id, mem).await;
@@ -171,14 +193,19 @@ impl S3Client {
                                     app_state_clone.clone(),
                                     llm_client_clone.clone(),
                                     status_tx_clone.clone(),
-                                ).await {
+                                )
+                                .await
+                                {
                                     error!("S3 client {} operation error: {}", client_id, e);
-                                    let _ = status_tx_clone.send(format!("[ERROR] S3 operation failed: {}", e));
+                                    let _ = status_tx_clone
+                                        .send(format!("[ERROR] S3 operation failed: {}", e));
                                 }
                             }
                             Ok(ClientActionResult::Disconnect) => {
                                 info!("S3 client {} disconnecting", client_id);
-                                app_state_clone.update_client_status(client_id, ClientStatus::Disconnected).await;
+                                app_state_clone
+                                    .update_client_status(client_id, ClientStatus::Disconnected)
+                                    .await;
                                 let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                                 return;
                             }
@@ -222,33 +249,49 @@ impl S3Client {
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
-        info!("S3 client {} executing operation: {}", client_id, operation_name);
+        info!(
+            "S3 client {} executing operation: {}",
+            client_id, operation_name
+        );
 
         // Get S3 client configuration
-        let (endpoint_url, region, access_key_id, secret_access_key) =
-            app_state.with_client_mut(client_id, |client| {
-                let endpoint = client.get_protocol_field("endpoint")
+        let (endpoint_url, region, access_key_id, secret_access_key) = app_state
+            .with_client_mut(client_id, |client| {
+                let endpoint = client
+                    .get_protocol_field("endpoint")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
 
-                let region = client.get_protocol_field("region")
+                let region = client
+                    .get_protocol_field("region")
                     .and_then(|v| v.as_str())
                     .unwrap_or("us-east-1")
                     .to_string();
 
-                let access_key = client.get_protocol_field("access_key_id")
+                let access_key = client
+                    .get_protocol_field("access_key_id")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
 
-                let secret_key = client.get_protocol_field("secret_access_key")
+                let secret_key = client
+                    .get_protocol_field("secret_access_key")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
 
                 (endpoint, region, access_key, secret_key)
-            }).await.unwrap_or_else(|| (String::new(), "us-east-1".to_string(), String::new(), String::new()));
+            })
+            .await
+            .unwrap_or_else(|| {
+                (
+                    String::new(),
+                    "us-east-1".to_string(),
+                    String::new(),
+                    String::new(),
+                )
+            });
 
         // Build AWS SDK client
         use aws_config::BehaviorVersion;
@@ -309,7 +352,10 @@ impl S3Client {
                 ),
             };
 
-            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+            let memory = app_state
+                .get_memory_for_client(client_id)
+                .await
+                .unwrap_or_default();
 
             match call_llm_for_client(
                 &llm_client,
@@ -320,8 +366,13 @@ impl S3Client {
                 Some(&event),
                 protocol.as_ref(),
                 &status_tx,
-            ).await {
-                Ok(ClientLlmResult { actions: _, memory_updates }) => {
+            )
+            .await
+            {
+                Ok(ClientLlmResult {
+                    actions: _,
+                    memory_updates,
+                }) => {
                     if let Some(mem) = memory_updates {
                         app_state.set_memory_for_client(client_id, mem).await;
                     }
@@ -354,8 +405,7 @@ impl S3Client {
             request = request.content_type(ct);
         }
 
-        let response = request.send().await
-            .context("Failed to put object")?;
+        let response = request.send().await.context("Failed to put object")?;
 
         Ok(serde_json::json!({
             "bucket": bucket,
@@ -379,10 +429,16 @@ impl S3Client {
             .await
             .context("Failed to get object")?;
 
-        let content_type = response.content_type().map(|s| s.to_string()).unwrap_or_default();
+        let content_type = response
+            .content_type()
+            .map(|s| s.to_string())
+            .unwrap_or_default();
         let content_length = response.content_length().unwrap_or(0);
 
-        let body_bytes = response.body.collect().await
+        let body_bytes = response
+            .body
+            .collect()
+            .await
             .context("Failed to read object body")?
             .into_bytes();
 
@@ -397,9 +453,7 @@ impl S3Client {
         }))
     }
 
-    async fn list_buckets(
-        client: &aws_sdk_s3::Client,
-    ) -> Result<serde_json::Value> {
+    async fn list_buckets(client: &aws_sdk_s3::Client) -> Result<serde_json::Value> {
         let response = client
             .list_buckets()
             .send()
@@ -433,9 +487,7 @@ impl S3Client {
         let prefix = data["prefix"].as_str();
         let max_keys = data["max_keys"].as_i64().map(|n| n as i32);
 
-        let mut request = client
-            .list_objects_v2()
-            .bucket(bucket);
+        let mut request = client.list_objects_v2().bucket(bucket);
 
         if let Some(p) = prefix {
             request = request.prefix(p);
@@ -445,8 +497,7 @@ impl S3Client {
             request = request.max_keys(mk);
         }
 
-        let response = request.send().await
-            .context("Failed to list objects")?;
+        let response = request.send().await.context("Failed to list objects")?;
 
         let objects: Vec<serde_json::Value> = response
             .contents()

@@ -9,13 +9,13 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
+use crate::client::http2::actions::HTTP2_CLIENT_RESPONSE_RECEIVED_EVENT;
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::http2::actions::HTTP2_CLIENT_RESPONSE_RECEIVED_EVENT;
 
 /// HTTP/2 client that makes requests to remote HTTP/2 servers
 pub struct Http2Client;
@@ -32,30 +32,37 @@ impl Http2Client {
         // For HTTP/2, "connection" is logical, with persistent multiplexed streams
         // We'll create an HTTP/2 client and store it in protocol_data
 
-        info!("HTTP/2 client {} initialized for {}", client_id, remote_addr);
+        info!(
+            "HTTP/2 client {} initialized for {}",
+            client_id, remote_addr
+        );
 
         // Build reqwest client with HTTP/2 enabled
         let _http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
-            .http2_prior_knowledge()  // Force HTTP/2 (without ALPN negotiation)
+            .http2_prior_knowledge() // Force HTTP/2 (without ALPN negotiation)
             .build()
             .context("Failed to build HTTP/2 client")?;
 
         // Store client in protocol_data
-        app_state.with_client_mut(client_id, |client| {
-            client.set_protocol_field(
-                "http2_client".to_string(),
-                serde_json::json!("initialized"),
-            );
-            client.set_protocol_field(
-                "base_url".to_string(),
-                serde_json::json!(remote_addr),
-            );
-        }).await;
+        app_state
+            .with_client_mut(client_id, |client| {
+                client.set_protocol_field(
+                    "http2_client".to_string(),
+                    serde_json::json!("initialized"),
+                );
+                client.set_protocol_field("base_url".to_string(), serde_json::json!(remote_addr));
+            })
+            .await;
 
         // Update status
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] HTTP/2 client {} ready for {}", client_id, remote_addr));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] HTTP/2 client {} ready for {}",
+            client_id, remote_addr
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // For HTTP/2 client, we'll spawn a background task that processes LLM-requested actions
@@ -89,11 +96,16 @@ impl Http2Client {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         // Get base URL from client
-        let base_url = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("base_url")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }).await.flatten().context("No base URL found")?;
+        let base_url = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("base_url")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .await
+            .flatten()
+            .context("No base URL found")?;
 
         let url = if path.starts_with("http://") || path.starts_with("https://") {
             path.clone()
@@ -101,12 +113,15 @@ impl Http2Client {
             format!("{}{}", base_url, path)
         };
 
-        info!("HTTP/2 client {} making request: {} {}", client_id, method, url);
+        info!(
+            "HTTP/2 client {} making request: {} {}",
+            client_id, method, url
+        );
 
         // Build request with HTTP/2 enabled
         let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
-            .http2_prior_knowledge()  // Force HTTP/2
+            .http2_prior_knowledge() // Force HTTP/2
             .build()?;
 
         let mut request = match method.to_uppercase().as_str() {
@@ -151,12 +166,15 @@ impl Http2Client {
                 // Get body
                 let body_text = response.text().await.unwrap_or_default();
 
-                info!("HTTP/2 client {} received response: {} ({}) version: {:?}",
-                    client_id, status_code, status, version);
+                info!(
+                    "HTTP/2 client {} received response: {} ({}) version: {:?}",
+                    client_id, status_code, status, version
+                );
 
                 // Call LLM with response
                 if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                    let protocol = Arc::new(crate::client::http2::actions::Http2ClientProtocol::new());
+                    let protocol =
+                        Arc::new(crate::client::http2::actions::Http2ClientProtocol::new());
                     let event = Event::new(
                         &HTTP2_CLIENT_RESPONSE_RECEIVED_EVENT,
                         serde_json::json!({
@@ -168,7 +186,10 @@ impl Http2Client {
                         }),
                     );
 
-                    let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                    let memory = app_state
+                        .get_memory_for_client(client_id)
+                        .await
+                        .unwrap_or_default();
 
                     match call_llm_for_client(
                         &llm_client,
@@ -179,8 +200,13 @@ impl Http2Client {
                         Some(&event),
                         protocol.as_ref(),
                         &status_tx,
-                    ).await {
-                        Ok(ClientLlmResult { actions: _, memory_updates }) => {
+                    )
+                    .await
+                    {
+                        Ok(ClientLlmResult {
+                            actions: _,
+                            memory_updates,
+                        }) => {
                             // Update memory
                             if let Some(mem) = memory_updates {
                                 app_state.set_memory_for_client(client_id, mem).await;

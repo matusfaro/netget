@@ -26,8 +26,6 @@ use crate::llm::ollama_client::OllamaClient;
 #[cfg(feature = "imap")]
 use crate::llm::ActionResult;
 #[cfg(feature = "imap")]
-use actions::{IMAP_AUTH_EVENT, IMAP_COMMAND_EVENT, IMAP_CONNECTION_EVENT};
-#[cfg(feature = "imap")]
 use crate::protocol::Event;
 #[cfg(feature = "imap")]
 use crate::server::connection::ConnectionId;
@@ -36,10 +34,14 @@ use crate::server::ImapProtocol;
 #[cfg(feature = "imap")]
 use crate::state::app_state::AppState;
 #[cfg(feature = "imap")]
-use crate::state::server::{ConnectionStatus, ImapSessionState, ProtocolConnectionInfo, ProtocolState, ServerId};
+use crate::state::server::{
+    ConnectionStatus, ImapSessionState, ProtocolConnectionInfo, ProtocolState, ServerId,
+};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+#[cfg(feature = "imap")]
+use actions::{IMAP_AUTH_EVENT, IMAP_COMMAND_EVENT, IMAP_CONNECTION_EVENT};
 #[cfg(feature = "imap")]
 use serde_json::json;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// IMAP server that handles mail retrieval with LLM
 pub struct ImapServer;
@@ -66,7 +68,8 @@ impl ImapServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         debug!("IMAP connection {} from {}", connection_id, remote_addr);
                         let _ = status_tx.send(format!(
                             "→ IMAP connection {} from {}",
@@ -79,22 +82,24 @@ impl ImapServer {
                         let write_half_arc = Arc::new(tokio::sync::Mutex::new(write_half));
 
                         // Add connection to app_state
-                        app_state.add_connection_to_server(
-                            server_id,
-                            crate::state::ConnectionState {
-                                id: connection_id,
-                                remote_addr,
-                                local_addr,
-                                bytes_sent: 0,
-                                bytes_received: 0,
-                                packets_sent: 0,
-                                packets_received: 0,
-                                last_activity: std::time::Instant::now(),
-                                status: ConnectionStatus::Active,
-                                status_changed_at: std::time::Instant::now(),
-                                protocol_info: ProtocolConnectionInfo::empty(),
-                            },
-                        ).await;
+                        app_state
+                            .add_connection_to_server(
+                                server_id,
+                                crate::state::ConnectionState {
+                                    id: connection_id,
+                                    remote_addr,
+                                    local_addr,
+                                    bytes_sent: 0,
+                                    bytes_received: 0,
+                                    packets_sent: 0,
+                                    packets_received: 0,
+                                    last_activity: std::time::Instant::now(),
+                                    status: ConnectionStatus::Active,
+                                    status_changed_at: std::time::Instant::now(),
+                                    protocol_info: ProtocolConnectionInfo::empty(),
+                                },
+                            )
+                            .await;
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -126,20 +131,22 @@ impl ImapServer {
 
                             // Mark connection as closed
                             state_clone
-                                .update_connection_status(server_id, connection_id, ConnectionStatus::Closed)
+                                .update_connection_status(
+                                    server_id,
+                                    connection_id,
+                                    ConnectionStatus::Closed,
+                                )
                                 .await;
 
                             info!("IMAP connection {} closed", connection_id);
-                            let _ =
-                                status_clone.send(format!("✗ IMAP connection {} closed", connection_id));
+                            let _ = status_clone
+                                .send(format!("✗ IMAP connection {} closed", connection_id));
                         });
                     }
                     Err(e) => {
                         error!("Failed to accept IMAP connection: {}", e);
-                        let _ = status_tx.send(format!(
-                            "[ERROR] Failed to accept IMAP connection: {}",
-                            e
-                        ));
+                        let _ = status_tx
+                            .send(format!("[ERROR] Failed to accept IMAP connection: {}", e));
                         break;
                     }
                 }
@@ -178,7 +185,8 @@ impl ImapServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         debug!("IMAPS connection {} from {}", connection_id, remote_addr);
 
                         // Accept TLS connection
@@ -186,10 +194,8 @@ impl ImapServer {
                             Ok(s) => s,
                             Err(e) => {
                                 error!("TLS handshake failed for {}: {}", connection_id, e);
-                                let _ = status_tx.send(format!(
-                                    "[ERROR] IMAPS TLS handshake failed: {}",
-                                    e
-                                ));
+                                let _ = status_tx
+                                    .send(format!("[ERROR] IMAPS TLS handshake failed: {}", e));
                                 continue;
                             }
                         };
@@ -205,22 +211,24 @@ impl ImapServer {
                         let write_half_arc = Arc::new(tokio::sync::Mutex::new(write_half));
 
                         // Add connection to app_state
-                        app_state.add_connection_to_server(
-                            server_id,
-                            crate::state::ConnectionState {
-                                id: connection_id,
-                                remote_addr,
-                                local_addr,
-                                bytes_sent: 0,
-                                bytes_received: 0,
-                                packets_sent: 0,
-                                packets_received: 0,
-                                last_activity: std::time::Instant::now(),
-                                status: ConnectionStatus::Active,
-                                status_changed_at: std::time::Instant::now(),
-                                protocol_info: ProtocolConnectionInfo::empty(),
-                            },
-                        ).await;
+                        app_state
+                            .add_connection_to_server(
+                                server_id,
+                                crate::state::ConnectionState {
+                                    id: connection_id,
+                                    remote_addr,
+                                    local_addr,
+                                    bytes_sent: 0,
+                                    bytes_received: 0,
+                                    packets_sent: 0,
+                                    packets_received: 0,
+                                    last_activity: std::time::Instant::now(),
+                                    status: ConnectionStatus::Active,
+                                    status_changed_at: std::time::Instant::now(),
+                                    protocol_info: ProtocolConnectionInfo::empty(),
+                                },
+                            )
+                            .await;
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -251,7 +259,11 @@ impl ImapServer {
 
                             // Mark connection as closed
                             state_clone
-                                .update_connection_status(server_id, connection_id, ConnectionStatus::Closed)
+                                .update_connection_status(
+                                    server_id,
+                                    connection_id,
+                                    ConnectionStatus::Closed,
+                                )
                                 .await;
 
                             info!("IMAPS connection {} closed", connection_id);
@@ -261,10 +273,8 @@ impl ImapServer {
                     }
                     Err(e) => {
                         error!("Failed to accept IMAPS connection: {}", e);
-                        let _ = status_tx.send(format!(
-                            "[ERROR] Failed to accept IMAPS connection: {}",
-                            e
-                        ));
+                        let _ = status_tx
+                            .send(format!("[ERROR] Failed to accept IMAPS connection: {}", e));
                         break;
                     }
                 }
@@ -305,8 +315,15 @@ impl<R: tokio::io::AsyncRead + Unpin, W: tokio::io::AsyncWrite + Unpin> ImapSess
                     break;
                 }
                 Ok(n) => {
-                    trace!("IMAP received {} bytes from {}: {}", n, self.connection_id, line.trim());
-                    let _ = self.status_tx.send(format!("[TRACE] IMAP command: {}", line.trim()));
+                    trace!(
+                        "IMAP received {} bytes from {}: {}",
+                        n,
+                        self.connection_id,
+                        line.trim()
+                    );
+                    let _ = self
+                        .status_tx
+                        .send(format!("[TRACE] IMAP command: {}", line.trim()));
 
                     // Update bytes received
                     self.app_state
@@ -323,7 +340,9 @@ impl<R: tokio::io::AsyncRead + Unpin, W: tokio::io::AsyncWrite + Unpin> ImapSess
                     // Parse and handle IMAP command
                     if let Err(e) = self.handle_command(&line).await {
                         error!("Error handling IMAP command: {}", e);
-                        let _ = self.status_tx.send(format!("[ERROR] IMAP command error: {}", e));
+                        let _ = self
+                            .status_tx
+                            .send(format!("[ERROR] IMAP command error: {}", e));
 
                         // Send BAD response
                         let (tag, _, _) = parse_imap_command(&line);
@@ -383,8 +402,10 @@ impl<R: tokio::io::AsyncRead + Unpin, W: tokio::io::AsyncWrite + Unpin> ImapSess
     async fn handle_command(&mut self, line: &str) -> Result<()> {
         let (tag, command, args) = parse_imap_command(line);
 
-        debug!("IMAP command from {}: tag={}, command={}, args={}",
-               self.connection_id, tag, command, args);
+        debug!(
+            "IMAP command from {}: tag={}, command={}, args={}",
+            self.connection_id, tag, command, args
+        );
 
         // Get current session state
         let (session_state, authenticated_user, selected_mailbox) = self
@@ -611,7 +632,9 @@ impl<R: tokio::io::AsyncRead + Unpin, W: tokio::io::AsyncWrite + Unpin> ImapSess
             .await;
 
         trace!("IMAP sent {} bytes to {}", data.len(), self.connection_id);
-        let _ = self.status_tx.send(format!("[TRACE] IMAP sent {} bytes", data.len()));
+        let _ = self
+            .status_tx
+            .send(format!("[TRACE] IMAP sent {} bytes", data.len()));
 
         Ok(())
     }
@@ -626,11 +649,7 @@ fn parse_imap_command(line: &str) -> (String, String, String) {
     match parts.len() {
         0 => ("*".to_string(), "".to_string(), "".to_string()),
         1 => (parts[0].to_string(), "".to_string(), "".to_string()),
-        2 => (
-            parts[0].to_string(),
-            parts[1].to_string(),
-            "".to_string(),
-        ),
+        2 => (parts[0].to_string(), parts[1].to_string(), "".to_string()),
         _ => (
             parts[0].to_string(),
             parts[1].to_string(),

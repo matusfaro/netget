@@ -11,13 +11,13 @@ use tokio::net::UnixStream;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, trace};
 
+use crate::client::socket_file::actions::SOCKET_FILE_CLIENT_DATA_RECEIVED_EVENT;
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::socket_file::actions::SOCKET_FILE_CLIENT_DATA_RECEIVED_EVENT;
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -55,11 +55,19 @@ impl SocketFileClient {
         // The socket path is stored in the client's remote_addr field in app_state
         let dummy_addr = SocketAddr::from(([127, 0, 0, 1], 0));
 
-        info!("Socket File client {} connected to {}", client_id, socket_path);
+        info!(
+            "Socket File client {} connected to {}",
+            client_id, socket_path
+        );
 
         // Update client state
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] Socket File client {} connected to {}", client_id, socket_path));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] Socket File client {} connected to {}",
+            client_id, socket_path
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Split stream
@@ -81,8 +89,13 @@ impl SocketFileClient {
                 match read_half.read(&mut buffer).await {
                     Ok(0) => {
                         info!("Socket File client {} disconnected", client_id);
-                        app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                        let _ = status_tx.send(format!("[CLIENT] Socket File client {} disconnected", client_id));
+                        app_state
+                            .update_client_status(client_id, ClientStatus::Disconnected)
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[CLIENT] Socket File client {} disconnected",
+                            client_id
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         break;
                     }
@@ -100,7 +113,9 @@ impl SocketFileClient {
                                 drop(client_data_lock);
 
                                 // Call LLM
-                                if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
+                                if let Some(instruction) =
+                                    app_state.get_instruction_for_client(client_id).await
+                                {
                                     let protocol = Arc::new(crate::client::socket_file::actions::SocketFileClientProtocol::new());
                                     let event = Event::new(
                                         &SOCKET_FILE_CLIENT_DATA_RECEIVED_EVENT,
@@ -119,8 +134,13 @@ impl SocketFileClient {
                                         Some(&event),
                                         protocol.as_ref(),
                                         &status_tx,
-                                    ).await {
-                                        Ok(ClientLlmResult { actions, memory_updates }) => {
+                                    )
+                                    .await
+                                    {
+                                        Ok(ClientLlmResult {
+                                            actions,
+                                            memory_updates,
+                                        }) => {
                                             // Update memory
                                             if let Some(mem) = memory_updates {
                                                 client_data.lock().await.memory = mem;
@@ -144,7 +164,10 @@ impl SocketFileClient {
                                             }
                                         }
                                         Err(e) => {
-                                            error!("LLM error for Socket File client {}: {}", client_id, e);
+                                            error!(
+                                                "LLM error for Socket File client {}: {}",
+                                                client_id, e
+                                            );
                                         }
                                     }
                                 }
@@ -169,7 +192,9 @@ impl SocketFileClient {
                     }
                     Err(e) => {
                         error!("Socket File client {} read error: {}", client_id, e);
-                        app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
+                        app_state
+                            .update_client_status(client_id, ClientStatus::Error(e.to_string()))
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         break;
                     }

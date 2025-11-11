@@ -12,7 +12,7 @@
 
 use super::authority_keys::AuthorityKeys;
 use anyhow::Result;
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 
 /// Sign a consensus document with authority keys
 ///
@@ -58,4 +58,3 @@ pub fn sign_consensus(consensus_body: &str, keys: &AuthorityKeys) -> Result<Stri
 pub fn build_directory_footer() -> String {
     "directory-footer\n".to_string()
 }
-

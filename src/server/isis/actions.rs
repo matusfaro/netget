@@ -20,8 +20,8 @@ impl IsisProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for IsisProtocol {
-        fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
-            vec![
+    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        vec![
                 crate::llm::actions::ParameterDefinition {
                     name: "interface".to_string(),
                     type_hint: "string".to_string(),
@@ -51,102 +51,105 @@ impl Protocol for IsisProtocol {
                     example: json!("level-2"),
                 },
             ]
-        }
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            Vec::new()
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                send_isis_hello_action(),
-                send_isis_lsp_action(),
-                send_isis_pdu_action(),
-                ignore_pdu_action(),
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "ISIS"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            get_isis_event_types()
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>UDP>ISIS"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["isis", "is-is"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState, PrivilegeRequirement};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Experimental)
-                .privilege_requirement(PrivilegeRequirement::RawSockets)
-                .implementation("Layer 2 IS-IS with pcap (ISO/IEC 10589, RFC 1195)")
-                .llm_control("Hello PDUs, LSPs, neighbor adjacencies, multicast MAC")
-                .e2e_testing("Raw socket packet injection with pcap")
-                .notes("True Layer 2 IS-IS, interoperable with real routers (FRR, Cisco, etc.)")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "IS-IS (Intermediate System to Intermediate System) Layer 2 routing protocol server"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "start an is-is router on interface eth0 with system-id 0000.0000.0001 in area 49.0001 at level-2"
-        }
-        fn group_name(&self) -> &'static str {
-            "Experimental"
-        }
+    }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        Vec::new()
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            send_isis_hello_action(),
+            send_isis_lsp_action(),
+            send_isis_pdu_action(),
+            ignore_pdu_action(),
+        ]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "ISIS"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_isis_event_types()
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>UDP>ISIS"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["isis", "is-is"]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{
+            DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2,
+        };
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .privilege_requirement(PrivilegeRequirement::RawSockets)
+            .implementation("Layer 2 IS-IS with pcap (ISO/IEC 10589, RFC 1195)")
+            .llm_control("Hello PDUs, LSPs, neighbor adjacencies, multicast MAC")
+            .e2e_testing("Raw socket packet injection with pcap")
+            .notes("True Layer 2 IS-IS, interoperable with real routers (FRR, Cisco, etc.)")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "IS-IS (Intermediate System to Intermediate System) Layer 2 routing protocol server"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "start an is-is router on interface eth0 with system-id 0000.0000.0001 in area 49.0001 at level-2"
+    }
+    fn group_name(&self) -> &'static str {
+        "Experimental"
+    }
 }
 
 // Implement Server trait (server-specific functionality)
 impl Server for IsisProtocol {
-        fn spawn(
-            &self,
-            ctx: crate::protocol::SpawnContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::server::isis::IsisServer;
-    
-                // IS-IS doesn't use SocketAddr, it uses interface name
-                // Extract interface from startup_params
-                let params = ctx.startup_params
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("IS-IS requires startup parameters (interface)"))?;
-    
-                let interface = params.get_string("interface");
-    
-                // Spawn the IS-IS server
-                let _interface_name = IsisServer::spawn_with_llm_actions(
-                    interface,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.server_id,
-                    ctx.startup_params,
-                ).await?;
-    
-                // IS-IS doesn't bind to a socket, so return a dummy address
-                Ok(ctx.listen_addr)
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "send_isis_hello" => self.execute_send_isis_hello(action),
-                "send_isis_lsp" => self.execute_send_isis_lsp(action),
-                "send_isis_pdu" => self.execute_send_isis_pdu(action),
-                "ignore_pdu" => Ok(ActionResult::NoAction),
-                _ => Err(anyhow::anyhow!("Unknown IS-IS action: {}", action_type)),
-            }
-        }
-}
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::isis::IsisServer;
 
+            // IS-IS doesn't use SocketAddr, it uses interface name
+            // Extract interface from startup_params
+            let params = ctx
+                .startup_params
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("IS-IS requires startup parameters (interface)"))?;
+
+            let interface = params.get_string("interface");
+
+            // Spawn the IS-IS server
+            let _interface_name = IsisServer::spawn_with_llm_actions(
+                interface,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+                ctx.startup_params,
+            )
+            .await?;
+
+            // IS-IS doesn't bind to a socket, so return a dummy address
+            Ok(ctx.listen_addr)
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
+
+        match action_type {
+            "send_isis_hello" => self.execute_send_isis_hello(action),
+            "send_isis_lsp" => self.execute_send_isis_lsp(action),
+            "send_isis_pdu" => self.execute_send_isis_pdu(action),
+            "ignore_pdu" => Ok(ActionResult::NoAction),
+            _ => Err(anyhow::anyhow!("Unknown IS-IS action: {}", action_type)),
+        }
+    }
+}
 
 impl IsisProtocol {
     /// Execute send_isis_hello action - Send IS-IS Hello PDU
@@ -180,12 +183,7 @@ impl IsisProtocol {
             .unwrap_or(30) as u16;
 
         // Build IS-IS Hello PDU
-        let packet = Self::build_isis_hello(
-            pdu_type,
-            system_id,
-            area_id,
-            holding_time,
-        )?;
+        let packet = Self::build_isis_hello(pdu_type, system_id, area_id, holding_time)?;
 
         Ok(ActionResult::Output(packet))
     }
@@ -221,8 +219,7 @@ impl IsisProtocol {
             .and_then(|v| v.as_str())
             .context("Missing 'data' parameter")?;
 
-        let bytes = hex::decode(data)
-            .context("Invalid hex data")?;
+        let bytes = hex::decode(data).context("Invalid hex data")?;
 
         Ok(ActionResult::Output(bytes))
     }
@@ -238,20 +235,20 @@ impl IsisProtocol {
 
         // Common header (8 bytes)
         packet.push(0x83); // Intradomain Routing Protocol Discriminator
-        packet.push(27);   // Length Indicator (will update later)
-        packet.push(1);    // Version/Protocol ID Extension
-        packet.push(0);    // ID Length (0 = 6 bytes)
+        packet.push(27); // Length Indicator (will update later)
+        packet.push(1); // Version/Protocol ID Extension
+        packet.push(0); // ID Length (0 = 6 bytes)
         packet.push(pdu_type); // PDU Type
-        packet.push(1);    // Version
-        packet.push(0);    // Reserved
-        packet.push(0);    // Max Area Addresses
+        packet.push(1); // Version
+        packet.push(0); // Reserved
+        packet.push(0); // Max Area Addresses
 
         // PDU-specific header for Hello (variable, simplified here)
         // Circuit Type (1 byte)
         let circuit_type = match pdu_type {
-            15 => 1,  // Level 1
-            16 => 2,  // Level 2
-            17 => 3,  // Level 1+2 (P2P)
+            15 => 1, // Level 1
+            16 => 2, // Level 2
+            17 => 3, // Level 1+2 (P2P)
             _ => 2,
         };
         packet.push(circuit_type);
@@ -303,13 +300,13 @@ impl IsisProtocol {
 
         // Common header
         packet.push(0x83); // Intradomain Routing Protocol Discriminator
-        packet.push(27);   // Length Indicator
-        packet.push(1);    // Version/Protocol ID Extension
-        packet.push(0);    // ID Length (0 = 6 bytes)
+        packet.push(27); // Length Indicator
+        packet.push(1); // Version/Protocol ID Extension
+        packet.push(0); // ID Length (0 = 6 bytes)
         packet.push(pdu_type); // PDU Type (18 for L1, 20 for L2)
-        packet.push(1);    // Version
-        packet.push(0);    // Reserved
-        packet.push(0);    // Max Area Addresses
+        packet.push(1); // Version
+        packet.push(0); // Reserved
+        packet.push(0); // Max Area Addresses
 
         // LSP-specific header (simplified)
         packet.extend_from_slice(&[0, 0]); // PDU Length (will update)
@@ -345,7 +342,7 @@ impl IsisProtocol {
 
         // TLV 129: Protocols Supported
         tlvs.push(129); // Type
-        tlvs.push(1);   // Length
+        tlvs.push(1); // Length
         tlvs.push(0xCC); // IPv4 (0xCC = NLPID for IPv4)
 
         Ok(tlvs)
@@ -398,14 +395,12 @@ impl IsisProtocol {
 pub static ISIS_HELLO_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "isis_hello",
-        "IS-IS Hello PDU received (neighbor discovery)"
+        "IS-IS Hello PDU received (neighbor discovery)",
     )
 });
 
 fn get_isis_event_types() -> Vec<EventType> {
-    vec![
-        ISIS_HELLO_EVENT.clone(),
-    ]
+    vec![ISIS_HELLO_EVENT.clone()]
 }
 
 // Action Definitions
@@ -478,14 +473,12 @@ fn send_isis_pdu_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_isis_pdu".to_string(),
         description: "Send raw IS-IS PDU from hex data".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "data".to_string(),
-                type_hint: "string".to_string(),
-                description: "Hex-encoded IS-IS PDU".to_string(),
-                required: true,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "data".to_string(),
+            type_hint: "string".to_string(),
+            description: "Hex-encoded IS-IS PDU".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "send_isis_pdu",
             "data": "831b01001001060000..."

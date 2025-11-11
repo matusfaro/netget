@@ -2,7 +2,8 @@
 
 ## Overview
 
-Bluetooth Low Energy (BLE) beacon server that broadcasts proximity/location data. Supports both iBeacon (Apple) and Eddystone (Google) standards. Beacons are advertisement-only - they do not accept connections, just broadcast data.
+Bluetooth Low Energy (BLE) beacon server that broadcasts proximity/location data. Supports both iBeacon (Apple) and
+Eddystone (Google) standards. Beacons are advertisement-only - they do not accept connections, just broadcast data.
 
 ## Architecture
 
@@ -19,6 +20,7 @@ ble-peripheral-rust (Platform backends)
 ### Advertisement-Only Protocol
 
 Unlike keyboard/mouse, beacons:
+
 - **Do not accept connections** - purely broadcast
 - **No GATT services** - only advertising packets
 - **Low power** - designed for battery-powered devices
@@ -31,12 +33,14 @@ Unlike keyboard/mouse, beacons:
 **Format**: Company ID (Apple) + 128-bit UUID + Major + Minor + TX Power
 
 **Use Cases**:
+
 - Indoor positioning
 - Proximity marketing
 - Asset tracking
 - Attendance tracking
 
 **Advertising Data (30 bytes)**:
+
 ```
 [0-2]:   Flags (0x02, 0x01, 0x06)
 [3-4]:   Manufacturer specific data length (0x1A, 0xFF)
@@ -54,11 +58,13 @@ Unlike keyboard/mouse, beacons:
 **Format**: Service UUID (Eddystone) + Namespace (10 bytes) + Instance (6 bytes)
 
 **Use Cases**:
+
 - Indoor navigation
 - Asset identification
 - Location-based services
 
 **Advertising Data (31 bytes)**:
+
 ```
 [0-1]:   Complete 16-bit UUID list (0x03, 0x03)
 [2-3]:   Eddystone UUID (0xAA, 0xFE)
@@ -76,17 +82,20 @@ Unlike keyboard/mouse, beacons:
 **Format**: Service UUID + URL scheme code + compressed URL
 
 **Use Cases**:
+
 - Physical web (broadcast URLs)
 - Contactless information sharing
 - Marketing campaigns
 
 **URL Scheme Codes**:
+
 - `0x00`: http://www.
 - `0x01`: https://www.
 - `0x02`: http://
 - `0x03`: https://
 
 **Limitations**:
+
 - Max ~17 characters after scheme
 - No URL encoding for special characters
 
@@ -95,11 +104,13 @@ Unlike keyboard/mouse, beacons:
 **Format**: Battery voltage + Temperature + Advertisement count + Uptime
 
 **Use Cases**:
+
 - Beacon health monitoring
 - Battery status tracking
 - Environmental monitoring
 
 **Advertising Data (25 bytes)**:
+
 ```
 [0-7]:   Eddystone header
 [8]:     Frame type TLM (0x20)
@@ -113,6 +124,7 @@ Unlike keyboard/mouse, beacons:
 ## LLM Actions
 
 ### advertise_ibeacon
+
 Start advertising as an iBeacon.
 
 ```json
@@ -126,12 +138,14 @@ Start advertising as an iBeacon.
 ```
 
 **Parameters**:
+
 - `uuid`: 128-bit UUID (identifies beacon family)
 - `major`: 16-bit identifier (e.g., store ID)
 - `minor`: 16-bit identifier (e.g., department ID)
 - `tx_power`: Calibrated TX power at 1m (default: -59 dBm)
 
 ### advertise_eddystone_uid
+
 Start advertising as Eddystone-UID.
 
 ```json
@@ -144,11 +158,13 @@ Start advertising as Eddystone-UID.
 ```
 
 **Parameters**:
+
 - `namespace`: 10-byte namespace ID (hex string)
 - `instance`: 6-byte instance ID (hex string)
 - `tx_power`: Calibrated TX power at 0m (default: -20 dBm)
 
 ### advertise_eddystone_url
+
 Start advertising as Eddystone-URL.
 
 ```json
@@ -160,15 +176,18 @@ Start advertising as Eddystone-URL.
 ```
 
 **Parameters**:
+
 - `url`: URL to broadcast (max ~17 chars after scheme)
 - `tx_power`: Calibrated TX power at 0m (default: -20 dBm)
 
 **URL Requirements**:
+
 - Must start with `http://` or `https://`
 - Body limited to ~17 characters
 - No special character encoding
 
 ### advertise_eddystone_tlm
+
 Start advertising as Eddystone-TLM.
 
 ```json
@@ -182,12 +201,14 @@ Start advertising as Eddystone-TLM.
 ```
 
 **Parameters**:
+
 - `battery_voltage`: Voltage in mV (0-65535)
 - `temperature`: Temperature in Celsius
 - `adv_count`: Advertisement count since boot
 - `uptime`: Uptime in seconds
 
 ### stop_beacon
+
 Stop beacon advertising.
 
 ```json
@@ -199,6 +220,7 @@ Stop beacon advertising.
 ## Events
 
 ### beacon_started
+
 ```json
 {
   "event": "beacon_started",
@@ -207,6 +229,7 @@ Stop beacon advertising.
 ```
 
 ### beacon_stopped
+
 ```json
 {
   "event": "beacon_stopped"
@@ -216,6 +239,7 @@ Stop beacon advertising.
 ## Example Usage
 
 ### Indoor Positioning System
+
 ```
 User: "Act as an iBeacon for store ID 5, department 12. Use UUID 12345678-1234-5678-1234-567812345678"
 
@@ -223,6 +247,7 @@ LLM: advertise_ibeacon("12345678-1234-5678-1234-567812345678", 5, 12, -59)
 ```
 
 ### Physical Web URL Broadcast
+
 ```
 User: "Broadcast the URL https://example.com as a beacon"
 
@@ -230,6 +255,7 @@ LLM: advertise_eddystone_url("https://example.com", -20)
 ```
 
 ### Asset Tracking
+
 ```
 User: "Act as an Eddystone beacon with namespace 0123456789abcdef0123 and instance 112233445566"
 
@@ -241,13 +267,15 @@ LLM: advertise_eddystone_uid("0123456789abcdef0123", "112233445566", -20)
 ### No Connection Handling
 
 Beacons are advertisement-only, so:
+
 - No connection tracking needed
 - No client management
 - No bidirectional communication
 
 ### TX Power Calibration
 
-TX power is the measured RSSI at a reference distance (1m for iBeacon, 0m for Eddystone). This allows receivers to estimate distance using the path loss formula:
+TX power is the measured RSSI at a reference distance (1m for iBeacon, 0m for Eddystone). This allows receivers to
+estimate distance using the path loss formula:
 
 ```
 distance ≈ 10 ^ ((TX_Power - RSSI) / (10 * n))
@@ -258,6 +286,7 @@ Where `n` is the path loss exponent (typically 2-4 depending on environment).
 ### Advertising Interval
 
 Beacons typically advertise at:
+
 - **100ms**: High update rate, higher power consumption
 - **1000ms (1s)**: Standard rate, balanced
 - **10000ms (10s)**: Low power, infrequent updates
@@ -265,6 +294,7 @@ Beacons typically advertise at:
 ### Platform Support
 
 Same as `bluetooth-ble`:
+
 - **Linux**: BlueZ daemon
 - **macOS**: Bluetooth enabled
 - **Windows**: Windows 10+ with Bluetooth
@@ -284,6 +314,7 @@ Same as `bluetooth-ble`:
 ### Privacy
 
 Beacons broadcast constantly, which can enable:
+
 - **Tracking**: Devices can be tracked by their beacon signature
 - **Fingerprinting**: Unique UUID/namespace combinations identify devices
 

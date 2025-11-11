@@ -1,5 +1,7 @@
 use netget::scripting::executor::execute_script;
-use netget::scripting::types::{ScriptConfig, ScriptInput, ScriptLanguage, ScriptSource, ServerContext};
+use netget::scripting::types::{
+    ScriptConfig, ScriptInput, ScriptLanguage, ScriptSource, ServerContext,
+};
 
 #[test]
 fn test_execute_python_simple() {
@@ -89,7 +91,10 @@ print(json.dumps(response))
     assert_eq!(response.actions.len(), 1);
 
     let action = &response.actions[0];
-    assert_eq!(action.get("type").and_then(|v| v.as_str()), Some("ssh_auth_decision"));
+    assert_eq!(
+        action.get("type").and_then(|v| v.as_str()),
+        Some("ssh_auth_decision")
+    );
     assert_eq!(action.get("allowed").and_then(|v| v.as_bool()), Some(true));
 }
 
@@ -167,8 +172,14 @@ fmt.Println(string(jsonBytes))
     assert_eq!(response.actions.len(), 1);
 
     let action = &response.actions[0];
-    assert_eq!(action.get("type").and_then(|v| v.as_str()), Some("show_message"));
-    assert_eq!(action.get("message").and_then(|v| v.as_str()), Some("Hello from Go"));
+    assert_eq!(
+        action.get("type").and_then(|v| v.as_str()),
+        Some("show_message")
+    );
+    assert_eq!(
+        action.get("message").and_then(|v| v.as_str()),
+        Some("Hello from Go")
+    );
 }
 
 #[test]
@@ -208,8 +219,14 @@ print encode_json($response);
     assert_eq!(response.actions.len(), 1);
 
     let action = &response.actions[0];
-    assert_eq!(action.get("type").and_then(|v| v.as_str()), Some("show_message"));
-    assert_eq!(action.get("message").and_then(|v| v.as_str()), Some("Hello from Perl"));
+    assert_eq!(
+        action.get("type").and_then(|v| v.as_str()),
+        Some("show_message")
+    );
+    assert_eq!(
+        action.get("message").and_then(|v| v.as_str()),
+        Some("Hello from Perl")
+    );
 }
 
 #[test]
@@ -256,6 +273,9 @@ print encode_json($response);
     assert_eq!(response.actions.len(), 1);
 
     let action = &response.actions[0];
-    assert_eq!(action.get("type").and_then(|v| v.as_str()), Some("ssh_auth_decision"));
+    assert_eq!(
+        action.get("type").and_then(|v| v.as_str()),
+        Some("ssh_auth_decision")
+    );
     assert_eq!(action.get("allowed").and_then(|v| v.as_bool()), Some(true));
 }

@@ -11,6 +11,10 @@ use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace};
 
+use crate::client::http_proxy::actions::{
+    HTTP_PROXY_CLIENT_CONNECTED_EVENT, HTTP_PROXY_RESPONSE_RECEIVED_EVENT,
+    HTTP_PROXY_TUNNEL_ESTABLISHED_EVENT,
+};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::actions::client_trait::{Client, ClientActionResult};
 use crate::llm::ollama_client::OllamaClient;
@@ -18,11 +22,6 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::http_proxy::actions::{
-    HTTP_PROXY_CLIENT_CONNECTED_EVENT,
-    HTTP_PROXY_TUNNEL_ESTABLISHED_EVENT,
-    HTTP_PROXY_RESPONSE_RECEIVED_EVENT,
-};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -53,23 +52,33 @@ impl HttpProxyClient {
         client_id: ClientId,
     ) -> Result<SocketAddr> {
         // Connect to the proxy server
-        let stream = TcpStream::connect(&remote_addr)
-            .await
-            .context(format!("Failed to connect to HTTP proxy at {}", remote_addr))?;
+        let stream = TcpStream::connect(&remote_addr).await.context(format!(
+            "Failed to connect to HTTP proxy at {}",
+            remote_addr
+        ))?;
 
         let local_addr = stream.local_addr()?;
         let remote_sock_addr = stream.peer_addr()?;
 
-        info!("HTTP proxy client {} connected to proxy {} (local: {})", client_id, remote_sock_addr, local_addr);
+        info!(
+            "HTTP proxy client {} connected to proxy {} (local: {})",
+            client_id, remote_sock_addr, local_addr
+        );
 
         // Update client state
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] HTTP proxy client {} connected to {}", client_id, remote_sock_addr));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] HTTP proxy client {} connected to {}",
+            client_id, remote_sock_addr
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Call LLM with connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-            let protocol = Arc::new(crate::client::http_proxy::actions::HttpProxyClientProtocol::new());
+            let protocol =
+                Arc::new(crate::client::http_proxy::actions::HttpProxyClientProtocol::new());
             let event = Event::new(
                 &HTTP_PROXY_CLIENT_CONNECTED_EVENT,
                 serde_json::json!({
@@ -86,8 +95,13 @@ impl HttpProxyClient {
                 Some(&event),
                 protocol.as_ref(),
                 &status_tx,
-            ).await {
-                Ok(ClientLlmResult { actions, memory_updates }) => {
+            )
+            .await
+            {
+                Ok(ClientLlmResult {
+                    actions,
+                    memory_updates,
+                }) => {
                     // Store memory
                     if let Some(mem) = memory_updates {
                         app_state.set_memory_for_client(client_id, mem).await;
@@ -97,20 +111,30 @@ impl HttpProxyClient {
                     for action in actions {
                         if let Ok(result) = protocol.as_ref().execute_action(action) {
                             match result {
-                                ClientActionResult::Custom { name, data } if name == "establish_tunnel" => {
+                                ClientActionResult::Custom { name, data }
+                                    if name == "establish_tunnel" =>
+                                {
                                     // Handle tunnel establishment
                                     if let (Some(target_host), Some(target_port)) = (
                                         data.get("target_host").and_then(|v| v.as_str()),
-                                        data.get("target_port").and_then(|v| v.as_u64())
+                                        data.get("target_port").and_then(|v| v.as_u64()),
                                     ) {
-                                        info!("HTTP proxy client {} establishing tunnel to {}:{}", client_id, target_host, target_port);
+                                        info!(
+                                            "HTTP proxy client {} establishing tunnel to {}:{}",
+                                            client_id, target_host, target_port
+                                        );
                                         // We'll establish the tunnel in the spawn task below
-                                        app_state.with_client_mut(client_id, |client| {
-                                            client.set_protocol_field(
-                                                "tunnel_target".to_string(),
-                                                serde_json::json!(format!("{}:{}", target_host, target_port)),
-                                            );
-                                        }).await;
+                                        app_state
+                                            .with_client_mut(client_id, |client| {
+                                                client.set_protocol_field(
+                                                    "tunnel_target".to_string(),
+                                                    serde_json::json!(format!(
+                                                        "{}:{}",
+                                                        target_host, target_port
+                                                    )),
+                                                );
+                                            })
+                                            .await;
                                     }
                                 }
                                 _ => {}
@@ -144,11 +168,16 @@ impl HttpProxyClient {
         // Spawn task to handle tunnel establishment if needed
         tokio::spawn(async move {
             // Check if we have a tunnel target to establish
-            if let Some(tunnel_target) = app_state_clone.with_client_mut(client_id, |client| {
-                client.get_protocol_field("tunnel_target")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-            }).await.flatten() {
+            if let Some(tunnel_target) = app_state_clone
+                .with_client_mut(client_id, |client| {
+                    client
+                        .get_protocol_field("tunnel_target")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
+                .await
+                .flatten()
+            {
                 let parts: Vec<&str> = tunnel_target.split(':').collect();
                 if parts.len() == 2 {
                     let target_host = parts[0];
@@ -160,10 +189,22 @@ impl HttpProxyClient {
                         target_host, target_port, target_host, target_port
                     );
 
-                    debug!("HTTP proxy client {} sending CONNECT request: {}", client_id, connect_request.trim());
+                    debug!(
+                        "HTTP proxy client {} sending CONNECT request: {}",
+                        client_id,
+                        connect_request.trim()
+                    );
 
-                    if let Err(e) = write_half_clone.lock().await.write_all(connect_request.as_bytes()).await {
-                        error!("HTTP proxy client {} failed to send CONNECT: {}", client_id, e);
+                    if let Err(e) = write_half_clone
+                        .lock()
+                        .await
+                        .write_all(connect_request.as_bytes())
+                        .await
+                    {
+                        error!(
+                            "HTTP proxy client {} failed to send CONNECT: {}",
+                            client_id, e
+                        );
                     }
                 }
             }
@@ -178,22 +219,38 @@ impl HttpProxyClient {
             let mut reader = BufReader::new(read_half);
 
             // First, check if we need to read CONNECT response
-            if let Some(target) = app_state_clone.with_client_mut(client_id, |client| {
-                client.get_protocol_field("tunnel_target")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-            }).await.flatten() {
-
+            if let Some(target) = app_state_clone
+                .with_client_mut(client_id, |client| {
+                    client
+                        .get_protocol_field("tunnel_target")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
+                .await
+                .flatten()
+            {
                 // Read CONNECT response
                 let mut status_line = String::new();
                 match reader.read_line(&mut status_line).await {
                     Ok(0) => {
-                        error!("HTTP proxy client {} disconnected during CONNECT", client_id);
-                        app_state_clone.update_client_status(client_id, ClientStatus::Error("Proxy disconnected".to_string())).await;
+                        error!(
+                            "HTTP proxy client {} disconnected during CONNECT",
+                            client_id
+                        );
+                        app_state_clone
+                            .update_client_status(
+                                client_id,
+                                ClientStatus::Error("Proxy disconnected".to_string()),
+                            )
+                            .await;
                         return;
                     }
                     Ok(_) => {
-                        debug!("HTTP proxy client {} received status: {}", client_id, status_line.trim());
+                        debug!(
+                            "HTTP proxy client {} received status: {}",
+                            client_id,
+                            status_line.trim()
+                        );
 
                         // Parse status code
                         let parts: Vec<&str> = status_line.split_whitespace().collect();
@@ -214,18 +271,26 @@ impl HttpProxyClient {
                                     }
                                 }
                                 Err(e) => {
-                                    error!("HTTP proxy client {} error reading headers: {}", client_id, e);
+                                    error!(
+                                        "HTTP proxy client {} error reading headers: {}",
+                                        client_id, e
+                                    );
                                     break;
                                 }
                             }
                         }
 
                         if status_code == 200 {
-                            info!("HTTP proxy client {} tunnel established successfully", client_id);
+                            info!(
+                                "HTTP proxy client {} tunnel established successfully",
+                                client_id
+                            );
                             client_data_clone.lock().await.tunnel_established = true;
 
                             // Call LLM with tunnel established event
-                            if let Some(instruction) = app_state_clone.get_instruction_for_client(client_id).await {
+                            if let Some(instruction) =
+                                app_state_clone.get_instruction_for_client(client_id).await
+                            {
                                 let protocol = Arc::new(crate::client::http_proxy::actions::HttpProxyClientProtocol::new());
 
                                 let parts: Vec<&str> = target.split(':').collect();
@@ -253,8 +318,13 @@ impl HttpProxyClient {
                                     Some(&event),
                                     protocol.as_ref(),
                                     &status_tx_clone,
-                                ).await {
-                                    Ok(ClientLlmResult { actions, memory_updates }) => {
+                                )
+                                .await
+                                {
+                                    Ok(ClientLlmResult {
+                                        actions,
+                                        memory_updates,
+                                    }) => {
                                         // Update memory
                                         if let Some(mem) = memory_updates {
                                             client_data_clone.lock().await.memory = mem;
@@ -262,15 +332,26 @@ impl HttpProxyClient {
 
                                         // Execute actions
                                         for action in actions {
-                                            if let Ok(result) = protocol.as_ref().execute_action(action) {
+                                            if let Ok(result) =
+                                                protocol.as_ref().execute_action(action)
+                                            {
                                                 match result {
                                                     ClientActionResult::SendData(bytes) => {
-                                                        if write_half_clone.lock().await.write_all(&bytes).await.is_ok() {
+                                                        if write_half_clone
+                                                            .lock()
+                                                            .await
+                                                            .write_all(&bytes)
+                                                            .await
+                                                            .is_ok()
+                                                        {
                                                             trace!("HTTP proxy client {} sent {} bytes via tunnel", client_id, bytes.len());
                                                         }
                                                     }
                                                     ClientActionResult::Disconnect => {
-                                                        info!("HTTP proxy client {} disconnecting", client_id);
+                                                        info!(
+                                                            "HTTP proxy client {} disconnecting",
+                                                            client_id
+                                                        );
                                                         return;
                                                     }
                                                     _ => {}
@@ -279,19 +360,35 @@ impl HttpProxyClient {
                                         }
                                     }
                                     Err(e) => {
-                                        error!("LLM error for HTTP proxy client {}: {}", client_id, e);
+                                        error!(
+                                            "LLM error for HTTP proxy client {}: {}",
+                                            client_id, e
+                                        );
                                     }
                                 }
                             }
                         } else {
-                            error!("HTTP proxy client {} tunnel failed with status {}", client_id, status_code);
-                            app_state_clone.update_client_status(client_id, ClientStatus::Error(format!("Tunnel failed: {}", status_code))).await;
+                            error!(
+                                "HTTP proxy client {} tunnel failed with status {}",
+                                client_id, status_code
+                            );
+                            app_state_clone
+                                .update_client_status(
+                                    client_id,
+                                    ClientStatus::Error(format!("Tunnel failed: {}", status_code)),
+                                )
+                                .await;
                             return;
                         }
                     }
                     Err(e) => {
-                        error!("HTTP proxy client {} error reading CONNECT response: {}", client_id, e);
-                        app_state_clone.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
+                        error!(
+                            "HTTP proxy client {} error reading CONNECT response: {}",
+                            client_id, e
+                        );
+                        app_state_clone
+                            .update_client_status(client_id, ClientStatus::Error(e.to_string()))
+                            .await;
                         return;
                     }
                 }
@@ -304,14 +401,23 @@ impl HttpProxyClient {
                 match reader.read(&mut buffer).await {
                     Ok(0) => {
                         info!("HTTP proxy client {} disconnected", client_id);
-                        app_state_clone.update_client_status(client_id, ClientStatus::Disconnected).await;
-                        let _ = status_tx_clone.send(format!("[CLIENT] HTTP proxy client {} disconnected", client_id));
+                        app_state_clone
+                            .update_client_status(client_id, ClientStatus::Disconnected)
+                            .await;
+                        let _ = status_tx_clone.send(format!(
+                            "[CLIENT] HTTP proxy client {} disconnected",
+                            client_id
+                        ));
                         let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         break;
                     }
                     Ok(n) => {
                         let data = buffer[..n].to_vec();
-                        trace!("HTTP proxy client {} received {} bytes via tunnel", client_id, n);
+                        trace!(
+                            "HTTP proxy client {} received {} bytes via tunnel",
+                            client_id,
+                            n
+                        );
 
                         // Handle data with LLM
                         let mut client_data_lock = client_data_clone.lock().await;
@@ -323,7 +429,9 @@ impl HttpProxyClient {
                                 drop(client_data_lock);
 
                                 // Call LLM
-                                if let Some(instruction) = app_state_clone.get_instruction_for_client(client_id).await {
+                                if let Some(instruction) =
+                                    app_state_clone.get_instruction_for_client(client_id).await
+                                {
                                     let protocol = Arc::new(crate::client::http_proxy::actions::HttpProxyClientProtocol::new());
                                     let event = Event::new(
                                         &HTTP_PROXY_RESPONSE_RECEIVED_EVENT,
@@ -342,8 +450,13 @@ impl HttpProxyClient {
                                         Some(&event),
                                         protocol.as_ref(),
                                         &status_tx_clone,
-                                    ).await {
-                                        Ok(ClientLlmResult { actions, memory_updates }) => {
+                                    )
+                                    .await
+                                    {
+                                        Ok(ClientLlmResult {
+                                            actions,
+                                            memory_updates,
+                                        }) => {
                                             // Update memory
                                             if let Some(mem) = memory_updates {
                                                 client_data_clone.lock().await.memory = mem;
@@ -351,10 +464,18 @@ impl HttpProxyClient {
 
                                             // Execute actions
                                             for action in actions {
-                                                if let Ok(result) = protocol.as_ref().execute_action(action) {
+                                                if let Ok(result) =
+                                                    protocol.as_ref().execute_action(action)
+                                                {
                                                     match result {
                                                         ClientActionResult::SendData(bytes) => {
-                                                            if write_half_clone.lock().await.write_all(&bytes).await.is_ok() {
+                                                            if write_half_clone
+                                                                .lock()
+                                                                .await
+                                                                .write_all(&bytes)
+                                                                .await
+                                                                .is_ok()
+                                                            {
                                                                 trace!("HTTP proxy client {} sent {} bytes", client_id, bytes.len());
                                                             }
                                                         }
@@ -368,7 +489,10 @@ impl HttpProxyClient {
                                             }
                                         }
                                         Err(e) => {
-                                            error!("LLM error for HTTP proxy client {}: {}", client_id, e);
+                                            error!(
+                                                "LLM error for HTTP proxy client {}: {}",
+                                                client_id, e
+                                            );
                                         }
                                     }
                                 }
@@ -393,7 +517,9 @@ impl HttpProxyClient {
                     }
                     Err(e) => {
                         error!("HTTP proxy client {} read error: {}", client_id, e);
-                        app_state_clone.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
+                        app_state_clone
+                            .update_client_status(client_id, ClientStatus::Error(e.to_string()))
+                            .await;
                         let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         break;
                     }

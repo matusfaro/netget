@@ -7,13 +7,12 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, ServerConfig, E2EResult};
+use super::super::super::helpers::{self, E2EResult, ServerConfig};
 use hickory_client::client::{AsyncClient, ClientHandle};
 use hickory_client::rr::{DNSClass, Name, RecordType};
 use hickory_client::udp::UdpClientStream;
 use std::net::SocketAddr;
 use std::str::FromStr;
-use std::time::Duration;
 
 #[tokio::test]
 async fn test_dns_a_record_query() -> E2EResult<()> {
@@ -23,9 +22,8 @@ async fn test_dns_a_record_query() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via dns. Respond to all A record queries for example.com with IP address 93.184.216.34";
 
     // Start the server with debug logging
-    let server = helpers::start_netget_server(
-        ServerConfig::new(prompt).with_log_level("debug")
-    ).await?;
+    let server =
+        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("debug")).await?;
     println!("DNS server started on port {}", server.port);
 
     // Wait for DNS server to fully initialize (needs LLM call)
@@ -46,14 +44,20 @@ async fn test_dns_a_record_query() -> E2EResult<()> {
 
     println!("DNS response received:");
     let answers = response.answers();
-    assert!(!answers.is_empty(), "Expected at least one A record in response");
+    assert!(
+        !answers.is_empty(),
+        "Expected at least one A record in response"
+    );
 
     for record in answers {
         println!("  Record: {:?}", record);
     }
 
     // Check that we got a response
-    println!("✓ DNS A record query succeeded with {} answers", answers.len());
+    println!(
+        "✓ DNS A record query succeeded with {} answers",
+        answers.len()
+    );
 
     server.stop().await?;
     println!("=== Test completed ===\n");
@@ -68,11 +72,9 @@ async fn test_dns_multiple_records() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via dns. For example.com A records return 1.2.3.4. For mail.example.com A records return 5.6.7.8";
 
     // Start the server
-    let server = helpers::start_netget_server(
-        ServerConfig::new(prompt).with_log_level("debug")
-    ).await?;
+    let server =
+        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("debug")).await?;
     println!("DNS server started on port {}", server.port);
-
 
     // VALIDATION: Query multiple domains
     let address: SocketAddr = format!("127.0.0.1:{}", server.port).parse()?;
@@ -84,15 +86,27 @@ async fn test_dns_multiple_records() -> E2EResult<()> {
     println!("Querying example.com...");
     let name1 = Name::from_str("example.com.")?;
     let response1 = client.query(name1, DNSClass::IN, RecordType::A).await?;
-    assert!(!response1.answers().is_empty(), "Expected answer for example.com");
-    println!("  ✓ example.com returned {} records", response1.answers().len());
+    assert!(
+        !response1.answers().is_empty(),
+        "Expected answer for example.com"
+    );
+    println!(
+        "  ✓ example.com returned {} records",
+        response1.answers().len()
+    );
 
     // Query mail.example.com
     println!("Querying mail.example.com...");
     let name2 = Name::from_str("mail.example.com.")?;
     let response2 = client.query(name2, DNSClass::IN, RecordType::A).await?;
-    assert!(!response2.answers().is_empty(), "Expected answer for mail.example.com");
-    println!("  ✓ mail.example.com returned {} records", response2.answers().len());
+    assert!(
+        !response2.answers().is_empty(),
+        "Expected answer for mail.example.com"
+    );
+    println!(
+        "  ✓ mail.example.com returned {} records",
+        response2.answers().len()
+    );
 
     server.stop().await?;
     println!("=== Test completed ===\n");
@@ -107,11 +121,9 @@ async fn test_dns_txt_record() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via dns. For TXT record queries on example.com, return 'v=spf1 include:_spf.example.com ~all'";
 
     // Start the server
-    let server = helpers::start_netget_server(
-        ServerConfig::new(prompt).with_log_level("debug")
-    ).await?;
+    let server =
+        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("debug")).await?;
     println!("DNS server started on port {}", server.port);
-
 
     // VALIDATION: Query TXT record
     let address: SocketAddr = format!("127.0.0.1:{}", server.port).parse()?;
@@ -146,11 +158,9 @@ async fn test_dns_nxdomain() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via dns. Only respond with A records for known.example.com (1.2.3.4). For all other domains, return NXDOMAIN";
 
     // Start the server
-    let server = helpers::start_netget_server(
-        ServerConfig::new(prompt).with_log_level("debug")
-    ).await?;
+    let server =
+        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("debug")).await?;
     println!("DNS server started on port {}", server.port);
-
 
     // VALIDATION: Query an unknown domain
     let address: SocketAddr = format!("127.0.0.1:{}", server.port).parse()?;

@@ -11,14 +11,14 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
+use crate::protocol::Event;
+use crate::server::SipProtocol;
+use crate::state::app_state::AppState;
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 use actions::{
     SIP_ACK_EVENT, SIP_BYE_EVENT, SIP_CANCEL_EVENT, SIP_INVITE_EVENT, SIP_OPTIONS_EVENT,
     SIP_REGISTER_EVENT,
 };
-use crate::protocol::Event;
-use crate::server::SipProtocol;
-use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// SIP server that handles VoIP signaling
 pub struct SipServer;
@@ -46,7 +46,8 @@ impl SipServer {
                 match socket.recv_from(&mut buffer).await {
                     Ok((n, peer_addr)) => {
                         let data = buffer[..n].to_vec();
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
 
                         // Add connection to ServerInstance
                         use crate::state::server::{
@@ -141,15 +142,16 @@ impl SipServer {
                                     // Extract action from execution result
                                     if let Some(action) = execution_result.raw_actions.first() {
                                         // Build SIP response from action JSON
-                                        let response = Self::build_sip_response(
-                                            &sip_message,
-                                            action,
-                                        );
+                                        let response =
+                                            Self::build_sip_response(&sip_message, action);
 
                                         // Send SIP response
                                         match socket_clone.send_to(&response, peer_addr).await {
                                             Ok(sent) => {
-                                                debug!("SIP sent {} byte response to {}", sent, peer_addr);
+                                                debug!(
+                                                    "SIP sent {} byte response to {}",
+                                                    sent, peer_addr
+                                                );
                                                 let _ = status_clone.send(format!(
                                                     "[DEBUG] SIP sent {} byte response to {}",
                                                     sent, peer_addr
@@ -164,13 +166,16 @@ impl SipServer {
                                             }
                                         }
                                     } else {
-                                        debug!("SIP no action taken for {} request", sip_message.method);
+                                        debug!(
+                                            "SIP no action taken for {} request",
+                                            sip_message.method
+                                        );
                                     }
                                 }
                                 Err(e) => {
                                     error!("SIP LLM error: {}", e);
-                                    let _ = status_clone
-                                        .send(format!("[ERROR] SIP LLM error: {}", e));
+                                    let _ =
+                                        status_clone.send(format!("[ERROR] SIP LLM error: {}", e));
                                 }
                             }
                         });
@@ -333,11 +338,9 @@ impl SipServer {
     }
 
     /// Build SIP response from action JSON
-    fn build_sip_response(
-        request: &SipMessage,
-        response_action: &serde_json::Value,
-    ) -> Vec<u8> {
-        let response_data = response_action.as_object()
+    fn build_sip_response(request: &SipMessage, response_action: &serde_json::Value) -> Vec<u8> {
+        let response_data = response_action
+            .as_object()
             .expect("Action should be an object");
         let status_code = response_data
             .get("status_code")

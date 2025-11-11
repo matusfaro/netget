@@ -2,11 +2,13 @@
 
 ## Overview
 
-The IPP (Internet Printing Protocol) client implementation enables LLM-controlled printing operations to remote IPP printers. IPP is defined in RFC 8010 (encoding) and RFC 8011 (operations) and runs over HTTP, typically on port 631.
+The IPP (Internet Printing Protocol) client implementation enables LLM-controlled printing operations to remote IPP
+printers. IPP is defined in RFC 8010 (encoding) and RFC 8011 (operations) and runs over HTTP, typically on port 631.
 
 ## Library Choice
 
 **Crate**: `ipp` v5.3
+
 - **Maturity**: Actively maintained, latest release ~2 months ago
 - **Features**: Full IPP protocol support with both sync and async clients
 - **Compliance**: Implements RFC 8010 and RFC 8011
@@ -17,6 +19,7 @@ The IPP (Internet Printing Protocol) client implementation enables LLM-controlle
 ### Connection Model
 
 IPP is HTTP-based, so "connection" is logical rather than persistent:
+
 1. Client stores printer URI in protocol_data
 2. Each operation creates a new HTTP request
 3. No persistent TCP connection maintained
@@ -25,6 +28,7 @@ IPP is HTTP-based, so "connection" is logical rather than persistent:
 ### URI Format
 
 IPP URIs follow the pattern:
+
 - `ipp://host:port/path` (converted to `http://`)
 - `http://host:port/path` (used directly)
 - Default port: 631
@@ -48,18 +52,21 @@ IPP URIs follow the pattern:
 ### Actions
 
 #### Async Actions (User-Triggered)
+
 - `get_printer_attributes`: Query printer capabilities
 - `print_job`: Submit a print job with job name, format, and document data
 - `get_job_attributes`: Query job status by job ID
 - `disconnect`: Close the client
 
 #### Sync Actions (Response-Triggered)
+
 - `get_printer_attributes`: Query printer after receiving a response
 - `get_job_attributes`: Check job status after submitting
 
 ### Document Data Handling
 
 The `print_job` action accepts document data as:
+
 - **Plain text**: UTF-8 string for text/plain documents
 - **Base64**: Encoded binary data for PDFs, PostScript, etc.
 
@@ -68,6 +75,7 @@ The client auto-detects and decodes base64 when appropriate.
 ### Response Parsing
 
 IPP responses contain attribute groups:
+
 - **Printer Attributes**: printer-name, printer-state, media-supported, etc.
 - **Job Attributes**: job-id, job-state, job-name, time-at-creation, etc.
 
@@ -86,6 +94,7 @@ The client extracts these into JSON structures for LLM consumption.
 ### State Management
 
 Client state stored in `protocol_data`:
+
 - `ipp_uri`: Full printer URI (http://...)
 - `ipp_client`: Initialization marker
 
@@ -98,15 +107,15 @@ Client state stored in `protocol_data`:
 ## Limitations
 
 1. **No TLS Support (Yet)**: Current implementation uses HTTP only
-   - Future: Add HTTPS/IPPS support via feature flag
+    - Future: Add HTTPS/IPPS support via feature flag
 2. **Limited Operations**: Only 3 core operations implemented
-   - Future: Add Cancel-Job, Pause-Printer, Resume-Printer, etc.
+    - Future: Add Cancel-Job, Pause-Printer, Resume-Printer, etc.
 3. **No Authentication**: No support for user/password or certificate auth
-   - Future: Add HTTP Basic Auth and mTLS
+    - Future: Add HTTP Basic Auth and mTLS
 4. **No Subscription Support**: No IPP-Subscribe or event notifications
-   - Future: Implement job/printer event subscriptions
+    - Future: Implement job/printer event subscriptions
 5. **Document Format Detection**: Simple heuristic for base64 vs. plain text
-   - May fail on edge cases
+    - May fail on edge cases
 
 ## Example Prompts
 

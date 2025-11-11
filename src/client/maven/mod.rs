@@ -9,13 +9,13 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
+use crate::client::maven::actions::MAVEN_CLIENT_CONNECTED_EVENT;
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::maven::actions::MAVEN_CLIENT_CONNECTED_EVENT;
 
 /// Maven client that interacts with Maven repositories
 pub struct MavenClient;
@@ -47,7 +47,9 @@ impl MavenClient {
                         app_state,
                         llm_client,
                         status_tx,
-                    ).await {
+                    )
+                    .await
+                    {
                         error!("Maven artifact download failed: {}", e);
                     }
                 });
@@ -66,7 +68,9 @@ impl MavenClient {
                         app_state,
                         llm_client,
                         status_tx,
-                    ).await {
+                    )
+                    .await
+                    {
                         error!("Maven POM download failed: {}", e);
                     }
                 });
@@ -83,7 +87,9 @@ impl MavenClient {
                         app_state,
                         llm_client,
                         status_tx,
-                    ).await {
+                    )
+                    .await
+                    {
                         error!("Maven version search failed: {}", e);
                     }
                 });
@@ -104,29 +110,42 @@ impl MavenClient {
     ) -> Result<SocketAddr> {
         // For Maven, "connection" is logical - we interact with HTTP-based repositories
         // Default to Maven Central if no specific URL provided
-        let repo_url = if repository_url.is_empty() || repository_url == "maven" || repository_url == "maven-central" {
+        let repo_url = if repository_url.is_empty()
+            || repository_url == "maven"
+            || repository_url == "maven-central"
+        {
             "https://repo.maven.apache.org/maven2".to_string()
         } else {
             repository_url
         };
 
-        info!("Maven client {} initialized for repository: {}", client_id, repo_url);
+        info!(
+            "Maven client {} initialized for repository: {}",
+            client_id, repo_url
+        );
 
         // Store client in protocol_data
-        app_state.with_client_mut(client_id, |client| {
-            client.set_protocol_field(
-                "http_client".to_string(),
-                serde_json::json!("initialized"),
-            );
-            client.set_protocol_field(
-                "repository_url".to_string(),
-                serde_json::json!(repo_url.clone()),
-            );
-        }).await;
+        app_state
+            .with_client_mut(client_id, |client| {
+                client.set_protocol_field(
+                    "http_client".to_string(),
+                    serde_json::json!("initialized"),
+                );
+                client.set_protocol_field(
+                    "repository_url".to_string(),
+                    serde_json::json!(repo_url.clone()),
+                );
+            })
+            .await;
 
         // Update status
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] Maven client {} connected to repository: {}", client_id, repo_url));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] Maven client {} connected to repository: {}",
+            client_id, repo_url
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Call LLM with connected event
@@ -139,7 +158,10 @@ impl MavenClient {
                 }),
             );
 
-            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+            let memory = app_state
+                .get_memory_for_client(client_id)
+                .await
+                .unwrap_or_default();
 
             match call_llm_for_client(
                 &_llm_client,
@@ -150,8 +172,13 @@ impl MavenClient {
                 Some(&event),
                 protocol.as_ref(),
                 &status_tx,
-            ).await {
-                Ok(ClientLlmResult { actions, memory_updates }) => {
+            )
+            .await
+            {
+                Ok(ClientLlmResult {
+                    actions,
+                    memory_updates,
+                }) => {
                     // Update memory
                     if let Some(mem) = memory_updates {
                         app_state.set_memory_for_client(client_id, mem).await;
@@ -161,83 +188,107 @@ impl MavenClient {
                     for action in actions {
                         use crate::llm::actions::client_trait::Client;
                         match protocol.as_ref().execute_action(action) {
-                            Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) => {
-                                match name.as_str() {
-                                    "maven_download_artifact" => {
-                                        let group_id = data["group_id"].as_str().unwrap_or_default().to_string();
-                                        let artifact_id = data["artifact_id"].as_str().unwrap_or_default().to_string();
-                                        let version = data["version"].as_str().unwrap_or_default().to_string();
-                                        let packaging = data["packaging"].as_str().map(|s| s.to_string());
+                            Ok(crate::llm::actions::client_trait::ClientActionResult::Custom {
+                                name,
+                                data,
+                            }) => match name.as_str() {
+                                "maven_download_artifact" => {
+                                    let group_id =
+                                        data["group_id"].as_str().unwrap_or_default().to_string();
+                                    let artifact_id = data["artifact_id"]
+                                        .as_str()
+                                        .unwrap_or_default()
+                                        .to_string();
+                                    let version =
+                                        data["version"].as_str().unwrap_or_default().to_string();
+                                    let packaging =
+                                        data["packaging"].as_str().map(|s| s.to_string());
 
-                                        let app_state_clone = app_state.clone();
-                                        let llm_client_clone = _llm_client.clone();
-                                        let status_tx_clone = status_tx.clone();
+                                    let app_state_clone = app_state.clone();
+                                    let llm_client_clone = _llm_client.clone();
+                                    let status_tx_clone = status_tx.clone();
 
-                                        tokio::spawn(async move {
-                                            if let Err(e) = Self::download_artifact(
-                                                client_id,
-                                                group_id,
-                                                artifact_id,
-                                                version,
-                                                packaging,
-                                                app_state_clone,
-                                                llm_client_clone,
-                                                status_tx_clone,
-                                            ).await {
-                                                error!("Maven artifact download failed: {}", e);
-                                            }
-                                        });
-                                    }
-                                    "maven_download_pom" => {
-                                        let group_id = data["group_id"].as_str().unwrap_or_default().to_string();
-                                        let artifact_id = data["artifact_id"].as_str().unwrap_or_default().to_string();
-                                        let version = data["version"].as_str().unwrap_or_default().to_string();
-
-                                        let app_state_clone = app_state.clone();
-                                        let llm_client_clone = _llm_client.clone();
-                                        let status_tx_clone = status_tx.clone();
-
-                                        tokio::spawn(async move {
-                                            if let Err(e) = Self::download_pom(
-                                                client_id,
-                                                group_id,
-                                                artifact_id,
-                                                version,
-                                                app_state_clone,
-                                                llm_client_clone,
-                                                status_tx_clone,
-                                            ).await {
-                                                error!("Maven POM download failed: {}", e);
-                                            }
-                                        });
-                                    }
-                                    "maven_search_versions" => {
-                                        let group_id = data["group_id"].as_str().unwrap_or_default().to_string();
-                                        let artifact_id = data["artifact_id"].as_str().unwrap_or_default().to_string();
-
-                                        let app_state_clone = app_state.clone();
-                                        let llm_client_clone = _llm_client.clone();
-                                        let status_tx_clone = status_tx.clone();
-
-                                        tokio::spawn(async move {
-                                            if let Err(e) = Self::search_versions(
-                                                client_id,
-                                                group_id,
-                                                artifact_id,
-                                                app_state_clone,
-                                                llm_client_clone,
-                                                status_tx_clone,
-                                            ).await {
-                                                error!("Maven version search failed: {}", e);
-                                            }
-                                        });
-                                    }
-                                    _ => {
-                                        warn!("Unknown Maven custom action: {}", name);
-                                    }
+                                    tokio::spawn(async move {
+                                        if let Err(e) = Self::download_artifact(
+                                            client_id,
+                                            group_id,
+                                            artifact_id,
+                                            version,
+                                            packaging,
+                                            app_state_clone,
+                                            llm_client_clone,
+                                            status_tx_clone,
+                                        )
+                                        .await
+                                        {
+                                            error!("Maven artifact download failed: {}", e);
+                                        }
+                                    });
                                 }
-                            }
-                            Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
+                                "maven_download_pom" => {
+                                    let group_id =
+                                        data["group_id"].as_str().unwrap_or_default().to_string();
+                                    let artifact_id = data["artifact_id"]
+                                        .as_str()
+                                        .unwrap_or_default()
+                                        .to_string();
+                                    let version =
+                                        data["version"].as_str().unwrap_or_default().to_string();
+
+                                    let app_state_clone = app_state.clone();
+                                    let llm_client_clone = _llm_client.clone();
+                                    let status_tx_clone = status_tx.clone();
+
+                                    tokio::spawn(async move {
+                                        if let Err(e) = Self::download_pom(
+                                            client_id,
+                                            group_id,
+                                            artifact_id,
+                                            version,
+                                            app_state_clone,
+                                            llm_client_clone,
+                                            status_tx_clone,
+                                        )
+                                        .await
+                                        {
+                                            error!("Maven POM download failed: {}", e);
+                                        }
+                                    });
+                                }
+                                "maven_search_versions" => {
+                                    let group_id =
+                                        data["group_id"].as_str().unwrap_or_default().to_string();
+                                    let artifact_id = data["artifact_id"]
+                                        .as_str()
+                                        .unwrap_or_default()
+                                        .to_string();
+
+                                    let app_state_clone = app_state.clone();
+                                    let llm_client_clone = _llm_client.clone();
+                                    let status_tx_clone = status_tx.clone();
+
+                                    tokio::spawn(async move {
+                                        if let Err(e) = Self::search_versions(
+                                            client_id,
+                                            group_id,
+                                            artifact_id,
+                                            app_state_clone,
+                                            llm_client_clone,
+                                            status_tx_clone,
+                                        )
+                                        .await
+                                        {
+                                            error!("Maven version search failed: {}", e);
+                                        }
+                                    });
+                                }
+                                _ => {
+                                    warn!("Unknown Maven custom action: {}", name);
+                                }
+                            },
+                            Ok(
+                                crate::llm::actions::client_trait::ClientActionResult::Disconnect,
+                            ) => {
                                 info!("Maven client {} disconnecting", client_id);
                             }
                             _ => {}
@@ -303,11 +354,7 @@ impl MavenClient {
     }
 
     /// Construct metadata URL
-    pub fn metadata_url(
-        repository_url: &str,
-        group_id: &str,
-        artifact_id: &str,
-    ) -> String {
+    pub fn metadata_url(repository_url: &str, group_id: &str, artifact_id: &str) -> String {
         let group_path = group_id.replace('.', "/");
         format!(
             "{}/{}/{}/maven-metadata.xml",
@@ -331,11 +378,16 @@ impl MavenClient {
         let packaging = packaging.unwrap_or_else(|| "jar".to_string());
 
         // Get repository URL from client
-        let repository_url = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("repository_url")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }).await.flatten().context("No repository URL found")?;
+        let repository_url = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("repository_url")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .await
+            .flatten()
+            .context("No repository URL found")?;
 
         let artifact_url = Self::artifact_url(
             &repository_url,
@@ -377,8 +429,10 @@ impl MavenClient {
                     );
 
                     // Call LLM with artifact download result
-                    if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                        let protocol = Arc::new(crate::client::maven::actions::MavenClientProtocol::new());
+                    if let Some(instruction) = app_state.get_instruction_for_client(client_id).await
+                    {
+                        let protocol =
+                            Arc::new(crate::client::maven::actions::MavenClientProtocol::new());
                         let event = Event::new(
                             &crate::client::maven::actions::MAVEN_CLIENT_ARTIFACT_DOWNLOADED_EVENT,
                             serde_json::json!({
@@ -392,7 +446,10 @@ impl MavenClient {
                             }),
                         );
 
-                        let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                        let memory = app_state
+                            .get_memory_for_client(client_id)
+                            .await
+                            .unwrap_or_default();
 
                         match call_llm_for_client(
                             &llm_client,
@@ -403,8 +460,13 @@ impl MavenClient {
                             Some(&event),
                             protocol.as_ref(),
                             &status_tx,
-                        ).await {
-                            Ok(ClientLlmResult { actions, memory_updates }) => {
+                        )
+                        .await
+                        {
+                            Ok(ClientLlmResult {
+                                actions,
+                                memory_updates,
+                            }) => {
                                 if let Some(mem) = memory_updates {
                                     app_state.set_memory_for_client(client_id, mem).await;
                                 }
@@ -463,27 +525,24 @@ impl MavenClient {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         // Get repository URL from client
-        let repository_url = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("repository_url")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }).await.flatten().context("No repository URL found")?;
+        let repository_url = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("repository_url")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .await
+            .flatten()
+            .context("No repository URL found")?;
 
-        let pom_url = Self::pom_url(
-            &repository_url,
-            &group_id,
-            &artifact_id,
-            &version,
-        );
+        let pom_url = Self::pom_url(&repository_url, &group_id, &artifact_id, &version);
 
         info!(
             "Maven client {} downloading POM: {}:{}:{}",
             client_id, group_id, artifact_id, version
         );
-        let _ = status_tx.send(format!(
-            "[CLIENT] Downloading POM from: {}",
-            pom_url
-        ));
+        let _ = status_tx.send(format!("[CLIENT] Downloading POM from: {}", pom_url));
 
         // Build HTTP client
         let http_client = reqwest::Client::builder()
@@ -507,8 +566,10 @@ impl MavenClient {
                     );
 
                     // Call LLM with POM content
-                    if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                        let protocol = Arc::new(crate::client::maven::actions::MavenClientProtocol::new());
+                    if let Some(instruction) = app_state.get_instruction_for_client(client_id).await
+                    {
+                        let protocol =
+                            Arc::new(crate::client::maven::actions::MavenClientProtocol::new());
                         let event = Event::new(
                             &crate::client::maven::actions::MAVEN_CLIENT_POM_RECEIVED_EVENT,
                             serde_json::json!({
@@ -520,7 +581,10 @@ impl MavenClient {
                             }),
                         );
 
-                        let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                        let memory = app_state
+                            .get_memory_for_client(client_id)
+                            .await
+                            .unwrap_or_default();
 
                         match call_llm_for_client(
                             &llm_client,
@@ -531,8 +595,13 @@ impl MavenClient {
                             Some(&event),
                             protocol.as_ref(),
                             &status_tx,
-                        ).await {
-                            Ok(ClientLlmResult { actions, memory_updates }) => {
+                        )
+                        .await
+                        {
+                            Ok(ClientLlmResult {
+                                actions,
+                                memory_updates,
+                            }) => {
                                 if let Some(mem) = memory_updates {
                                     app_state.set_memory_for_client(client_id, mem).await;
                                 }
@@ -590,26 +659,24 @@ impl MavenClient {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         // Get repository URL from client
-        let repository_url = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("repository_url")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }).await.flatten().context("No repository URL found")?;
+        let repository_url = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("repository_url")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .await
+            .flatten()
+            .context("No repository URL found")?;
 
-        let metadata_url = Self::metadata_url(
-            &repository_url,
-            &group_id,
-            &artifact_id,
-        );
+        let metadata_url = Self::metadata_url(&repository_url, &group_id, &artifact_id);
 
         info!(
             "Maven client {} searching versions: {}:{}",
             client_id, group_id, artifact_id
         );
-        let _ = status_tx.send(format!(
-            "[CLIENT] Fetching metadata from: {}",
-            metadata_url
-        ));
+        let _ = status_tx.send(format!("[CLIENT] Fetching metadata from: {}", metadata_url));
 
         // Build HTTP client
         let http_client = reqwest::Client::builder()
@@ -633,8 +700,10 @@ impl MavenClient {
                     );
 
                     // Call LLM with metadata content
-                    if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                        let protocol = Arc::new(crate::client::maven::actions::MavenClientProtocol::new());
+                    if let Some(instruction) = app_state.get_instruction_for_client(client_id).await
+                    {
+                        let protocol =
+                            Arc::new(crate::client::maven::actions::MavenClientProtocol::new());
                         let event = Event::new(
                             &crate::client::maven::actions::MAVEN_CLIENT_METADATA_RECEIVED_EVENT,
                             serde_json::json!({
@@ -645,7 +714,10 @@ impl MavenClient {
                             }),
                         );
 
-                        let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                        let memory = app_state
+                            .get_memory_for_client(client_id)
+                            .await
+                            .unwrap_or_default();
 
                         match call_llm_for_client(
                             &llm_client,
@@ -656,8 +728,13 @@ impl MavenClient {
                             Some(&event),
                             protocol.as_ref(),
                             &status_tx,
-                        ).await {
-                            Ok(ClientLlmResult { actions, memory_updates }) => {
+                        )
+                        .await
+                        {
+                            Ok(ClientLlmResult {
+                                actions,
+                                memory_updates,
+                            }) => {
                                 if let Some(mem) = memory_updates {
                                     app_state.set_memory_for_client(client_id, mem).await;
                                 }

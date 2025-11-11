@@ -58,4 +58,3 @@ pub fn format_script_for_log(code: &str, language: &str) -> String {
         highlighted
     )
 }
-

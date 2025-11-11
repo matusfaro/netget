@@ -139,7 +139,12 @@ impl ConversationHandler {
     }
 
     /// Set conversation tracking information
-    pub fn with_tracking(mut self, state: AppState, source: ConversationSource, details: String) -> Self {
+    pub fn with_tracking(
+        mut self,
+        state: AppState,
+        source: ConversationSource,
+        details: String,
+    ) -> Self {
         self.state = Some(state);
         self.source = Some(source);
         self.details = Some(details);
@@ -252,7 +257,8 @@ impl ConversationHandler {
             }
 
             // Build new actions section using PromptBuilder
-            let new_actions_section = PromptBuilder::build_actions_section_public(available_actions);
+            let new_actions_section =
+                PromptBuilder::build_actions_section_public(available_actions);
 
             // Replace the old actions section with the new one
             let mut new_content = String::new();
@@ -302,12 +308,16 @@ impl ConversationHandler {
         available_actions: Vec<ActionDefinition>,
     ) -> Result<Vec<serde_json::Value>> {
         // Register conversation if tracking is enabled
-        if let (Some(state), Some(source), Some(details)) = (&self.state, &self.source, &self.details) {
-            state.register_conversation(
-                self.conversation_id.clone(),
-                source.clone(),
-                details.clone()
-            ).await;
+        if let (Some(state), Some(source), Some(details)) =
+            (&self.state, &self.source, &self.details)
+        {
+            state
+                .register_conversation(
+                    self.conversation_id.clone(),
+                    source.clone(),
+                    details.clone(),
+                )
+                .await;
         }
 
         let mut all_actions = Vec::new();
@@ -402,10 +412,12 @@ impl ConversationHandler {
                         }
 
                         // Check if this is read_base_stack_docs tool
-                        let is_read_docs = matches!(tool_action, ToolAction::ReadBaseStackDocs { .. });
+                        let is_read_docs =
+                            matches!(tool_action, ToolAction::ReadBaseStackDocs { .. });
 
                         let result =
-                            execute_tool(&tool_action, approval_tx.as_ref(), web_search_mode, None).await;
+                            execute_tool(&tool_action, approval_tx.as_ref(), web_search_mode, None)
+                                .await;
                         info!("  Result: {}", result.summary());
 
                         // Mark protocol docs as read if the tool succeeded
@@ -507,7 +519,8 @@ impl ConversationHandler {
 
             // Log summary of message count
             let new_message_count = self.messages.len().saturating_sub(self.last_logged_index);
-            debug!("Conversation state: {} messages, {} new since last call",
+            debug!(
+                "Conversation state: {} messages, {} new since last call",
                 self.messages.len(),
                 new_message_count
             );
@@ -515,8 +528,14 @@ impl ConversationHandler {
             // Log only new messages at TRACE level
             if new_message_count > 0 {
                 trace!("New messages:");
-                for (idx, msg) in self.messages.iter().enumerate().skip(self.last_logged_index) {
-                    trace!("  Message {}: [{}] {}",
+                for (idx, msg) in self
+                    .messages
+                    .iter()
+                    .enumerate()
+                    .skip(self.last_logged_index)
+                {
+                    trace!(
+                        "  Message {}: [{}] {}",
                         idx + 1,
                         msg.role,
                         if msg.content.len() > 200 {
@@ -531,8 +550,12 @@ impl ConversationHandler {
                         } else {
                             msg.content.clone()
                         };
-                        let _ = tx.send(format!("[TRACE] Message {}: [{}] {}",
-                            idx + 1, msg.role, preview.replace('\n', "\r\n")));
+                        let _ = tx.send(format!(
+                            "[TRACE] Message {}: [{}] {}",
+                            idx + 1,
+                            msg.role,
+                            preview.replace('\n', "\r\n")
+                        ));
                     }
                 }
             }

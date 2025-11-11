@@ -1,9 +1,12 @@
 # LDAP Protocol Implementation
 
 ## Overview
-LDAP (Lightweight Directory Access Protocol) server implementing basic LDAPv3 functionality for directory operations. Supports bind (authentication), search, add, modify, delete, and unbind operations.
+
+LDAP (Lightweight Directory Access Protocol) server implementing basic LDAPv3 functionality for directory operations.
+Supports bind (authentication), search, add, modify, delete, and unbind operations.
 
 ## Library Choices
+
 - **Manual Implementation** - No external LDAP library used
 - **Manual ASN.1 BER encoding/decoding** - Custom parsers for LDAP messages
 - Raw TCP handling with tokio for async I/O
@@ -12,41 +15,49 @@ LDAP (Lightweight Directory Access Protocol) server implementing basic LDAPv3 fu
 ## Architecture Decisions
 
 ### ASN.1 BER Protocol
+
 LDAP uses ASN.1 BER (Basic Encoding Rules) for message encoding:
+
 - **Manual parsers** implemented for:
-  - `parse_ber_length()` - Decode BER length encoding (short/long form)
-  - `parse_ber_integer()` - Decode BER INTEGER
-  - `parse_ldap_message()` - Parse LDAP message SEQUENCE
+    - `parse_ber_length()` - Decode BER length encoding (short/long form)
+    - `parse_ber_integer()` - Decode BER INTEGER
+    - `parse_ldap_message()` - Parse LDAP message SEQUENCE
 - **Manual encoders** implemented for:
-  - `encode_ber_length()` - Encode BER length
-  - `encode_ber_integer()` - Encode BER INTEGER
-  - `encode_ber_string()` - Encode BER OCTET STRING
-  - `encode_ldap_message()` - Build LDAP message SEQUENCE
+    - `encode_ber_length()` - Encode BER length
+    - `encode_ber_integer()` - Encode BER INTEGER
+    - `encode_ber_string()` - Encode BER OCTET STRING
+    - `encode_ldap_message()` - Build LDAP message SEQUENCE
 
 ### LLM Integration
+
 - **Three event types**:
-  - `LDAP_BIND_EVENT` - Bind (authentication) request
-  - `LDAP_SEARCH_EVENT` - Search request
-  - `LDAP_UNBIND_EVENT` - Unbind (disconnect) notification
+    - `LDAP_BIND_EVENT` - Bind (authentication) request
+    - `LDAP_SEARCH_EVENT` - Search request
+    - `LDAP_UNBIND_EVENT` - Unbind (disconnect) notification
 - **Action-based responses** - LLM returns JSON actions for directory operations
 - **Binary protocol** - Actions produce raw BER-encoded binary data
 - **No state persistence** - LLM manages directory entries in memory/context
 
 ### Session Management
+
 Session tracked in local `LdapSession` struct:
+
 ```rust
 authenticated: bool
 bind_dn: Option<String>
 ```
 
 Operations:
+
 - **Bind** - Authentication sets `authenticated = true`, stores `bind_dn`
 - **Search** - Passes authentication status to LLM
 - **Add/Modify/Delete** - LLM decides authorization based on session
 - **Unbind** - Fire-and-forget, no response required
 
 ### Response Actions
+
 The LLM controls LDAP responses through these actions:
+
 - `ldap_bind_response` - Bind response (success/failure)
 - `ldap_search_response` - Search results (entries + done)
 - `ldap_add_response` - Add entry result
@@ -56,7 +67,9 @@ The LLM controls LDAP responses through these actions:
 - `close_connection` - Terminate session
 
 ### Binary Response Encoding
+
 Actions produce BER-encoded binary responses:
+
 - **BindResponse** `[APPLICATION 1]` - Result code 0 = success, 49 = invalidCredentials
 - **SearchResultEntry** `[APPLICATION 4]` - DN + attributes (repeated for each entry)
 - **SearchResultDone** `[APPLICATION 5]` - Final result code
@@ -65,18 +78,21 @@ Actions produce BER-encoded binary responses:
 - **DelResponse** `[APPLICATION 11]` - Result code 0 = success, 32 = noSuchObject
 
 ## Connection Management
+
 - Connections spawn independent async tasks
 - No connection tracking in `AppState` (not properly integrated)
 - Binary message parsing with buffer reading
 - Write operations directly to TcpStream
 
 ## State Management
+
 - **Session state** - Local to `LdapSession` (not in `AppState`)
 - **Directory data** - Managed by LLM in conversation context
 - **No persistence** - Entries exist only in LLM memory
 - **Authentication** - Checked per operation, passed to LLM
 
 ## Limitations
+
 - **No LDAP persistence** - All directory data ephemeral
 - **No LDAPS** - TLS not implemented (port 389 only)
 - **No SASL** - Only simple bind (username/password) supported
@@ -90,6 +106,7 @@ Actions produce BER-encoded binary responses:
 ## Examples
 
 ### Example LLM Prompt
+
 ```
 Start LDAP server on port 389. Accept bind for 'cn=admin,dc=example,dc=com' with password 'secret'.
 For search on 'dc=example,dc=com', return 2 users:
@@ -98,6 +115,7 @@ For search on 'dc=example,dc=com', return 2 users:
 ```
 
 ### Example LLM Response (Bind Success)
+
 ```json
 {
   "actions": [
@@ -112,6 +130,7 @@ For search on 'dc=example,dc=com', return 2 users:
 ```
 
 ### Example LLM Response (Bind Failure)
+
 ```json
 {
   "actions": [
@@ -126,6 +145,7 @@ For search on 'dc=example,dc=com', return 2 users:
 ```
 
 ### Example LLM Response (Search)
+
 ```json
 {
   "actions": [
@@ -157,6 +177,7 @@ For search on 'dc=example,dc=com', return 2 users:
 ```
 
 ### Example LLM Response (Add)
+
 ```json
 {
   "actions": [
@@ -172,7 +193,9 @@ For search on 'dc=example,dc=com', return 2 users:
 ```
 
 ## ASN.1 BER Encoding Notes
+
 LDAP messages are SEQUENCE structures:
+
 ```
 LDAPMessage ::= SEQUENCE {
     messageID       INTEGER,
@@ -182,6 +205,7 @@ LDAPMessage ::= SEQUENCE {
 ```
 
 Result codes:
+
 - 0 = success
 - 2 = protocolError
 - 32 = noSuchObject
@@ -189,6 +213,7 @@ Result codes:
 - 68 = entryAlreadyExists
 
 ## References
+
 - RFC 4511 - Lightweight Directory Access Protocol (LDAP): The Protocol
 - RFC 4510 - Lightweight Directory Access Protocol (LDAP): Technical Specification Road Map
 - ITU-T X.690 - ASN.1 encoding rules (BER, CER, DER)

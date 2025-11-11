@@ -19,88 +19,88 @@ impl WebDavProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for WebDavProtocol {
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            vec![
-                create_file_action(),
-                create_directory_action(),
-                delete_resource_action(),
-            ]
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                read_file_action(),
-                list_directory_action(),
-                get_properties_action(),
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "WebDAV"
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>TCP>HTTP>WEBDAV"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["webdav", "dav"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Experimental)
-                .implementation("dav-server v0.5 library, MemFs virtual filesystem")
-                .llm_control("File operations (future - currently library-driven)")
-                .e2e_testing("cadaver / WebDAV clients")
-                .notes("In-memory only, no persistence, no authentication")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "WebDAV file server"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Start a WebDAV server on port 8080"
-        }
-        fn group_name(&self) -> &'static str {
-            "Web & File"
-        }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        vec![
+            create_file_action(),
+            create_directory_action(),
+            delete_resource_action(),
+        ]
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            read_file_action(),
+            list_directory_action(),
+            get_properties_action(),
+        ]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "WebDAV"
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>HTTP>WEBDAV"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["webdav", "dav"]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("dav-server v0.5 library, MemFs virtual filesystem")
+            .llm_control("File operations (future - currently library-driven)")
+            .e2e_testing("cadaver / WebDAV clients")
+            .notes("In-memory only, no persistence, no authentication")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "WebDAV file server"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Start a WebDAV server on port 8080"
+    }
+    fn group_name(&self) -> &'static str {
+        "Web & File"
+    }
 }
 
 // Implement Server trait (server-specific functionality)
 impl Server for WebDavProtocol {
-        fn spawn(
-            &self,
-            ctx: crate::protocol::SpawnContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::server::webdav::WebDavServer;
-                WebDavServer::spawn_with_llm_actions(
-                    ctx.listen_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.server_id,
-                ).await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "read_file" => self.execute_read_file(action),
-                "create_file" => self.execute_create_file(action),
-                "create_directory" => self.execute_create_directory(action),
-                "delete_resource" => self.execute_delete_resource(action),
-                "list_directory" => self.execute_list_directory(action),
-                "get_properties" => self.execute_get_properties(action),
-                _ => Err(anyhow::anyhow!("Unknown WebDAV action: {}", action_type)),
-            }
-        }
-}
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::webdav::WebDavServer;
+            WebDavServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
 
+        match action_type {
+            "read_file" => self.execute_read_file(action),
+            "create_file" => self.execute_create_file(action),
+            "create_directory" => self.execute_create_directory(action),
+            "delete_resource" => self.execute_delete_resource(action),
+            "list_directory" => self.execute_list_directory(action),
+            "get_properties" => self.execute_get_properties(action),
+            _ => Err(anyhow::anyhow!("Unknown WebDAV action: {}", action_type)),
+        }
+    }
+}
 
 impl WebDavProtocol {
     /// Read file contents

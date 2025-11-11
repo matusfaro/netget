@@ -19,12 +19,12 @@ use hyper_util::rt::TokioIo;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
 
-use crate::server::connection::ConnectionId;
-use crate::server::DynamoProtocol;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
+use crate::server::connection::ConnectionId;
+use crate::server::DynamoProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 
 /// DynamoDB server that delegates API operations to LLM
 pub struct DynamoServer;
@@ -39,7 +39,8 @@ impl DynamoServer {
         _send_first: bool,
         server_id: crate::state::ServerId,
     ) -> anyhow::Result<SocketAddr> {
-        let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let listener =
+            crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         console_info!(status_tx, "DynamoDB server listening on {}", local_addr);
 
@@ -50,13 +51,18 @@ impl DynamoServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
                         info!("DynamoDB connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!("[INFO] DynamoDB connection from {}", remote_addr));
+                        let _ = status_tx
+                            .send(format!("[INFO] DynamoDB connection from {}", remote_addr));
 
                         // Add connection to ServerInstance
-                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -71,7 +77,9 @@ impl DynamoServer {
                             status_changed_at: now,
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
-                        app_state.add_connection_to_server(server_id, conn_state).await;
+                        app_state
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let llm_client_clone = llm_client.clone();
@@ -105,13 +113,20 @@ impl DynamoServer {
                             });
 
                             // Serve HTTP/1 on this connection
-                            if let Err(err) = http1::Builder::new().serve_connection(io, service).await {
+                            if let Err(err) =
+                                http1::Builder::new().serve_connection(io, service).await
+                            {
                                 error!("Error serving DynamoDB connection: {:?}", err);
                             }
 
                             // Mark connection as closed
-                            app_state_clone.close_connection_on_server(server_id, connection_id).await;
-                            let _ = status_tx_clone.send(format!("[INFO] DynamoDB connection {} closed", connection_id));
+                            app_state_clone
+                                .close_connection_on_server(server_id, connection_id)
+                                .await;
+                            let _ = status_tx_clone.send(format!(
+                                "[INFO] DynamoDB connection {} closed",
+                                connection_id
+                            ));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
@@ -143,7 +158,8 @@ async fn handle_dynamo_request_with_llm(
 
     // Extract DynamoDB operation from x-amz-target header
     // Format: "DynamoDB_20120810.GetItem"
-    let operation = req.headers()
+    let operation = req
+        .headers()
         .get("x-amz-target")
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.split('.').nth(1))
@@ -170,14 +186,20 @@ async fn handle_dynamo_request_with_llm(
     );
     let _ = status_tx.send(format!(
         "[DEBUG] DynamoDB {} operation={} ({} bytes)",
-        method, operation, body_bytes.len()
+        method,
+        operation,
+        body_bytes.len()
     ));
 
     // Try to extract table name from JSON body
     let table_name = if !body_str.is_empty() {
         serde_json::from_str::<serde_json::Value>(&body_str)
             .ok()
-            .and_then(|v| v.get("TableName").and_then(|t| t.as_str()).map(String::from))
+            .and_then(|v| {
+                v.get("TableName")
+                    .and_then(|t| t.as_str())
+                    .map(String::from)
+            })
     } else {
         None
     };
@@ -213,23 +235,24 @@ async fn handle_dynamo_request_with_llm(
                 match result {
                     ActionResult::Custom { name, data } => {
                         if name == "dynamo_response" {
-                            let status = data.get("status")
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(200) as u16;
-                            let body = data.get("body")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("{}");
+                            let status =
+                                data.get("status").and_then(|v| v.as_u64()).unwrap_or(200) as u16;
+                            let body = data.get("body").and_then(|v| v.as_str()).unwrap_or("{}");
 
                             debug!("DynamoDB response: status={}", status);
-                            let _ = status_tx.send(format!("[DEBUG] DynamoDB → {} response", status));
+                            let _ =
+                                status_tx.send(format!("[DEBUG] DynamoDB → {} response", status));
                             trace!("DynamoDB response body: {}", body);
                             let _ = status_tx.send(format!("[TRACE] DynamoDB response: {}", body));
 
                             // Generate a simple request ID using timestamp
-                            let request_id = format!("{:x}", std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap()
-                                .as_nanos());
+                            let request_id = format!(
+                                "{:x}",
+                                std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap()
+                                    .as_nanos()
+                            );
 
                             return Ok(Response::builder()
                                 .status(status)
@@ -248,10 +271,13 @@ async fn handle_dynamo_request_with_llm(
             // No DynamoDB response found, return default OK with empty response
             debug!("No DynamoDB response from LLM, returning 200 OK with empty object");
 
-            let request_id = format!("{:x}", std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos());
+            let request_id = format!(
+                "{:x}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            );
 
             Ok(Response::builder()
                 .status(200)

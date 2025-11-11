@@ -224,7 +224,10 @@ impl PinState {
         } else {
             self.retries -= 1;
             self.verified = false;
-            warn!("PIN verification failed - {} retries remaining", self.retries);
+            warn!(
+                "PIN verification failed - {} retries remaining",
+                self.retries
+            );
             Ok(false)
         }
     }
@@ -282,7 +285,8 @@ impl Ctap2CredentialStore {
 
         // Generate ECDSA P-256 key pair
         let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &self.rng)?;
-        let key_pair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref(), &self.rng)?;
+        let key_pair =
+            EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref(), &self.rng)?;
 
         let public_key_bytes = key_pair.public_key().as_ref();
 
@@ -313,19 +317,33 @@ impl Ctap2CredentialStore {
         // Also store in resident credentials if requested
         if require_resident_key {
             self.resident_credentials.push(credential.clone());
-            info!("Created resident credential for RP '{}', user '{}'", rp_id, user_name);
+            info!(
+                "Created resident credential for RP '{}', user '{}'",
+                rp_id, user_name
+            );
         } else {
-            info!("Created credential for RP '{}', user '{}'", rp_id, user_name);
+            info!(
+                "Created credential for RP '{}', user '{}'",
+                rp_id, user_name
+            );
         }
 
         Ok(credential)
     }
 
     /// Find credentials for RP ID (includes resident keys)
-    pub fn find_credentials(&mut self, rp_id: &str, credential_id: Option<&[u8]>) -> Option<&mut Ctap2Credential> {
+    pub fn find_credentials(
+        &mut self,
+        rp_id: &str,
+        credential_id: Option<&[u8]>,
+    ) -> Option<&mut Ctap2Credential> {
         // First check resident credentials
         if credential_id.is_none() {
-            if let Some(cred) = self.resident_credentials.iter_mut().find(|c| c.rp_id == rp_id) {
+            if let Some(cred) = self
+                .resident_credentials
+                .iter_mut()
+                .find(|c| c.rp_id == rp_id)
+            {
                 return Some(cred);
             }
         }
@@ -420,13 +438,15 @@ impl Ctap2Handler {
     }
 
     pub fn new_with_approval_manager(
-        approval_manager: Option<std::sync::Arc<crate::server::usb::fido2::approval::ApprovalManager>>,
+        approval_manager: Option<
+            std::sync::Arc<crate::server::usb::fido2::approval::ApprovalManager>,
+        >,
     ) -> Self {
         let aaguid = [
-            0x4e, 0x65, 0x74, 0x47,  // "NetG"
-            0x65, 0x74, 0x2d, 0x46,  // "et-F"
-            0x49, 0x44, 0x4f, 0x32,  // "IDO2"
-            0x00, 0x00, 0x00, 0x01,  // version
+            0x4e, 0x65, 0x74, 0x47, // "NetG"
+            0x65, 0x74, 0x2d, 0x46, // "et-F"
+            0x49, 0x44, 0x4f, 0x32, // "IDO2"
+            0x00, 0x00, 0x00, 0x01, // version
         ];
 
         Self {
@@ -483,14 +503,20 @@ impl Ctap2Handler {
         options.insert(CborValue::Text("up".to_string()), CborValue::Bool(true)); // User presence
         options.insert(CborValue::Text("uv".to_string()), CborValue::Bool(true)); // User verification (PIN)
         options.insert(CborValue::Text("plat".to_string()), CborValue::Bool(false)); // Not platform authenticator
-        options.insert(CborValue::Text("clientPin".to_string()), CborValue::Bool(self.store.has_pin())); // PIN configured
+        options.insert(
+            CborValue::Text("clientPin".to_string()),
+            CborValue::Bool(self.store.has_pin()),
+        ); // PIN configured
         info.insert(CborValue::Integer(0x04), CborValue::Map(options));
 
         // 0x05: maxMsgSize
         info.insert(CborValue::Integer(0x05), CborValue::Integer(1200));
 
         // 0x06: pinProtocols (supported PIN protocol versions)
-        info.insert(CborValue::Integer(0x06), CborValue::Array(vec![CborValue::Integer(1)]));
+        info.insert(
+            CborValue::Integer(0x06),
+            CborValue::Array(vec![CborValue::Integer(1)]),
+        );
 
         Ctap2Response::success(CborValue::Map(info))
     }
@@ -568,25 +594,33 @@ impl Ctap2Handler {
         // Check for LLM approval if approval manager is configured
         if let Some(ref approval_mgr) = self.approval_manager {
             debug!("Requesting LLM approval for MakeCredential");
-            let (approval_id, decision) = tokio::runtime::Handle::current().block_on(
-                approval_mgr.request_approval(
+            let (approval_id, decision) =
+                tokio::runtime::Handle::current().block_on(approval_mgr.request_approval(
                     crate::server::usb::fido2::approval::OperationType::Register,
                     rp_id.clone(),
                     Some(user_name.clone()),
                     None,
-                )
-            );
+                ));
 
             if decision == crate::server::usb::fido2::approval::ApprovalDecision::Denied {
                 warn!("MakeCredential denied by LLM (approval_id={})", approval_id);
                 return Ctap2Response::error(Ctap2Status::OperationDenied);
             }
 
-            info!("MakeCredential approved by LLM (approval_id={})", approval_id);
+            info!(
+                "MakeCredential approved by LLM (approval_id={})",
+                approval_id
+            );
         }
 
         // Create credential
-        let credential = match self.store.make_credential(&rp_id, &user_handle, &user_name, require_resident_key, require_user_verification) {
+        let credential = match self.store.make_credential(
+            &rp_id,
+            &user_handle,
+            &user_name,
+            require_resident_key,
+            require_user_verification,
+        ) {
             Ok(c) => c,
             Err(e) => {
                 warn!("Failed to create credential: {}", e);
@@ -601,13 +635,23 @@ impl Ctap2Handler {
         // Build attestation object
         let mut att_stmt = BTreeMap::new();
         att_stmt.insert(CborValue::Text("alg".to_string()), CborValue::Integer(-7)); // ES256
-        att_stmt.insert(CborValue::Text("sig".to_string()), CborValue::Bytes(vec![0u8; 71])); // Dummy signature
+        att_stmt.insert(
+            CborValue::Text("sig".to_string()),
+            CborValue::Bytes(vec![0u8; 71]),
+        ); // Dummy signature
 
         let mut auth_data = Vec::new();
         // RP ID hash (32 bytes)
-        auth_data.extend_from_slice(&ring::digest::digest(&ring::digest::SHA256, rp_id.as_bytes()).as_ref());
+        auth_data.extend_from_slice(
+            &ring::digest::digest(&ring::digest::SHA256, rp_id.as_bytes()).as_ref(),
+        );
         // Flags (1 byte): UP=1, UV=(pin verified), AT=1, ED=0
-        let flags = 0x41 | if self.store.pin_verified() { 0x04 } else { 0x00 }; // Set UV bit if PIN verified
+        let flags = 0x41
+            | if self.store.pin_verified() {
+                0x04
+            } else {
+                0x00
+            }; // Set UV bit if PIN verified
         auth_data.push(flags);
         // Counter (4 bytes)
         auth_data.extend_from_slice(&0u32.to_be_bytes());
@@ -621,14 +665,32 @@ impl Ctap2Handler {
         auth_data.extend_from_slice(&credential.public_key_cose);
 
         let mut att_obj = BTreeMap::new();
-        att_obj.insert(CborValue::Text("fmt".to_string()), CborValue::Text("packed".to_string()));
-        att_obj.insert(CborValue::Text("authData".to_string()), CborValue::Bytes(auth_data));
-        att_obj.insert(CborValue::Text("attStmt".to_string()), CborValue::Map(att_stmt));
+        att_obj.insert(
+            CborValue::Text("fmt".to_string()),
+            CborValue::Text("packed".to_string()),
+        );
+        att_obj.insert(
+            CborValue::Text("authData".to_string()),
+            CborValue::Bytes(auth_data),
+        );
+        att_obj.insert(
+            CborValue::Text("attStmt".to_string()),
+            CborValue::Map(att_stmt),
+        );
 
         let mut response = BTreeMap::new();
-        response.insert(CborValue::Integer(0x01), CborValue::Text("packed".to_string()));
-        response.insert(CborValue::Integer(0x02), CborValue::Bytes(serde_cbor::to_vec(&CborValue::Map(att_obj)).unwrap_or_default()));
-        response.insert(CborValue::Integer(0x03), CborValue::Bytes(self.aaguid.to_vec()));
+        response.insert(
+            CborValue::Integer(0x01),
+            CborValue::Text("packed".to_string()),
+        );
+        response.insert(
+            CborValue::Integer(0x02),
+            CborValue::Bytes(serde_cbor::to_vec(&CborValue::Map(att_obj)).unwrap_or_default()),
+        );
+        response.insert(
+            CborValue::Integer(0x03),
+            CborValue::Bytes(self.aaguid.to_vec()),
+        );
 
         info!("MakeCredential successful");
         Ctap2Response::success(CborValue::Map(response))
@@ -657,14 +719,13 @@ impl Ctap2Handler {
         // Check for LLM approval if approval manager is configured
         if let Some(ref approval_mgr) = self.approval_manager {
             debug!("Requesting LLM approval for GetAssertion");
-            let (approval_id, decision) = tokio::runtime::Handle::current().block_on(
-                approval_mgr.request_approval(
+            let (approval_id, decision) =
+                tokio::runtime::Handle::current().block_on(approval_mgr.request_approval(
                     crate::server::usb::fido2::approval::OperationType::Authenticate,
                     rp_id.clone(),
                     None,
                     None,
-                )
-            );
+                ));
 
             if decision == crate::server::usb::fido2::approval::ApprovalDecision::Denied {
                 warn!("GetAssertion denied by LLM (approval_id={})", approval_id);
@@ -696,7 +757,9 @@ impl Ctap2Handler {
 
         // Build authenticator data
         let mut auth_data = Vec::new();
-        auth_data.extend_from_slice(&ring::digest::digest(&ring::digest::SHA256, rp_id.as_bytes()).as_ref());
+        auth_data.extend_from_slice(
+            &ring::digest::digest(&ring::digest::SHA256, rp_id.as_bytes()).as_ref(),
+        );
         // Flags: UP=1, UV=(pin verified)
         let flags = 0x01 | if pin_verified { 0x04 } else { 0x00 };
         auth_data.push(flags);
@@ -709,7 +772,7 @@ impl Ctap2Handler {
         let key_pair = match EcdsaKeyPair::from_pkcs8(
             &ECDSA_P256_SHA256_FIXED_SIGNING,
             &private_key,
-            &ring::rand::SystemRandom::new()
+            &ring::rand::SystemRandom::new(),
         ) {
             Ok(kp) => kp,
             Err(e) => {
@@ -759,7 +822,10 @@ impl Ctap2Handler {
             0x03 => {
                 // getPinRetries
                 let mut response = BTreeMap::new();
-                response.insert(CborValue::Integer(0x03), CborValue::Integer(self.store.pin_retries() as i128));
+                response.insert(
+                    CborValue::Integer(0x03),
+                    CborValue::Integer(self.store.pin_retries() as i128),
+                );
                 info!("ClientPin: getPinRetries = {}", self.store.pin_retries());
                 Ctap2Response::success(CborValue::Map(response))
             }

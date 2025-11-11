@@ -11,13 +11,13 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, trace, warn};
 
+use crate::client::tor::actions::{TOR_CLIENT_CONNECTED_EVENT, TOR_CLIENT_DATA_RECEIVED_EVENT};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::tor::actions::{TOR_CLIENT_CONNECTED_EVENT, TOR_CLIENT_DATA_RECEIVED_EVENT};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -70,11 +70,19 @@ impl TorClient {
         // Get a dummy local address since Tor connections don't have real local addresses
         let local_addr = SocketAddr::from(([127, 0, 0, 1], 0));
 
-        info!("Tor client {} connected to {} through Tor network", client_id, remote_addr);
+        info!(
+            "Tor client {} connected to {} through Tor network",
+            client_id, remote_addr
+        );
 
         // Update client state
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] Tor client {} connected to {}", client_id, remote_addr));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] Tor client {} connected to {}",
+            client_id, remote_addr
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Call LLM with connected event
@@ -96,12 +104,20 @@ impl TorClient {
                 Some(&event),
                 protocol.as_ref(),
                 &status_tx,
-            ).await {
+            )
+            .await
+            {
                 Ok(_) => {
-                    trace!("LLM called successfully for Tor client {} connection", client_id);
+                    trace!(
+                        "LLM called successfully for Tor client {} connection",
+                        client_id
+                    );
                 }
                 Err(e) => {
-                    warn!("Failed to call LLM for Tor client {} connection: {}", client_id, e);
+                    warn!(
+                        "Failed to call LLM for Tor client {} connection: {}",
+                        client_id, e
+                    );
                 }
             }
         }
@@ -125,8 +141,11 @@ impl TorClient {
                 match read_half.read(&mut buffer).await {
                     Ok(0) => {
                         info!("Tor client {} disconnected", client_id);
-                        app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                        let _ = status_tx.send(format!("[CLIENT] Tor client {} disconnected", client_id));
+                        app_state
+                            .update_client_status(client_id, ClientStatus::Disconnected)
+                            .await;
+                        let _ = status_tx
+                            .send(format!("[CLIENT] Tor client {} disconnected", client_id));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         break;
                     }
@@ -144,8 +163,12 @@ impl TorClient {
                                 drop(client_data_lock);
 
                                 // Call LLM
-                                if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                                    let protocol = Arc::new(crate::client::tor::actions::TorClientProtocol::new());
+                                if let Some(instruction) =
+                                    app_state.get_instruction_for_client(client_id).await
+                                {
+                                    let protocol = Arc::new(
+                                        crate::client::tor::actions::TorClientProtocol::new(),
+                                    );
                                     let event = Event::new(
                                         &TOR_CLIENT_DATA_RECEIVED_EVENT,
                                         serde_json::json!({
@@ -163,8 +186,13 @@ impl TorClient {
                                         Some(&event),
                                         protocol.as_ref(),
                                         &status_tx,
-                                    ).await {
-                                        Ok(ClientLlmResult { actions, memory_updates }) => {
+                                    )
+                                    .await
+                                    {
+                                        Ok(ClientLlmResult {
+                                            actions,
+                                            memory_updates,
+                                        }) => {
                                             // Update memory
                                             if let Some(mem) = memory_updates {
                                                 client_data.lock().await.memory = mem;
@@ -213,7 +241,9 @@ impl TorClient {
                     }
                     Err(e) => {
                         error!("Tor client {} read error: {}", client_id, e);
-                        app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
+                        app_state
+                            .update_client_status(client_id, ClientStatus::Error(e.to_string()))
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         break;
                     }

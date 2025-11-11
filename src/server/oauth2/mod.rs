@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
-use hyper::body::{Incoming, Body};
+use hyper::body::{Body, Incoming};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
@@ -21,13 +21,16 @@ use serde_json::json;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info};
 
-use crate::server::connection::ConnectionId;
-use crate::server::oauth2::actions::{OAuth2Protocol, OAUTH2_AUTHORIZE_EVENT, OAUTH2_TOKEN_EVENT, OAUTH2_INTROSPECT_EVENT, OAUTH2_REVOKE_EVENT};
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
+use crate::server::connection::ConnectionId;
+use crate::server::oauth2::actions::{
+    OAuth2Protocol, OAUTH2_AUTHORIZE_EVENT, OAUTH2_INTROSPECT_EVENT, OAUTH2_REVOKE_EVENT,
+    OAUTH2_TOKEN_EVENT,
+};
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 
 /// OAuth2 authorization server
 pub struct OAuth2Server;
@@ -41,7 +44,8 @@ impl OAuth2Server {
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
     ) -> anyhow::Result<SocketAddr> {
-        let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let listener =
+            crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         console_info!(status_tx, "OAuth2 server listening on {}", local_addr);
 
@@ -52,12 +56,16 @@ impl OAuth2Server {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
                         info!("OAuth2 connection {} from {}", connection_id, remote_addr);
 
                         // Add connection to ServerInstance
-                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
                         use serde_json::json;
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
@@ -75,7 +83,9 @@ impl OAuth2Server {
                                 "recent_requests": []
                             })),
                         };
-                        app_state.add_connection_to_server(server_id, conn_state).await;
+                        app_state
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let llm_client_clone = llm_client.clone();
@@ -109,13 +119,18 @@ impl OAuth2Server {
                             });
 
                             // Serve HTTP/1 on this connection
-                            if let Err(err) = http1::Builder::new().serve_connection(io, service).await {
+                            if let Err(err) =
+                                http1::Builder::new().serve_connection(io, service).await
+                            {
                                 error!("Error serving OAuth2 connection: {:?}", err);
                             }
 
                             // Mark connection as closed
-                            app_state_clone.close_connection_on_server(server_id, connection_id).await;
-                            let _ = status_tx_clone.send(format!("✗ OAuth2 connection {connection_id} closed"));
+                            app_state_clone
+                                .close_connection_on_server(server_id, connection_id)
+                                .await;
+                            let _ = status_tx_clone
+                                .send(format!("✗ OAuth2 connection {connection_id} closed"));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
@@ -149,38 +164,92 @@ async fn handle_oauth2_request(
     let _ = status_tx.send(format!("[DEBUG] OAuth2 {} {}", method, path));
 
     // Track request in connection info
-    app_state.update_connection_stats(server_id, connection_id, None, None, Some(1), None).await;
+    app_state
+        .update_connection_stats(server_id, connection_id, None, None, Some(1), None)
+        .await;
 
     // Route the request
     let response = match (method.clone(), path) {
         (Method::GET, "/authorize") | (Method::POST, "/authorize") => {
-            handle_authorize_request(req, connection_id, server_id, llm_client, app_state.clone(), status_tx.clone(), protocol).await
+            handle_authorize_request(
+                req,
+                connection_id,
+                server_id,
+                llm_client,
+                app_state.clone(),
+                status_tx.clone(),
+                protocol,
+            )
+            .await
         }
         (Method::POST, "/token") => {
-            handle_token_request(req, connection_id, server_id, llm_client, app_state.clone(), status_tx.clone(), protocol).await
+            handle_token_request(
+                req,
+                connection_id,
+                server_id,
+                llm_client,
+                app_state.clone(),
+                status_tx.clone(),
+                protocol,
+            )
+            .await
         }
         (Method::POST, "/introspect") => {
-            handle_introspect_request(req, connection_id, server_id, llm_client, app_state.clone(), status_tx.clone(), protocol).await
+            handle_introspect_request(
+                req,
+                connection_id,
+                server_id,
+                llm_client,
+                app_state.clone(),
+                status_tx.clone(),
+                protocol,
+            )
+            .await
         }
         (Method::POST, "/revoke") => {
-            handle_revoke_request(req, connection_id, server_id, llm_client, app_state.clone(), status_tx.clone(), protocol).await
+            handle_revoke_request(
+                req,
+                connection_id,
+                server_id,
+                llm_client,
+                app_state.clone(),
+                status_tx.clone(),
+                protocol,
+            )
+            .await
         }
         _ => {
             debug!("OAuth2: Unknown endpoint {} {}", method, path);
             Ok(Response::builder()
                 .status(StatusCode::NOT_FOUND)
                 .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(json!({
-                    "error": "invalid_request",
-                    "error_description": "Unknown endpoint"
-                }).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({
+                        "error": "invalid_request",
+                        "error_description": "Unknown endpoint"
+                    })
+                    .to_string(),
+                )))
                 .unwrap())
         }
     };
 
     // Update connection stats
-    let body_size = response.as_ref().ok().map(|resp| resp.body().size_hint().exact().unwrap_or(0)).unwrap_or(0);
-    app_state.update_connection_stats(server_id, connection_id, None, Some(body_size), None, Some(1)).await;
+    let body_size = response
+        .as_ref()
+        .ok()
+        .map(|resp| resp.body().size_hint().exact().unwrap_or(0))
+        .unwrap_or(0);
+    app_state
+        .update_connection_stats(
+            server_id,
+            connection_id,
+            None,
+            Some(body_size),
+            None,
+            Some(1),
+        )
+        .await;
 
     let _ = status_tx.send("__UPDATE_UI__".to_string());
     response
@@ -215,27 +284,45 @@ async fn handle_authorize_request(
     };
 
     debug!("OAuth2 authorize request: {:?}", params);
-    let _ = status_tx.send(format!("[DEBUG] OAuth2 authorize: response_type={:?}, client_id={:?}",
-        params.get("response_type"), params.get("client_id")));
+    let _ = status_tx.send(format!(
+        "[DEBUG] OAuth2 authorize: response_type={:?}, client_id={:?}",
+        params.get("response_type"),
+        params.get("client_id")
+    ));
 
     // Create LLM event
-    let event = Event::new(&OAUTH2_AUTHORIZE_EVENT, json!({
-        "response_type": params.get("response_type").cloned().unwrap_or_default(),
-        "client_id": params.get("client_id").cloned().unwrap_or_default(),
-        "redirect_uri": params.get("redirect_uri").cloned().unwrap_or_default(),
-        "scope": params.get("scope").cloned().unwrap_or_default(),
-        "state": params.get("state").cloned().unwrap_or_default(),
-    }));
+    let event = Event::new(
+        &OAUTH2_AUTHORIZE_EVENT,
+        json!({
+            "response_type": params.get("response_type").cloned().unwrap_or_default(),
+            "client_id": params.get("client_id").cloned().unwrap_or_default(),
+            "redirect_uri": params.get("redirect_uri").cloned().unwrap_or_default(),
+            "scope": params.get("scope").cloned().unwrap_or_default(),
+            "state": params.get("state").cloned().unwrap_or_default(),
+        }),
+    );
 
     // Call LLM
-    match call_llm(&llm_client, &app_state, server_id, Some(connection_id), &event, &*protocol).await {
+    match call_llm(
+        &llm_client,
+        &app_state,
+        server_id,
+        Some(connection_id),
+        &event,
+        &*protocol,
+    )
+    .await
+    {
         Ok(_) => {
             // LLM should have returned oauth2_authorize_response action
             // Extract response from action results
             // For now, return a default authorization code response
             let code = "AUTH_CODE_123"; // LLM should generate this
             let state = params.get("state").cloned().unwrap_or_default();
-            let redirect_uri = params.get("redirect_uri").cloned().unwrap_or("urn:ietf:wg:oauth:2.0:oob".to_string());
+            let redirect_uri = params
+                .get("redirect_uri")
+                .cloned()
+                .unwrap_or("urn:ietf:wg:oauth:2.0:oob".to_string());
 
             let location = if redirect_uri.contains('?') {
                 format!("{}&code={}&state={}", redirect_uri, code, state)
@@ -255,10 +342,13 @@ async fn handle_authorize_request(
             Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(json!({
-                    "error": "server_error",
-                    "error_description": format!("{}", e)
-                }).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({
+                        "error": "server_error",
+                        "error_description": format!("{}", e)
+                    })
+                    .to_string(),
+                )))
                 .unwrap())
         }
     }
@@ -281,10 +371,13 @@ async fn handle_token_request(
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(json!({
-                    "error": "invalid_request",
-                    "error_description": "Failed to read request body"
-                }).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({
+                        "error": "invalid_request",
+                        "error_description": "Failed to read request body"
+                    })
+                    .to_string(),
+                )))
                 .unwrap());
         }
     };
@@ -293,24 +386,39 @@ async fn handle_token_request(
     let params = parse_query_params(&body_str);
 
     debug!("OAuth2 token request: {:?}", params);
-    let _ = status_tx.send(format!("[DEBUG] OAuth2 token: grant_type={:?}, client_id={:?}",
-        params.get("grant_type"), params.get("client_id")));
+    let _ = status_tx.send(format!(
+        "[DEBUG] OAuth2 token: grant_type={:?}, client_id={:?}",
+        params.get("grant_type"),
+        params.get("client_id")
+    ));
 
     // Create LLM event
-    let event = Event::new(&OAUTH2_TOKEN_EVENT, json!({
-        "grant_type": params.get("grant_type").cloned().unwrap_or_default(),
-        "code": params.get("code").cloned().unwrap_or_default(),
-        "redirect_uri": params.get("redirect_uri").cloned().unwrap_or_default(),
-        "client_id": params.get("client_id").cloned().unwrap_or_default(),
-        "client_secret": params.get("client_secret").cloned().unwrap_or_default(),
-        "refresh_token": params.get("refresh_token").cloned().unwrap_or_default(),
-        "username": params.get("username").cloned().unwrap_or_default(),
-        "password": params.get("password").cloned().unwrap_or_default(),
-        "scope": params.get("scope").cloned().unwrap_or_default(),
-    }));
+    let event = Event::new(
+        &OAUTH2_TOKEN_EVENT,
+        json!({
+            "grant_type": params.get("grant_type").cloned().unwrap_or_default(),
+            "code": params.get("code").cloned().unwrap_or_default(),
+            "redirect_uri": params.get("redirect_uri").cloned().unwrap_or_default(),
+            "client_id": params.get("client_id").cloned().unwrap_or_default(),
+            "client_secret": params.get("client_secret").cloned().unwrap_or_default(),
+            "refresh_token": params.get("refresh_token").cloned().unwrap_or_default(),
+            "username": params.get("username").cloned().unwrap_or_default(),
+            "password": params.get("password").cloned().unwrap_or_default(),
+            "scope": params.get("scope").cloned().unwrap_or_default(),
+        }),
+    );
 
     // Call LLM
-    match call_llm(&llm_client, &app_state, server_id, Some(connection_id), &event, &*protocol).await {
+    match call_llm(
+        &llm_client,
+        &app_state,
+        server_id,
+        Some(connection_id),
+        &event,
+        &*protocol,
+    )
+    .await
+    {
         Ok(_) => {
             // LLM should have returned oauth2_token_response action
             // For now, return a default token response
@@ -320,13 +428,16 @@ async fn handle_token_request(
                 .header("Content-Type", "application/json")
                 .header("Cache-Control", "no-store")
                 .header("Pragma", "no-cache")
-                .body(Full::new(Bytes::from(json!({
-                    "access_token": "ACCESS_TOKEN_123",
-                    "token_type": "Bearer",
-                    "expires_in": 3600,
-                    "refresh_token": "REFRESH_TOKEN_123",
-                    "scope": params.get("scope").cloned().unwrap_or("".to_string())
-                }).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({
+                        "access_token": "ACCESS_TOKEN_123",
+                        "token_type": "Bearer",
+                        "expires_in": 3600,
+                        "refresh_token": "REFRESH_TOKEN_123",
+                        "scope": params.get("scope").cloned().unwrap_or("".to_string())
+                    })
+                    .to_string(),
+                )))
                 .unwrap())
         }
         Err(e) => {
@@ -334,10 +445,13 @@ async fn handle_token_request(
             Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(json!({
-                    "error": "invalid_grant",
-                    "error_description": format!("{}", e)
-                }).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({
+                        "error": "invalid_grant",
+                        "error_description": format!("{}", e)
+                    })
+                    .to_string(),
+                )))
                 .unwrap())
         }
     }
@@ -360,9 +474,12 @@ async fn handle_introspect_request(
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(json!({
-                    "active": false
-                }).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({
+                        "active": false
+                    })
+                    .to_string(),
+                )))
                 .unwrap());
         }
     };
@@ -373,13 +490,25 @@ async fn handle_introspect_request(
     debug!("OAuth2 introspect request: token={:?}", params.get("token"));
 
     // Create LLM event
-    let event = Event::new(&OAUTH2_INTROSPECT_EVENT, json!({
-        "token": params.get("token").cloned().unwrap_or_default(),
-        "token_type_hint": params.get("token_type_hint").cloned().unwrap_or_default(),
-    }));
+    let event = Event::new(
+        &OAUTH2_INTROSPECT_EVENT,
+        json!({
+            "token": params.get("token").cloned().unwrap_or_default(),
+            "token_type_hint": params.get("token_type_hint").cloned().unwrap_or_default(),
+        }),
+    );
 
     // Call LLM
-    match call_llm(&llm_client, &app_state, server_id, Some(connection_id), &event, &*protocol).await {
+    match call_llm(
+        &llm_client,
+        &app_state,
+        server_id,
+        Some(connection_id),
+        &event,
+        &*protocol,
+    )
+    .await
+    {
         Ok(_) => {
             // LLM should have returned oauth2_introspect_response action
             // For now, return a default active response
@@ -387,24 +516,28 @@ async fn handle_introspect_request(
             Ok(Response::builder()
                 .status(StatusCode::OK)
                 .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(json!({
-                    "active": true,
-                    "scope": "read write",
-                    "client_id": "client123",
-                    "token_type": "Bearer",
-                    "exp": 1234567890,
-                }).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({
+                        "active": true,
+                        "scope": "read write",
+                        "client_id": "client123",
+                        "token_type": "Bearer",
+                        "exp": 1234567890,
+                    })
+                    .to_string(),
+                )))
                 .unwrap())
         }
-        Err(_) => {
-            Ok(Response::builder()
-                .status(StatusCode::OK)
-                .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(json!({
+        Err(_) => Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("Content-Type", "application/json")
+            .body(Full::new(Bytes::from(
+                json!({
                     "active": false
-                }).to_string())))
-                .unwrap())
-        }
+                })
+                .to_string(),
+            )))
+            .unwrap()),
     }
 }
 
@@ -435,13 +568,24 @@ async fn handle_revoke_request(
     debug!("OAuth2 revoke request: token={:?}", params.get("token"));
 
     // Create LLM event
-    let event = Event::new(&OAUTH2_REVOKE_EVENT, json!({
-        "token": params.get("token").cloned().unwrap_or_default(),
-        "token_type_hint": params.get("token_type_hint").cloned().unwrap_or_default(),
-    }));
+    let event = Event::new(
+        &OAUTH2_REVOKE_EVENT,
+        json!({
+            "token": params.get("token").cloned().unwrap_or_default(),
+            "token_type_hint": params.get("token_type_hint").cloned().unwrap_or_default(),
+        }),
+    );
 
     // Call LLM
-    let _ = call_llm(&llm_client, &app_state, server_id, Some(connection_id), &event, &*protocol).await;
+    let _ = call_llm(
+        &llm_client,
+        &app_state,
+        server_id,
+        Some(connection_id),
+        &event,
+        &*protocol,
+    )
+    .await;
 
     info!("OAuth2 token revoked");
     // RFC 7009: The authorization server responds with HTTP status code 200

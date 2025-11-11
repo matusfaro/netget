@@ -2,7 +2,9 @@
 
 ## Overview
 
-Elasticsearch-compatible server implementing the Elasticsearch HTTP/JSON REST API. The server handles search, indexing, and cluster management operations with full LLM control over responses. This is a "virtual" search engine where the LLM maintains data and search results through conversation context.
+Elasticsearch-compatible server implementing the Elasticsearch HTTP/JSON REST API. The server handles search, indexing,
+and cluster management operations with full LLM control over responses. This is a "virtual" search engine where the LLM
+maintains data and search results through conversation context.
 
 **Port**: 9200 (default Elasticsearch port)
 **Protocol**: HTTP/1.1 with JSON payloads
@@ -12,22 +14,26 @@ Elasticsearch-compatible server implementing the Elasticsearch HTTP/JSON REST AP
 ## Library Choices
 
 **hyper** (v1.5):
+
 - HTTP/1.1 server implementation
 - Async connection handling with tokio
 - Service-based request routing
 - Handles HTTP framing, headers, body parsing
 
 **http-body-util**:
+
 - Body aggregation (`BodyExt::collect()`)
 - Full body type (`Full<Bytes>`)
 - Efficient byte handling
 
 **serde_json**:
+
 - JSON request/response parsing
 - Elasticsearch uses JSON for all data
 - No binary protocol support
 
 **Manual API Implementation**:
+
 - LLM controls all Elasticsearch operations through action system
 - No Elasticsearch client dependencies
 - Responses manually constructed as JSON
@@ -36,6 +42,7 @@ Elasticsearch-compatible server implementing the Elasticsearch HTTP/JSON REST AP
 ## Architecture Decisions
 
 ### REST API Design
+
 - Operations determined by HTTP method (GET, POST, PUT, DELETE) and path
 - Path structure: `/{index}/_doc/{id}`, `/{index}/_search`, `/_cluster/health`, etc.
 - Request body is JSON (for POST/PUT operations)
@@ -44,12 +51,14 @@ Elasticsearch-compatible server implementing the Elasticsearch HTTP/JSON REST AP
 - Custom header: `X-elastic-product: Elasticsearch`
 
 ### Stateless Operation
+
 - Each HTTP request is independent
 - No persistent storage or connection state
 - LLM maintains "virtual" indices and documents through conversation context
 - Server ID used but no per-connection state
 
 ### Request Processing Flow
+
 1. Accept TCP connection
 2. Parse HTTP request (method, URI, headers, body)
 3. Detect operation from method + path (e.g., GET + "/_search" → search)
@@ -57,11 +66,12 @@ Elasticsearch-compatible server implementing the Elasticsearch HTTP/JSON REST AP
 5. Create `ELASTICSEARCH_REQUEST_EVENT` with method, path, operation, body
 6. Call LLM via `call_llm()` with event and protocol
 7. Process action result:
-   - `elasticsearch_response`: Build HTTP response with status/body
+    - `elasticsearch_response`: Build HTTP response with status/body
 8. If no action, return default JSON `{"acknowledged": true}`
 9. Close connection (HTTP/1.1 without keep-alive)
 
 ### Operation Detection
+
 - **Root endpoint** (`GET /`) → cluster_info
 - **Search** (`GET|POST /_search` or `/{index}/_search`) → search
 - **Index document** (`POST|PUT /{index}/_doc` or `/{index}/_doc/{id}`) → index
@@ -73,10 +83,11 @@ Elasticsearch-compatible server implementing the Elasticsearch HTTP/JSON REST AP
 - **Cat API** (`GET /_cat/{endpoint}`) → cat_*
 
 ### Response Format
+
 - Status: 200 (success), 201 (created), 404 (not found), 500 (error)
 - Headers:
-  - `Content-Type: application/json; charset=UTF-8`
-  - `X-elastic-product: Elasticsearch`
+    - `Content-Type: application/json; charset=UTF-8`
+    - `X-elastic-product: Elasticsearch`
 - Body: JSON object with operation-specific fields
 - Error format: `{"error": {"type": "...", "reason": "..."}, "status": 500}`
 
@@ -85,15 +96,19 @@ Elasticsearch-compatible server implementing the Elasticsearch HTTP/JSON REST AP
 ### Action-Based Responses
 
 **Sync Actions** (network event context required):
+
 - `elasticsearch_response`: Return HTTP response with status and body
 
 **Event Types**:
+
 - `ELASTICSEARCH_REQUEST_EVENT`: Fired for every Elasticsearch operation
-  - Data: `{ "method": "POST", "path": "/_search", "operation": "search", "index": null, "doc_id": null, "request_body": "{...}" }`
+    - Data:
+      `{ "method": "POST", "path": "/_search", "operation": "search", "index": null, "doc_id": null, "request_body": "{...}" }`
 
 ### Example LLM Prompts
 
 **Root endpoint** (cluster info):
+
 ```
 For GET / request, use elasticsearch_response with:
 status=200
@@ -101,6 +116,7 @@ body='{"name":"netget-node","cluster_name":"netget","version":{"number":"8.0.0"}
 ```
 
 **Search operation**:
+
 ```
 For POST /products/_search with query match_all, use elasticsearch_response with:
 status=200
@@ -108,6 +124,7 @@ body='{"hits":{"total":{"value":2},"hits":[{"_index":"products","_id":"1","_sour
 ```
 
 **Index document**:
+
 ```
 For PUT /products/_doc/1, use elasticsearch_response with:
 status=201
@@ -115,6 +132,7 @@ body='{"_index":"products","_id":"1","_version":1,"result":"created"}'
 ```
 
 **Get document**:
+
 ```
 For GET /products/_doc/123, use elasticsearch_response with:
 status=200
@@ -122,6 +140,7 @@ body='{"_index":"products","_id":"123","found":true,"_source":{"name":"Widget","
 ```
 
 **Delete document**:
+
 ```
 For DELETE /products/_doc/123, use elasticsearch_response with:
 status=200
@@ -129,6 +148,7 @@ body='{"_index":"products","_id":"123","_version":2,"result":"deleted"}'
 ```
 
 **Error responses**:
+
 ```
 For GET /products/_doc/nonexistent, use elasticsearch_response with:
 status=404
@@ -138,6 +158,7 @@ body='{"_index":"products","_id":"nonexistent","found":false}'
 ## Connection Management
 
 ### Connection Lifecycle
+
 1. Server accepts TCP connection on port 9200
 2. Create `ConnectionId` for tracking
 3. Add connection to `ServerInstance` with `ProtocolConnectionInfo::Elasticsearch`
@@ -146,6 +167,7 @@ body='{"_index":"products","_id":"nonexistent","found":false}'
 6. Connection closed after response sent
 
 ### State Tracking
+
 - Connection state stored in `ServerInstance.connections` HashMap
 - Protocol-specific: `recent_requests` Vec (method, path, time)
 - Tracks: remote_addr, local_addr, bytes_sent/received
@@ -153,6 +175,7 @@ body='{"_index":"products","_id":"nonexistent","found":false}'
 - HTTP/1.1 without keep-alive (new connection per request)
 
 ### Concurrency
+
 - Multiple connections handled concurrently
 - Each connection is independent (stateless HTTP)
 - No shared state between connections
@@ -161,6 +184,7 @@ body='{"_index":"products","_id":"nonexistent","found":false}'
 ## Limitations
 
 ### Protocol Features
+
 - **No persistent storage** - data only exists in LLM conversation context
 - **No authentication** - no security features
 - **HTTP/1.1 only** - no HTTP/2 support
@@ -174,12 +198,14 @@ body='{"_index":"products","_id":"nonexistent","found":false}'
 - **No X-Pack features** - no ML, security, monitoring
 
 ### Performance
+
 - Each request triggers LLM call
 - No actual search indexing or ranking
 - Full request/response in memory
 - Connection overhead per request
 
 ### Data Management
+
 - **Virtual data** - LLM maintains indices/documents through conversation
 - **No persistence** - data lost when LLM context is cleared
 - **Consistency** - depends on LLM memory
@@ -197,6 +223,7 @@ body='{"_index":"products","_id":"nonexistent","found":false}'
 ## Example Responses
 
 ### Root Endpoint (Cluster Info)
+
 ```json
 {
   "actions": [
@@ -210,6 +237,7 @@ body='{"_index":"products","_id":"nonexistent","found":false}'
 ```
 
 ### Search Response
+
 ```json
 {
   "actions": [
@@ -223,6 +251,7 @@ body='{"_index":"products","_id":"nonexistent","found":false}'
 ```
 
 ### Index Document Success
+
 ```json
 {
   "actions": [
@@ -236,6 +265,7 @@ body='{"_index":"products","_id":"nonexistent","found":false}'
 ```
 
 ### Error Response
+
 ```json
 {
   "actions": [

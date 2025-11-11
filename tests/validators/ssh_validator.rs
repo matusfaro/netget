@@ -24,7 +24,9 @@ impl SshValidator {
         // For now, we'll just simulate the behavior for testing
 
         // This would use something like async-ssh2 or russh
-        anyhow::bail!("SSH client not yet implemented - use manual testing or add SSH client dependency")
+        anyhow::bail!(
+            "SSH client not yet implemented - use manual testing or add SSH client dependency"
+        )
     }
 
     /// Check if SSH server is reachable
@@ -44,7 +46,10 @@ impl SshValidator {
             tokio::time::sleep(Duration::from_millis(500)).await;
 
             if i % 5 == 0 && i > 0 {
-                println!("Still waiting for SSH server to be ready... (attempt {})", i);
+                println!(
+                    "Still waiting for SSH server to be ready... (attempt {})",
+                    i
+                );
             }
         }
 
@@ -52,7 +57,12 @@ impl SshValidator {
     }
 
     /// Test authentication
-    pub async fn test_auth(&self, username: &str, password: &str, should_succeed: bool) -> Result<()> {
+    pub async fn test_auth(
+        &self,
+        username: &str,
+        password: &str,
+        should_succeed: bool,
+    ) -> Result<()> {
         // Placeholder for SSH auth testing
         anyhow::bail!("SSH authentication test not yet implemented")
     }

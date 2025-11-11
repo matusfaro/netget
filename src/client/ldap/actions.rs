@@ -15,23 +15,21 @@ use std::sync::LazyLock;
 pub static LDAP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "ldap_connected",
-        "LDAP client successfully connected to server"
+        "LDAP client successfully connected to server",
     )
-    .with_parameters(vec![
-        Parameter {
-            name: "remote_addr".to_string(),
-            type_hint: "string".to_string(),
-            description: "LDAP server address".to_string(),
-            required: true,
-        },
-    ])
+    .with_parameters(vec![Parameter {
+        name: "remote_addr".to_string(),
+        type_hint: "string".to_string(),
+        description: "LDAP server address".to_string(),
+        required: true,
+    }])
 });
 
 /// LDAP client bind response event
 pub static LDAP_CLIENT_BIND_RESPONSE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "ldap_bind_response",
-        "LDAP bind (authentication) response received"
+        "LDAP bind (authentication) response received",
     )
     .with_parameters(vec![
         Parameter {
@@ -51,11 +49,7 @@ pub static LDAP_CLIENT_BIND_RESPONSE_EVENT: LazyLock<EventType> = LazyLock::new(
 
 /// LDAP client search results event
 pub static LDAP_CLIENT_SEARCH_RESULTS_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "ldap_search_results",
-        "LDAP search results received"
-    )
-    .with_parameters(vec![
+    EventType::new("ldap_search_results", "LDAP search results received").with_parameters(vec![
         Parameter {
             name: "entries".to_string(),
             type_hint: "array".to_string(),
@@ -75,7 +69,7 @@ pub static LDAP_CLIENT_SEARCH_RESULTS_EVENT: LazyLock<EventType> = LazyLock::new
 pub static LDAP_CLIENT_MODIFY_RESPONSE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "ldap_modify_response",
-        "LDAP modify operation response received"
+        "LDAP modify operation response received",
     )
     .with_parameters(vec![
         Parameter {
@@ -104,8 +98,8 @@ impl LdapClientProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for LdapClientProtocol {
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            vec![
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        vec![
                 ActionDefinition {
                     name: "bind".to_string(),
                     description: "Authenticate to LDAP server with credentials".to_string(),
@@ -256,231 +250,231 @@ impl Protocol for LdapClientProtocol {
                     }),
                 },
             ]
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                ActionDefinition {
-                    name: "wait_for_more".to_string(),
-                    description: "Wait for more data from LDAP server".to_string(),
-                    parameters: vec![],
-                    example: json!({
-                        "type": "wait_for_more"
-                    }),
-                },
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "LDAP"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            vec![
-                EventType {
-                    id: "ldap_connected".to_string(),
-                    description: "Triggered when LDAP client connects to server".to_string(),
-                    actions: vec![],
-                    parameters: vec![],
-                },
-                EventType {
-                    id: "ldap_bind_response".to_string(),
-                    description: "Triggered when LDAP bind response is received".to_string(),
-                    actions: vec![],
-                    parameters: vec![],
-                },
-                EventType {
-                    id: "ldap_search_results".to_string(),
-                    description: "Triggered when LDAP search results are received".to_string(),
-                    actions: vec![],
-                    parameters: vec![],
-                },
-                EventType {
-                    id: "ldap_modify_response".to_string(),
-                    description: "Triggered when LDAP modify response is received".to_string(),
-                    actions: vec![],
-                    parameters: vec![],
-                },
-            ]
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>TCP>LDAP"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["ldap", "ldap client", "connect to ldap", "directory"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Experimental)
-                .implementation("ldap3 crate with full directory operations")
-                .llm_control("Full control over bind, search, add, modify, delete operations")
-                .e2e_testing("Docker OpenLDAP container")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "LDAP client for directory services operations"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Connect to LDAP at localhost:389, bind as cn=admin,dc=example,dc=com and search for all users"
-        }
-        fn group_name(&self) -> &'static str {
-            "Directory"
-        }
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![ActionDefinition {
+            name: "wait_for_more".to_string(),
+            description: "Wait for more data from LDAP server".to_string(),
+            parameters: vec![],
+            example: json!({
+                "type": "wait_for_more"
+            }),
+        }]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "LDAP"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        vec![
+            EventType {
+                id: "ldap_connected".to_string(),
+                description: "Triggered when LDAP client connects to server".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+            EventType {
+                id: "ldap_bind_response".to_string(),
+                description: "Triggered when LDAP bind response is received".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+            EventType {
+                id: "ldap_search_results".to_string(),
+                description: "Triggered when LDAP search results are received".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+            EventType {
+                id: "ldap_modify_response".to_string(),
+                description: "Triggered when LDAP modify response is received".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+        ]
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>LDAP"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["ldap", "ldap client", "connect to ldap", "directory"]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("ldap3 crate with full directory operations")
+            .llm_control("Full control over bind, search, add, modify, delete operations")
+            .e2e_testing("Docker OpenLDAP container")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "LDAP client for directory services operations"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Connect to LDAP at localhost:389, bind as cn=admin,dc=example,dc=com and search for all users"
+    }
+    fn group_name(&self) -> &'static str {
+        "Directory"
+    }
 }
 
 // Implement Client trait (client-specific functionality)
 impl Client for LdapClientProtocol {
-        fn connect(
-            &self,
-            ctx: crate::protocol::ConnectContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::client::ldap::LdapClient;
-                LdapClient::connect_with_llm_actions(
-                    ctx.remote_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.client_id,
-                )
-                .await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "bind" => {
-                    let dn = action
-                        .get("dn")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'dn' field")?
-                        .to_string();
-                    let password = action
-                        .get("password")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'password' field")?
-                        .to_string();
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "ldap_bind".to_string(),
-                        data: json!({
-                            "dn": dn,
-                            "password": password,
-                        }),
-                    })
-                }
-                "search" => {
-                    let base_dn = action
-                        .get("base_dn")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'base_dn' field")?
-                        .to_string();
-                    let filter = action
-                        .get("filter")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'filter' field")?
-                        .to_string();
-                    let attributes = action
-                        .get("attributes")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                                .collect::<Vec<String>>()
-                        })
-                        .unwrap_or_default();
-                    let scope = action
-                        .get("scope")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("subtree")
-                        .to_string();
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "ldap_search".to_string(),
-                        data: json!({
-                            "base_dn": base_dn,
-                            "filter": filter,
-                            "attributes": attributes,
-                            "scope": scope,
-                        }),
-                    })
-                }
-                "add" => {
-                    let dn = action
-                        .get("dn")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'dn' field")?
-                        .to_string();
-                    let attributes = action
-                        .get("attributes")
-                        .context("Missing 'attributes' field")?
-                        .clone();
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "ldap_add".to_string(),
-                        data: json!({
-                            "dn": dn,
-                            "attributes": attributes,
-                        }),
-                    })
-                }
-                "modify" => {
-                    let dn = action
-                        .get("dn")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'dn' field")?
-                        .to_string();
-                    let operation = action
-                        .get("operation")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'operation' field")?
-                        .to_string();
-                    let attribute = action
-                        .get("attribute")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'attribute' field")?
-                        .to_string();
-                    let values = action
-                        .get("values")
-                        .and_then(|v| v.as_array())
-                        .context("Missing 'values' field")?
-                        .iter()
-                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                        .collect::<Vec<String>>();
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "ldap_modify".to_string(),
-                        data: json!({
-                            "dn": dn,
-                            "operation": operation,
-                            "attribute": attribute,
-                            "values": values,
-                        }),
-                    })
-                }
-                "delete" => {
-                    let dn = action
-                        .get("dn")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'dn' field")?
-                        .to_string();
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "ldap_delete".to_string(),
-                        data: json!({
-                            "dn": dn,
-                        }),
-                    })
-                }
-                "disconnect" => Ok(ClientActionResult::Disconnect),
-                "wait_for_more" => Ok(ClientActionResult::WaitForMore),
-                _ => Err(anyhow::anyhow!("Unknown LDAP client action: {}", action_type)),
-            }
-        }
-}
+    fn connect(
+        &self,
+        ctx: crate::protocol::ConnectContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::client::ldap::LdapClient;
+            LdapClient::connect_with_llm_actions(
+                ctx.remote_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.client_id,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
 
+        match action_type {
+            "bind" => {
+                let dn = action
+                    .get("dn")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'dn' field")?
+                    .to_string();
+                let password = action
+                    .get("password")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'password' field")?
+                    .to_string();
+
+                Ok(ClientActionResult::Custom {
+                    name: "ldap_bind".to_string(),
+                    data: json!({
+                        "dn": dn,
+                        "password": password,
+                    }),
+                })
+            }
+            "search" => {
+                let base_dn = action
+                    .get("base_dn")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'base_dn' field")?
+                    .to_string();
+                let filter = action
+                    .get("filter")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'filter' field")?
+                    .to_string();
+                let attributes = action
+                    .get("attributes")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect::<Vec<String>>()
+                    })
+                    .unwrap_or_default();
+                let scope = action
+                    .get("scope")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("subtree")
+                    .to_string();
+
+                Ok(ClientActionResult::Custom {
+                    name: "ldap_search".to_string(),
+                    data: json!({
+                        "base_dn": base_dn,
+                        "filter": filter,
+                        "attributes": attributes,
+                        "scope": scope,
+                    }),
+                })
+            }
+            "add" => {
+                let dn = action
+                    .get("dn")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'dn' field")?
+                    .to_string();
+                let attributes = action
+                    .get("attributes")
+                    .context("Missing 'attributes' field")?
+                    .clone();
+
+                Ok(ClientActionResult::Custom {
+                    name: "ldap_add".to_string(),
+                    data: json!({
+                        "dn": dn,
+                        "attributes": attributes,
+                    }),
+                })
+            }
+            "modify" => {
+                let dn = action
+                    .get("dn")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'dn' field")?
+                    .to_string();
+                let operation = action
+                    .get("operation")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'operation' field")?
+                    .to_string();
+                let attribute = action
+                    .get("attribute")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'attribute' field")?
+                    .to_string();
+                let values = action
+                    .get("values")
+                    .and_then(|v| v.as_array())
+                    .context("Missing 'values' field")?
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect::<Vec<String>>();
+
+                Ok(ClientActionResult::Custom {
+                    name: "ldap_modify".to_string(),
+                    data: json!({
+                        "dn": dn,
+                        "operation": operation,
+                        "attribute": attribute,
+                        "values": values,
+                    }),
+                })
+            }
+            "delete" => {
+                let dn = action
+                    .get("dn")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'dn' field")?
+                    .to_string();
+
+                Ok(ClientActionResult::Custom {
+                    name: "ldap_delete".to_string(),
+                    data: json!({
+                        "dn": dn,
+                    }),
+                })
+            }
+            "disconnect" => Ok(ClientActionResult::Disconnect),
+            "wait_for_more" => Ok(ClientActionResult::WaitForMore),
+            _ => Err(anyhow::anyhow!(
+                "Unknown LDAP client action: {}",
+                action_type
+            )),
+        }
+    }
+}

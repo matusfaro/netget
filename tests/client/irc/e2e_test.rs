@@ -36,7 +36,8 @@ mod irc_client_tests {
 
         // Verify client output shows connection
         assert!(
-            client.output_contains("connected").await || client.output_contains("registration").await,
+            client.output_contains("connected").await
+                || client.output_contains("registration").await,
             "Client should show connection or registration message. Output: {:?}",
             client.get_output().await
         );

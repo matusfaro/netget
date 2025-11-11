@@ -15,13 +15,13 @@ use hyper_util::rt::TokioIo;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info};
 
-use crate::server::connection::ConnectionId;
-use actions::HTTP_REQUEST_EVENT;
-use crate::server::HttpProtocol;
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
+use crate::server::connection::ConnectionId;
+use crate::server::HttpProtocol;
 use crate::state::app_state::AppState;
+use actions::HTTP_REQUEST_EVENT;
 
 /// HTTP server that delegates request handling to LLM
 pub struct HttpServer;
@@ -36,30 +36,43 @@ impl HttpServer {
         server_id: crate::state::ServerId,
         tls_config: Option<Arc<rustls::ServerConfig>>,
     ) -> anyhow::Result<SocketAddr> {
-        let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let listener =
+            crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
 
-        let protocol_name = if tls_config.is_some() { "HTTPS" } else { "HTTP" };
-        info!("{} server (action-based) listening on {}", protocol_name, local_addr);
+        let protocol_name = if tls_config.is_some() {
+            "HTTPS"
+        } else {
+            "HTTP"
+        };
+        info!(
+            "{} server (action-based) listening on {}",
+            protocol_name, local_addr
+        );
 
         let protocol = Arc::new(HttpProtocol::new());
 
         // Create TLS acceptor if TLS is enabled
-        let tls_acceptor = tls_config.map(|config| {
-            tokio_rustls::TlsAcceptor::from(config)
-        });
+        let tls_acceptor = tls_config.map(|config| tokio_rustls::TlsAcceptor::from(config));
 
         // Spawn server loop
         tokio::spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        info!("Accepted {} connection {} from {}", protocol_name, connection_id, remote_addr);
+                        info!(
+                            "Accepted {} connection {} from {}",
+                            protocol_name, connection_id, remote_addr
+                        );
 
                         // Add connection to ServerInstance
-                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -76,7 +89,9 @@ impl HttpServer {
                                 "recent_requests": []
                             })),
                         };
-                        app_state.add_connection_to_server(server_id, conn_state).await;
+                        app_state
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let llm_client_clone = llm_client.clone();
@@ -91,8 +106,14 @@ impl HttpServer {
                             if let Some(acceptor) = tls_acceptor_clone {
                                 match acceptor.accept(stream).await {
                                     Ok(tls_stream) => {
-                                        debug!("{} TLS handshake complete with {}", protocol_name, remote_addr);
-                                        let _ = status_tx_clone.send(format!("[DEBUG] {} TLS handshake complete with {}", protocol_name, remote_addr));
+                                        debug!(
+                                            "{} TLS handshake complete with {}",
+                                            protocol_name, remote_addr
+                                        );
+                                        let _ = status_tx_clone.send(format!(
+                                            "[DEBUG] {} TLS handshake complete with {}",
+                                            protocol_name, remote_addr
+                                        ));
                                         let io = TokioIo::new(tls_stream);
                                         Self::serve_connection(
                                             io,
@@ -102,11 +123,15 @@ impl HttpServer {
                                             app_state_clone.clone(),
                                             status_tx_clone.clone(),
                                             protocol_clone,
-                                        ).await;
+                                        )
+                                        .await;
                                     }
                                     Err(e) => {
                                         error!("{} TLS handshake failed: {}", protocol_name, e);
-                                        let _ = status_tx_clone.send(format!("[ERROR] {} TLS handshake failed: {}", protocol_name, e));
+                                        let _ = status_tx_clone.send(format!(
+                                            "[ERROR] {} TLS handshake failed: {}",
+                                            protocol_name, e
+                                        ));
                                     }
                                 }
                             } else {
@@ -120,12 +145,18 @@ impl HttpServer {
                                     app_state_clone.clone(),
                                     status_tx_clone.clone(),
                                     protocol_clone,
-                                ).await;
+                                )
+                                .await;
                             }
 
                             // Mark connection as closed
-                            app_state_clone.close_connection_on_server(server_id, connection_id).await;
-                            let _ = status_tx_clone.send(format!("✗ {} connection {connection_id} closed", protocol_name));
+                            app_state_clone
+                                .close_connection_on_server(server_id, connection_id)
+                                .await;
+                            let _ = status_tx_clone.send(format!(
+                                "✗ {} connection {connection_id} closed",
+                                protocol_name
+                            ));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
@@ -200,7 +231,10 @@ async fn handle_http_request_with_llm_actions(
         if let Some(upgrade_header) = req.headers().get(hyper::header::UPGRADE) {
             if let Ok(upgrade_value) = upgrade_header.to_str() {
                 if upgrade_value.contains("h2c") {
-                    info!("HTTP/2 upgrade (h2c) request detected from connection {}", connection_id);
+                    info!(
+                        "HTTP/2 upgrade (h2c) request detected from connection {}",
+                        connection_id
+                    );
                     let _ = status_tx.send(format!("[INFO] HTTP/2 upgrade (h2c) requested"));
 
                     // Check for HTTP2-Settings header (required for h2c upgrade)
@@ -208,7 +242,7 @@ async fn handle_http_request_with_llm_actions(
                         let response = Response::builder()
                             .status(400) // Bad Request
                             .body(Full::new(Bytes::from(
-                                "HTTP/2 upgrade requires HTTP2-Settings header"
+                                "HTTP/2 upgrade requires HTTP2-Settings header",
                             )))
                             .unwrap();
                         return Ok(response);
@@ -225,7 +259,10 @@ async fn handle_http_request_with_llm_actions(
                         match hyper::upgrade::on(req).await {
                             Ok(upgraded) => {
                                 info!("HTTP/2 upgrade successful for connection {}", connection_id);
-                                let _ = status_tx_clone.send(format!("[INFO] Upgraded connection {} to HTTP/2", connection_id));
+                                let _ = status_tx_clone.send(format!(
+                                    "[INFO] Upgraded connection {} to HTTP/2",
+                                    connection_id
+                                ));
 
                                 // Perform h2 handshake on the upgraded connection
                                 use hyper_util::rt::TokioIo;
@@ -240,13 +277,16 @@ async fn handle_http_request_with_llm_actions(
                                     app_state_clone,
                                     status_tx_clone,
                                     protocol_clone,
-                                ).await {
+                                )
+                                .await
+                                {
                                     error!("Error handling upgraded h2c connection: {}", e);
                                 }
                             }
                             Err(e) => {
                                 error!("HTTP/2 upgrade failed: {}", e);
-                                let _ = status_tx_clone.send(format!("[ERROR] HTTP/2 upgrade failed: {}", e));
+                                let _ = status_tx_clone
+                                    .send(format!("[ERROR] HTTP/2 upgrade failed: {}", e));
                             }
                         }
                     });
@@ -272,12 +312,14 @@ async fn handle_http_request_with_llm_actions(
             if let Ok(upgrade_value) = upgrade_header.to_str() {
                 if upgrade_value.contains("h2c") {
                     info!("HTTP/2 upgrade requested but http2 feature not enabled");
-                    let _ = status_tx.send("[INFO] HTTP/2 upgrade not supported (http2 feature disabled)".to_string());
+                    let _ = status_tx.send(
+                        "[INFO] HTTP/2 upgrade not supported (http2 feature disabled)".to_string(),
+                    );
 
                     let response = Response::builder()
                         .status(501) // Not Implemented
                         .body(Full::new(Bytes::from(
-                            "HTTP/2 upgrade not supported. Server built without http2 feature."
+                            "HTTP/2 upgrade not supported. Server built without http2 feature.",
                         )))
                         .unwrap();
 
@@ -288,20 +330,20 @@ async fn handle_http_request_with_llm_actions(
     }
 
     // Use shared request extraction logic
-    let request_data = crate::server::http_common::handler::extract_request_data(
-        req,
-        "HTTP",
-        &status_tx,
-    ).await;
+    let request_data =
+        crate::server::http_common::handler::extract_request_data(req, "HTTP", &status_tx).await;
 
     // Create HTTP request event (no version field for HTTP/1.1)
     let body_text = String::from_utf8_lossy(&request_data.body_bytes);
-    let event = Event::new(&HTTP_REQUEST_EVENT, serde_json::json!({
-        "method": request_data.method,
-        "uri": request_data.uri,
-        "headers": request_data.headers,
-        "body": if body_text.is_empty() { "" } else { body_text.as_ref() }
-    }));
+    let event = Event::new(
+        &HTTP_REQUEST_EVENT,
+        serde_json::json!({
+            "method": request_data.method,
+            "uri": request_data.uri,
+            "headers": request_data.headers,
+            "body": if body_text.is_empty() { "" } else { body_text.as_ref() }
+        }),
+    );
 
     // Call LLM to generate HTTP response
     match call_llm(
@@ -311,7 +353,9 @@ async fn handle_http_request_with_llm_actions(
         Some(connection_id),
         &event,
         protocol.as_ref(),
-    ).await {
+    )
+    .await
+    {
         Ok(execution_result) => {
             debug!("LLM HTTP response received");
 
@@ -356,8 +400,8 @@ async fn handle_upgraded_h2c_connection<T>(
 where
     T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
-    use h2::server;
     use crate::server::Http2Protocol;
+    use h2::server;
 
     info!("Starting h2c connection for {}", connection_id);
 
@@ -388,7 +432,9 @@ where
                         app_state_clone,
                         status_tx_clone,
                         protocol_clone,
-                    ).await {
+                    )
+                    .await
+                    {
                         error!("Error handling h2c request: {}", e);
                     }
                 });

@@ -22,12 +22,12 @@ docker run -p 6379:6379 redis:latest
 ## Tests
 
 1. **test_redis_client_initialization** (0 LLM calls)
-   - Create Redis client instance
-   - Verify fields
+    - Create Redis client instance
+    - Verify fields
 
 2. **test_redis_client_status** (0 LLM calls)
-   - Test status transitions (Connecting → Connected)
-   - Verify state management
+    - Test status transitions (Connecting → Connected)
+    - Verify state management
 
 ## Runtime
 

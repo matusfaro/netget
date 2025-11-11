@@ -64,8 +64,7 @@ impl PushManager {
             match send_response.push_request(push_request) {
                 Ok(mut push_stream) => {
                     // Send push response
-                    let mut push_response = http::Response::builder()
-                        .status(push.status);
+                    let mut push_response = http::Response::builder().status(push.status);
 
                     for (name, value) in &push.headers {
                         push_response = push_response.header(name, value);

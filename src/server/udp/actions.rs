@@ -39,80 +39,80 @@ impl UdpProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for UdpProtocol {
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            vec![send_to_address_action()]
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![send_udp_response_action(), ignore_datagram_action()]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "UDP"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            get_udp_event_types()
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>UDP"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["udp"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Beta)
-                .implementation("Manual UDP socket handling with tokio")
-                .llm_control("Full datagram control - all sent/received data")
-                .e2e_testing("std::net::UdpSocket")
-                .notes("Stateless, used by DNS/DHCP/NTP")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "UDP datagram server"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Listen on port 5000 via UDP"
-        }
-        fn group_name(&self) -> &'static str {
-            "Core"
-        }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        vec![send_to_address_action()]
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![send_udp_response_action(), ignore_datagram_action()]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "UDP"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_udp_event_types()
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>UDP"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["udp"]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Beta)
+            .implementation("Manual UDP socket handling with tokio")
+            .llm_control("Full datagram control - all sent/received data")
+            .e2e_testing("std::net::UdpSocket")
+            .notes("Stateless, used by DNS/DHCP/NTP")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "UDP datagram server"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Listen on port 5000 via UDP"
+    }
+    fn group_name(&self) -> &'static str {
+        "Core"
+    }
 }
 
 // Implement Server trait (server-specific functionality)
 impl Server for UdpProtocol {
-        fn spawn(
-            &self,
-            ctx: crate::protocol::SpawnContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::server::udp::UdpServer;
-                UdpServer::spawn_with_llm_actions(
-                    ctx.listen_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.server_id,
-                ).await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "send_to_address" => self.execute_send_to_address(action),
-                "send_udp_response" => self.execute_send_udp_response(action),
-                "ignore_datagram" => Ok(ActionResult::NoAction),
-                _ => Err(anyhow::anyhow!("Unknown UDP action: {}", action_type)),
-            }
-        }
-}
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::udp::UdpServer;
+            UdpServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
 
+        match action_type {
+            "send_to_address" => self.execute_send_to_address(action),
+            "send_udp_response" => self.execute_send_udp_response(action),
+            "ignore_datagram" => Ok(ActionResult::NoAction),
+            _ => Err(anyhow::anyhow!("Unknown UDP action: {}", action_type)),
+        }
+    }
+}
 
 impl UdpProtocol {
     /// Execute send_to_address async action
@@ -210,38 +210,30 @@ fn ignore_datagram_action() -> ActionDefinition {
 // ============================================================================
 
 pub static UDP_DATAGRAM_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "udp_datagram_received",
-        "UDP datagram received from a peer"
-    )
-    .with_parameters(vec![
-        Parameter {
-            name: "peer_address".to_string(),
-            type_hint: "string".to_string(),
-            description: "Source address of the datagram (IP:port)".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "data_length".to_string(),
-            type_hint: "number".to_string(),
-            description: "Length of the received data in bytes".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "data_preview".to_string(),
-            type_hint: "string".to_string(),
-            description: "Preview of the received data".to_string(),
-            required: false,
-        },
-    ])
-    .with_actions(vec![
-        send_udp_response_action(),
-        ignore_datagram_action(),
-    ])
+    EventType::new("udp_datagram_received", "UDP datagram received from a peer")
+        .with_parameters(vec![
+            Parameter {
+                name: "peer_address".to_string(),
+                type_hint: "string".to_string(),
+                description: "Source address of the datagram (IP:port)".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "data_length".to_string(),
+                type_hint: "number".to_string(),
+                description: "Length of the received data in bytes".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "data_preview".to_string(),
+                type_hint: "string".to_string(),
+                description: "Preview of the received data".to_string(),
+                required: false,
+            },
+        ])
+        .with_actions(vec![send_udp_response_action(), ignore_datagram_action()])
 });
 
 pub fn get_udp_event_types() -> Vec<EventType> {
-    vec![
-        UDP_DATAGRAM_RECEIVED_EVENT.clone(),
-    ]
+    vec![UDP_DATAGRAM_RECEIVED_EVENT.clone()]
 }

@@ -35,8 +35,8 @@ pub async fn query_available_models() -> Result<Vec<ModelInfo>> {
         .context("Failed to read response from Ollama")?;
 
     // Parse the response
-    let json: serde_json::Value = serde_json::from_str(&body)
-        .context("Failed to parse Ollama API response")?;
+    let json: serde_json::Value =
+        serde_json::from_str(&body).context("Failed to parse Ollama API response")?;
 
     let models = json
         .get("models")
@@ -50,10 +50,7 @@ pub async fn query_available_models() -> Result<Vec<ModelInfo>> {
             .and_then(|n| n.as_str())
             .unwrap_or("")
             .to_string();
-        let size = model
-            .get("size")
-            .and_then(|s| s.as_u64())
-            .unwrap_or(0);
+        let size = model.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
         let modified_at = model
             .get("modified_at")
             .and_then(|m| m.as_str())
@@ -194,9 +191,7 @@ pub async fn select_or_validate_model(
             "⚠  No model configured, auto-selected: {} (largest/most recent)",
             best_model
         );
-        info!(
-            "   To set a different model, use: /model or edit ~/.netget settings"
-        );
+        info!("   To set a different model, use: /model or edit ~/.netget settings");
         Ok(Some(best_model))
     } else {
         // This shouldn't happen since we checked models.is_empty() above
@@ -220,7 +215,10 @@ pub async fn ensure_model_selected(current_model: Option<String>) -> Result<Stri
     match select_or_validate_model(None, false).await {
         Ok(Some(model)) => {
             info!("✓  Auto-selected model: {}", model);
-            warn!("⚠  Auto-selected model: {} (no model was configured)", model);
+            warn!(
+                "⚠  Auto-selected model: {} (no model was configured)",
+                model
+            );
             Ok(model)
         }
         Ok(None) => {
@@ -231,4 +229,3 @@ pub async fn ensure_model_selected(current_model: Option<String>) -> Result<Stri
         Err(e) => Err(e),
     }
 }
-

@@ -2,11 +2,13 @@
 
 ## Overview
 
-The syslog client implementation provides LLM-controlled outbound connections to syslog servers. The LLM can send log messages with configurable facility, severity, and message content. Both UDP and TCP transports are supported.
+The syslog client implementation provides LLM-controlled outbound connections to syslog servers. The LLM can send log
+messages with configurable facility, severity, and message content. Both UDP and TCP transports are supported.
 
 ## Implementation Details
 
 ### Library Choice
+
 - **Custom RFC 5424 implementation** - Manual message formatting
 - **tokio::net::TcpStream** - TCP transport
 - **tokio::net::UdpSocket** - UDP transport (default)
@@ -27,11 +29,13 @@ The syslog client implementation provides LLM-controlled outbound connections to
 ### Syslog Protocol
 
 **RFC 5424 Format:**
+
 ```
 <PRI>VERSION TIMESTAMP HOSTNAME APP-NAME PROCID MSGID STRUCTURED-DATA MSG
 ```
 
 **Components:**
+
 - **PRI**: Priority = (Facility × 8) + Severity
 - **VERSION**: 1 (RFC 5424)
 - **TIMESTAMP**: RFC 3339 timestamp
@@ -43,6 +47,7 @@ The syslog client implementation provides LLM-controlled outbound connections to
 - **MSG**: The actual log message
 
 **Facilities (0-23):**
+
 - 0: kern (kernel)
 - 1: user
 - 2: mail
@@ -62,6 +67,7 @@ The syslog client implementation provides LLM-controlled outbound connections to
 - 16-23: local0-local7
 
 **Severities (0-7):**
+
 - 0: emerg (Emergency)
 - 1: alert
 - 2: crit (Critical)
@@ -74,11 +80,13 @@ The syslog client implementation provides LLM-controlled outbound connections to
 ### Transport Protocols
 
 **UDP (Default):**
+
 - Connectionless, fire-and-forget
 - Port 514 (standard syslog)
 - Message as single datagram
 
 **TCP:**
+
 - Connection-oriented
 - Port 514 or custom
 - Message terminated with newline
@@ -86,17 +94,20 @@ The syslog client implementation provides LLM-controlled outbound connections to
 ### LLM Control
 
 **Async Actions** (user-triggered):
+
 - `send_syslog_message` - Send log message with facility, severity, message
-  - Parameters: facility, severity, message, hostname, app_name, proc_id, msg_id
+    - Parameters: facility, severity, message, hostname, app_name, proc_id, msg_id
 - `disconnect` - Close connection (TCP only)
 
 **Events:**
+
 - `syslog_connected` - Fired when connection established
 - `syslog_message_sent` - Fired when message sent (future)
 
 ### Data Encoding
 
 **LLM-Friendly:**
+
 - Facility and severity as strings (e.g., "user", "info")
 - Message as plain text
 - Automatic RFC 5424 formatting
@@ -113,11 +124,13 @@ status_tx.send(format!("[CLIENT] Syslog {} sent: [{}:{}] {}",
 ### Connection Lifecycle
 
 **UDP:**
+
 1. **Bind**: Bind to ephemeral local port
 2. **Send**: Send datagram to remote server
 3. **No Response**: Fire-and-forget
 
 **TCP:**
+
 1. **Connect**: `TcpStream::connect(remote_addr)`
 2. **Connected**: Update ClientStatus::Connected
 3. **Send**: Write message + newline
@@ -146,16 +159,19 @@ See `tests/client/syslog/CLAUDE.md` for E2E testing approach.
 ## Example Usage
 
 **UDP Syslog:**
+
 ```
 open_client syslog localhost:514 "Send user info logs"
 ```
 
 **TCP Syslog:**
+
 ```
 open_client syslog localhost:514 --protocol tcp "Send daemon error logs"
 ```
 
 **LLM Action:**
+
 ```json
 {
   "type": "send_syslog_message",

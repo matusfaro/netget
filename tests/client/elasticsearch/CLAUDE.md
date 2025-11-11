@@ -2,13 +2,15 @@
 
 ## Test Strategy
 
-The Elasticsearch client E2E tests verify LLM-controlled operations against a real Elasticsearch cluster using actual Ollama LLM calls. Tests focus on core document operations and query capabilities.
+The Elasticsearch client E2E tests verify LLM-controlled operations against a real Elasticsearch cluster using actual
+Ollama LLM calls. Tests focus on core document operations and query capabilities.
 
 ## Test Approach
 
 ### Black-Box Testing
 
 Tests verify:
+
 1. **Client initialization** - Connection to Elasticsearch cluster
 2. **Document indexing** - Creating documents with structured data
 3. **Search operations** - Query DSL execution and result handling
@@ -19,6 +21,7 @@ Tests verify:
 ### LLM Integration
 
 Each test uses **real Ollama LLM calls** to control client behavior. Tests validate that:
+
 - LLM receives correct events (`elasticsearch_connected`, `elasticsearch_response_received`)
 - LLM constructs valid Elasticsearch operations (index, search, get, delete, bulk)
 - LLM interprets Elasticsearch responses correctly
@@ -29,17 +32,20 @@ Each test uses **real Ollama LLM calls** to control client behavior. Tests valid
 **Total Budget: < 10 LLM calls across all tests**
 
 ### Test 1: Index and Search (3-4 calls)
+
 - **Call 1**: Initial connection → LLM indexes document
 - **Call 2**: Index response → LLM executes search
 - **Call 3**: Search response → LLM processes results
 - **Total**: ~3-4 calls
 
 ### Test 2: Bulk Operations (2 calls)
+
 - **Call 1**: Initial connection → LLM executes bulk operation
 - **Call 2**: Bulk response → LLM processes results
 - **Total**: ~2 calls
 
 ### Test 3: Document Lifecycle (4-5 calls)
+
 - **Call 1**: Initial connection → LLM indexes document
 - **Call 2**: Index response → LLM retrieves document
 - **Call 3**: Get response → LLM deletes document
@@ -51,11 +57,13 @@ Each test uses **real Ollama LLM calls** to control client behavior. Tests valid
 ## Expected Runtime
 
 ### Per Test
+
 - **Initialization**: ~1 second
 - **LLM calls**: ~2-3 seconds each
 - **Total per test**: ~10-15 seconds
 
 ### Full Suite
+
 - **3 tests**: ~30-45 seconds total
 - **With Ollama startup**: +5 seconds
 - **With Elasticsearch startup**: +10 seconds (if not already running)
@@ -86,6 +94,7 @@ Each test uses **real Ollama LLM calls** to control client behavior. Tests valid
 ### Test Data
 
 Tests create temporary data in Elasticsearch:
+
 - **Indices**: `test-index`, `products`, dynamically created
 - **Documents**: Test documents with simple schemas
 - **Cleanup**: Not implemented (Elasticsearch is ephemeral in Docker)
@@ -93,21 +102,25 @@ Tests create temporary data in Elasticsearch:
 ## Known Issues
 
 ### 1. Elasticsearch Availability
+
 **Issue**: Tests fail if Elasticsearch is not running
 **Severity**: High
 **Workaround**: Mark tests as `#[ignore]`, require manual Elasticsearch setup
 
 ### 2. LLM Query DSL Construction
+
 **Issue**: LLM may construct invalid Elasticsearch Query DSL
 **Severity**: Medium
 **Mitigation**: Use simple match queries in test prompts
 
 ### 3. Index Creation Timing
+
 **Issue**: Newly created indices may not be immediately available
 **Severity**: Low
 **Mitigation**: Elasticsearch auto-creates indices on first document write
 
 ### 4. Response Parsing
+
 **Issue**: Large search responses may exceed LLM context window
 **Severity**: Low
 **Mitigation**: Use small test datasets
@@ -115,18 +128,21 @@ Tests create temporary data in Elasticsearch:
 ## Test Scenarios
 
 ### Scenario 1: Basic Indexing
+
 ```
 Instruction: "Index a test document with fields 'title'='Test' and 'content'='Hello World', then search for it"
 Expected: LLM indexes document, receives success, performs search, receives results
 ```
 
 ### Scenario 2: Bulk Operations
+
 ```
 Instruction: "Use bulk operation to index 3 documents in 'products' index: laptop (price=999), phone (price=699), tablet (price=499)"
 Expected: LLM constructs bulk NDJSON payload, receives success with operation count
 ```
 
 ### Scenario 3: Document Lifecycle
+
 ```
 Instruction: "Index a document with id 'test-doc-1' in 'test-index', then get it, then delete it"
 Expected: LLM indexes, retrieves (verifying content), deletes, confirms deletion
@@ -135,18 +151,21 @@ Expected: LLM indexes, retrieves (verifying content), deletes, confirms deletion
 ## Running Tests
 
 ### Single Test
+
 ```bash
 ./cargo-isolated.sh test --no-default-features --features elasticsearch \
   --test client::elasticsearch::e2e_test -- test_elasticsearch_client_index_and_search
 ```
 
 ### All Elasticsearch Client Tests
+
 ```bash
 ./cargo-isolated.sh test --no-default-features --features elasticsearch \
   --test client::elasticsearch::e2e_test
 ```
 
 ### With Logs
+
 ```bash
 RUST_LOG=debug ./cargo-isolated.sh test --no-default-features --features elasticsearch \
   --test client::elasticsearch::e2e_test -- --nocapture
@@ -155,6 +174,7 @@ RUST_LOG=debug ./cargo-isolated.sh test --no-default-features --features elastic
 ## Debugging
 
 ### Enable Verbose Logging
+
 ```rust
 // In test setup
 env_logger::builder()
@@ -163,6 +183,7 @@ env_logger::builder()
 ```
 
 ### Check Elasticsearch
+
 ```bash
 # Verify Elasticsearch is running
 curl http://localhost:9200
@@ -175,6 +196,7 @@ curl http://localhost:9200/test-index/_doc/test-doc-1
 ```
 
 ### LLM Response Inspection
+
 ```rust
 // Add to test
 println!("[TEST] Status: {:?}", status_rx.recv().await);
@@ -183,9 +205,11 @@ println!("[TEST] Status: {:?}", status_rx.recv().await);
 ## Flaky Tests
 
 ### None Identified
+
 Currently no flaky tests identified. Elasticsearch is deterministic for basic operations.
 
 ### Potential Flakiness
+
 - **Network delays**: Elasticsearch may be slow on first request
 - **LLM variability**: Different models may construct queries differently
 - **Index creation**: Very rare race condition on index auto-creation
@@ -220,6 +244,7 @@ Currently no flaky tests identified. Elasticsearch is deterministic for basic op
 ## Performance Benchmarks
 
 Not yet established. Initial measurements:
+
 - **Index operation**: ~100-200ms
 - **Search operation**: ~50-100ms
 - **Bulk operation (3 docs)**: ~150-250ms

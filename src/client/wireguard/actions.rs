@@ -120,7 +120,9 @@ impl Protocol for WireguardClientProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2, PrivilegeRequirement};
+        use crate::protocol::metadata::{
+            DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2,
+        };
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
@@ -169,11 +171,15 @@ impl Client for WireguardClientProtocol {
                                 .collect()
                         })
                         .unwrap_or_else(|| vec!["0.0.0.0/0".to_string()]),
-                    keepalive: startup_params.get_optional_u64("keepalive").map(|k| k as u16),
+                    keepalive: startup_params
+                        .get_optional_u64("keepalive")
+                        .map(|k| k as u16),
                     private_key: startup_params.get_optional_string("private_key"),
                 }
             } else {
-                return Err(anyhow::anyhow!("Missing startup parameters for WireGuard client"));
+                return Err(anyhow::anyhow!(
+                    "Missing startup parameters for WireGuard client"
+                ));
             };
 
             WireguardClient::connect_with_llm_actions(

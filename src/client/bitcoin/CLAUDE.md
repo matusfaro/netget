@@ -2,11 +2,13 @@
 
 ## Overview
 
-The Bitcoin RPC client implementation provides LLM-controlled access to Bitcoin Core via JSON-RPC. The LLM can query blockchain data, monitor the mempool, inspect network status, and perform wallet operations.
+The Bitcoin RPC client implementation provides LLM-controlled access to Bitcoin Core via JSON-RPC. The LLM can query
+blockchain data, monitor the mempool, inspect network status, and perform wallet operations.
 
 ## Implementation Details
 
 ### Library Choice
+
 - **reqwest** - HTTP client for JSON-RPC communication
 - **Direct JSON-RPC** - No bitcoin-rpc crate dependency, manual JSON construction
 - Connects to Bitcoin Core node (bitcoind) via HTTP
@@ -35,6 +37,7 @@ The Bitcoin RPC client implementation provides LLM-controlled access to Bitcoin 
 ### Connection Model
 
 Bitcoin RPC is **JSON-RPC over HTTP** (request/response based):
+
 - "Connection" = initialization with RPC endpoint URL
 - Each RPC call is an independent HTTP request
 - LLM triggers RPC commands via actions
@@ -45,6 +48,7 @@ Bitcoin RPC is **JSON-RPC over HTTP** (request/response based):
 **Async Actions** (user-triggered):
 
 **Blockchain Queries:**
+
 - `get_blockchain_info` - Chain info, block count, difficulty
 - `get_block_hash` - Get block hash by height
 - `get_block` - Get block details by hash
@@ -54,26 +58,31 @@ Bitcoin RPC is **JSON-RPC over HTTP** (request/response based):
 - `get_mining_info` - Network hashrate, difficulty
 
 **Network Queries:**
+
 - `get_network_info` - Version, connections, protocols
 - `get_peer_info` - Connected peers details
 - `get_connection_count` - Number of peer connections
 
 **Wallet Operations:**
+
 - `get_wallet_info` - Wallet balance, transaction count
 - `get_balance` - Current wallet balance
 - `list_transactions` - Recent wallet transactions
 
 **Generic:**
+
 - `execute_rpc` - Execute any Bitcoin RPC method with parameters
 - `disconnect` - Stop Bitcoin RPC client
 
 **Sync Actions** (in response to RPC responses):
+
 - `execute_rpc` - Make follow-up RPC call based on response
 
 **Events:**
+
 - `bitcoin_connected` - Fired when client initialized
 - `bitcoin_response_received` - Fired when RPC response received
-  - Data includes: method, result, error, status_code
+    - Data includes: method, result, error, status_code
 
 ### Structured Actions (CRITICAL)
 
@@ -112,10 +121,10 @@ LLMs can construct structured RPC requests and interpret JSON responses.
 2. **Action Execution**: Returns `ClientActionResult::Custom` with RPC method and params
 3. **RPC Execution**: `BitcoinClient::execute_rpc_command()` called
 4. **Response Handling**:
-   - Parse JSON-RPC response
-   - Extract result or error
-   - Create `bitcoin_response_received` event
-   - Call LLM for interpretation
+    - Parse JSON-RPC response
+    - Extract result or error
+    - Create `bitcoin_response_received` event
+    - Call LLM for interpretation
 5. **LLM Response**: May trigger follow-up queries
 
 ### Startup Parameters
@@ -126,6 +135,7 @@ LLMs can construct structured RPC requests and interpret JSON responses.
 ### RPC URL Format
 
 Accepted formats for `remote_addr`:
+
 - `http://user:pass@localhost:8332` - Full URL with auth
 - `localhost:8332` - Auto-prefixed with `http://`
 - `https://bitcoin-node.example.com:8332` - HTTPS support
@@ -150,6 +160,7 @@ status_tx.send("[CLIENT] Bitcoin RPC client connected");         // → TUI
 ### Supported RPC Methods
 
 **Implemented as Actions:**
+
 - ✅ getblockchaininfo
 - ✅ getblockhash
 - ✅ getblock
@@ -166,6 +177,7 @@ status_tx.send("[CLIENT] Bitcoin RPC client connected");         // → TUI
 - ✅ Generic `execute_rpc` for any method
 
 **Via execute_rpc:**
+
 - Any Bitcoin Core RPC method (v0.21+)
 
 ### Bitcoin Core Compatibility
@@ -190,6 +202,7 @@ status_tx.send("[CLIENT] Bitcoin RPC client connected");         // → TUI
 **User**: "Connect to Bitcoin Core at http://user:pass@localhost:8332 and get blockchain info"
 
 **LLM Action**:
+
 ```json
 {
   "type": "get_blockchain_info"
@@ -197,6 +210,7 @@ status_tx.send("[CLIENT] Bitcoin RPC client connected");         // → TUI
 ```
 
 **Response**:
+
 ```json
 {
   "result": {
@@ -213,6 +227,7 @@ status_tx.send("[CLIENT] Bitcoin RPC client connected");         // → TUI
 **User**: "Get block at height 700000"
 
 **LLM Action 1**:
+
 ```json
 {
   "type": "get_block_hash",
@@ -221,6 +236,7 @@ status_tx.send("[CLIENT] Bitcoin RPC client connected");         // → TUI
 ```
 
 **LLM Action 2** (follow-up):
+
 ```json
 {
   "type": "get_block",
@@ -234,6 +250,7 @@ status_tx.send("[CLIENT] Bitcoin RPC client connected");         // → TUI
 **User**: "Check mempool status every 10 seconds"
 
 **LLM Action**:
+
 ```json
 {
   "type": "get_mempool_info"
@@ -241,6 +258,7 @@ status_tx.send("[CLIENT] Bitcoin RPC client connected");         // → TUI
 ```
 
 **Response**:
+
 ```json
 {
   "result": {
@@ -257,6 +275,7 @@ status_tx.send("[CLIENT] Bitcoin RPC client connected");         // → TUI
 **User**: "Get the best block hash"
 
 **LLM Action**:
+
 ```json
 {
   "type": "execute_rpc",

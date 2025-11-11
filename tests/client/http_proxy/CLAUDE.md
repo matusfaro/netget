@@ -2,7 +2,8 @@
 
 ## Test Strategy
 
-Black-box, prompt-driven testing using the actual NetGet binary. LLM interprets prompts and controls proxy client behavior. Tests validate HTTP CONNECT tunneling and data transmission through proxies.
+Black-box, prompt-driven testing using the actual NetGet binary. LLM interprets prompts and controls proxy client
+behavior. Tests validate HTTP CONNECT tunneling and data transmission through proxies.
 
 ## LLM Call Budget
 
@@ -11,17 +12,17 @@ Black-box, prompt-driven testing using the actual NetGet binary. LLM interprets 
 ### Per-Test Breakdown
 
 1. **test_http_proxy_client_connect_and_tunnel**: 3 LLM calls
-   - 1 call: Start HTTP proxy server
-   - 1 call: Start target HTTP server
-   - 1 call: Start proxy client with tunnel instruction
+    - 1 call: Start HTTP proxy server
+    - 1 call: Start target HTTP server
+    - 1 call: Start proxy client with tunnel instruction
 
 2. **test_http_proxy_client_basic_connection**: 2 LLM calls
-   - 1 call: Start minimal TCP server (proxy simulation)
-   - 1 call: Start proxy client
+    - 1 call: Start minimal TCP server (proxy simulation)
+    - 1 call: Start proxy client
 
 3. **test_http_proxy_client_raw_data**: 2 LLM calls
-   - 1 call: Start TCP server
-   - 1 call: Start proxy client with data send instruction
+    - 1 call: Start TCP server
+    - 1 call: Start proxy client with data send instruction
 
 **Total: 7 LLM calls** (within budget)
 
@@ -37,9 +38,9 @@ Black-box, prompt-driven testing using the actual NetGet binary. LLM interprets 
 
 - NetGet binary compiled with `--features http_proxy`
 - Helper functions from `tests/helpers.rs`:
-  - `start_netget_server()`: Spawn server instances
-  - `start_netget_client()`: Spawn client instances
-  - `NetGetConfig`: Configure test instances
+    - `start_netget_server()`: Spawn server instances
+    - `start_netget_client()`: Spawn client instances
+    - `NetGetConfig`: Configure test instances
 
 ### Test Environment
 
@@ -52,19 +53,19 @@ Black-box, prompt-driven testing using the actual NetGet binary. LLM interprets 
 ### Core Functionality
 
 1. **Connection Establishment**
-   - TCP connection to proxy server
-   - `http_proxy_connected` event fires
-   - LLM receives connection confirmation
+    - TCP connection to proxy server
+    - `http_proxy_connected` event fires
+    - LLM receives connection confirmation
 
 2. **CONNECT Tunnel**
-   - Send CONNECT request with target host:port
-   - Parse 200 Connection established response
-   - `http_proxy_tunnel_established` event fires
+    - Send CONNECT request with target host:port
+    - Parse 200 Connection established response
+    - `http_proxy_tunnel_established` event fires
 
 3. **Data Transmission**
-   - Send HTTP requests through tunnel
-   - Send raw data (hex-encoded) through tunnel
-   - Receive responses via `http_proxy_response_received` event
+    - Send HTTP requests through tunnel
+    - Send raw data (hex-encoded) through tunnel
+    - Receive responses via `http_proxy_response_received` event
 
 ### Edge Cases
 
@@ -75,6 +76,7 @@ Black-box, prompt-driven testing using the actual NetGet binary. LLM interprets 
 ## Test Scenarios
 
 ### Scenario 1: Full Proxy Chain
+
 ```
 Client -> HTTP Proxy -> Target Server
 ```
@@ -85,6 +87,7 @@ Client -> HTTP Proxy -> Target Server
 - Validates end-to-end communication
 
 ### Scenario 2: Minimal Proxy
+
 ```
 Client -> Minimal TCP Proxy (responds to CONNECT)
 ```
@@ -94,6 +97,7 @@ Client -> Minimal TCP Proxy (responds to CONNECT)
 - Validates CONNECT handshake only
 
 ### Scenario 3: Raw Data Tunnel
+
 ```
 Client -> Proxy -> (tunnel) -> Raw data
 ```
@@ -106,7 +110,8 @@ Client -> Proxy -> (tunnel) -> Raw data
 
 ### Test Limitations
 
-1. **No real proxy server**: Tests use NetGet's own proxy implementation or minimal TCP server, not external proxies like Squid/tinyproxy
+1. **No real proxy server**: Tests use NetGet's own proxy implementation or minimal TCP server, not external proxies
+   like Squid/tinyproxy
 2. **No authentication testing**: Proxy-Authorization not yet implemented
 3. **No error case testing**: Only happy path tested (200 responses)
 4. **No performance testing**: No load testing or connection pooling
@@ -114,53 +119,56 @@ Client -> Proxy -> (tunnel) -> Raw data
 ### Potential Flaky Tests
 
 - **Timing-dependent**: Uses fixed sleep durations
-  - Mitigation: Generous sleep times (500ms-2s)
-  - Future: Poll for connection status instead
+    - Mitigation: Generous sleep times (500ms-2s)
+    - Future: Poll for connection status instead
 
 - **Port conflicts**: Dynamic port allocation may conflict
-  - Mitigation: Use `{AVAILABLE_PORT}` helper
-  - Future: Retry on EADDRINUSE
+    - Mitigation: Use `{AVAILABLE_PORT}` helper
+    - Future: Retry on EADDRINUSE
 
 ## Future Test Enhancements
 
 1. **Proxy Authentication**
-   - Test Basic auth (username:password)
-   - Test 407 Proxy Authentication Required
+    - Test Basic auth (username:password)
+    - Test 407 Proxy Authentication Required
 
 2. **Error Handling**
-   - Test CONNECT failures (502, 503, etc.)
-   - Test connection timeouts
-   - Test proxy disconnection mid-tunnel
+    - Test CONNECT failures (502, 503, etc.)
+    - Test connection timeouts
+    - Test proxy disconnection mid-tunnel
 
 3. **Integration with External Proxies**
-   - Use actual Squid/tinyproxy instances
-   - Test against public HTTP proxies
-   - Validate compatibility
+    - Use actual Squid/tinyproxy instances
+    - Test against public HTTP proxies
+    - Validate compatibility
 
 4. **Performance Tests**
-   - Measure tunnel establishment time
-   - Test concurrent tunnels
-   - Test large data transfers
+    - Measure tunnel establishment time
+    - Test concurrent tunnels
+    - Test large data transfers
 
 5. **Chained Proxies**
-   - Test Client -> Proxy1 -> Proxy2 -> Target
-   - Validate nested CONNECT requests
+    - Test Client -> Proxy1 -> Proxy2 -> Target
+    - Validate nested CONNECT requests
 
 ## Running Tests
 
 ### Single Protocol
+
 ```bash
 ./cargo-isolated.sh test --no-default-features --features http_proxy \
     --test client::http_proxy::e2e_test
 ```
 
 ### With Debugging
+
 ```bash
 RUST_LOG=debug ./cargo-isolated.sh test --no-default-features \
     --features http_proxy --test client::http_proxy::e2e_test -- --nocapture
 ```
 
 ### Full Test Suite (All Protocols)
+
 ```bash
 ./cargo-isolated.sh test --all-features
 ```

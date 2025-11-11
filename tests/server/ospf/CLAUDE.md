@@ -7,6 +7,7 @@
 **Approach**: Black-box testing using manual OSPF client that sends Hello packets and validates responses.
 
 **LLM Budget**: Target < 5 LLM calls
+
 - 1 call for server startup (parse instruction)
 - 2-3 calls for Hello packet exchanges
 - 1 call for neighbor state verification
@@ -16,22 +17,26 @@
 ## Test Scenarios
 
 ### 1. Server Startup
+
 - Start OSPF server on port 2600
 - LLM parses instruction: "Listen on port 2600 via OSPF as router 1.1.1.1 in area 0.0.0.0"
 - Verify server binds to UDP socket
 
 ### 2. Hello Packet Exchange
+
 - Client sends Hello packet to server
 - LLM receives `ospf_hello` event with neighbor information
 - LLM responds with `send_hello` action
 - Verify Hello response received
 
 ### 3. Neighbor State Transition
+
 - Exchange multiple Hello packets
 - Verify neighbor state transitions: Down → Init → 2-Way
 - Confirm bidirectional communication established
 
 ### 4. Database Description Exchange (Optional)
+
 - Client sends Database Description packet
 - LLM receives `ospf_database_description` event
 - LLM responds with DD packet
@@ -42,6 +47,7 @@
 **Test file**: `e2e_test.rs`
 
 **Setup**:
+
 ```rust
 #[tokio::test]
 #[cfg(all(test, feature = "ospf"))]
@@ -54,6 +60,7 @@ async fn test_ospf_hello_exchange() {
 ```
 
 **Manual OSPF Client**:
+
 - Construct OSPF Hello packet (24-byte header + Hello body)
 - Send via UDP socket
 - Parse response packets
@@ -90,11 +97,13 @@ async fn test_ospf_hello_exchange() {
 ## Debugging
 
 **Enable logging**:
+
 ```bash
 RUST_LOG=debug ./cargo-isolated.sh test --no-default-features --features ospf --test server::ospf::e2e_test
 ```
 
 **Check packet structure**:
+
 - Verify OSPF header (24 bytes): version, type, length, router ID, area ID
 - Verify Hello body: network mask, hello interval, priority, DR, BDR
 - Check checksum calculation

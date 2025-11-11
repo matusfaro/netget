@@ -16,7 +16,7 @@ mod turn_client_tests {
         // Start a TURN server on an available port
         let server_config = NetGetConfig::new(
             "Start TURN relay server on port {AVAILABLE_PORT}. When client requests allocation, \
-             assign relay address and return 600 second lifetime."
+             assign relay address and return 600 second lifetime.",
         );
 
         let mut server = start_netget_server(server_config).await?;

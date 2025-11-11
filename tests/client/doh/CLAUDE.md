@@ -2,7 +2,8 @@
 
 ## Test Strategy
 
-The DoH client E2E tests verify DNS query functionality by connecting to **public DoH servers** (Google Public DNS, Cloudflare DNS) and making real DNS queries. These are true end-to-end tests that validate:
+The DoH client E2E tests verify DNS query functionality by connecting to **public DoH servers** (Google Public DNS,
+Cloudflare DNS) and making real DNS queries. These are true end-to-end tests that validate:
 
 1. **Connection Establishment**: Client can connect to DoH servers over HTTPS
 2. **DNS Query Execution**: Client can make DNS queries with LLM-controlled parameters
@@ -14,17 +15,18 @@ The DoH client E2E tests verify DNS query functionality by connecting to **publi
 ## Test Approach
 
 ### Public DoH Servers
+
 Unlike other protocol tests that spin up local servers, DoH tests use **real public DoH servers**:
 
 - **Google Public DNS**: `https://dns.google/dns-query`
-  - Fast, reliable, widely available
-  - Supports all standard DNS record types
-  - Good for testing A, AAAA, MX, TXT queries
+    - Fast, reliable, widely available
+    - Supports all standard DNS record types
+    - Good for testing A, AAAA, MX, TXT queries
 
 - **Cloudflare DNS**: `https://cloudflare-dns.com/dns-query` / `https://1.1.1.1/dns-query`
-  - Privacy-focused, no logging
-  - Fast global network
-  - Good for testing AAAA and security-focused queries
+    - Privacy-focused, no logging
+    - Fast global network
+    - Good for testing AAAA and security-focused queries
 
 ### Why Public Servers?
 
@@ -34,6 +36,7 @@ Unlike other protocol tests that spin up local servers, DoH tests use **real pub
 4. **Network Dependency**: Acceptable for E2E tests (requires internet connection)
 
 ### Test Domains
+
 - `example.com` - IANA reserved example domain, always resolves
 - `example.org` - Another IANA reserved domain
 - `gmail.com` - Real domain with MX records for mail server testing
@@ -46,20 +49,20 @@ Unlike other protocol tests that spin up local servers, DoH tests use **real pub
 ### Breakdown by Test
 
 1. **test_doh_client_google_dns**: 1 LLM call
-   - Single client connection with query instruction
-   - LLM decides DNS query parameters
+    - Single client connection with query instruction
+    - LLM decides DNS query parameters
 
 2. **test_doh_client_cloudflare_dns**: 1 LLM call
-   - Single client connection to Cloudflare
-   - LLM issues AAAA query
+    - Single client connection to Cloudflare
+    - LLM issues AAAA query
 
 3. **test_doh_client_multiple_queries**: 1 LLM call
-   - Client connection with multi-query instruction
-   - LLM makes sequential queries based on single instruction
+    - Client connection with multi-query instruction
+    - LLM makes sequential queries based on single instruction
 
 4. **test_doh_client_record_types**: 1 LLM call
-   - Single MX query to test different record types
-   - LLM parses MX records
+    - Single MX query to test different record types
+    - LLM parses MX records
 
 **Total**: 4 LLM calls
 
@@ -73,17 +76,20 @@ Unlike other protocol tests that spin up local servers, DoH tests use **real pub
 ## Expected Runtime
 
 ### Per Test
+
 - **Client Startup**: ~1-2 seconds (NetGet spawn + LLM call)
 - **DNS Query**: ~50-200ms (network RTT to public DoH server)
 - **Response Processing**: ~10-50ms (parsing DNS response)
 - **Total per test**: ~2-3 seconds
 
 ### Full Suite
+
 - **4 tests x 3 seconds**: ~12 seconds
 - **With parallelization**: ~3-5 seconds (tests can run concurrently)
 - **Including test framework overhead**: ~15-20 seconds
 
 ### Comparison
+
 - **vs Server-Based Tests**: Much faster (no server startup/LLM)
 - **vs TCP/HTTP Tests**: Similar (both use public endpoints)
 - **vs Redis Tests**: Faster (no Docker container overhead)
@@ -91,6 +97,7 @@ Unlike other protocol tests that spin up local servers, DoH tests use **real pub
 ## Test Coverage
 
 ### Positive Cases
+
 - ✅ Connect to Google Public DNS
 - ✅ Connect to Cloudflare DNS
 - ✅ Query A records (IPv4 addresses)
@@ -100,6 +107,7 @@ Unlike other protocol tests that spin up local servers, DoH tests use **real pub
 - ✅ LLM-controlled query parameters
 
 ### Not Covered (Future)
+
 - ❌ DNSSEC validation (requires complex setup)
 - ❌ Custom DoH server (would need local DoH server)
 - ❌ Error cases (NXDomain, ServFail) - hard to trigger reliably
@@ -109,9 +117,11 @@ Unlike other protocol tests that spin up local servers, DoH tests use **real pub
 ## Known Issues & Limitations
 
 ### 1. Network Dependency
+
 **Issue**: Tests require internet connection to public DoH servers
 
 **Mitigation**:
+
 - Use well-known, reliable DoH servers (Google, Cloudflare)
 - Graceful failure if network unavailable
 - CI environments typically have internet access
@@ -119,9 +129,11 @@ Unlike other protocol tests that spin up local servers, DoH tests use **real pub
 **Impact**: Medium (acceptable for E2E tests)
 
 ### 2. DNS Propagation
+
 **Issue**: DNS records can change over time
 
 **Mitigation**:
+
 - Use stable IANA reserved domains (example.com, example.org)
 - Use well-known production domains (gmail.com, cloudflare.com)
 - Don't assert specific IP addresses (just verify query succeeded)
@@ -129,9 +141,11 @@ Unlike other protocol tests that spin up local servers, DoH tests use **real pub
 **Impact**: Low (test domains are very stable)
 
 ### 3. Rate Limiting
+
 **Issue**: Public DoH servers may rate-limit queries
 
 **Mitigation**:
+
 - Only 4 tests, minimal query volume
 - Tests use different domains to spread load
 - Google and Cloudflare have generous rate limits
@@ -139,9 +153,11 @@ Unlike other protocol tests that spin up local servers, DoH tests use **real pub
 **Impact**: Very Low (unlikely to hit limits)
 
 ### 4. Response Variability
+
 **Issue**: DNS responses may vary (load balancing, geo-location)
 
 **Mitigation**:
+
 - Don't assert exact IP addresses
 - Verify response structure, not specific values
 - Check for presence of expected record types
@@ -149,9 +165,11 @@ Unlike other protocol tests that spin up local servers, DoH tests use **real pub
 **Impact**: Low (tests are flexible)
 
 ### 5. TLS Certificate Validation
+
 **Issue**: Public DoH servers use production TLS certificates
 
 **Mitigation**:
+
 - hickory-client handles TLS validation automatically
 - Tests verify HTTPS connection works
 - No self-signed certificate issues
@@ -161,16 +179,19 @@ Unlike other protocol tests that spin up local servers, DoH tests use **real pub
 ## Performance Characteristics
 
 ### Latency
+
 - **Google DNS**: ~20-50ms (well-distributed globally)
 - **Cloudflare DNS**: ~10-30ms (1.1.1.1 is very fast)
 - **LLM Call**: ~1-3 seconds (dominates test time)
 
 ### Throughput
+
 - **Queries per test**: 1-2 queries
 - **Total queries across suite**: 5-6 queries
 - **Peak QPS**: Very low (well under any rate limits)
 
 ### Resource Usage
+
 - **Memory**: Minimal (single client connection)
 - **CPU**: Low (DNS parsing is fast)
 - **Network**: Lightweight (DNS queries are small packets)
@@ -178,17 +199,20 @@ Unlike other protocol tests that spin up local servers, DoH tests use **real pub
 ## Running Tests
 
 ### Single Test
+
 ```bash
 ./cargo-isolated.sh test --no-default-features --features doh \
   --test client::doh::e2e_test::doh_client_tests::test_doh_client_google_dns
 ```
 
 ### Full Suite
+
 ```bash
 ./cargo-isolated.sh test --no-default-features --features doh --test client::doh::e2e_test
 ```
 
 ### Prerequisites
+
 - Internet connection (for public DoH servers)
 - Ollama running locally (for LLM calls)
 - No local DoH server required
@@ -196,6 +220,7 @@ Unlike other protocol tests that spin up local servers, DoH tests use **real pub
 ## CI/CD Considerations
 
 ### GitHub Actions
+
 - ✅ Internet access available
 - ✅ No special privileges required
 - ✅ Fast execution (~15-20 seconds)
@@ -203,6 +228,7 @@ Unlike other protocol tests that spin up local servers, DoH tests use **real pub
 - ✅ No port allocation required
 
 ### Local Development
+
 - ✅ Works on any machine with internet
 - ✅ No root access required
 - ✅ No firewall changes needed
@@ -213,24 +239,30 @@ Unlike other protocol tests that spin up local servers, DoH tests use **real pub
 ### Test Failures
 
 **Symptom**: "Connection refused" or "Connection timeout"
+
 - **Cause**: No internet connection or public DoH server down
 - **Fix**: Check internet connection, try alternative DoH server
 
 **Symptom**: "Invalid domain" or "Parse error"
+
 - **Cause**: LLM generated invalid domain name
 - **Fix**: Review LLM instruction clarity, check model temperature
 
 **Symptom**: "TLS error" or "Certificate validation failed"
+
 - **Cause**: System TLS certificate store issue
 - **Fix**: Update system CA certificates
 
 ### Verbose Logging
+
 ```bash
 RUST_LOG=debug ./cargo-isolated.sh test --no-default-features --features doh --test client::doh::e2e_test
 ```
 
 ### Specific DoH Server Testing
+
 To test a specific DoH server, modify the test URL:
+
 ```rust
 // Google DNS
 "https://dns.google/dns-query"
@@ -253,6 +285,7 @@ To test a specific DoH server, modify the test URL:
 6. **Cache Testing**: Verify TTL handling and response caching
 
 ## References
+
 - [RFC 8484: DNS Queries over HTTPS (DoH)](https://datatracker.ietf.org/doc/html/rfc8484)
 - [Google Public DNS DoH](https://developers.google.com/speed/public-dns/docs/doh)
 - [Cloudflare DoH](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/)

@@ -2,11 +2,13 @@
 
 ## Overview
 
-E2E tests for the Telnet client verify LLM-controlled Telnet connection, command sending, and option negotiation handling.
+E2E tests for the Telnet client verify LLM-controlled Telnet connection, command sending, and option negotiation
+handling.
 
 ## Test Approach
 
 ### Test Infrastructure
+
 - **Server**: NetGet Telnet server (LLM-controlled)
 - **Client**: NetGet Telnet client (LLM-controlled)
 - **Verification**: Black-box output inspection
@@ -17,60 +19,70 @@ E2E tests for the Telnet client verify LLM-controlled Telnet connection, command
 **Total Budget**: < 10 LLM calls per test suite
 
 **Test Breakdown**:
+
 1. `test_telnet_client_connect_to_server` - 2 LLM calls
-   - Server startup (1 call)
-   - Client connection (1 call)
+    - Server startup (1 call)
+    - Client connection (1 call)
 
 2. `test_telnet_client_send_command` - 2 LLM calls
-   - Server startup (1 call)
-   - Client with command (1 call)
+    - Server startup (1 call)
+    - Client with command (1 call)
 
 3. `test_telnet_client_option_negotiation` - 2 LLM calls
-   - Server with option negotiation (1 call)
-   - Client response (1 call)
+    - Server with option negotiation (1 call)
+    - Client response (1 call)
 
 **Total**: 6 LLM calls
 
 ## Test Cases
 
 ### 1. Connection Test
+
 **Purpose**: Verify Telnet client can connect to server
 
 **Flow**:
+
 1. Start Telnet server on available port
 2. Start Telnet client connecting to server
 3. Wait for connection establishment
 4. Verify client output shows "connected"
 
 **Expected Behavior**:
+
 - Client successfully connects
 - Option negotiation happens automatically
 - Client reports connection status
 
 ### 2. Command Sending Test
+
 **Purpose**: Verify client can send Telnet commands
 
 **Flow**:
+
 1. Start Telnet echo server
 2. Start client with instruction to send "hello"
 3. Wait for command execution
 4. Verify client protocol is Telnet
 
 **Expected Behavior**:
+
 - Client sends command with `\r\n` termination
 - Server receives and echoes back
 - Client processes response
 
 ### 3. Option Negotiation Test
+
 **Purpose**: Verify automatic option negotiation handling
 
 **Flow**:
+
 1. Start server that sends Telnet options (WILL ECHO, DO TERMINAL_TYPE)
 2. Start client that connects
 3. Wait for negotiation
 4. Verify client handled negotiation
 
 **Expected Behavior**:
+
 - Client automatically responds to WILL with DONT
 - Client automatically responds to DO with WONT
 - Connection remains stable after negotiation
@@ -79,26 +91,29 @@ E2E tests for the Telnet client verify LLM-controlled Telnet connection, command
 ## Known Issues
 
 ### Test Flakiness
+
 - **Option Negotiation Timing**: Some servers send options immediately, others after data
-  - Mitigation: Generous sleep durations (1000ms)
-  - Future: Add retry logic with backoff
+    - Mitigation: Generous sleep durations (1000ms)
+    - Future: Add retry logic with backoff
 
 - **Server Startup Race**: Client may connect before server is fully ready
-  - Mitigation: 500ms sleep after server start
-  - Future: Poll server port availability
+    - Mitigation: 500ms sleep after server start
+    - Future: Poll server port availability
 
 ### LLM Variability
+
 - **Command Format**: LLM might send commands in unexpected format
-  - Handled by flexible action parsing
-  - `send_command` vs `send_text` actions
+    - Handled by flexible action parsing
+    - `send_command` vs `send_text` actions
 
 - **Option Response**: LLM shouldn't need to handle negotiation
-  - Automatic negotiation in client implementation
-  - LLM sees clean text data only
+    - Automatic negotiation in client implementation
+    - LLM sees clean text data only
 
 ## Test Data
 
 ### Server Prompts
+
 ```
 "Listen on port {AVAILABLE_PORT} via Telnet. When client connects, send 'Welcome!\r\n' prompt."
 "Listen on port {AVAILABLE_PORT} via Telnet. Echo back any text received."
@@ -106,6 +121,7 @@ E2E tests for the Telnet client verify LLM-controlled Telnet connection, command
 ```
 
 ### Client Prompts
+
 ```
 "Connect to 127.0.0.1:{port} via Telnet. Wait for welcome message."
 "Connect to 127.0.0.1:{port} via Telnet and send the command 'hello'."
@@ -115,6 +131,7 @@ E2E tests for the Telnet client verify LLM-controlled Telnet connection, command
 ## Runtime Expectations
 
 **Per Test**:
+
 - Server startup: 500ms
 - Client connection: 500-1000ms
 - Option negotiation: <100ms (automatic)
@@ -134,12 +151,14 @@ E2E tests for the Telnet client verify LLM-controlled Telnet connection, command
 ## Debugging Tips
 
 **If tests fail**:
+
 1. Check netget.log for detailed Telnet negotiation
 2. Verify "nectar" dependency is available
 3. Ensure server is bound before client connects (check logs)
 4. Look for IAC command traces in debug output
 
 **Common Failures**:
+
 - `connection refused`: Server not started yet (increase sleep)
 - `output_contains failed`: LLM didn't produce expected text (check prompt)
 - `timeout`: LLM call took too long (check Ollama)

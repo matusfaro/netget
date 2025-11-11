@@ -31,9 +31,15 @@ Input:
         println!("Expected footer layout:{}", expected);
 
         // Assertions about structure:
-        assert!(expected.contains("#1 HTTP :8080 - Running"), "Should show server");
+        assert!(
+            expected.contains("#1 HTTP :8080 - Running"),
+            "Should show server"
+        );
         assert!(expected.contains("Input:"), "Should show input prompt");
-        assert!(expected.contains("Server | HTTP | :8080"), "Should show status bar");
+        assert!(
+            expected.contains("Server | HTTP | :8080"),
+            "Should show status bar"
+        );
 
         // Count separators - there are 3 full separator lines
         let lines: Vec<&str> = expected.lines().collect();
@@ -50,7 +56,10 @@ Input:
         let input_prefix = "Input: ";
         let expected_cursor_col = input_prefix.len(); // Should be 7 (length of "Input: ")
 
-        assert_eq!(expected_cursor_col, 7, "Cursor should be at column 7 after 'Input: '");
+        assert_eq!(
+            expected_cursor_col, 7,
+            "Cursor should be at column 7 after 'Input: '"
+        );
     }
 
     /// Test footer layout with multi-line input
@@ -74,9 +83,18 @@ Input: line 1
 
         println!("Expected multi-line footer:{}", expected);
 
-        assert!(expected.contains("Input: line 1"), "First line has Input: prefix");
-        assert!(expected.contains("       line 2"), "Second line has space prefix");
-        assert!(expected.contains("       line 3"), "Third line has space prefix");
+        assert!(
+            expected.contains("Input: line 1"),
+            "First line has Input: prefix"
+        );
+        assert!(
+            expected.contains("       line 2"),
+            "Second line has space prefix"
+        );
+        assert!(
+            expected.contains("       line 3"),
+            "Third line has space prefix"
+        );
     }
 
     /// Test footer with slash commands
@@ -120,6 +138,10 @@ Input: /
         let footer_start = terminal_height - footer_height;
 
         assert_eq!(footer_start, 19, "Footer should start at line 19");
-        assert_eq!(terminal_height - footer_start, 5, "Footer should occupy 5 lines");
+        assert_eq!(
+            terminal_height - footer_start,
+            5,
+            "Footer should occupy 5 lines"
+        );
     }
 }

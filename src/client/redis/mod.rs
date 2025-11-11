@@ -3,8 +3,8 @@ pub mod actions;
 
 pub use actions::RedisClientProtocol;
 
-use anyhow::{Context, Result};
 use crate::llm::actions::client_trait::Client;
+use anyhow::{Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -12,13 +12,13 @@ use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, trace};
 
+use crate::client::redis::actions::REDIS_CLIENT_RESPONSE_RECEIVED_EVENT;
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::redis::actions::REDIS_CLIENT_RESPONSE_RECEIVED_EVENT;
 
 /// Redis client that connects to a Redis server
 pub struct RedisClient;
@@ -40,10 +40,15 @@ impl RedisClient {
         let local_addr = stream.local_addr()?;
         let remote_sock_addr = stream.peer_addr()?;
 
-        info!("Redis client {} connected to {} (local: {})", client_id, remote_sock_addr, local_addr);
+        info!(
+            "Redis client {} connected to {} (local: {})",
+            client_id, remote_sock_addr, local_addr
+        );
 
         // Update client state
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
         let _ = status_tx.send(format!("[CLIENT] Redis client {} connected", client_id));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
@@ -61,8 +66,11 @@ impl RedisClient {
                 match reader.read_line(&mut line).await {
                     Ok(0) => {
                         info!("Redis client {} disconnected", client_id);
-                        app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                        let _ = status_tx.send(format!("[CLIENT] Redis client {} disconnected", client_id));
+                        app_state
+                            .update_client_status(client_id, ClientStatus::Disconnected)
+                            .await;
+                        let _ = status_tx
+                            .send(format!("[CLIENT] Redis client {} disconnected", client_id));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         break;
                     }
@@ -70,8 +78,11 @@ impl RedisClient {
                         trace!("Redis client {} received: {}", client_id, line.trim());
 
                         // Call LLM with response
-                        if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                            let protocol = Arc::new(crate::client::redis::actions::RedisClientProtocol::new());
+                        if let Some(instruction) =
+                            app_state.get_instruction_for_client(client_id).await
+                        {
+                            let protocol =
+                                Arc::new(crate::client::redis::actions::RedisClientProtocol::new());
                             let event = Event::new(
                                 &REDIS_CLIENT_RESPONSE_RECEIVED_EVENT,
                                 serde_json::json!({
@@ -79,7 +90,10 @@ impl RedisClient {
                                 }),
                             );
 
-                            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                            let memory = app_state
+                                .get_memory_for_client(client_id)
+                                .await
+                                .unwrap_or_default();
 
                             match call_llm_for_client(
                                 &llm_client,
@@ -90,8 +104,13 @@ impl RedisClient {
                                 Some(&event),
                                 protocol.as_ref(),
                                 &status_tx,
-                            ).await {
-                                Ok(ClientLlmResult { actions, memory_updates }) => {
+                            )
+                            .await
+                            {
+                                Ok(ClientLlmResult {
+                                    actions,
+                                    memory_updates,
+                                }) => {
                                     // Update memory
                                     if let Some(mem) = memory_updates {
                                         app_state.set_memory_for_client(client_id, mem).await;
@@ -124,7 +143,9 @@ impl RedisClient {
                     }
                     Err(e) => {
                         error!("Redis client {} read error: {}", client_id, e);
-                        app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
+                        app_state
+                            .update_client_status(client_id, ClientStatus::Error(e.to_string()))
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         break;
                     }

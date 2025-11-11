@@ -17,11 +17,23 @@ mod smtp_client_tests {
     async fn start_local_smtp_server() -> E2EResult<std::process::Child> {
         // Start Python SMTP debugging server on port 1025
         let child = Command::new("python3")
-            .args(&["-m", "smtpd", "-n", "-c", "DebuggingServer", "localhost:1025"])
+            .args(&[
+                "-m",
+                "smtpd",
+                "-n",
+                "-c",
+                "DebuggingServer",
+                "localhost:1025",
+            ])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .map_err(|e| format!("Failed to start Python SMTP server: {}. Make sure Python 3 is installed.", e))?;
+            .map_err(|e| {
+                format!(
+                    "Failed to start Python SMTP server: {}. Make sure Python 3 is installed.",
+                    e
+                )
+            })?;
 
         // Give server time to start
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -60,7 +72,9 @@ mod smtp_client_tests {
 
         // Cleanup
         client.stop().await?;
-        smtp_server.kill().map_err(|e| format!("Failed to kill SMTP server: {}", e))?;
+        smtp_server
+            .kill()
+            .map_err(|e| format!("Failed to kill SMTP server: {}", e))?;
 
         Ok(())
     }
@@ -92,7 +106,9 @@ mod smtp_client_tests {
 
         // Cleanup
         client.stop().await?;
-        smtp_server.kill().map_err(|e| format!("Failed to kill SMTP server: {}", e))?;
+        smtp_server
+            .kill()
+            .map_err(|e| format!("Failed to kill SMTP server: {}", e))?;
 
         Ok(())
     }
@@ -108,7 +124,7 @@ mod smtp_client_tests {
 
         // Client connecting without authentication
         let client_config = NetGetConfig::new(
-            "Connect to localhost:1025 via SMTP without authentication. Ready to send emails."
+            "Connect to localhost:1025 via SMTP without authentication. Ready to send emails.",
         );
 
         let mut client = start_netget_client(client_config).await?;
@@ -126,7 +142,9 @@ mod smtp_client_tests {
 
         // Cleanup
         client.stop().await?;
-        smtp_server.kill().map_err(|e| format!("Failed to kill SMTP server: {}", e))?;
+        smtp_server
+            .kill()
+            .map_err(|e| format!("Failed to kill SMTP server: {}", e))?;
 
         Ok(())
     }

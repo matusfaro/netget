@@ -213,8 +213,7 @@ impl Args {
         if let Some(ref filename) = self.load_file {
             // This will fail if file doesn't exist, which is appropriate
             return Ok(Some(
-                tokio::runtime::Runtime::new()?
-                    .block_on(save_load::load_actions(filename))?
+                tokio::runtime::Runtime::new()?.block_on(save_load::load_actions(filename))?,
             ));
         }
 
@@ -224,7 +223,8 @@ impl Args {
             if save_load::is_actions_json(&joined) {
                 // Parse {"actions": [...]} format and extract the array
                 let parsed: serde_json::Value = serde_json::from_str(&joined)?;
-                let actions = parsed["actions"].as_array()
+                let actions = parsed["actions"]
+                    .as_array()
                     .ok_or_else(|| anyhow::anyhow!("Invalid actions format"))?
                     .clone();
                 return Ok(Some(actions));
@@ -239,7 +239,8 @@ impl Args {
             if !trimmed.is_empty() && save_load::is_actions_json(trimmed) {
                 // Parse {"actions": [...]} format and extract the array
                 let parsed: serde_json::Value = serde_json::from_str(trimmed)?;
-                let actions = parsed["actions"].as_array()
+                let actions = parsed["actions"]
+                    .as_array()
                     .ok_or_else(|| anyhow::anyhow!("Invalid actions format"))?
                     .clone();
                 return Ok(Some(actions));
@@ -281,7 +282,9 @@ impl Args {
                     "on" | "auto" => crate::state::app_state::ScriptingMode::On,
                     "off" | "llm" => crate::state::app_state::ScriptingMode::Off,
                     "python" | "py" => crate::state::app_state::ScriptingMode::Python,
-                    "javascript" | "js" | "node" => crate::state::app_state::ScriptingMode::JavaScript,
+                    "javascript" | "js" | "node" => {
+                        crate::state::app_state::ScriptingMode::JavaScript
+                    }
                     "go" | "golang" => crate::state::app_state::ScriptingMode::Go,
                     "perl" => crate::state::app_state::ScriptingMode::Perl,
                     _ => {
@@ -298,7 +301,9 @@ impl Args {
     }
 
     /// Parse the event handler mode argument into an EventHandlerMode
-    pub fn parse_event_handler_mode(&self) -> Result<Option<crate::state::app_state::EventHandlerMode>> {
+    pub fn parse_event_handler_mode(
+        &self,
+    ) -> Result<Option<crate::state::app_state::EventHandlerMode>> {
         match &self.event_handler_mode {
             None => Ok(None),
             Some(mode) => {

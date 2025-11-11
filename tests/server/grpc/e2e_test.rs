@@ -58,17 +58,16 @@ fn compile_proto_to_fds(proto_text: &str) -> E2EResult<Vec<u8>> {
     let output = Command::new("protoc")
         .arg("--include_imports")
         .arg("--include_source_info")
-        .arg(format!("--descriptor_set_out={}", descriptor_file.display()))
+        .arg(format!(
+            "--descriptor_set_out={}",
+            descriptor_file.display()
+        ))
         .arg(format!("--proto_path={}", temp_dir.display()))
         .arg(proto_file.file_name().unwrap())
         .output()?;
 
     if !output.status.success() {
-        return Err(format!(
-            "protoc failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )
-        .into());
+        return Err(format!("protoc failed: {}", String::from_utf8_lossy(&output.stderr)).into());
     }
 
     // Read the compiled descriptor
@@ -86,7 +85,11 @@ async fn test_grpc_unary_rpc_basic() -> E2EResult<()> {
     println!("\n=== E2E Test: gRPC Unary RPC Basic ===");
 
     // Check if protoc is available
-    if std::process::Command::new("protoc").arg("--version").output().is_err() {
+    if std::process::Command::new("protoc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         panic!("protoc not found in PATH. Please install protobuf compiler: brew install protobuf (macOS) or apt-get install protobuf-compiler (Linux)");
     }
 
@@ -106,7 +109,10 @@ When you receive GetUser requests, respond with a User message containing the re
 
     // Start the server
     let mut server = helpers::start_netget_server(ServerConfig::new_no_scripts(prompt)).await?;
-    println!("Server started: {} stack on port {}", server.stack, server.port);
+    println!(
+        "Server started: {} stack on port {}",
+        server.stack, server.port
+    );
 
     // Verify it's actually a gRPC server
     // Note: The stack will be "gRPC" in uppercase in server output
@@ -123,15 +129,17 @@ When you receive GetUser requests, respond with a User message containing the re
     let descriptor_bytes = compile_proto_to_fds(&proto_text)?;
 
     // Encode request as protobuf using prost-reflect
-    use prost_reflect::{DescriptorPool, DynamicMessage};
     use prost::Message;
+    use prost_reflect::{DescriptorPool, DynamicMessage};
 
     let descriptor_pool = DescriptorPool::decode(descriptor_bytes.as_slice())?;
-    let user_id_desc = descriptor_pool.get_message_by_name("test.UserId")
+    let user_id_desc = descriptor_pool
+        .get_message_by_name("test.UserId")
         .ok_or_else(|| "UserId message not found")?;
 
     let mut request_msg = DynamicMessage::new(user_id_desc.clone());
-    let id_field = user_id_desc.get_field_by_name("id")
+    let id_field = user_id_desc
+        .get_field_by_name("id")
         .ok_or_else(|| "id field not found")?;
     request_msg.set_field(&id_field, prost_reflect::Value::I32(123));
 
@@ -144,9 +152,7 @@ When you receive GetUser requests, respond with a User message containing the re
     grpc_frame.extend_from_slice(&request_body);
 
     // Use reqwest with HTTP/2
-    let client = reqwest::Client::builder()
-        .http2_prior_knowledge()
-        .build()?;
+    let client = reqwest::Client::builder().http2_prior_knowledge().build()?;
     let url = format!("http://127.0.0.1:{}/test.UserService/GetUser", server.port);
 
     let response = client
@@ -182,7 +188,11 @@ async fn test_grpc_proto_file_loading() -> E2EResult<()> {
     println!("\n=== E2E Test: gRPC Proto File Loading ===");
 
     // Check if protoc is available
-    if std::process::Command::new("protoc").arg("--version").output().is_err() {
+    if std::process::Command::new("protoc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         panic!("protoc not found in PATH. Please install protobuf compiler: brew install protobuf (macOS) or apt-get install protobuf-compiler (Linux)");
     }
 
@@ -230,7 +240,11 @@ async fn test_grpc_proto_text_inline() -> E2EResult<()> {
     println!("\n=== E2E Test: gRPC Proto Text Inline ===");
 
     // Check if protoc is available
-    if std::process::Command::new("protoc").arg("--version").output().is_err() {
+    if std::process::Command::new("protoc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         panic!("protoc not found in PATH. Please install protobuf compiler: brew install protobuf (macOS) or apt-get install protobuf-compiler (Linux)");
     }
 
@@ -269,7 +283,11 @@ async fn test_grpc_error_response() -> E2EResult<()> {
     println!("\n=== E2E Test: gRPC Error Response ===");
 
     // Check if protoc is available
-    if std::process::Command::new("protoc").arg("--version").output().is_err() {
+    if std::process::Command::new("protoc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         panic!("protoc not found in PATH. Please install protobuf compiler: brew install protobuf (macOS) or apt-get install protobuf-compiler (Linux)");
     }
 
@@ -298,15 +316,17 @@ When you receive GetUser requests:
     sleep(Duration::from_secs(2)).await;
 
     // Encode request as protobuf
-    use prost_reflect::{DescriptorPool, DynamicMessage};
     use prost::Message;
+    use prost_reflect::{DescriptorPool, DynamicMessage};
 
     let descriptor_pool = DescriptorPool::decode(descriptor_bytes.as_slice())?;
-    let user_id_desc = descriptor_pool.get_message_by_name("test.UserId")
+    let user_id_desc = descriptor_pool
+        .get_message_by_name("test.UserId")
         .ok_or_else(|| "UserId message not found")?;
 
     let mut request_msg = DynamicMessage::new(user_id_desc.clone());
-    let id_field = user_id_desc.get_field_by_name("id")
+    let id_field = user_id_desc
+        .get_field_by_name("id")
         .ok_or_else(|| "id field not found")?;
     request_msg.set_field(&id_field, prost_reflect::Value::I32(0));
 
@@ -317,9 +337,7 @@ When you receive GetUser requests:
     grpc_frame.extend_from_slice(&(request_body.len() as u32).to_be_bytes());
     grpc_frame.extend_from_slice(&request_body);
 
-    let client = reqwest::Client::builder()
-        .http2_prior_knowledge()
-        .build()?;
+    let client = reqwest::Client::builder().http2_prior_knowledge().build()?;
     let uri = format!("http://127.0.0.1:{}/test.UserService/GetUser", server.port);
 
     let response = client
@@ -340,7 +358,10 @@ When you receive GetUser requests:
 
     // Note: Exact error handling depends on LLM interpretation
     // We just verify the server is still running and responsive
-    assert!(server.is_running(), "Server should still be running after error");
+    assert!(
+        server.is_running(),
+        "Server should still be running after error"
+    );
 
     println!("✓ Error handling test passed");
     server.stop().await?;
@@ -353,7 +374,11 @@ async fn test_grpc_concurrent_requests() -> E2EResult<()> {
     println!("\n=== E2E Test: gRPC Concurrent Requests ===");
 
     // Check if protoc is available
-    if std::process::Command::new("protoc").arg("--version").output().is_err() {
+    if std::process::Command::new("protoc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         panic!("protoc not found in PATH. Please install protobuf compiler: brew install protobuf (macOS) or apt-get install protobuf-compiler (Linux)");
     }
 
@@ -379,9 +404,7 @@ When you receive GetUser requests, respond with a User message where the id matc
     sleep(Duration::from_secs(2)).await;
 
     // Make 3 concurrent requests
-    let client = reqwest::Client::builder()
-        .http2_prior_knowledge()
-        .build()?;
+    let client = reqwest::Client::builder().http2_prior_knowledge().build()?;
     let mut handles = vec![];
 
     for id in 1..=3 {
@@ -390,10 +413,11 @@ When you receive GetUser requests, respond with a User message where the id matc
         let descriptor_bytes_clone = descriptor_bytes.clone();
 
         let handle = tokio::spawn(async move {
-            use prost_reflect::{DescriptorPool, DynamicMessage};
             use prost::Message;
+            use prost_reflect::{DescriptorPool, DynamicMessage};
 
-            let descriptor_pool = DescriptorPool::decode(descriptor_bytes_clone.as_slice()).unwrap();
+            let descriptor_pool =
+                DescriptorPool::decode(descriptor_bytes_clone.as_slice()).unwrap();
             let user_id_desc = descriptor_pool.get_message_by_name("test.UserId").unwrap();
 
             let mut request_msg = DynamicMessage::new(user_id_desc.clone());
@@ -434,7 +458,10 @@ When you receive GetUser requests, respond with a User message where the id matc
         success_count
     );
 
-    println!("✓ Concurrent requests test passed ({}/3 succeeded)", success_count);
+    println!(
+        "✓ Concurrent requests test passed ({}/3 succeeded)",
+        success_count
+    );
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())

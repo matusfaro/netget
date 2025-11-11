@@ -9,13 +9,15 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
+use crate::client::npm::actions::{
+    NPM_CLIENT_PACKAGE_INFO_RECEIVED_EVENT, NPM_CLIENT_SEARCH_RESULTS_RECEIVED_EVENT,
+};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::npm::actions::{NPM_CLIENT_PACKAGE_INFO_RECEIVED_EVENT, NPM_CLIENT_SEARCH_RESULTS_RECEIVED_EVENT};
 
 /// NPM Registry client that queries packages
 pub struct NpmClient;
@@ -31,12 +33,13 @@ impl NpmClient {
     ) -> Result<SocketAddr> {
         // For NPM, "connection" is logical - we're accessing a REST API
         // Default to registry.npmjs.org if not specified
-        let registry_url = if remote_addr.starts_with("http://") || remote_addr.starts_with("https://") {
-            remote_addr
-        } else {
-            // Treat as package name or use default registry
-            "https://registry.npmjs.org".to_string()
-        };
+        let registry_url =
+            if remote_addr.starts_with("http://") || remote_addr.starts_with("https://") {
+                remote_addr
+            } else {
+                // Treat as package name or use default registry
+                "https://registry.npmjs.org".to_string()
+            };
 
         info!("NPM client {} initialized for {}", client_id, registry_url);
 
@@ -48,20 +51,25 @@ impl NpmClient {
             .context("Failed to build HTTP client")?;
 
         // Store client in protocol_data
-        app_state.with_client_mut(client_id, |client| {
-            client.set_protocol_field(
-                "npm_client".to_string(),
-                serde_json::json!("initialized"),
-            );
-            client.set_protocol_field(
-                "registry_url".to_string(),
-                serde_json::json!(registry_url),
-            );
-        }).await;
+        app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .set_protocol_field("npm_client".to_string(), serde_json::json!("initialized"));
+                client.set_protocol_field(
+                    "registry_url".to_string(),
+                    serde_json::json!(registry_url),
+                );
+            })
+            .await;
 
         // Update status
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] NPM client {} ready for {}", client_id, registry_url));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] NPM client {} ready for {}",
+            client_id, registry_url
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Spawn background task to monitor for disconnection
@@ -91,11 +99,16 @@ impl NpmClient {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         // Get registry URL from client
-        let registry_url = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("registry_url")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }).await.flatten().context("No registry URL found")?;
+        let registry_url = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("registry_url")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .await
+            .flatten()
+            .context("No registry URL found")?;
 
         // Encode package name for URL (handles scoped packages like @types/node)
         let encoded_name = package_name.replace("/", "%2f");
@@ -106,7 +119,10 @@ impl NpmClient {
             format!("{}/{}/{}", registry_url, encoded_name, version)
         };
 
-        info!("NPM client {} getting package info: {} ({})", client_id, package_name, version);
+        info!(
+            "NPM client {} getting package info: {} ({})",
+            client_id, package_name, version
+        );
 
         // Build HTTP client
         let http_client = reqwest::Client::builder()
@@ -120,20 +136,35 @@ impl NpmClient {
                 let status = response.status();
 
                 if !status.is_success() {
-                    let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-                    error!("NPM client {} failed to get package {}: {} - {}", client_id, package_name, status, error_text);
-                    let _ = status_tx.send(format!("[ERROR] NPM request failed: {} - {}", status, error_text));
+                    let error_text = response
+                        .text()
+                        .await
+                        .unwrap_or_else(|_| "Unknown error".to_string());
+                    error!(
+                        "NPM client {} failed to get package {}: {} - {}",
+                        client_id, package_name, status, error_text
+                    );
+                    let _ = status_tx.send(format!(
+                        "[ERROR] NPM request failed: {} - {}",
+                        status, error_text
+                    ));
                     return Err(anyhow::anyhow!("NPM request failed: {}", status));
                 }
 
                 // Parse JSON response
-                let package_data: serde_json::Value = response.json().await
+                let package_data: serde_json::Value = response
+                    .json()
+                    .await
                     .context("Failed to parse NPM response")?;
 
-                info!("NPM client {} received package info for {}", client_id, package_name);
+                info!(
+                    "NPM client {} received package info for {}",
+                    client_id, package_name
+                );
 
                 // Extract relevant fields
-                let description = package_data.get("description")
+                let description = package_data
+                    .get("description")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
 
@@ -143,16 +174,19 @@ impl NpmClient {
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown");
 
-                let versions = package_data.get("versions")
+                let versions = package_data
+                    .get("versions")
                     .and_then(|v| v.as_object())
                     .map(|obj| obj.keys().cloned().collect::<Vec<_>>())
                     .unwrap_or_default();
 
                 let dist = if version == "latest" {
-                    package_data.get("dist-tags")
+                    package_data
+                        .get("dist-tags")
                         .and_then(|dt| dt.get("latest"))
                         .and_then(|lv| {
-                            package_data.get("versions")
+                            package_data
+                                .get("versions")
                                 .and_then(|vs| vs.get(lv.as_str().unwrap_or("")))
                         })
                         .and_then(|v| v.get("dist"))
@@ -175,7 +209,10 @@ impl NpmClient {
                         }),
                     );
 
-                    let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                    let memory = app_state
+                        .get_memory_for_client(client_id)
+                        .await
+                        .unwrap_or_default();
 
                     match call_llm_for_client(
                         &llm_client,
@@ -186,8 +223,13 @@ impl NpmClient {
                         Some(&event),
                         protocol.as_ref(),
                         &status_tx,
-                    ).await {
-                        Ok(ClientLlmResult { actions: _, memory_updates }) => {
+                    )
+                    .await
+                    {
+                        Ok(ClientLlmResult {
+                            actions: _,
+                            memory_updates,
+                        }) => {
                             // Update memory
                             if let Some(mem) = memory_updates {
                                 app_state.set_memory_for_client(client_id, mem).await;
@@ -221,7 +263,10 @@ impl NpmClient {
         // NPM search API endpoint
         let search_url = "https://registry.npmjs.org/-/v1/search";
 
-        info!("NPM client {} searching for: {} (limit: {})", client_id, query, limit);
+        info!(
+            "NPM client {} searching for: {} (limit: {})",
+            client_id, query, limit
+        );
 
         // Build HTTP client
         let http_client = reqwest::Client::builder()
@@ -230,7 +275,12 @@ impl NpmClient {
             .build()?;
 
         // Build query parameters
-        let url = format!("{}?text={}&size={}", search_url, urlencoding::encode(&query), limit);
+        let url = format!(
+            "{}?text={}&size={}",
+            search_url,
+            urlencoding::encode(&query),
+            limit
+        );
 
         // Make request
         match http_client.get(&url).send().await {
@@ -238,14 +288,25 @@ impl NpmClient {
                 let status = response.status();
 
                 if !status.is_success() {
-                    let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-                    error!("NPM client {} search failed: {} - {}", client_id, status, error_text);
-                    let _ = status_tx.send(format!("[ERROR] NPM search failed: {} - {}", status, error_text));
+                    let error_text = response
+                        .text()
+                        .await
+                        .unwrap_or_else(|_| "Unknown error".to_string());
+                    error!(
+                        "NPM client {} search failed: {} - {}",
+                        client_id, status, error_text
+                    );
+                    let _ = status_tx.send(format!(
+                        "[ERROR] NPM search failed: {} - {}",
+                        status, error_text
+                    ));
                     return Err(anyhow::anyhow!("NPM search failed: {}", status));
                 }
 
                 // Parse JSON response
-                let search_data: serde_json::Value = response.json().await
+                let search_data: serde_json::Value = response
+                    .json()
+                    .await
                     .context("Failed to parse NPM search response")?;
 
                 let results = search_data.get("objects")
@@ -262,11 +323,16 @@ impl NpmClient {
                     })
                     .unwrap_or_default();
 
-                let total = search_data.get("total")
+                let total = search_data
+                    .get("total")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(results.len() as u64);
 
-                info!("NPM client {} received {} search results", client_id, results.len());
+                info!(
+                    "NPM client {} received {} search results",
+                    client_id,
+                    results.len()
+                );
 
                 // Call LLM with search results
                 if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -280,7 +346,10 @@ impl NpmClient {
                         }),
                     );
 
-                    let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                    let memory = app_state
+                        .get_memory_for_client(client_id)
+                        .await
+                        .unwrap_or_default();
 
                     match call_llm_for_client(
                         &llm_client,
@@ -291,8 +360,13 @@ impl NpmClient {
                         Some(&event),
                         protocol.as_ref(),
                         &status_tx,
-                    ).await {
-                        Ok(ClientLlmResult { actions: _, memory_updates }) => {
+                    )
+                    .await
+                    {
+                        Ok(ClientLlmResult {
+                            actions: _,
+                            memory_updates,
+                        }) => {
                             // Update memory
                             if let Some(mem) = memory_updates {
                                 app_state.set_memory_for_client(client_id, mem).await;
@@ -324,16 +398,24 @@ impl NpmClient {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         // First get package info to find tarball URL
-        let registry_url = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("registry_url")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }).await.flatten().context("No registry URL found")?;
+        let registry_url = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("registry_url")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .await
+            .flatten()
+            .context("No registry URL found")?;
 
         let encoded_name = package_name.replace("/", "%2f");
         let info_url = format!("{}/{}", registry_url, encoded_name);
 
-        info!("NPM client {} downloading tarball for {} ({})", client_id, package_name, version);
+        info!(
+            "NPM client {} downloading tarball for {} ({})",
+            client_id, package_name, version
+        );
 
         // Build HTTP client
         let http_client = reqwest::Client::builder()
@@ -342,28 +424,36 @@ impl NpmClient {
             .build()?;
 
         // Get package info
-        let package_data: serde_json::Value = http_client.get(&info_url).send().await?
-            .json().await
+        let package_data: serde_json::Value = http_client
+            .get(&info_url)
+            .send()
+            .await?
+            .json()
+            .await
             .context("Failed to get package info")?;
 
         // Find tarball URL
         let tarball_url = if version == "latest" {
-            package_data.get("dist-tags")
+            package_data
+                .get("dist-tags")
                 .and_then(|dt| dt.get("latest"))
                 .and_then(|lv| {
-                    package_data.get("versions")
+                    package_data
+                        .get("versions")
                         .and_then(|vs| vs.get(lv.as_str().unwrap_or("")))
                 })
                 .and_then(|v| v.get("dist"))
                 .and_then(|d| d.get("tarball"))
                 .and_then(|t| t.as_str())
         } else {
-            package_data.get("versions")
+            package_data
+                .get("versions")
                 .and_then(|vs| vs.get(&version))
                 .and_then(|v| v.get("dist"))
                 .and_then(|d| d.get("tarball"))
                 .and_then(|t| t.as_str())
-        }.context("Could not find tarball URL")?;
+        }
+        .context("Could not find tarball URL")?;
 
         info!("NPM client {} downloading from: {}", client_id, tarball_url);
 
@@ -372,11 +462,18 @@ impl NpmClient {
         let bytes = response.bytes().await?;
 
         // Write to file
-        tokio::fs::write(&output_path, bytes).await
+        tokio::fs::write(&output_path, bytes)
+            .await
             .context("Failed to write tarball")?;
 
-        info!("NPM client {} downloaded tarball to: {}", client_id, output_path);
-        let _ = status_tx.send(format!("[CLIENT] NPM tarball downloaded to: {}", output_path));
+        info!(
+            "NPM client {} downloaded tarball to: {}",
+            client_id, output_path
+        );
+        let _ = status_tx.send(format!(
+            "[CLIENT] NPM tarball downloaded to: {}",
+            output_path
+        ));
 
         Ok(())
     }

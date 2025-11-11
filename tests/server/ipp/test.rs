@@ -7,7 +7,7 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, ServerConfig, E2EResult};
+use super::super::super::helpers::{self, E2EResult, ServerConfig};
 use std::time::Duration;
 
 #[tokio::test]
@@ -22,7 +22,6 @@ async fn test_ipp_get_printer_attributes() -> E2EResult<()> {
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
-
 
     // VALIDATION: Send HTTP POST request to IPP endpoint
     println!("Sending Get-Printer-Attributes request...");
@@ -77,8 +76,10 @@ async fn test_ipp_get_printer_attributes() -> E2EResult<()> {
             .post(format!("http://127.0.0.1:{}/printers/netget", server.port))
             .header("Content-Type", "application/ipp")
             .body(body)
-            .send()
-    ).await {
+            .send(),
+    )
+    .await
+    {
         Ok(Ok(resp)) => {
             println!("✓ Received HTTP response: {}", resp.status());
             resp
@@ -106,7 +107,15 @@ async fn test_ipp_get_printer_attributes() -> E2EResult<()> {
 
         // Check status code (bytes 2-3)
         let status = u16::from_be_bytes([response_body[2], response_body[3]]);
-        println!("IPP status code: 0x{:04x} ({})", status, if status == 0 { "successful-ok" } else { "error" });
+        println!(
+            "IPP status code: 0x{:04x} ({})",
+            status,
+            if status == 0 {
+                "successful-ok"
+            } else {
+                "error"
+            }
+        );
     }
 
     println!("✓ IPP Get-Printer-Attributes test completed\n");
@@ -123,7 +132,6 @@ async fn test_ipp_print_job() -> E2EResult<()> {
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
-
 
     println!("Sending Print-Job request...");
 
@@ -204,7 +212,6 @@ async fn test_ipp_basic_http() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-
     println!("Sending basic HTTP request...");
 
     let client = reqwest::Client::new();
@@ -217,7 +224,8 @@ async fn test_ipp_basic_http() -> E2EResult<()> {
 
     // IPP servers typically return 200 for GET requests
     assert!(
-        response.status().is_success() || response.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED,
+        response.status().is_success()
+            || response.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED,
         "Expected successful response or method not allowed"
     );
 

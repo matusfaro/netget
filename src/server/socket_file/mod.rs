@@ -19,11 +19,11 @@ use super::connection::ConnectionId;
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
-use actions::{SOCKET_FILE_CONNECTION_OPENED_EVENT, SOCKET_FILE_DATA_RECEIVED_EVENT};
-use crate::server::SocketFileProtocol;
 use crate::protocol::Event;
+use crate::server::SocketFileProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use actions::{SOCKET_FILE_CONNECTION_OPENED_EVENT, SOCKET_FILE_DATA_RECEIVED_EVENT};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -56,8 +56,9 @@ impl SocketFileServer {
     ) -> Result<PathBuf> {
         // Remove existing socket file if present
         if socket_path.exists() {
-            std::fs::remove_file(&socket_path)
-                .with_context(|| format!("Failed to remove existing socket file: {:?}", socket_path))?;
+            std::fs::remove_file(&socket_path).with_context(|| {
+                format!("Failed to remove existing socket file: {:?}", socket_path)
+            })?;
         }
 
         // Create and bind Unix domain socket server
@@ -76,7 +77,8 @@ impl SocketFileServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, _)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         info!("Accepted socket file connection {}", connection_id);
 
                         // Split stream
@@ -84,7 +86,10 @@ impl SocketFileServer {
                         let write_half_arc = Arc::new(Mutex::new(write_half));
 
                         // Add connection to ServerInstance
-                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
                         let now = std::time::Instant::now();
                         // Use a dummy SocketAddr since Unix sockets don't have IP addresses
                         let dummy_addr = "127.0.0.1:0".parse().unwrap();
@@ -104,7 +109,9 @@ impl SocketFileServer {
                                 "socket_path": socket_path_clone.to_string_lossy()
                             })),
                         };
-                        app_state.add_connection_to_server(server_id, conn_state).await;
+                        app_state
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         // Handle connection (send data first if needed)
@@ -125,7 +132,8 @@ impl SocketFileServer {
                                 connections_clone,
                                 write_half_for_conn,
                                 protocol_clone,
-                            ).await;
+                            )
+                            .await;
                         });
 
                         // Spawn reader task
@@ -143,8 +151,12 @@ impl SocketFileServer {
                                     Ok(0) => {
                                         // Connection closed
                                         connections_clone.lock().await.remove(&connection_id);
-                                        app_state_clone.close_connection_on_server(server_id, connection_id).await;
-                                        let _ = status_tx_clone.send(format!("✗ Socket file connection {connection_id} closed"));
+                                        app_state_clone
+                                            .close_connection_on_server(server_id, connection_id)
+                                            .await;
+                                        let _ = status_tx_clone.send(format!(
+                                            "✗ Socket file connection {connection_id} closed"
+                                        ));
                                         let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                                         break;
                                     }
@@ -152,27 +164,44 @@ impl SocketFileServer {
                                         let data = Bytes::copy_from_slice(&buffer[..n]);
 
                                         // DEBUG: Log summary with data preview
-                                        if data.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
+                                        if data.iter().all(|&b| {
+                                            b.is_ascii_graphic() || b.is_ascii_whitespace()
+                                        }) {
                                             let data_str = String::from_utf8_lossy(&data);
                                             let preview = if data_str.len() > 100 {
                                                 format!("{}...", &data_str[..100])
                                             } else {
                                                 data_str.to_string()
                                             };
-                                            debug!("Socket file received {} bytes on {}: {}", n, connection_id, preview);
-                                            let _ = status_tx_clone.send(format!("[DEBUG] Socket file received {} bytes on {}: {}", n, connection_id, preview));
+                                            debug!(
+                                                "Socket file received {} bytes on {}: {}",
+                                                n, connection_id, preview
+                                            );
+                                            let _ = status_tx_clone.send(format!(
+                                                "[DEBUG] Socket file received {} bytes on {}: {}",
+                                                n, connection_id, preview
+                                            ));
 
                                             // TRACE: Log full text payload
                                             trace!("Socket file data (text): {:?}", data_str);
-                                            let _ = status_tx_clone.send(format!("[TRACE] Socket file data (text): {:?}", data_str));
+                                            let _ = status_tx_clone.send(format!(
+                                                "[TRACE] Socket file data (text): {:?}",
+                                                data_str
+                                            ));
                                         } else {
-                                            debug!("Socket file received {} bytes on {} (binary data)", n, connection_id);
+                                            debug!(
+                                                "Socket file received {} bytes on {} (binary data)",
+                                                n, connection_id
+                                            );
                                             let _ = status_tx_clone.send(format!("[DEBUG] Socket file received {} bytes on {} (binary data)", n, connection_id));
 
                                             // TRACE: Log full hex payload
                                             let hex_str = hex::encode(&data);
                                             trace!("Socket file data (hex): {}", hex_str);
-                                            let _ = status_tx_clone.send(format!("[TRACE] Socket file data (hex): {}", hex_str));
+                                            let _ = status_tx_clone.send(format!(
+                                                "[TRACE] Socket file data (hex): {}",
+                                                hex_str
+                                            ));
                                         }
 
                                         // Handle data in separate task
@@ -191,11 +220,15 @@ impl SocketFileServer {
                                                 status_clone,
                                                 conns_clone,
                                                 protocol_clone,
-                                            ).await;
+                                            )
+                                            .await;
                                         });
                                     }
                                     Err(e) => {
-                                        error!("Read error on socket file connection {}: {}", connection_id, e);
+                                        error!(
+                                            "Read error on socket file connection {}: {}",
+                                            connection_id, e
+                                        );
                                         connections_clone.lock().await.remove(&connection_id);
                                         break;
                                     }
@@ -227,12 +260,15 @@ impl SocketFileServer {
         protocol: Arc<SocketFileProtocol>,
     ) {
         // Add connection to tracking
-        connections.lock().await.insert(connection_id, ConnectionData {
-            state: ConnectionState::Idle,
-            queued_data: Vec::new(),
-            memory: String::new(),
-            write_half: write_half.clone(),
-        });
+        connections.lock().await.insert(
+            connection_id,
+            ConnectionData {
+                state: ConnectionState::Idle,
+                queued_data: Vec::new(),
+                memory: String::new(),
+                write_half: write_half.clone(),
+            },
+        );
 
         // Send data first if requested
         if send_first {
@@ -247,7 +283,9 @@ impl SocketFileServer {
                 Some(connection_id),
                 &event,
                 protocol.as_ref(),
-            ).await {
+            )
+            .await
+            {
                 Ok(execution_result) => {
                     debug!("LLM socket file banner response received");
 
@@ -265,30 +303,56 @@ impl SocketFileServer {
                                     error!("Failed to send socket file banner: {}", e);
                                 } else {
                                     // DEBUG: Log summary with data preview
-                                    if output_data.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
+                                    if output_data
+                                        .iter()
+                                        .all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace())
+                                    {
                                         let data_str = String::from_utf8_lossy(&output_data);
                                         let preview = if data_str.len() > 100 {
                                             format!("{}...", &data_str[..100])
                                         } else {
                                             data_str.to_string()
                                         };
-                                        console_debug!(status_tx, "Socket file sent {} bytes to {}: {}", output_data.len(), connection_id, preview);
+                                        console_debug!(
+                                            status_tx,
+                                            "Socket file sent {} bytes to {}: {}",
+                                            output_data.len(),
+                                            connection_id,
+                                            preview
+                                        );
 
                                         // TRACE: Log full text payload
-                                        console_trace!(status_tx, "Socket file sent (text): {:?}", data_str);
+                                        console_trace!(
+                                            status_tx,
+                                            "Socket file sent (text): {:?}",
+                                            data_str
+                                        );
                                     } else {
-                                        console_debug!(status_tx, "Socket file sent {} bytes to {} (binary data)", output_data.len(), connection_id);
+                                        console_debug!(
+                                            status_tx,
+                                            "Socket file sent {} bytes to {} (binary data)",
+                                            output_data.len(),
+                                            connection_id
+                                        );
 
                                         // TRACE: Log full hex payload
                                         let hex_str = hex::encode(&output_data);
-                                        console_trace!(status_tx, "Socket file sent (hex): {}", hex_str);
+                                        console_trace!(
+                                            status_tx,
+                                            "Socket file sent (hex): {}",
+                                            hex_str
+                                        );
                                     }
-                                    let _ = status_tx.send(format!("→ Sent banner to socket file connection {connection_id}"));
+                                    let _ = status_tx.send(format!(
+                                        "→ Sent banner to socket file connection {connection_id}"
+                                    ));
                                 }
                             }
                             ActionResult::CloseConnection => {
                                 connections.lock().await.remove(&connection_id);
-                                let _ = status_tx.send(format!("✗ Closed socket file connection {connection_id} after banner"));
+                                let _ = status_tx.send(format!(
+                                    "✗ Closed socket file connection {connection_id} after banner"
+                                ));
                             }
                             _ => {}
                         }
@@ -325,12 +389,18 @@ impl SocketFileServer {
 
         // If processing, queue the data
         if current_state == ConnectionState::Processing {
-            connections.lock().await
+            connections
+                .lock()
+                .await
                 .entry(connection_id)
                 .and_modify(|conn| {
                     conn.queued_data.extend_from_slice(&data);
                 });
-            let _ = status_tx.send(format!("⏸ Queued {} bytes for socket file connection {}", data.len(), connection_id));
+            let _ = status_tx.send(format!(
+                "⏸ Queued {} bytes for socket file connection {}",
+                data.len(),
+                connection_id
+            ));
             return;
         }
 
@@ -349,7 +419,10 @@ impl SocketFileServer {
             // Get memory
             let memory = {
                 let conns = connections.lock().await;
-                conns.get(&connection_id).map(|c| c.memory.clone()).unwrap_or_default()
+                conns
+                    .get(&connection_id)
+                    .map(|c| c.memory.clone())
+                    .unwrap_or_default()
             };
 
             // Get write_half for context
@@ -363,16 +436,22 @@ impl SocketFileServer {
             };
 
             // Format data for event parameter
-            let data_str = if all_data.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
+            let data_str = if all_data
+                .iter()
+                .all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace())
+            {
                 String::from_utf8_lossy(&all_data).to_string()
             } else {
                 hex::encode(&all_data)
             };
 
             // Create data received event
-            let event = Event::new(&SOCKET_FILE_DATA_RECEIVED_EVENT, serde_json::json!({
-                "data": data_str
-            }));
+            let event = Event::new(
+                &SOCKET_FILE_DATA_RECEIVED_EVENT,
+                serde_json::json!({
+                    "data": data_str
+                }),
+            );
 
             // Call LLM
             match call_llm(
@@ -382,12 +461,16 @@ impl SocketFileServer {
                 Some(connection_id),
                 &event,
                 protocol.as_ref(),
-            ).await {
+            )
+            .await
+            {
                 Ok(execution_result) => {
                     debug!("LLM socket file response received");
 
                     // Update memory
-                    connections.lock().await
+                    connections
+                        .lock()
+                        .await
                         .entry(connection_id)
                         .and_modify(|conn| conn.memory = memory.clone());
 
@@ -408,25 +491,51 @@ impl SocketFileServer {
                                     error!("Failed to send socket file response: {}", e);
                                 } else {
                                     // DEBUG: Log summary with data preview
-                                    if output_data.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
+                                    if output_data
+                                        .iter()
+                                        .all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace())
+                                    {
                                         let data_str = String::from_utf8_lossy(&output_data);
                                         let preview = if data_str.len() > 100 {
                                             format!("{}...", &data_str[..100])
                                         } else {
                                             data_str.to_string()
                                         };
-                                        console_debug!(status_tx, "Socket file sent {} bytes to {}: {}", output_data.len(), connection_id, preview);
+                                        console_debug!(
+                                            status_tx,
+                                            "Socket file sent {} bytes to {}: {}",
+                                            output_data.len(),
+                                            connection_id,
+                                            preview
+                                        );
 
                                         // TRACE: Log full text payload
-                                        console_trace!(status_tx, "Socket file sent (text): {:?}", data_str);
+                                        console_trace!(
+                                            status_tx,
+                                            "Socket file sent (text): {:?}",
+                                            data_str
+                                        );
                                     } else {
-                                        console_debug!(status_tx, "Socket file sent {} bytes to {} (binary data)", output_data.len(), connection_id);
+                                        console_debug!(
+                                            status_tx,
+                                            "Socket file sent {} bytes to {} (binary data)",
+                                            output_data.len(),
+                                            connection_id
+                                        );
 
                                         // TRACE: Log full hex payload
                                         let hex_str = hex::encode(&output_data);
-                                        console_trace!(status_tx, "Socket file sent (hex): {}", hex_str);
+                                        console_trace!(
+                                            status_tx,
+                                            "Socket file sent (hex): {}",
+                                            hex_str
+                                        );
                                     }
-                                    let _ = status_tx.send(format!("→ Sent {} bytes to socket file connection {}", output_data.len(), connection_id));
+                                    let _ = status_tx.send(format!(
+                                        "→ Sent {} bytes to socket file connection {}",
+                                        output_data.len(),
+                                        connection_id
+                                    ));
                                 }
                             }
                             ActionResult::CloseConnection => {
@@ -441,34 +550,44 @@ impl SocketFileServer {
 
                     // Handle wait_for_more
                     if should_wait {
-                        connections.lock().await
+                        connections
+                            .lock()
+                            .await
                             .entry(connection_id)
                             .and_modify(|conn| conn.state = ConnectionState::Accumulating);
-                        let _ = status_tx.send(format!("⏳ Waiting for more data from socket file connection {connection_id}"));
+                        let _ = status_tx.send(format!(
+                            "⏳ Waiting for more data from socket file connection {connection_id}"
+                        ));
                         return;
                     }
 
                     // Handle close_connection
                     if should_close {
                         connections.lock().await.remove(&connection_id);
-                        let _ = status_tx.send(format!("✗ Closed socket file connection {connection_id}"));
+                        let _ = status_tx
+                            .send(format!("✗ Closed socket file connection {connection_id}"));
                         return;
                     }
 
                     // Check for queued data
                     let has_queued = {
                         let conns = connections.lock().await;
-                        conns.get(&connection_id)
+                        conns
+                            .get(&connection_id)
                             .map(|c| !c.queued_data.is_empty())
                             .unwrap_or(false)
                     };
 
                     if has_queued {
-                        let _ = status_tx.send(format!("▶ Processing queued data for socket file connection {connection_id}"));
+                        let _ = status_tx.send(format!(
+                            "▶ Processing queued data for socket file connection {connection_id}"
+                        ));
                         // Loop continues to process queued data
                     } else {
                         // Go to Idle state
-                        connections.lock().await
+                        connections
+                            .lock()
+                            .await
                             .entry(connection_id)
                             .and_modify(|conn| conn.state = ConnectionState::Idle);
                         return;
@@ -477,7 +596,9 @@ impl SocketFileServer {
                 Err(e) => {
                     error!("LLM error for socket file data: {}", e);
                     let _ = status_tx.send(format!("✗ LLM error: {e}"));
-                    connections.lock().await
+                    connections
+                        .lock()
+                        .await
                         .entry(connection_id)
                         .and_modify(|conn| conn.state = ConnectionState::Idle);
                     return;

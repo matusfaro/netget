@@ -20,97 +20,97 @@ impl SipProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for SipProtocol {
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            vec![
-                send_sip_invite_action(),
-                send_sip_bye_action(),
-                update_registration_action(),
-            ]
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                sip_register_action(),
-                sip_invite_action(),
-                sip_bye_action(),
-                sip_ack_action(),
-                sip_options_action(),
-                sip_cancel_action(),
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "SIP"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            get_sip_event_types()
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>UDP>SIP"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["sip", "voip", "session initiation"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Experimental)
-                .implementation("rsipstack v0.2.52 - RFC 3261 compliant SIP stack")
-                .llm_control("Registration decisions + call routing + SDP generation")
-                .e2e_testing("rvoip-sip-client - 1-2 LLM calls with scripting")
-                .notes("Perfect scripting candidate, VoIP signaling honeypot")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "SIP server for VoIP signaling"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Start a SIP server on port 5060 for VoIP registration and call signaling"
-        }
-        fn group_name(&self) -> &'static str {
-            "Proxy & Network"
-        }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        vec![
+            send_sip_invite_action(),
+            send_sip_bye_action(),
+            update_registration_action(),
+        ]
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            sip_register_action(),
+            sip_invite_action(),
+            sip_bye_action(),
+            sip_ack_action(),
+            sip_options_action(),
+            sip_cancel_action(),
+        ]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "SIP"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_sip_event_types()
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>UDP>SIP"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["sip", "voip", "session initiation"]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("rsipstack v0.2.52 - RFC 3261 compliant SIP stack")
+            .llm_control("Registration decisions + call routing + SDP generation")
+            .e2e_testing("rvoip-sip-client - 1-2 LLM calls with scripting")
+            .notes("Perfect scripting candidate, VoIP signaling honeypot")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "SIP server for VoIP signaling"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Start a SIP server on port 5060 for VoIP registration and call signaling"
+    }
+    fn group_name(&self) -> &'static str {
+        "Proxy & Network"
+    }
 }
 
 // Implement Server trait (server-specific functionality)
 impl Server for SipProtocol {
-        fn spawn(
-            &self,
-            ctx: crate::protocol::SpawnContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::server::sip::SipServer;
-                SipServer::spawn_with_llm_actions(
-                    ctx.listen_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.server_id,
-                ).await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "sip_register" => self.execute_sip_register(action),
-                "sip_invite" => self.execute_sip_invite(action),
-                "sip_bye" => self.execute_sip_bye(action),
-                "sip_ack" => Ok(ActionResult::NoAction), // ACK doesn't require response
-                "sip_options" => self.execute_sip_options(action),
-                "sip_cancel" => self.execute_sip_cancel(action),
-                "send_sip_invite" => self.execute_send_invite(action),
-                "send_sip_bye" => self.execute_send_bye(action),
-                "update_registration" => self.execute_update_registration(action),
-                _ => Err(anyhow::anyhow!("Unknown SIP action: {}", action_type)),
-            }
-        }
-}
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::sip::SipServer;
+            SipServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
 
+        match action_type {
+            "sip_register" => self.execute_sip_register(action),
+            "sip_invite" => self.execute_sip_invite(action),
+            "sip_bye" => self.execute_sip_bye(action),
+            "sip_ack" => Ok(ActionResult::NoAction), // ACK doesn't require response
+            "sip_options" => self.execute_sip_options(action),
+            "sip_cancel" => self.execute_sip_cancel(action),
+            "send_sip_invite" => self.execute_send_invite(action),
+            "send_sip_bye" => self.execute_send_bye(action),
+            "update_registration" => self.execute_update_registration(action),
+            _ => Err(anyhow::anyhow!("Unknown SIP action: {}", action_type)),
+        }
+    }
+}
 
 impl SipProtocol {
     /// Execute SIP REGISTER action (network event)
@@ -181,44 +181,24 @@ pub static SIP_REGISTER_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 });
 
 /// SIP INVITE event
-pub static SIP_INVITE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "sip_invite",
-        "Client initiates session with INVITE request",
-    )
-});
+pub static SIP_INVITE_EVENT: LazyLock<EventType> =
+    LazyLock::new(|| EventType::new("sip_invite", "Client initiates session with INVITE request"));
 
 /// SIP BYE event
-pub static SIP_BYE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "sip_bye",
-        "Client or server terminates session with BYE",
-    )
-});
+pub static SIP_BYE_EVENT: LazyLock<EventType> =
+    LazyLock::new(|| EventType::new("sip_bye", "Client or server terminates session with BYE"));
 
 /// SIP ACK event
-pub static SIP_ACK_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "sip_ack",
-        "Client acknowledges INVITE response",
-    )
-});
+pub static SIP_ACK_EVENT: LazyLock<EventType> =
+    LazyLock::new(|| EventType::new("sip_ack", "Client acknowledges INVITE response"));
 
 /// SIP OPTIONS event
-pub static SIP_OPTIONS_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "sip_options",
-        "Client queries server capabilities",
-    )
-});
+pub static SIP_OPTIONS_EVENT: LazyLock<EventType> =
+    LazyLock::new(|| EventType::new("sip_options", "Client queries server capabilities"));
 
 /// SIP CANCEL event
-pub static SIP_CANCEL_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "sip_cancel",
-        "Client cancels pending INVITE request",
-    )
-});
+pub static SIP_CANCEL_EVENT: LazyLock<EventType> =
+    LazyLock::new(|| EventType::new("sip_cancel", "Client cancels pending INVITE request"));
 
 // Action definitions
 fn sip_register_action() -> ActionDefinition {
@@ -229,7 +209,8 @@ fn sip_register_action() -> ActionDefinition {
             Parameter {
                 name: "status_code".to_string(),
                 type_hint: "number".to_string(),
-                description: "SIP status code (200=OK, 403=Forbidden, 401=Unauthorized)".to_string(),
+                description: "SIP status code (200=OK, 403=Forbidden, 401=Unauthorized)"
+                    .to_string(),
                 required: true,
             },
             Parameter {
@@ -261,7 +242,8 @@ fn sip_invite_action() -> ActionDefinition {
             Parameter {
                 name: "status_code".to_string(),
                 type_hint: "number".to_string(),
-                description: "SIP status code (200=OK, 486=Busy, 603=Decline, 180=Ringing)".to_string(),
+                description: "SIP status code (200=OK, 486=Busy, 603=Decline, 180=Ringing)"
+                    .to_string(),
                 required: true,
             },
             Parameter {
@@ -289,14 +271,12 @@ fn sip_bye_action() -> ActionDefinition {
     ActionDefinition {
         name: "sip_bye".to_string(),
         description: "Respond to SIP BYE request".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "status_code".to_string(),
-                type_hint: "number".to_string(),
-                description: "SIP status code (default 200)".to_string(),
-                required: false,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "status_code".to_string(),
+            type_hint: "number".to_string(),
+            description: "SIP status code (default 200)".to_string(),
+            required: false,
+        }],
         example: json!({
             "type": "sip_bye",
             "status_code": 200
@@ -345,14 +325,12 @@ fn sip_cancel_action() -> ActionDefinition {
     ActionDefinition {
         name: "sip_cancel".to_string(),
         description: "Respond to SIP CANCEL request".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "status_code".to_string(),
-                type_hint: "number".to_string(),
-                description: "SIP status code (default 200)".to_string(),
-                required: false,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "status_code".to_string(),
+            type_hint: "number".to_string(),
+            description: "SIP status code (default 200)".to_string(),
+            required: false,
+        }],
         example: json!({
             "type": "sip_cancel",
             "status_code": 200
@@ -398,14 +376,12 @@ fn send_sip_bye_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_sip_bye".to_string(),
         description: "Send SIP BYE to terminate active session".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "call_id".to_string(),
-                type_hint: "string".to_string(),
-                description: "Call-ID of session to terminate".to_string(),
-                required: true,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "call_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Call-ID of session to terminate".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "send_sip_bye",
             "call_id": "call-123@example.com"
@@ -417,14 +393,12 @@ fn update_registration_action() -> ActionDefinition {
     ActionDefinition {
         name: "update_registration".to_string(),
         description: "Update registration database bindings".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "bindings".to_string(),
-                type_hint: "object".to_string(),
-                description: "Object mapping username to contact URI".to_string(),
-                required: true,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "bindings".to_string(),
+            type_hint: "object".to_string(),
+            description: "Object mapping username to contact URI".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "update_registration",
             "bindings": {

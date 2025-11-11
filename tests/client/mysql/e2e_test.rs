@@ -54,7 +54,9 @@ mod mysql_client_tests {
     #[tokio::test]
     async fn test_mysql_client_with_database() -> E2EResult<()> {
         // Start a MySQL server
-        let server_config = NetGetConfig::new("Listen on port {} via MySQL. Accept connections to 'testdb' database.");
+        let server_config = NetGetConfig::new(
+            "Listen on port {} via MySQL. Accept connections to 'testdb' database.",
+        );
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -87,7 +89,8 @@ mod mysql_client_tests {
     #[tokio::test]
     async fn test_mysql_client_transaction() -> E2EResult<()> {
         // Start a MySQL server
-        let server_config = NetGetConfig::new("Listen on port {} via MySQL. Accept transaction commands.");
+        let server_config =
+            NetGetConfig::new("Listen on port {} via MySQL. Accept transaction commands.");
 
         let mut server = start_netget_server(server_config).await?;
 

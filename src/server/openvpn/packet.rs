@@ -2,7 +2,7 @@
 //!
 //! Implements the OpenVPN protocol packet format for control and data channels.
 
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use bytes::{BufMut, BytesMut};
 
 /// Maximum OpenVPN packet size
@@ -86,8 +86,8 @@ impl PacketHeader {
         let opcode_u8 = (first_byte >> 3) & 0x1F;
         let key_id = first_byte & 0x07;
 
-        let opcode = Opcode::from_u8(opcode_u8)
-            .context(format!("Invalid opcode: {}", opcode_u8))?;
+        let opcode =
+            Opcode::from_u8(opcode_u8).context(format!("Invalid opcode: {}", opcode_u8))?;
 
         let mut offset = 1;
 
@@ -323,4 +323,3 @@ impl AckPacket {
         buf
     }
 }
-

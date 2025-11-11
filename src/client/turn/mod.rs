@@ -10,17 +10,16 @@ use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace};
 
+use crate::client::turn::actions::{
+    TURN_CLIENT_ALLOCATED_EVENT, TURN_CLIENT_CONNECTED_EVENT, TURN_CLIENT_DATA_RECEIVED_EVENT,
+    TURN_CLIENT_PERMISSION_CREATED_EVENT, TURN_CLIENT_REFRESHED_EVENT,
+};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::turn::actions::{
-    TURN_CLIENT_CONNECTED_EVENT, TURN_CLIENT_ALLOCATED_EVENT,
-    TURN_CLIENT_DATA_RECEIVED_EVENT, TURN_CLIENT_PERMISSION_CREATED_EVENT,
-    TURN_CLIENT_REFRESHED_EVENT
-};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -51,20 +50,30 @@ impl TurnClient {
         client_id: ClientId,
     ) -> Result<SocketAddr> {
         // Parse remote address
-        let remote_sock_addr: SocketAddr = remote_addr.parse()
+        let remote_sock_addr: SocketAddr = remote_addr
+            .parse()
             .context(format!("Invalid TURN server address: {}", remote_addr))?;
 
         // Create UDP socket (TURN uses UDP transport)
-        let socket = UdpSocket::bind("0.0.0.0:0").await
+        let socket = UdpSocket::bind("0.0.0.0:0")
+            .await
             .context("Failed to bind UDP socket")?;
 
         let local_addr = socket.local_addr()?;
 
-        info!("TURN client {} bound to {} (server: {})", client_id, local_addr, remote_sock_addr);
+        info!(
+            "TURN client {} bound to {} (server: {})",
+            client_id, local_addr, remote_sock_addr
+        );
 
         // Update client state
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] TURN client {} connected to {}", client_id, remote_sock_addr));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] TURN client {} connected to {}",
+            client_id, remote_sock_addr
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Send initial connected event to LLM
@@ -86,9 +95,15 @@ impl TurnClient {
                 Some(&event),
                 protocol.as_ref(),
                 &status_tx,
-            ).await {
+            )
+            .await
+            {
                 Ok(result) => {
-                    debug!("TURN client {} initial LLM call returned {} actions", client_id, result.actions.len());
+                    debug!(
+                        "TURN client {} initial LLM call returned {} actions",
+                        client_id,
+                        result.actions.len()
+                    );
                 }
                 Err(e) => {
                     error!("TURN client {} initial LLM call failed: {}", client_id, e);
@@ -121,14 +136,25 @@ impl TurnClient {
                 match socket_clone.recv_from(&mut buffer).await {
                     Ok((n, peer_addr)) => {
                         let data = buffer[..n].to_vec();
-                        trace!("TURN client {} received {} bytes from {}", client_id, n, peer_addr);
+                        trace!(
+                            "TURN client {} received {} bytes from {}",
+                            client_id,
+                            n,
+                            peer_addr
+                        );
 
                         // Parse TURN/STUN message
-                        let (transaction_id, message_type, _is_valid) = Self::parse_turn_header(&data);
+                        let (transaction_id, message_type, _is_valid) =
+                            Self::parse_turn_header(&data);
 
-                        let transaction_id_hex = transaction_id.map(|tid| hex::encode(tid)).unwrap_or_default();
+                        let transaction_id_hex = transaction_id
+                            .map(|tid| hex::encode(tid))
+                            .unwrap_or_default();
 
-                        debug!("TURN client {} received {} (transaction: {})", client_id, message_type, transaction_id_hex);
+                        debug!(
+                            "TURN client {} received {} (transaction: {})",
+                            client_id, message_type, transaction_id_hex
+                        );
 
                         // Determine event based on message type
                         let event = match message_type.as_str() {
@@ -174,7 +200,7 @@ impl TurnClient {
                                 // Extract peer address and data from DATA and XOR-PEER-ADDRESS
                                 if let (Some(peer_addr), Some(relay_data)) = (
                                     Self::extract_xor_peer_address(&data),
-                                    Self::extract_data_attribute(&data)
+                                    Self::extract_data_attribute(&data),
                                 ) {
                                     Some(Event::new(
                                         &TURN_CLIENT_DATA_RECEIVED_EVENT,
@@ -190,12 +216,21 @@ impl TurnClient {
                             }
                             "AllocateError" | "RefreshError" | "CreatePermissionError" => {
                                 let error_code = Self::extract_error_code(&data).unwrap_or(400);
-                                error!("TURN client {} received error: {} (code: {})", client_id, message_type, error_code);
-                                let _ = status_clone.send(format!("[ERROR] TURN {} error code {}", message_type, error_code));
+                                error!(
+                                    "TURN client {} received error: {} (code: {})",
+                                    client_id, message_type, error_code
+                                );
+                                let _ = status_clone.send(format!(
+                                    "[ERROR] TURN {} error code {}",
+                                    message_type, error_code
+                                ));
                                 None
                             }
                             _ => {
-                                debug!("TURN client {} ignoring message type: {}", client_id, message_type);
+                                debug!(
+                                    "TURN client {} ignoring message type: {}",
+                                    client_id, message_type
+                                );
                                 None
                             }
                         };
@@ -211,7 +246,9 @@ impl TurnClient {
                                     drop(client_data_lock);
 
                                     // Call LLM
-                                    if let Some(instruction) = app_state_clone.get_instruction_for_client(client_id).await {
+                                    if let Some(instruction) =
+                                        app_state_clone.get_instruction_for_client(client_id).await
+                                    {
                                         match call_llm_for_client(
                                             &llm_clone,
                                             &app_state_clone,
@@ -221,8 +258,13 @@ impl TurnClient {
                                             Some(&event),
                                             protocol_clone.as_ref(),
                                             &status_clone,
-                                        ).await {
-                                            Ok(ClientLlmResult { actions, memory_updates }) => {
+                                        )
+                                        .await
+                                        {
+                                            Ok(ClientLlmResult {
+                                                actions,
+                                                memory_updates,
+                                            }) => {
                                                 // Update memory
                                                 if let Some(mem) = memory_updates {
                                                     client_data_clone.lock().await.memory = mem;
@@ -231,16 +273,22 @@ impl TurnClient {
                                                 // Execute actions
                                                 for action in actions {
                                                     use crate::llm::actions::client_trait::Client;
-                                                    match protocol_clone.as_ref().execute_action(action) {
+                                                    match protocol_clone
+                                                        .as_ref()
+                                                        .execute_action(action)
+                                                    {
                                                         Ok(action_result) => {
-                                                            if let Err(e) = Self::handle_action_result(
-                                                                action_result,
-                                                                &socket_clone,
-                                                                remote_sock_addr,
-                                                                &client_data_clone,
-                                                                &status_clone,
-                                                                client_id,
-                                                            ).await {
+                                                            if let Err(e) =
+                                                                Self::handle_action_result(
+                                                                    action_result,
+                                                                    &socket_clone,
+                                                                    remote_sock_addr,
+                                                                    &client_data_clone,
+                                                                    &status_clone,
+                                                                    client_id,
+                                                                )
+                                                                .await
+                                                            {
                                                                 error!("TURN client {} action execution failed: {}", client_id, e);
                                                             }
                                                         }
@@ -251,7 +299,10 @@ impl TurnClient {
                                                 }
                                             }
                                             Err(e) => {
-                                                error!("LLM error for TURN client {}: {}", client_id, e);
+                                                error!(
+                                                    "LLM error for TURN client {}: {}",
+                                                    client_id, e
+                                                );
                                             }
                                         }
                                     }
@@ -277,7 +328,9 @@ impl TurnClient {
                     }
                     Err(e) => {
                         error!("TURN client {} read error: {}", client_id, e);
-                        app_state_clone.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
+                        app_state_clone
+                            .update_client_status(client_id, ClientStatus::Error(e.to_string()))
+                            .await;
                         let _ = status_clone.send("__UPDATE_UI__".to_string());
                         break;
                     }
@@ -300,74 +353,111 @@ impl TurnClient {
         use crate::llm::actions::client_trait::ClientActionResult;
 
         match action_result {
-            ClientActionResult::Custom { name, data } => {
-                match name.as_str() {
-                    "allocate" => {
-                        let lifetime = data.get("lifetime_seconds")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(600);
+            ClientActionResult::Custom { name, data } => match name.as_str() {
+                "allocate" => {
+                    let lifetime = data
+                        .get("lifetime_seconds")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(600);
 
-                        let message = Self::build_allocate_request(lifetime as u32)?;
-                        socket.send_to(&message, remote_addr).await?;
+                    let message = Self::build_allocate_request(lifetime as u32)?;
+                    socket.send_to(&message, remote_addr).await?;
 
-                        debug!("TURN client {} sent Allocate request (lifetime: {}s)", client_id, lifetime);
-                        let _ = status_tx.send(format!("[DEBUG] TURN Allocate request sent ({}s lifetime)", lifetime));
-                    }
-                    "create_permission" => {
-                        let peer_address = data.get("peer_address")
-                            .and_then(|v| v.as_str())
-                            .context("Missing peer_address")?;
-
-                        let peer_addr: SocketAddr = peer_address.parse()
-                            .context("Invalid peer_address")?;
-
-                        let message = Self::build_create_permission_request(peer_addr)?;
-                        socket.send_to(&message, remote_addr).await?;
-
-                        debug!("TURN client {} sent CreatePermission for {}", client_id, peer_addr);
-                        let _ = status_tx.send(format!("[DEBUG] TURN CreatePermission sent for {}", peer_addr));
-                    }
-                    "send_indication" => {
-                        let peer_address = data.get("peer_address")
-                            .and_then(|v| v.as_str())
-                            .context("Missing peer_address")?;
-
-                        let peer_addr: SocketAddr = peer_address.parse()
-                            .context("Invalid peer_address")?;
-
-                        let send_data = data.get("data")
-                            .and_then(|v| v.as_array())
-                            .map(|arr| arr.iter().filter_map(|v| v.as_u64().map(|n| n as u8)).collect::<Vec<u8>>())
-                            .context("Missing or invalid data")?;
-
-                        let message = Self::build_send_indication(peer_addr, &send_data)?;
-                        socket.send_to(&message, remote_addr).await?;
-
-                        trace!("TURN client {} sent {} bytes via SendIndication to {}", client_id, send_data.len(), peer_addr);
-                        let _ = status_tx.send(format!("[DEBUG] TURN sent {} bytes to {}", send_data.len(), peer_addr));
-                    }
-                    "refresh" => {
-                        let lifetime = data.get("lifetime_seconds")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(600);
-
-                        let message = Self::build_refresh_request(lifetime as u32)?;
-                        socket.send_to(&message, remote_addr).await?;
-
-                        debug!("TURN client {} sent Refresh request (lifetime: {}s)", client_id, lifetime);
-                        let _ = status_tx.send(format!("[DEBUG] TURN Refresh sent ({}s lifetime)", lifetime));
-                    }
-                    _ => {
-                        debug!("TURN client {} unknown custom action: {}", client_id, name);
-                    }
+                    debug!(
+                        "TURN client {} sent Allocate request (lifetime: {}s)",
+                        client_id, lifetime
+                    );
+                    let _ = status_tx.send(format!(
+                        "[DEBUG] TURN Allocate request sent ({}s lifetime)",
+                        lifetime
+                    ));
                 }
-            }
+                "create_permission" => {
+                    let peer_address = data
+                        .get("peer_address")
+                        .and_then(|v| v.as_str())
+                        .context("Missing peer_address")?;
+
+                    let peer_addr: SocketAddr =
+                        peer_address.parse().context("Invalid peer_address")?;
+
+                    let message = Self::build_create_permission_request(peer_addr)?;
+                    socket.send_to(&message, remote_addr).await?;
+
+                    debug!(
+                        "TURN client {} sent CreatePermission for {}",
+                        client_id, peer_addr
+                    );
+                    let _ = status_tx.send(format!(
+                        "[DEBUG] TURN CreatePermission sent for {}",
+                        peer_addr
+                    ));
+                }
+                "send_indication" => {
+                    let peer_address = data
+                        .get("peer_address")
+                        .and_then(|v| v.as_str())
+                        .context("Missing peer_address")?;
+
+                    let peer_addr: SocketAddr =
+                        peer_address.parse().context("Invalid peer_address")?;
+
+                    let send_data = data
+                        .get("data")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_u64().map(|n| n as u8))
+                                .collect::<Vec<u8>>()
+                        })
+                        .context("Missing or invalid data")?;
+
+                    let message = Self::build_send_indication(peer_addr, &send_data)?;
+                    socket.send_to(&message, remote_addr).await?;
+
+                    trace!(
+                        "TURN client {} sent {} bytes via SendIndication to {}",
+                        client_id,
+                        send_data.len(),
+                        peer_addr
+                    );
+                    let _ = status_tx.send(format!(
+                        "[DEBUG] TURN sent {} bytes to {}",
+                        send_data.len(),
+                        peer_addr
+                    ));
+                }
+                "refresh" => {
+                    let lifetime = data
+                        .get("lifetime_seconds")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(600);
+
+                    let message = Self::build_refresh_request(lifetime as u32)?;
+                    socket.send_to(&message, remote_addr).await?;
+
+                    debug!(
+                        "TURN client {} sent Refresh request (lifetime: {}s)",
+                        client_id, lifetime
+                    );
+                    let _ = status_tx.send(format!(
+                        "[DEBUG] TURN Refresh sent ({}s lifetime)",
+                        lifetime
+                    ));
+                }
+                _ => {
+                    debug!("TURN client {} unknown custom action: {}", client_id, name);
+                }
+            },
             ClientActionResult::Disconnect => {
                 // Send Refresh with lifetime=0 to delete allocation
                 let message = Self::build_refresh_request(0)?;
                 socket.send_to(&message, remote_addr).await?;
 
-                info!("TURN client {} disconnecting (sent Refresh with lifetime=0)", client_id);
+                info!(
+                    "TURN client {} disconnecting (sent Refresh with lifetime=0)",
+                    client_id
+                );
                 let _ = status_tx.send(format!("[INFO] TURN client {} disconnecting", client_id));
             }
             _ => {}
@@ -516,7 +606,11 @@ impl TurnClient {
     }
 
     /// Add XOR-PEER-ADDRESS attribute to message
-    fn add_xor_peer_address(message: &mut Vec<u8>, peer_addr: SocketAddr, transaction_id: &[u8]) -> Result<()> {
+    fn add_xor_peer_address(
+        message: &mut Vec<u8>,
+        peer_addr: SocketAddr,
+        transaction_id: &[u8],
+    ) -> Result<()> {
         let attr_type = 0x0012u16;
 
         match peer_addr {
@@ -588,8 +682,8 @@ impl TurnClient {
 
         let class = ((message_type_raw & 0x0110) >> 4) | ((message_type_raw & 0x0100) >> 7);
         let method = (message_type_raw & 0x000F)
-                   | ((message_type_raw & 0x00E0) >> 1)
-                   | ((message_type_raw & 0x3E00) >> 2);
+            | ((message_type_raw & 0x00E0) >> 1)
+            | ((message_type_raw & 0x3E00) >> 2);
 
         let message_type = match (class, method) {
             (0, 3) => "AllocateRequest",

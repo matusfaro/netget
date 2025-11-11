@@ -10,13 +10,13 @@ use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace};
 
+use crate::client::rip::actions::{RIP_CLIENT_CONNECTED_EVENT, RIP_CLIENT_RESPONSE_RECEIVED_EVENT};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::rip::actions::{RIP_CLIENT_CONNECTED_EVENT, RIP_CLIENT_RESPONSE_RECEIVED_EVENT};
 
 /// RIP protocol version
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -38,7 +38,7 @@ pub enum RipCommand {
 #[derive(Debug, Clone)]
 pub struct RipRouteEntry {
     pub address_family: u16,
-    pub route_tag: u16,        // RIPv2 only (0 for RIPv1)
+    pub route_tag: u16, // RIPv2 only (0 for RIPv1)
     pub ip_address: Ipv4Addr,
     pub subnet_mask: Ipv4Addr, // RIPv2 only (0.0.0.0 for RIPv1)
     pub next_hop: Ipv4Addr,    // RIPv2 only (0.0.0.0 for RIPv1)
@@ -220,10 +220,15 @@ impl RipClient {
 
         let local_addr = socket.local_addr()?;
 
-        info!("RIP client {} bound to {} (target: {})", client_id, local_addr, remote_sock_addr);
+        info!(
+            "RIP client {} bound to {} (target: {})",
+            client_id, local_addr, remote_sock_addr
+        );
 
         // Update client state
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
         let _ = status_tx.send(format!("[CLIENT] RIP client {} connected", client_id));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
@@ -255,8 +260,13 @@ impl RipClient {
                 Some(&event),
                 protocol.as_ref(),
                 &status_tx,
-            ).await {
-                Ok(ClientLlmResult { actions, memory_updates }) => {
+            )
+            .await
+            {
+                Ok(ClientLlmResult {
+                    actions,
+                    memory_updates,
+                }) => {
                     // Update memory
                     if let Some(mem) = memory_updates {
                         client_data.lock().await.memory = mem;
@@ -266,25 +276,41 @@ impl RipClient {
                     for action in actions {
                         use crate::llm::actions::client_trait::Client;
                         match protocol.as_ref().execute_action(action) {
-                            Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) => {
+                            Ok(crate::llm::actions::client_trait::ClientActionResult::Custom {
+                                name,
+                                data,
+                            }) => {
                                 if name == "send_rip_request" {
                                     // Send RIP request
                                     if let Some(version) = data["version"].as_u64() {
-                                        let rip_version = if version == 1 { RipVersion::V1 } else { RipVersion::V2 };
+                                        let rip_version = if version == 1 {
+                                            RipVersion::V1
+                                        } else {
+                                            RipVersion::V2
+                                        };
                                         let request = RipMessage::request(rip_version);
                                         let bytes = request.encode();
 
-                                        if let Err(e) = socket_arc.send_to(&bytes, remote_sock_addr).await {
+                                        if let Err(e) =
+                                            socket_arc.send_to(&bytes, remote_sock_addr).await
+                                        {
                                             error!("Failed to send RIP request: {}", e);
                                         } else {
-                                            debug!("RIP client {} sent request (version {})", client_id, version);
+                                            debug!(
+                                                "RIP client {} sent request (version {})",
+                                                client_id, version
+                                            );
                                         }
                                     }
                                 }
                             }
-                            Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
+                            Ok(
+                                crate::llm::actions::client_trait::ClientActionResult::Disconnect,
+                            ) => {
                                 info!("RIP client {} disconnecting", client_id);
-                                app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
+                                app_state
+                                    .update_client_status(client_id, ClientStatus::Disconnected)
+                                    .await;
                                 return Ok(local_addr);
                             }
                             _ => {}
@@ -306,7 +332,12 @@ impl RipClient {
             loop {
                 match socket_clone.recv_from(&mut buffer).await {
                     Ok((n, peer)) => {
-                        trace!("RIP client {} received {} bytes from {}", client_id, n, peer);
+                        trace!(
+                            "RIP client {} received {} bytes from {}",
+                            client_id,
+                            n,
+                            peer
+                        );
 
                         // Parse RIP message
                         match RipMessage::decode(&buffer[..n]) {
@@ -320,15 +351,21 @@ impl RipClient {
                                         drop(client_data_lock);
 
                                         // Call LLM with response event
-                                        if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                                            let routes: Vec<_> = msg.routes.iter().map(|r| {
-                                                serde_json::json!({
-                                                    "ip_address": r.ip_address.to_string(),
-                                                    "subnet_mask": r.subnet_mask.to_string(),
-                                                    "next_hop": r.next_hop.to_string(),
-                                                    "metric": r.metric,
+                                        if let Some(instruction) =
+                                            app_state.get_instruction_for_client(client_id).await
+                                        {
+                                            let routes: Vec<_> = msg
+                                                .routes
+                                                .iter()
+                                                .map(|r| {
+                                                    serde_json::json!({
+                                                        "ip_address": r.ip_address.to_string(),
+                                                        "subnet_mask": r.subnet_mask.to_string(),
+                                                        "next_hop": r.next_hop.to_string(),
+                                                        "metric": r.metric,
+                                                    })
                                                 })
-                                            }).collect();
+                                                .collect();
 
                                             let event = Event::new(
                                                 &RIP_CLIENT_RESPONSE_RECEIVED_EVENT,
@@ -352,8 +389,13 @@ impl RipClient {
                                                 Some(&event),
                                                 protocol.as_ref(),
                                                 &status_tx,
-                                            ).await {
-                                                Ok(ClientLlmResult { actions, memory_updates }) => {
+                                            )
+                                            .await
+                                            {
+                                                Ok(ClientLlmResult {
+                                                    actions,
+                                                    memory_updates,
+                                                }) => {
                                                     // Update memory
                                                     if let Some(mem) = memory_updates {
                                                         client_data_clone.lock().await.memory = mem;
@@ -386,7 +428,10 @@ impl RipClient {
                                                     }
                                                 }
                                                 Err(e) => {
-                                                    error!("LLM error for RIP client {}: {}", client_id, e);
+                                                    error!(
+                                                        "LLM error for RIP client {}: {}",
+                                                        client_id, e
+                                                    );
                                                 }
                                             }
                                         }
@@ -414,7 +459,9 @@ impl RipClient {
                     }
                     Err(e) => {
                         error!("RIP client {} recv error: {}", client_id, e);
-                        app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
+                        app_state
+                            .update_client_status(client_id, ClientStatus::Error(e.to_string()))
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         break;
                     }

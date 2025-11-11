@@ -2,13 +2,15 @@
 
 ## Test Strategy
 
-The IRC client tests use a **server-client pair approach** where both the IRC server and IRC client are NetGet instances. This tests the full integration of the IRC protocol implementation.
+The IRC client tests use a **server-client pair approach** where both the IRC server and IRC client are NetGet
+instances. This tests the full integration of the IRC protocol implementation.
 
 ## Test Approach
 
 **Black-box testing**: Tests spawn NetGet binaries and verify behavior through output and status messages.
 
 **Server-Client Integration**:
+
 1. Start NetGet IRC server (1 LLM call)
 2. Start NetGet IRC client (1+ LLM calls)
 3. Verify interactions through logs
@@ -21,22 +23,22 @@ The IRC client tests use a **server-client pair approach** where both the IRC se
 ### Per-Test Breakdown:
 
 1. **test_irc_client_connect_and_register**: 3 LLM calls
-   - Server startup (1 call)
-   - Client connection (1 call)
-   - Client registration/connected event (1 call)
+    - Server startup (1 call)
+    - Client connection (1 call)
+    - Client registration/connected event (1 call)
 
 2. **test_irc_client_join_and_message**: 4 LLM calls
-   - Server startup (1 call)
-   - Client connection (1 call)
-   - Client connected event (1 call)
-   - Client join + message action (1 call)
+    - Server startup (1 call)
+    - Client connection (1 call)
+    - Client connected event (1 call)
+    - Client join + message action (1 call)
 
 3. **test_irc_client_responds_to_messages**: 5 LLM calls
-   - Server startup (1 call)
-   - Client connection (1 call)
-   - Client connected event (1 call)
-   - Server sends message (1 call)
-   - Client responds (1 call)
+    - Server startup (1 call)
+    - Client connection (1 call)
+    - Client connected event (1 call)
+    - Server sends message (1 call)
+    - Client responds (1 call)
 
 **Total**: 12 LLM calls (slightly over budget but acceptable for comprehensive testing)
 
@@ -49,22 +51,26 @@ The IRC client tests use a **server-client pair approach** where both the IRC se
 ## Test Coverage
 
 ### Connection & Registration
+
 - ✅ Connect to IRC server
 - ✅ Send NICK and USER commands
 - ✅ Wait for 001 welcome message
 - ✅ Handle PING/PONG automatically
 
 ### Channel Operations
+
 - ✅ Join channels
 - ✅ Send PRIVMSG to channels
 - ✅ Receive messages from channels
 
 ### Message Handling
+
 - ✅ Receive server messages
 - ✅ Parse IRC message format
 - ✅ Respond to PRIVMSG with LLM-generated responses
 
 ### Actions
+
 - ✅ join_channel action
 - ✅ send_privmsg action
 - ⚠️ part_channel (not explicitly tested)
@@ -74,17 +80,17 @@ The IRC client tests use a **server-client pair approach** where both the IRC se
 ## Known Issues
 
 1. **Timing Sensitivity**: Tests use fixed sleep durations which may be fragile
-   - Mitigation: Increased timeouts (2-4 seconds) to handle slow LLM responses
+    - Mitigation: Increased timeouts (2-4 seconds) to handle slow LLM responses
 
 2. **PING/PONG Handling**: Server must respond to PING or client will timeout
-   - Mitigation: Server implementation auto-responds to PING
+    - Mitigation: Server implementation auto-responds to PING
 
 3. **Registration Timing**: Client may not be registered before attempting to join channels
-   - Mitigation: Client implementation waits for 001 before firing connected event
+    - Mitigation: Client implementation waits for 001 before firing connected event
 
 4. **No External IRC Server**: Tests don't validate against real IRC servers (libera.chat, etc.)
-   - Rationale: Black-box testing against NetGet server is sufficient
-   - Future: Add optional tests against public IRC servers
+    - Rationale: Black-box testing against NetGet server is sufficient
+    - Future: Add optional tests against public IRC servers
 
 ## Test Dependencies
 

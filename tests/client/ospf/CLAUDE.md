@@ -15,6 +15,7 @@ End-to-end tests for the OSPF client protocol implementation.
 **CRITICAL**: OSPF client uses raw IP sockets (protocol 89) which require root/CAP_NET_RAW privileges.
 
 **Running tests**:
+
 ```bash
 # With root (tests will run)
 sudo -E ./cargo-isolated.sh test --no-default-features --features ospf
@@ -24,6 +25,7 @@ sudo -E ./cargo-isolated.sh test --no-default-features --features ospf
 ```
 
 **Why root is needed**:
+
 - Raw IP socket creation (IP protocol 89)
 - Multicast group membership (224.0.0.5)
 - IP header construction/parsing
@@ -32,10 +34,12 @@ sudo -E ./cargo-isolated.sh test --no-default-features --features ospf
 ### Platform Support
 
 **Supported platforms**:
+
 - Linux (with root or CAP_NET_RAW)
 - macOS (with root)
 
 **Unsupported platforms**:
+
 - Windows (raw IP sockets require admin + different API)
 
 ## Test Strategy
@@ -43,16 +47,19 @@ sudo -E ./cargo-isolated.sh test --no-default-features --features ospf
 ### Test Categories
 
 **1. Initialization Tests** (1 LLM call)
+
 - Verify OSPF client can be created
 - Check privilege error handling
 - Validate socket creation
 
 **2. Basic Protocol Tests** (2 LLM calls)
+
 - Send Hello packet to multicast
 - Verify packet construction
 - Check LLM action execution
 
 **3. Full E2E Tests** (4 LLM calls)
+
 - OSPF server + client interaction
 - Hello packet exchange
 - Neighbor discovery
@@ -60,12 +67,12 @@ sudo -E ./cargo-isolated.sh test --no-default-features --features ospf
 
 ### LLM Call Budget
 
-| Test | LLM Calls | Rationale |
-|------|-----------|-----------|
-| test_ospf_client_initialization | 1 | Client startup only |
-| test_ospf_client_send_hello | 2 | Client startup + send action |
-| test_ospf_client_with_server | 4 | Server + client startup + Hello exchange |
-| **Total** | **7** | Under 10 LLM call budget ✅ |
+| Test                            | LLM Calls | Rationale                                |
+|---------------------------------|-----------|------------------------------------------|
+| test_ospf_client_initialization | 1         | Client startup only                      |
+| test_ospf_client_send_hello     | 2         | Client startup + send action             |
+| test_ospf_client_with_server    | 4         | Server + client startup + Hello exchange |
+| **Total**                       | **7**     | Under 10 LLM call budget ✅               |
 
 ### Privilege Handling
 
@@ -85,6 +92,7 @@ fn has_root_privileges() -> bool {
 ```
 
 **Output when skipped**:
+
 ```
 ⚠️  Skipping test: OSPF requires root privileges
    Run with: sudo -E cargo test --no-default-features --features ospf
@@ -97,16 +105,19 @@ fn has_root_privileges() -> bool {
 **Purpose**: Verify OSPF client can be initialized with proper configuration
 
 **Steps**:
+
 1. Start OSPF client on loopback (127.0.0.1)
 2. Configure to monitor (no packet sending)
 3. Verify initialization output
 
 **Expected behavior**:
+
 - Client connects successfully (with root)
 - Output mentions "OSPF" or "connected"
 - Socket joins multicast group
 
 **Assertions**:
+
 ```rust
 assert!(output.contains("OSPF") || output.contains("ospf"));
 ```
@@ -120,16 +131,19 @@ assert!(output.contains("OSPF") || output.contains("ospf"));
 **Purpose**: Verify OSPF client can send Hello packet to multicast group
 
 **Steps**:
+
 1. Start OSPF client with specific router_id
 2. Instruct LLM to send Hello packet
 3. Verify Hello packet construction and transmission
 
 **Expected behavior**:
+
 - Client sends Hello to 224.0.0.5
 - Output shows "Hello" or OSPF activity
 - Packet includes router_id and area_id
 
 **Assertions**:
+
 ```rust
 assert!(output.contains("Hello") || output.contains("OSPF"));
 ```
@@ -143,6 +157,7 @@ assert!(output.contains("Hello") || output.contains("OSPF"));
 **Purpose**: Full E2E test with OSPF server and client exchanging Hello packets
 
 **Steps**:
+
 1. Start OSPF server on interface A
 2. Start OSPF client on interface B
 3. Client sends Hello
@@ -150,12 +165,14 @@ assert!(output.contains("Hello") || output.contains("OSPF"));
 5. Client receives server's Hello
 
 **Expected behavior**:
+
 - Server logs incoming Hello packet
 - Server sends Hello response
 - Client receives and parses Hello
 - Bidirectional communication verified
 
 **Assertions**:
+
 ```rust
 // Server side
 assert!(server_output.contains("Hello") || server_output.contains("neighbor"));
@@ -197,6 +214,7 @@ assert!(client_output.contains("Hello") || client_output.contains("received"));
 **Impact**: Tests may be flaky if delays are too short
 
 **Current delays**:
+
 - Initialization: 1 second
 - Hello exchange: 3 seconds
 
@@ -255,18 +273,19 @@ docker run --privileged --rm netget-test cargo test --features ospf
 
 ### Expected Runtime
 
-| Test | With Root | Without Root |
-|------|-----------|--------------|
-| test_ospf_client_initialization | ~2 seconds | Instant (skip) |
-| test_ospf_client_send_hello | ~3 seconds | Instant (skip) |
-| test_ospf_client_with_server | ~5 seconds | Instant (skip) |
-| **Total** | **~10 seconds** | **Instant** |
+| Test                            | With Root       | Without Root   |
+|---------------------------------|-----------------|----------------|
+| test_ospf_client_initialization | ~2 seconds      | Instant (skip) |
+| test_ospf_client_send_hello     | ~3 seconds      | Instant (skip) |
+| test_ospf_client_with_server    | ~5 seconds      | Instant (skip) |
+| **Total**                       | **~10 seconds** | **Instant**    |
 
 ### LLM Impact
 
 **Ollama model**: qwen3-coder:30b (default)
 
 **Per-call latency**:
+
 - Fast hardware: ~1-2 seconds
 - Slow hardware: ~5-10 seconds
 
@@ -348,16 +367,19 @@ fn ensure_root_privileges() -> Result<()> {
 ### Debugging Tests
 
 **Enable verbose logging**:
+
 ```bash
 RUST_LOG=debug sudo -E cargo test --features ospf
 ```
 
 **Check raw socket operations**:
+
 ```bash
 sudo tcpdump -i any -n proto 89
 ```
 
 **Verify multicast membership**:
+
 ```bash
 netstat -g | grep 224.0.0.5
 ```

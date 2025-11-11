@@ -4,8 +4,8 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter, ParameterDefinition,
 };
-use crate::protocol::EventType;
 use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::Result;
 use serde_json::json;
@@ -318,9 +318,8 @@ impl Server for SshAgentProtocol {
     fn spawn(
         &self,
         ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>,
-    > {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>>
+    {
         Box::pin(async move {
             // For Unix sockets, we need a path not a SocketAddr
             // Extract socket_path from startup_params or use default
@@ -347,10 +346,7 @@ impl Server for SshAgentProtocol {
         })
     }
 
-    fn execute_action(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action["type"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Missing 'type' field in action"))?;

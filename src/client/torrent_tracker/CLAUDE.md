@@ -2,7 +2,8 @@
 
 ## Overview
 
-The BitTorrent Tracker client provides LLM-controlled HTTP-based communication with BitTorrent trackers for peer discovery. Trackers coordinate peer connections by maintaining lists of clients downloading/seeding specific torrents.
+The BitTorrent Tracker client provides LLM-controlled HTTP-based communication with BitTorrent trackers for peer
+discovery. Trackers coordinate peer connections by maintaining lists of clients downloading/seeding specific torrents.
 
 ## Protocol Details
 
@@ -38,21 +39,25 @@ The BitTorrent Tracker client provides LLM-controlled HTTP-based communication w
 ### Message Format
 
 **Announce Request:**
+
 ```
 GET /announce?info_hash=<hash>&peer_id=<id>&port=<port>&uploaded=<bytes>&downloaded=<bytes>&left=<bytes>&event=<started|completed|stopped>
 ```
 
 **Announce Response (bencode):**
+
 ```
 d8:intervali1800e5:peers<binary peer list or list of dicts>e
 ```
 
 **Scrape Request:**
+
 ```
 GET /scrape?info_hash=<hash>
 ```
 
 **Scrape Response (bencode):**
+
 ```
 d5:filesd20:<info_hash>d8:completei10e10:incompletei5eeee
 ```
@@ -62,25 +67,25 @@ d5:filesd20:<info_hash>d8:completei10e10:incompletei5eeee
 ### Actions
 
 1. **tracker_announce** - Announce presence to tracker
-   - Parameters: info_hash, peer_id, port, uploaded, downloaded, left, event
-   - LLM decides: when to announce, what event type, what statistics to report
+    - Parameters: info_hash, peer_id, port, uploaded, downloaded, left, event
+    - LLM decides: when to announce, what event type, what statistics to report
 
 2. **tracker_scrape** - Query tracker statistics
-   - Parameters: info_hash
-   - LLM decides: which torrents to scrape
+    - Parameters: info_hash
+    - LLM decides: which torrents to scrape
 
 3. **disconnect** - Stop tracking
-   - LLM decides: when to stop announcing
+    - LLM decides: when to stop announcing
 
 ### Events
 
 1. **tracker_announce_response** - Received peer list from tracker
-   - Data: interval, complete (seeders), incomplete (leechers), peers
-   - LLM analyzes: peer list, decides to connect to peers or re-announce
+    - Data: interval, complete (seeders), incomplete (leechers), peers
+    - LLM analyzes: peer list, decides to connect to peers or re-announce
 
 2. **tracker_scrape_response** - Received torrent statistics
-   - Data: file statistics (complete, incomplete, downloaded)
-   - LLM analyzes: popularity, health of torrent
+    - Data: file statistics (complete, incomplete, downloaded)
+    - LLM analyzes: popularity, health of torrent
 
 ## Limitations
 

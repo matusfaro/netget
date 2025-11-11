@@ -60,7 +60,8 @@ impl WebDavServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, peer_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         debug!("WebDAV connection {} from {}", connection_id, peer_addr);
                         let _ =
                             status_tx.send(format!("[DEBUG] WebDAV connection from {}", peer_addr));

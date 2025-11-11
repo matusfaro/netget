@@ -20,11 +20,11 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
 
+use crate::llm::ollama_client::OllamaClient;
 use crate::server::connection::ConnectionId;
 use crate::server::openai::actions::OpenAiProtocol;
-use crate::llm::ollama_client::OllamaClient;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 
 /// OpenAI-compatible API server that delegates to LLM/Ollama
 pub struct OpenAiServer;
@@ -39,7 +39,8 @@ impl OpenAiServer {
         _send_first: bool,
         server_id: crate::state::ServerId,
     ) -> anyhow::Result<SocketAddr> {
-        let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let listener =
+            crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         console_info!(status_tx, "OpenAI API server listening on {}", local_addr);
 
@@ -50,13 +51,21 @@ impl OpenAiServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        info!("OpenAI API connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!("[INFO] OpenAI API connection from {}", remote_addr));
+                        info!(
+                            "OpenAI API connection {} from {}",
+                            connection_id, remote_addr
+                        );
+                        let _ = status_tx
+                            .send(format!("[INFO] OpenAI API connection from {}", remote_addr));
 
                         // Add connection to ServerInstance
-                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -71,7 +80,9 @@ impl OpenAiServer {
                             status_changed_at: now,
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
-                        app_state.add_connection_to_server(server_id, conn_state).await;
+                        app_state
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let llm_client_clone = llm_client.clone();
@@ -105,13 +116,20 @@ impl OpenAiServer {
                             });
 
                             // Serve HTTP/1 on this connection
-                            if let Err(err) = http1::Builder::new().serve_connection(io, service).await {
+                            if let Err(err) =
+                                http1::Builder::new().serve_connection(io, service).await
+                            {
                                 error!("Error serving OpenAI API connection: {:?}", err);
                             }
 
                             // Mark connection as closed
-                            app_state_clone.close_connection_on_server(server_id, connection_id).await;
-                            let _ = status_tx_clone.send(format!("[INFO] OpenAI API connection {} closed", connection_id));
+                            app_state_clone
+                                .close_connection_on_server(server_id, connection_id)
+                                .await;
+                            let _ = status_tx_clone.send(format!(
+                                "[INFO] OpenAI API connection {} closed",
+                                connection_id
+                            ));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
@@ -146,24 +164,30 @@ async fn handle_openai_request(
 
     // Route the request
     match (method.clone(), path) {
-        (Method::GET, "/v1/models") => {
-            handle_models_list(llm_client, status_tx).await
-        }
+        (Method::GET, "/v1/models") => handle_models_list(llm_client, status_tx).await,
         (Method::POST, "/v1/chat/completions") => {
             handle_chat_completions(req, llm_client, app_state, status_tx).await
         }
         _ => {
-            console_debug!(status_tx, "OpenAI API: Unknown endpoint {} {}", method, path);
+            console_debug!(
+                status_tx,
+                "OpenAI API: Unknown endpoint {} {}",
+                method,
+                path
+            );
             Ok(Response::builder()
                 .status(StatusCode::NOT_FOUND)
                 .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(json!({
-                    "error": {
-                        "message": "Not Found",
-                        "type": "invalid_request_error",
-                        "code": "not_found"
-                    }
-                }).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({
+                        "error": {
+                            "message": "Not Found",
+                            "type": "invalid_request_error",
+                            "code": "not_found"
+                        }
+                    })
+                    .to_string(),
+                )))
                 .unwrap())
         }
     }
@@ -213,13 +237,16 @@ async fn handle_models_list(
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(json!({
-                    "error": {
-                        "message": format!("Failed to list models: {}", e),
-                        "type": "server_error",
-                        "code": "internal_error"
-                    }
-                }).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({
+                        "error": {
+                            "message": format!("Failed to list models: {}", e),
+                            "type": "server_error",
+                            "code": "internal_error"
+                        }
+                    })
+                    .to_string(),
+                )))
                 .unwrap())
         }
     }
@@ -240,12 +267,15 @@ async fn handle_chat_completions(
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(json!({
-                    "error": {
-                        "message": "Failed to read request body",
-                        "type": "invalid_request_error"
-                    }
-                }).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({
+                        "error": {
+                            "message": "Failed to read request body",
+                            "type": "invalid_request_error"
+                        }
+                    })
+                    .to_string(),
+                )))
                 .unwrap());
         }
     };
@@ -258,30 +288,46 @@ async fn handle_chat_completions(
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(json!({
-                    "error": {
-                        "message": "Invalid JSON",
-                        "type": "invalid_request_error"
-                    }
-                }).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({
+                        "error": {
+                            "message": "Invalid JSON",
+                            "type": "invalid_request_error"
+                        }
+                    })
+                    .to_string(),
+                )))
                 .unwrap());
         }
     };
 
-    console_trace!(status_tx, "Chat completion request: {}", serde_json::to_string_pretty(&request_json).unwrap_or_default());
+    console_trace!(
+        status_tx,
+        "Chat completion request: {}",
+        serde_json::to_string_pretty(&request_json).unwrap_or_default()
+    );
 
     // Extract model and messages
     let model = match request_json.get("model").and_then(|v| v.as_str()) {
         Some(m) => m.to_string(),
-        None => app_state.get_ollama_model().await.unwrap_or_else(|| "qwen2.5-coder:32b".to_string()),
+        None => app_state
+            .get_ollama_model()
+            .await
+            .unwrap_or_else(|| "qwen2.5-coder:32b".to_string()),
     };
 
-    let messages = request_json.get("messages")
+    let messages = request_json
+        .get("messages")
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
 
-    console_debug!(status_tx, "Chat completion: model={}, {} messages", model, messages.len());
+    console_debug!(
+        status_tx,
+        "Chat completion: model={}, {} messages",
+        model,
+        messages.len()
+    );
 
     // Convert messages to Ollama format and generate response
     match generate_chat_response(&llm_client, &model, messages, &request_json, &status_tx).await {
@@ -313,7 +359,10 @@ async fn handle_chat_completions(
                 }
             });
 
-            trace!("Chat completion response: {}", serde_json::to_string_pretty(&response).unwrap_or_default());
+            trace!(
+                "Chat completion response: {}",
+                serde_json::to_string_pretty(&response).unwrap_or_default()
+            );
             let _ = status_tx.send("[TRACE] Chat completion response generated".to_string());
 
             Ok(Response::builder()
@@ -328,13 +377,16 @@ async fn handle_chat_completions(
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(json!({
-                    "error": {
-                        "message": format!("Failed to generate response: {}", e),
-                        "type": "server_error",
-                        "code": "internal_error"
-                    }
-                }).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({
+                        "error": {
+                            "message": format!("Failed to generate response: {}", e),
+                            "type": "server_error",
+                            "code": "internal_error"
+                        }
+                    })
+                    .to_string(),
+                )))
                 .unwrap())
         }
     }
@@ -353,8 +405,10 @@ async fn generate_chat_response(
     let max_tokens = request_json.get("max_tokens").and_then(|v| v.as_u64());
     let top_p = request_json.get("top_p").and_then(|v| v.as_f64());
 
-    debug!("Generating response with model={}, temp={:?}, max_tokens={:?}, top_p={:?}",
-           model, temperature, max_tokens, top_p);
+    debug!(
+        "Generating response with model={}, temp={:?}, max_tokens={:?}, top_p={:?}",
+        model, temperature, max_tokens, top_p
+    );
     let _ = status_tx.send(format!("[DEBUG] Generating response with model={}", model));
 
     // Build prompt from messages
@@ -369,9 +423,7 @@ async fn generate_chat_response(
     debug!("Calling Ollama with prompt length: {}", prompt.len());
 
     // Call Ollama
-    let response = llm_client
-        .generate(model, &prompt)
-        .await?;
+    let response = llm_client.generate(model, &prompt).await?;
 
     Ok(response)
 }

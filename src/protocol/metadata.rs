@@ -20,7 +20,9 @@ impl PrivilegeRequirement {
     pub fn description(&self) -> String {
         match self {
             Self::None => "None".to_string(),
-            Self::PrivilegedPort(port) => format!("Privileged port {} (requires root or capabilities)", port),
+            Self::PrivilegedPort(port) => {
+                format!("Privileged port {} (requires root or capabilities)", port)
+            }
             Self::RawSockets => "Raw socket access (requires root or CAP_NET_RAW)".to_string(),
             Self::Root => "Root/Administrator access required".to_string(),
         }

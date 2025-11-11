@@ -2,22 +2,27 @@
 
 ## Test Strategy
 
-Black-box E2E testing that spawns NetGet gRPC server and client instances, verifies RPC calls work correctly with dynamic schema support.
+Black-box E2E testing that spawns NetGet gRPC server and client instances, verifies RPC calls work correctly with
+dynamic schema support.
 
 ## Test Approach
 
 ### Server Setup
+
 - Spawn NetGet gRPC server with base64-encoded FileDescriptorSet
 - Server implements calculator.Calculator service with Add RPC
 - LLM handles server-side logic (returns sum of a and b)
 
 ### Client Testing
+
 - Spawn NetGet gRPC client with same schema
 - Client makes RPC calls based on LLM instructions
 - Verify client can connect, make calls, and handle responses
 
 ### Schema Used
+
 Calculator service with simple Add operation:
+
 - Service: `calculator.Calculator`
 - Method: `Add(AddRequest) returns (AddResponse)`
 - Request: `{a: int32, b: int32}`
@@ -30,15 +35,17 @@ Schema provided as base64 FileDescriptorSet (no protoc dependency).
 **Target: < 10 LLM calls per test suite**
 
 ### Current Budget
+
 - `test_grpc_client_add_request`: 2 LLM calls
-  1. Server startup (parse instruction, generate schema handler)
-  2. Client connection and RPC call
+    1. Server startup (parse instruction, generate schema handler)
+    2. Client connection and RPC call
 - `test_grpc_client_connection_error`: 1 LLM call
-  1. Client connection attempt
+    1. Client connection attempt
 
 **Total: 3 LLM calls**
 
 ### Budget Rationale
+
 - **Minimal**: 2 tests cover core functionality (success + error)
 - **Efficient**: Reuse same schema across tests
 - **Simple service**: Calculator is trivial, LLM handles easily
@@ -47,16 +54,17 @@ Schema provided as base64 FileDescriptorSet (no protoc dependency).
 ## Expected Runtime
 
 - `test_grpc_client_add_request`: ~3 seconds
-  - 1s server startup
-  - 2s client connection + RPC call
+    - 1s server startup
+    - 2s client connection + RPC call
 - `test_grpc_client_connection_error`: ~1 second
-  - 1s connection attempt timeout
+    - 1s connection attempt timeout
 
 **Total suite runtime: ~4 seconds**
 
 ## Test Coverage
 
 ### Covered
+
 ✅ gRPC client initialization with dynamic schema
 ✅ RPC method call (unary)
 ✅ Request/response JSON ↔ protobuf conversion
@@ -64,6 +72,7 @@ Schema provided as base64 FileDescriptorSet (no protoc dependency).
 ✅ End-to-end server ↔ client communication
 
 ### Not Covered (Future Tests)
+
 ❌ Streaming RPCs (not implemented)
 ❌ gRPC metadata (headers)
 ❌ TLS connections
@@ -74,16 +83,19 @@ Schema provided as base64 FileDescriptorSet (no protoc dependency).
 ## Known Issues
 
 ### Schema Encoding
+
 - Base64 FileDescriptorSet must be correct
 - If schema is malformed, client fails to initialize
 - Error messages may be cryptic ("Failed to create descriptor pool")
 
 ### Timing
+
 - Tests use sleep() for synchronization (brittle)
 - If LLM is slow, tests may timeout
 - Server needs ~1s to fully initialize
 
 ### LLM Variability
+
 - LLM may not always call the RPC method immediately
 - LLM may log extra messages (affects output verification)
 - Tests check for multiple possible output patterns

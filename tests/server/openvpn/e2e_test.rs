@@ -11,7 +11,7 @@
 #![cfg(feature = "openvpn")]
 
 use crate::server::helpers::*;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
+use std::net::{SocketAddr, UdpSocket};
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
@@ -304,7 +304,9 @@ async fn test_openvpn_manual_handshake_v2() {
 
     // Check if server responded with HARD_RESET_SERVER_V2
     let mut response_buf = [0u8; 1024];
-    client.set_read_timeout(Some(Duration::from_millis(500))).ok();
+    client
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .ok();
 
     match client.recv_from(&mut response_buf) {
         Ok((len, _)) => {

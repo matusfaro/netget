@@ -30,12 +30,7 @@ impl TorClient {
     ///
     /// # Returns
     /// Configured TorClient (not yet started)
-    pub fn new(
-        dir_port: u16,
-        relay_port: u16,
-        v3_ident: &str,
-        fingerprint: &str,
-    ) -> Result<Self> {
+    pub fn new(dir_port: u16, relay_port: u16, v3_ident: &str, fingerprint: &str) -> Result<Self> {
         // Create temporary directory
         let temp_dir = TempDir::new()?;
         let data_dir = temp_dir.path().join("data");
@@ -91,7 +86,10 @@ CircuitBuildTimeout 60
         let torrc_path = temp_dir.path().join("torrc");
         std::fs::write(&torrc_path, torrc_content)?;
 
-        println!("[TOR CLIENT] Configuration written to: {}", torrc_path.display());
+        println!(
+            "[TOR CLIENT] Configuration written to: {}",
+            torrc_path.display()
+        );
         println!("[TOR CLIENT] SOCKS port: {}", socks_port);
 
         Ok(Self {
@@ -121,7 +119,10 @@ CircuitBuildTimeout 60
             anyhow::bail!("Tor client already started");
         }
 
-        println!("[TOR CLIENT] Starting tor with config: {}", self.torrc_path.display());
+        println!(
+            "[TOR CLIENT] Starting tor with config: {}",
+            self.torrc_path.display()
+        );
 
         let process = tokio::process::Command::new("tor")
             .arg("-f")
@@ -130,7 +131,10 @@ CircuitBuildTimeout 60
             .stderr(std::process::Stdio::piped())
             .spawn()?;
 
-        println!("[TOR CLIENT] Tor process started with PID: {:?}", process.id());
+        println!(
+            "[TOR CLIENT] Tor process started with PID: {:?}",
+            process.id()
+        );
         self.process = Some(process);
 
         Ok(())
@@ -144,15 +148,22 @@ CircuitBuildTimeout 60
         use tokio::io::{AsyncBufReadExt, BufReader};
         use tokio::time::timeout as tokio_timeout;
 
-        let process = self.process.as_mut()
+        let process = self
+            .process
+            .as_mut()
             .ok_or_else(|| anyhow::anyhow!("Tor process not started"))?;
 
-        let stdout = process.stdout.take()
+        let stdout = process
+            .stdout
+            .take()
             .ok_or_else(|| anyhow::anyhow!("Failed to capture stdout"))?;
 
         let mut reader = BufReader::new(stdout).lines();
 
-        println!("[TOR CLIENT] Waiting for bootstrap (timeout: {:?})...", timeout);
+        println!(
+            "[TOR CLIENT] Waiting for bootstrap (timeout: {:?})...",
+            timeout
+        );
 
         let bootstrap_future = async {
             while let Some(line) = reader.next_line().await? {

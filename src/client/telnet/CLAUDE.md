@@ -2,11 +2,13 @@
 
 ## Overview
 
-The Telnet client implementation provides LLM-controlled outbound Telnet connections. The LLM can connect to Telnet servers, send commands, handle option negotiations, and interpret server responses.
+The Telnet client implementation provides LLM-controlled outbound Telnet connections. The LLM can connect to Telnet
+servers, send commands, handle option negotiations, and interpret server responses.
 
 ## Implementation Details
 
 ### Library Choice
+
 - **tokio::net::TcpStream** - Async TCP connection
 - **Custom Telnet Protocol Parser** - Handle IAC commands and option negotiation
 - No external Telnet library needed (protocol is simple enough)
@@ -38,6 +40,7 @@ The Telnet client implementation provides LLM-controlled outbound Telnet connect
 ### Telnet Protocol Handling
 
 **Protocol Constants:**
+
 ```
 IAC (Interpret As Command) = 255 (0xFF)
 WILL = 251 (0xFB) - Server offers to enable option
@@ -49,12 +52,14 @@ SE = 240 (0xF0) - Subnegotiation end
 ```
 
 **Negotiation Strategy:**
+
 - Server sends WILL <option> → Client responds DONT (refuse)
 - Server sends DO <option> → Client responds WONT (refuse)
 - Simple "refuse all" strategy keeps implementation straightforward
 - LLM doesn't need to understand option negotiation details
 
 **Supported Options** (for logging only):
+
 - ECHO (1)
 - SUPPRESS_GO_AHEAD (3)
 - TERMINAL_TYPE (24)
@@ -64,11 +69,13 @@ SE = 240 (0xF0) - Subnegotiation end
 ### Connection State Machine
 
 **States:**
+
 1. **Idle** - No LLM processing happening
 2. **Processing** - LLM is being called, new data queued
 3. **Accumulating** - LLM still processing, accumulating more data
 
 **Transitions:**
+
 - Idle → Processing: Data received, call LLM
 - Processing → Accumulating: More data arrives during LLM call
 - Accumulating → Accumulating: More data while LLM processing
@@ -77,25 +84,29 @@ SE = 240 (0xF0) - Subnegotiation end
 ### LLM Control
 
 **Async Actions** (user-triggered):
+
 - `send_command` - Send command with newline appended (`cmd\r\n`)
 - `send_text` - Send raw text without newline
 - `disconnect` - Close connection
 
 **Sync Actions** (in response to received data):
+
 - `send_command` - Send command as response
 - `send_text` - Send text as response
 - `wait_for_more` - Don't respond yet, accumulate data
 
 **Events:**
+
 - `telnet_connected` - Fired when connection established
 - `telnet_data_received` - Fired when text data received
-  - `data` field: UTF-8 text (Telnet commands stripped)
-  - `raw_hex` field: Raw bytes including IAC commands
+    - `data` field: UTF-8 text (Telnet commands stripped)
+    - `raw_hex` field: Raw bytes including IAC commands
 - `telnet_option_negotiated` - Fired when option negotiation occurs (informational)
 
 ### Data Encoding
 
 **Received Data:**
+
 ```json
 {
   "data": "login: ",
@@ -104,6 +115,7 @@ SE = 240 (0xF0) - Subnegotiation end
 ```
 
 **Sent Actions:**
+
 ```json
 {
   "type": "send_command",
@@ -146,14 +158,17 @@ debug!("Telnet client {} received WILL ECHO", client_id); // → netget.log
 ### Telnet Protocol Edge Cases
 
 **IAC Escaping:**
+
 - IAC IAC (255 255) = Literal byte 255
 - Handled in `parse_telnet_data()`
 
 **Subnegotiation:**
+
 - IAC SB ... IAC SE sequences
 - Skipped/ignored (not relevant for basic shell usage)
 
 **Incomplete Sequences:**
+
 - If buffer ends mid-IAC sequence, may lose command
 - Acceptable for LLM-controlled client (rare edge case)
 

@@ -15,23 +15,21 @@ use std::sync::LazyLock;
 pub static K8S_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "k8s_connected",
-        "Kubernetes client connected to cluster API"
+        "Kubernetes client connected to cluster API",
     )
-    .with_parameters(vec![
-        Parameter {
-            name: "cluster_url".to_string(),
-            type_hint: "string".to_string(),
-            description: "Kubernetes cluster URL or kubeconfig path".to_string(),
-            required: true,
-        },
-    ])
+    .with_parameters(vec![Parameter {
+        name: "cluster_url".to_string(),
+        type_hint: "string".to_string(),
+        description: "Kubernetes cluster URL or kubeconfig path".to_string(),
+        required: true,
+    }])
 });
 
 /// Kubernetes client resource received event
 pub static K8S_CLIENT_RESOURCE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "k8s_resource_received",
-        "Kubernetes resource operation completed"
+        "Kubernetes resource operation completed",
     )
     .with_parameters(vec![
         Parameter {
@@ -106,13 +104,16 @@ impl Protocol for KubernetesClientProtocol {
                     Parameter {
                         name: "namespace".to_string(),
                         type_hint: "string".to_string(),
-                        description: "Namespace to list pods from (optional, uses default if not specified)".to_string(),
+                        description:
+                            "Namespace to list pods from (optional, uses default if not specified)"
+                                .to_string(),
                         required: false,
                     },
                     Parameter {
                         name: "label_selector".to_string(),
                         type_hint: "string".to_string(),
-                        description: "Label selector to filter pods (e.g., 'app=nginx')".to_string(),
+                        description: "Label selector to filter pods (e.g., 'app=nginx')"
+                            .to_string(),
                         required: false,
                     },
                 ],
@@ -282,24 +283,20 @@ impl Protocol for KubernetesClientProtocol {
     }
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "k8s_list_pods".to_string(),
-                description: "List pods in response to a previous operation".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "namespace".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Namespace (optional)".to_string(),
-                        required: false,
-                    },
-                ],
-                example: json!({
-                    "type": "k8s_list_pods",
-                    "namespace": "default"
-                }),
-            },
-        ]
+        vec![ActionDefinition {
+            name: "k8s_list_pods".to_string(),
+            description: "List pods in response to a previous operation".to_string(),
+            parameters: vec![Parameter {
+                name: "namespace".to_string(),
+                type_hint: "string".to_string(),
+                description: "Namespace (optional)".to_string(),
+                required: false,
+            }],
+            example: json!({
+                "type": "k8s_list_pods",
+                "namespace": "default"
+            }),
+        }]
     }
 
     fn protocol_name(&self) -> &'static str {
@@ -384,11 +381,13 @@ impl Client for KubernetesClientProtocol {
 
         match action_type {
             "k8s_list_pods" => {
-                let namespace = action.get("namespace")
+                let namespace = action
+                    .get("namespace")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
 
-                let label_selector = action.get("label_selector")
+                let label_selector = action
+                    .get("label_selector")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
 
@@ -403,12 +402,14 @@ impl Client for KubernetesClientProtocol {
                 })
             }
             "k8s_get_pod" => {
-                let name = action.get("name")
+                let name = action
+                    .get("name")
                     .and_then(|v| v.as_str())
                     .context("Missing 'name' field")?
                     .to_string();
 
-                let namespace = action.get("namespace")
+                let namespace = action
+                    .get("namespace")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
 
@@ -423,12 +424,14 @@ impl Client for KubernetesClientProtocol {
                 })
             }
             "k8s_get_logs" => {
-                let name = action.get("name")
+                let name = action
+                    .get("name")
                     .and_then(|v| v.as_str())
                     .context("Missing 'name' field")?
                     .to_string();
 
-                let namespace = action.get("namespace")
+                let namespace = action
+                    .get("namespace")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
 
@@ -443,11 +446,10 @@ impl Client for KubernetesClientProtocol {
                 })
             }
             "k8s_create_pod" => {
-                let spec = action.get("spec")
-                    .context("Missing 'spec' field")?
-                    .clone();
+                let spec = action.get("spec").context("Missing 'spec' field")?.clone();
 
-                let namespace = action.get("namespace")
+                let namespace = action
+                    .get("namespace")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
 
@@ -462,12 +464,14 @@ impl Client for KubernetesClientProtocol {
                 })
             }
             "k8s_delete_pod" => {
-                let name = action.get("name")
+                let name = action
+                    .get("name")
                     .and_then(|v| v.as_str())
                     .context("Missing 'name' field")?
                     .to_string();
 
-                let namespace = action.get("namespace")
+                let namespace = action
+                    .get("namespace")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
 
@@ -482,11 +486,13 @@ impl Client for KubernetesClientProtocol {
                 })
             }
             "k8s_list_deployments" => {
-                let namespace = action.get("namespace")
+                let namespace = action
+                    .get("namespace")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
 
-                let label_selector = action.get("label_selector")
+                let label_selector = action
+                    .get("label_selector")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
 
@@ -501,11 +507,13 @@ impl Client for KubernetesClientProtocol {
                 })
             }
             "k8s_list_services" => {
-                let namespace = action.get("namespace")
+                let namespace = action
+                    .get("namespace")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
 
-                let label_selector = action.get("label_selector")
+                let label_selector = action
+                    .get("label_selector")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
 
@@ -520,7 +528,10 @@ impl Client for KubernetesClientProtocol {
                 })
             }
             "disconnect" => Ok(ClientActionResult::Disconnect),
-            _ => Err(anyhow::anyhow!("Unknown Kubernetes client action: {}", action_type)),
+            _ => Err(anyhow::anyhow!(
+                "Unknown Kubernetes client action: {}",
+                action_type
+            )),
         }
     }
 }

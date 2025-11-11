@@ -7,9 +7,9 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, ServerConfig, E2EResult};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use super::super::super::helpers::{self, E2EResult, ServerConfig};
 use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 #[tokio::test]
 async fn test_telnet_echo() -> E2EResult<()> {
@@ -23,7 +23,6 @@ async fn test_telnet_echo() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-
     // VALIDATION: Connect via raw TCP (Telnet protocol)
     println!("Connecting to Telnet server...");
     let stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
@@ -35,7 +34,9 @@ async fn test_telnet_echo() -> E2EResult<()> {
     // Send a test message
     let test_message = "Hello Telnet Server";
     println!("Sending: {}", test_message);
-    write_half.write_all(format!("{}\n", test_message).as_bytes()).await?;
+    write_half
+        .write_all(format!("{}\n", test_message).as_bytes())
+        .await?;
     write_half.flush().await?;
 
     // Read echo response
@@ -80,7 +81,6 @@ async fn test_telnet_prompt() -> E2EResult<()> {
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
-
 
     // VALIDATION: Connect and verify welcome + prompt
     let stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
@@ -134,7 +134,6 @@ async fn test_telnet_multiple_lines() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-
     // VALIDATION: Send multiple lines
     let stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
     println!("✓ TCP connected");
@@ -146,7 +145,9 @@ async fn test_telnet_multiple_lines() -> E2EResult<()> {
     let lines = ["First line", "Second line", "Third line"];
     for (i, line) in lines.iter().enumerate() {
         println!("Sending line {}: {}", i + 1, line);
-        write_half.write_all(format!("{}\n", line).as_bytes()).await?;
+        write_half
+            .write_all(format!("{}\n", line).as_bytes())
+            .await?;
         write_half.flush().await?;
 
         // Read response
@@ -159,7 +160,6 @@ async fn test_telnet_multiple_lines() -> E2EResult<()> {
                 println!("  No response for line {}", i + 1);
             }
         }
-
     }
 
     println!("✓ Multiple line handling tested");
@@ -181,11 +181,12 @@ async fn test_telnet_concurrent_connections() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-
     // VALIDATION: Connect multiple clients concurrently
     println!("Testing concurrent Telnet clients...");
 
-    let mut handles: Vec<tokio::task::JoinHandle<Result<bool, Box<dyn std::error::Error + Send + Sync>>>> = vec![];
+    let mut handles: Vec<
+        tokio::task::JoinHandle<Result<bool, Box<dyn std::error::Error + Send + Sync>>>,
+    > = vec![];
     for i in 1..=3 {
         let port = server.port;
         let handle = tokio::spawn(async move {
@@ -195,7 +196,9 @@ async fn test_telnet_concurrent_connections() -> E2EResult<()> {
 
             // Send a unique message
             let message = format!("Client {} message", i);
-            write_half.write_all(format!("{}\n", message).as_bytes()).await?;
+            write_half
+                .write_all(format!("{}\n", message).as_bytes())
+                .await?;
             write_half.flush().await?;
 
             // Try to read response

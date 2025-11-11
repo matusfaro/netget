@@ -10,13 +10,13 @@ use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, trace, warn};
 
+use crate::client::bootp::actions::{BOOTP_CLIENT_CONNECTED_EVENT, BOOTP_REPLY_RECEIVED_EVENT};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::bootp::actions::{BOOTP_CLIENT_CONNECTED_EVENT, BOOTP_REPLY_RECEIVED_EVENT};
 
 #[cfg(feature = "bootp")]
 use dhcproto::v4;
@@ -67,22 +67,32 @@ impl BootpClient {
         let socket = match UdpSocket::bind("0.0.0.0:68").await {
             Ok(s) => s,
             Err(e) => {
-                warn!("Failed to bind to port 68 (requires privileges): {}. Binding to random port.", e);
-                UdpSocket::bind("0.0.0.0:0").await
+                warn!(
+                    "Failed to bind to port 68 (requires privileges): {}. Binding to random port.",
+                    e
+                );
+                UdpSocket::bind("0.0.0.0:0")
+                    .await
                     .context("Failed to bind UDP socket")?
             }
         };
 
         // Enable broadcast if needed
-        socket.set_broadcast(true)
+        socket
+            .set_broadcast(true)
             .context("Failed to enable broadcast")?;
 
         let local_addr = socket.local_addr()?;
 
-        info!("BOOTP client {} bound to {} (server: {})", client_id, local_addr, server_addr);
+        info!(
+            "BOOTP client {} bound to {} (server: {})",
+            client_id, local_addr, server_addr
+        );
 
         // Update client state
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
         let _ = status_tx.send(format!("[CLIENT] BOOTP client {} connected", client_id));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
@@ -119,8 +129,13 @@ impl BootpClient {
                 Some(&event),
                 protocol.as_ref(),
                 &status_tx,
-            ).await {
-                Ok(ClientLlmResult { actions, memory_updates }) => {
+            )
+            .await
+            {
+                Ok(ClientLlmResult {
+                    actions,
+                    memory_updates,
+                }) => {
                     // Update memory
                     if let Some(mem) = memory_updates {
                         client_data.lock().await.memory = mem;
@@ -135,13 +150,18 @@ impl BootpClient {
                             &protocol,
                             &status_tx,
                             client_id,
-                        ).await {
+                        )
+                        .await
+                        {
                             error!("Failed to execute initial BOOTP action: {}", e);
                         }
                     }
                 }
                 Err(e) => {
-                    error!("Initial LLM call failed for BOOTP client {}: {}", client_id, e);
+                    error!(
+                        "Initial LLM call failed for BOOTP client {}: {}",
+                        client_id, e
+                    );
                 }
             }
         }
@@ -153,14 +173,22 @@ impl BootpClient {
             loop {
                 match socket_clone.recv_from(&mut buffer).await {
                     Ok((n, peer)) => {
-                        trace!("BOOTP client {} received {} bytes from {}", client_id, n, peer);
+                        trace!(
+                            "BOOTP client {} received {} bytes from {}",
+                            client_id,
+                            n,
+                            peer
+                        );
 
                         // Parse BOOTP reply
                         match Self::parse_bootp_reply(&buffer[..n]) {
                             Ok(reply) => {
                                 info!(
                                     "BOOTP client {} received reply: IP={}, Server={}, Boot={}",
-                                    client_id, reply.assigned_ip, reply.server_ip, reply.boot_filename
+                                    client_id,
+                                    reply.assigned_ip,
+                                    reply.server_ip,
+                                    reply.boot_filename
                                 );
 
                                 // Handle reply with LLM
@@ -173,7 +201,10 @@ impl BootpClient {
                                         drop(client_data_lock);
 
                                         // Call LLM
-                                        if let Some(instruction) = app_state_clone.get_instruction_for_client(client_id).await {
+                                        if let Some(instruction) = app_state_clone
+                                            .get_instruction_for_client(client_id)
+                                            .await
+                                        {
                                             let protocol = Arc::new(crate::client::bootp::actions::BootpClientProtocol::new());
                                             let event = Event::new(
                                                 &BOOTP_REPLY_RECEIVED_EVENT,
@@ -194,8 +225,13 @@ impl BootpClient {
                                                 Some(&event),
                                                 protocol.as_ref(),
                                                 &status_tx_clone,
-                                            ).await {
-                                                Ok(ClientLlmResult { actions, memory_updates }) => {
+                                            )
+                                            .await
+                                            {
+                                                Ok(ClientLlmResult {
+                                                    actions,
+                                                    memory_updates,
+                                                }) => {
                                                     // Update memory
                                                     if let Some(mem) = memory_updates {
                                                         client_data.lock().await.memory = mem;
@@ -210,13 +246,18 @@ impl BootpClient {
                                                             &protocol,
                                                             &status_tx_clone,
                                                             client_id,
-                                                        ).await {
+                                                        )
+                                                        .await
+                                                        {
                                                             error!("Failed to execute BOOTP action: {}", e);
                                                         }
                                                     }
                                                 }
                                                 Err(e) => {
-                                                    error!("LLM error for BOOTP client {}: {}", client_id, e);
+                                                    error!(
+                                                        "LLM error for BOOTP client {}: {}",
+                                                        client_id, e
+                                                    );
                                                 }
                                             }
                                         }
@@ -246,7 +287,9 @@ impl BootpClient {
                     }
                     Err(e) => {
                         error!("BOOTP client {} recv error: {}", client_id, e);
-                        app_state_clone.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
+                        app_state_clone
+                            .update_client_status(client_id, ClientStatus::Error(e.to_string()))
+                            .await;
                         let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         break;
                     }
@@ -270,12 +313,8 @@ impl BootpClient {
 
         match protocol.as_ref().execute_action(action)? {
             ClientActionResult::Custom { name, data } if name == "send_bootp_request" => {
-                let client_mac = data["client_mac"]
-                    .as_str()
-                    .context("Missing client_mac")?;
-                let broadcast = data["broadcast"]
-                    .as_bool()
-                    .unwrap_or(true);
+                let client_mac = data["client_mac"].as_str().context("Missing client_mac")?;
+                let broadcast = data["broadcast"].as_bool().unwrap_or(true);
 
                 // Parse MAC address
                 let mac_bytes = Self::parse_mac(client_mac)?;
@@ -316,8 +355,7 @@ impl BootpClient {
 
         let mut mac = [0u8; 6];
         for (i, part) in parts.iter().enumerate() {
-            mac[i] = u8::from_str_radix(part, 16)
-                .context("Invalid hex digit in MAC address")?;
+            mac[i] = u8::from_str_radix(part, 16).context("Invalid hex digit in MAC address")?;
         }
 
         Ok(mac)
@@ -354,19 +392,19 @@ impl BootpClient {
     fn parse_bootp_reply(data: &[u8]) -> Result<BootpReply> {
         #[cfg(feature = "bootp")]
         {
-            use dhcproto::Decodable;
             use dhcproto::decoder::Decoder;
+            use dhcproto::Decodable;
 
             let mut decoder = Decoder::new(data);
-            let msg = v4::Message::decode(&mut decoder)
-                .context("Failed to decode BOOTP reply")?;
+            let msg = v4::Message::decode(&mut decoder).context("Failed to decode BOOTP reply")?;
 
             // Verify it's a reply
             if msg.opcode() != v4::Opcode::BootReply {
                 return Err(anyhow::anyhow!("Not a BOOTP reply"));
             }
 
-            let boot_filename = msg.fname()
+            let boot_filename = msg
+                .fname()
                 .and_then(|bytes| std::str::from_utf8(bytes).ok())
                 .unwrap_or("")
                 .trim_end_matches('\0')

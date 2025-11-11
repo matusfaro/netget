@@ -16,7 +16,8 @@ use tokio::sync::mpsc;
 use tokio::time::sleep;
 
 /// Helper function to create test Git client
-async fn setup_git_client() -> Result<(Arc<AppState>, OllamaClient, mpsc::UnboundedSender<String>)> {
+async fn setup_git_client() -> Result<(Arc<AppState>, OllamaClient, mpsc::UnboundedSender<String>)>
+{
     let args = CliArgs {
         model: "qwen3-coder:30b".to_string(),
         ollama_host: "http://localhost:11434".to_string(),
@@ -54,7 +55,9 @@ async fn test_git_clone() -> Result<()> {
         "Clone the repository https://github.com/rust-lang/rustlings.git to {}",
         clone_path.display()
     );
-    app_state.set_instruction_for_client(client_id, instruction.clone()).await;
+    app_state
+        .set_instruction_for_client(client_id, instruction.clone())
+        .await;
 
     // Initialize Git client protocol
     let protocol = GitClientProtocol::new();
@@ -69,14 +72,21 @@ async fn test_git_clone() -> Result<()> {
     };
 
     let result = protocol.connect(ctx).await;
-    assert!(result.is_ok(), "Git client connection failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Git client connection failed: {:?}",
+        result.err()
+    );
 
     // Wait for clone operation to complete
     sleep(Duration::from_secs(30)).await;
 
     // Verify repository was cloned
     assert!(clone_path.exists(), "Clone path does not exist");
-    assert!(clone_path.join(".git").exists(), "Not a valid Git repository");
+    assert!(
+        clone_path.join(".git").exists(),
+        "Not a valid Git repository"
+    );
 
     Ok(())
 }
@@ -105,7 +115,9 @@ async fn test_git_list_branches() -> Result<()> {
 
     // Set instruction to list branches
     let instruction = "List all branches in the repository, including remote branches";
-    app_state.set_instruction_for_client(client_id, instruction.to_string()).await;
+    app_state
+        .set_instruction_for_client(client_id, instruction.to_string())
+        .await;
 
     // Initialize Git client protocol
     let protocol = GitClientProtocol::new();
@@ -120,7 +132,11 @@ async fn test_git_list_branches() -> Result<()> {
     };
 
     let result = protocol.connect(ctx).await;
-    assert!(result.is_ok(), "Git client connection failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Git client connection failed: {:?}",
+        result.err()
+    );
 
     // Wait for operation to complete
     sleep(Duration::from_secs(10)).await;
@@ -152,7 +168,9 @@ async fn test_git_log() -> Result<()> {
 
     // Set instruction to show log
     let instruction = "Show me the last 5 commits in the repository";
-    app_state.set_instruction_for_client(client_id, instruction.to_string()).await;
+    app_state
+        .set_instruction_for_client(client_id, instruction.to_string())
+        .await;
 
     // Initialize Git client protocol
     let protocol = GitClientProtocol::new();
@@ -167,7 +185,11 @@ async fn test_git_log() -> Result<()> {
     };
 
     let result = protocol.connect(ctx).await;
-    assert!(result.is_ok(), "Git client connection failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Git client connection failed: {:?}",
+        result.err()
+    );
 
     // Wait for operation to complete
     sleep(Duration::from_secs(10)).await;
@@ -199,7 +221,9 @@ async fn test_git_status() -> Result<()> {
 
     // Set instruction to check status
     let instruction = "Check the repository status";
-    app_state.set_instruction_for_client(client_id, instruction.to_string()).await;
+    app_state
+        .set_instruction_for_client(client_id, instruction.to_string())
+        .await;
 
     // Initialize Git client protocol
     let protocol = GitClientProtocol::new();
@@ -214,7 +238,11 @@ async fn test_git_status() -> Result<()> {
     };
 
     let result = protocol.connect(ctx).await;
-    assert!(result.is_ok(), "Git client connection failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Git client connection failed: {:?}",
+        result.err()
+    );
 
     // Wait for operation to complete
     sleep(Duration::from_secs(10)).await;

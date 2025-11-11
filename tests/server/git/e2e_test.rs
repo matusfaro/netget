@@ -5,8 +5,7 @@
 
 #![cfg(feature = "git")]
 
-use super::super::super::helpers::{self, ServerConfig, E2EResult};
-use std::path::PathBuf;
+use super::super::super::helpers::{self, E2EResult, ServerConfig};
 use std::process::Command;
 use tempfile::TempDir;
 
@@ -64,9 +63,7 @@ Note: For this MVP, you can provide a simplified pack that allows git clone to s
 If you are unsure about pack format, provide minimal pack data and we will test protocol flow."#;
 
     // Start server without scripting (pure LLM mode)
-    let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
-    ).await?;
+    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
 
     let port = server.port;
     println!("Git server started on port {}", port);
@@ -86,9 +83,9 @@ If you are unsure about pack format, provide minimal pack data and we will test 
         &[
             "clone",
             &format!("http://127.0.0.1:{}/test-repo", port),
-            clone_path.to_str().unwrap()
+            clone_path.to_str().unwrap(),
         ],
-        None
+        None,
     );
 
     match clone_result {
@@ -98,7 +95,10 @@ If you are unsure about pack format, provide minimal pack data and we will test 
 
             // Verify cloned repository structure
             assert!(clone_path.exists(), "Clone directory should exist");
-            assert!(clone_path.join(".git").exists(), "Should have .git directory");
+            assert!(
+                clone_path.join(".git").exists(),
+                "Should have .git directory"
+            );
 
             // Check if we can see git status (validates repository structure)
             let status = run_git_command(&["status"], Some(&clone_path))?;
@@ -108,14 +108,19 @@ If you are unsure about pack format, provide minimal pack data and we will test 
             if clone_path.join("README.md").exists() {
                 let readme_content = std::fs::read_to_string(clone_path.join("README.md"))?;
                 println!("README.md content: {}", readme_content);
-                assert!(readme_content.contains("Test Repository"), "README should contain expected content");
+                assert!(
+                    readme_content.contains("Test Repository"),
+                    "README should contain expected content"
+                );
             } else {
                 println!("Note: README.md not found - pack may be minimal");
             }
         }
         Err(e) => {
             println!("Clone failed (this may be expected for MVP): {}", e);
-            println!("This is acceptable for initial implementation - protocol flow is being validated");
+            println!(
+                "This is acceptable for initial implementation - protocol flow is being validated"
+            );
             // We don't fail the test here because pack generation is complex
             // The important part is that the server responds correctly to the protocol
         }
@@ -138,9 +143,7 @@ When client requests /simple-repo/info/refs?service=git-upload-pack:
 - Return refs/tags/v1.0 with SHA: fedcba9876543210fedcba9876543210fedcba98
 - Include capabilities: multi_ack, side-band-64k"#;
 
-    let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
-    ).await?;
+    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
 
     let port = server.port;
     println!("Git server started on port {}", port);
@@ -151,7 +154,10 @@ When client requests /simple-repo/info/refs?service=git-upload-pack:
     println!("\n--- Test: GET /simple-repo/info/refs ---");
 
     let client = reqwest::Client::new();
-    let url = format!("http://127.0.0.1:{}/simple-repo/info/refs?service=git-upload-pack", port);
+    let url = format!(
+        "http://127.0.0.1:{}/simple-repo/info/refs?service=git-upload-pack",
+        port
+    );
 
     let response = client.get(&url).send().await?;
 
@@ -175,7 +181,10 @@ When client requests /simple-repo/info/refs?service=git-upload-pack:
 
     // Verify pkt-line format (should start with service announcement)
     let body_str = String::from_utf8_lossy(&body_bytes);
-    println!("Response body (first 200 chars): {}", &body_str.chars().take(200).collect::<String>());
+    println!(
+        "Response body (first 200 chars): {}",
+        &body_str.chars().take(200).collect::<String>()
+    );
 
     // Check for pkt-line format markers
     assert!(body_bytes.len() > 4, "Response should have pkt-line data");
@@ -206,9 +215,7 @@ When client requests info/refs for any other repository name:
 - Return error with 404 status code
 - Message: "Repository not found""#;
 
-    let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
-    ).await?;
+    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
 
     let port = server.port;
     println!("Git server started on port {}", port);
@@ -219,7 +226,10 @@ When client requests info/refs for any other repository name:
     println!("\n--- Test: GET /nonexistent/info/refs ---");
 
     let client = reqwest::Client::new();
-    let url = format!("http://127.0.0.1:{}/nonexistent/info/refs?service=git-upload-pack", port);
+    let url = format!(
+        "http://127.0.0.1:{}/nonexistent/info/refs?service=git-upload-pack",
+        port
+    );
 
     let response = client.get(&url).send().await?;
 
@@ -261,9 +271,7 @@ Create two repositories:
 When client requests info/refs for 'frontend', return frontend branches.
 When client requests info/refs for 'backend', return backend branches."#;
 
-    let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
-    ).await?;
+    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
 
     let port = server.port;
     println!("Git server started on port {}", port);
@@ -274,7 +282,10 @@ When client requests info/refs for 'backend', return backend branches."#;
 
     // Test 1: Frontend repository
     println!("\n--- Test 1: GET /frontend/info/refs ---");
-    let url1 = format!("http://127.0.0.1:{}/frontend/info/refs?service=git-upload-pack", port);
+    let url1 = format!(
+        "http://127.0.0.1:{}/frontend/info/refs?service=git-upload-pack",
+        port
+    );
     let response1 = client.get(&url1).send().await?;
 
     assert_eq!(response1.status(), 200, "Frontend repo should exist");
@@ -284,7 +295,10 @@ When client requests info/refs for 'backend', return backend branches."#;
 
     // Test 2: Backend repository
     println!("\n--- Test 2: GET /backend/info/refs ---");
-    let url2 = format!("http://127.0.0.1:{}/backend/info/refs?service=git-upload-pack", port);
+    let url2 = format!(
+        "http://127.0.0.1:{}/backend/info/refs?service=git-upload-pack",
+        port
+    );
     let response2 = client.get(&url2).send().await?;
 
     assert_eq!(response2.status(), 200, "Backend repo should exist");
@@ -329,9 +343,7 @@ Script should return:
   }]
 }"#;
 
-    let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
-    ).await?;
+    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
 
     let port = server.port;
     println!("Git server with scripting started on port {}", port);
@@ -346,7 +358,10 @@ Script should return:
     for i in 1..=3 {
         let start = std::time::Instant::now();
 
-        let url = format!("http://127.0.0.1:{}/scripted-repo/info/refs?service=git-upload-pack", port);
+        let url = format!(
+            "http://127.0.0.1:{}/scripted-repo/info/refs?service=git-upload-pack",
+            port
+        );
         let response = client.get(&url).send().await?;
 
         let elapsed = start.elapsed();

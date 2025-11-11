@@ -2,7 +2,8 @@
 
 ## Overview
 
-Bluetooth Low Energy (BLE) remote control server that allows devices to pair with NetGet and receive media control commands. Built on top of the `bluetooth-ble` protocol, providing a high-level remote control interface.
+Bluetooth Low Energy (BLE) remote control server that allows devices to pair with NetGet and receive media control
+commands. Built on top of the `bluetooth-ble` protocol, providing a high-level remote control interface.
 
 ## Architecture
 
@@ -30,6 +31,7 @@ Uses HID Consumer Control (part of HID over GATT) for media and system control b
 ### HID Report Descriptor
 
 Standard HID Consumer Control with 16 button bits:
+
 - Play/Pause
 - Next/Previous Track
 - Stop, Fast Forward, Rewind
@@ -44,6 +46,7 @@ Standard HID Consumer Control with 16 button bits:
 ```
 
 **Example**: Play/Pause pressed
+
 ```
 01 00
 ││
@@ -51,6 +54,7 @@ Standard HID Consumer Control with 16 button bits:
 ```
 
 **Example**: Volume Up pressed
+
 ```
 40 00
 ││
@@ -60,6 +64,7 @@ Standard HID Consumer Control with 16 button bits:
 ## LLM Actions
 
 ### play_pause
+
 Toggle play/pause.
 
 ```json
@@ -69,6 +74,7 @@ Toggle play/pause.
 ```
 
 ### next_track
+
 Skip to next track.
 
 ```json
@@ -78,6 +84,7 @@ Skip to next track.
 ```
 
 ### previous_track
+
 Go to previous track.
 
 ```json
@@ -87,6 +94,7 @@ Go to previous track.
 ```
 
 ### volume_up
+
 Increase volume.
 
 ```json
@@ -96,6 +104,7 @@ Increase volume.
 ```
 
 ### volume_down
+
 Decrease volume.
 
 ```json
@@ -105,6 +114,7 @@ Decrease volume.
 ```
 
 ### mute
+
 Toggle mute.
 
 ```json
@@ -114,6 +124,7 @@ Toggle mute.
 ```
 
 ### fast_forward
+
 Fast forward.
 
 ```json
@@ -123,6 +134,7 @@ Fast forward.
 ```
 
 ### rewind
+
 Rewind.
 
 ```json
@@ -132,6 +144,7 @@ Rewind.
 ```
 
 ### stop
+
 Stop playback.
 
 ```json
@@ -143,6 +156,7 @@ Stop playback.
 ## Events
 
 ### remote_button_pressed
+
 ```json
 {
   "event": "remote_button_pressed",
@@ -153,6 +167,7 @@ Stop playback.
 ## Example Usage
 
 ### Media Control
+
 ```
 User: "Act as a Bluetooth remote. When connected, press play/pause, wait 5 seconds, then volume up twice."
 
@@ -164,6 +179,7 @@ volume_up()
 ```
 
 ### Presentation Control
+
 ```
 User: "Act as a remote control. Press next track 5 times to advance slides."
 
@@ -179,21 +195,25 @@ next_track()
 
 ### No Connection Tracking
 
-Unlike keyboard/mouse, this implementation doesn't track individual clients. All button presses are broadcast to all connected devices.
+Unlike keyboard/mouse, this implementation doesn't track individual clients. All button presses are broadcast to all
+connected devices.
 
 ### Button Release
 
-Buttons are momentary - each action sends a button press followed immediately by release (all bits clear). This matches standard remote control behavior.
+Buttons are momentary - each action sends a button press followed immediately by release (all bits clear). This matches
+standard remote control behavior.
 
 ### Platform Compatibility
 
 **Works with**:
+
 - Media players (VLC, Windows Media Player, iTunes, Spotify)
 - Smart TVs
 - Streaming devices (Roku, Fire TV, Apple TV)
 - Presentation software (PowerPoint, Keynote)
 
 **Platform support**:
+
 - **Windows**: Native Consumer Control support
 - **macOS**: Full support via CoreBluetooth
 - **Linux**: BlueZ with Consumer Control mapping
@@ -210,6 +230,7 @@ Buttons are momentary - each action sends a button press followed immediately by
 ## Platform Requirements
 
 Same as `bluetooth-ble`:
+
 - **Linux**: BlueZ daemon
 - **macOS**: Bluetooth enabled
 - **Windows**: Windows 10+ with Bluetooth

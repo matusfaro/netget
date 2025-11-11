@@ -5,20 +5,22 @@ use netget::llm::actions::tools::execute_read_file;
 #[tokio::test]
 async fn test_read_file_tool() {
     // Test reading a file in full mode
-    let result = execute_read_file(
-        "tests/fixtures/schema.json",
-        "full",
-        None,
-        None,
-        None,
-        None,
-    )
-    .await;
+    let result =
+        execute_read_file("tests/fixtures/schema.json", "full", None, None, None, None).await;
 
     assert!(result.success, "File read should succeed");
-    assert!(result.result.contains("testdb"), "Should contain database name");
-    assert!(result.result.contains("users"), "Should contain users table");
-    assert!(result.result.contains("posts"), "Should contain posts table");
+    assert!(
+        result.result.contains("testdb"),
+        "Should contain database name"
+    );
+    assert!(
+        result.result.contains("users"),
+        "Should contain users table"
+    );
+    assert!(
+        result.result.contains("posts"),
+        "Should contain posts table"
+    );
 }
 
 #[tokio::test]
@@ -57,16 +59,11 @@ async fn test_read_file_grep_mode() {
 
 #[tokio::test]
 async fn test_read_file_not_found() {
-    let result = execute_read_file(
-        "nonexistent_file.txt",
-        "full",
-        None,
-        None,
-        None,
-        None,
-    )
-    .await;
+    let result = execute_read_file("nonexistent_file.txt", "full", None, None, None, None).await;
 
     assert!(!result.success, "Should fail for non-existent file");
-    assert!(result.result.contains("not found"), "Should contain error message");
+    assert!(
+        result.result.contains("not found"),
+        "Should contain error message"
+    );
 }

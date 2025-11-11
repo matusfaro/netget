@@ -12,7 +12,7 @@ mod tests {
     use netget::state::app_state::AppState;
     use std::sync::Arc;
     use tokio::sync::mpsc;
-    use tokio::time::{sleep, Duration};
+    use tokio::time::Duration;
 
     /// Test WebRTC client initialization and SDP offer generation
     #[tokio::test]
@@ -65,7 +65,8 @@ mod tests {
         let start = tokio::time::Instant::now();
 
         while start.elapsed() < timeout {
-            if let Ok(msg) = tokio::time::timeout(Duration::from_millis(100), status_rx.recv()).await
+            if let Ok(msg) =
+                tokio::time::timeout(Duration::from_millis(100), status_rx.recv()).await
             {
                 if let Some(msg) = msg {
                     println!("Status: {}", msg);
@@ -86,9 +87,7 @@ mod tests {
 
         // Verify SDP offer was generated
         let has_offer = app_state
-            .with_client_mut(client_id, |c| {
-                c.get_protocol_field("sdp_offer").is_some()
-            })
+            .with_client_mut(client_id, |c| c.get_protocol_field("sdp_offer").is_some())
             .await
             .flatten()
             .unwrap_or(false);

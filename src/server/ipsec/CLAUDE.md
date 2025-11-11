@@ -2,7 +2,8 @@
 
 ## Overview
 
-IPSec/IKEv2 **enhanced honeypot** that detects and logs IKE handshake attempts with detailed protocol analysis. This is **NOT a full VPN server** - it does not establish actual tunnels, but provides comprehensive IKE message parsing.
+IPSec/IKEv2 **enhanced honeypot** that detects and logs IKE handshake attempts with detailed protocol analysis. This is
+**NOT a full VPN server** - it does not establish actual tunnels, but provides comprehensive IKE message parsing.
 
 **Status**: Experimental (enhanced honeypot with swanny library)
 **Protocol Spec**: [RFC 7296 (IKEv2)](https://datatracker.ietf.org/doc/html/rfc7296)
@@ -20,6 +21,7 @@ IPSec/IKEv2 **enhanced honeypot** that detects and logs IKE handshake attempts w
 **Status**: Experimental (use at own risk)
 
 **What it provides**:
+
 - Complete IKE message parsing (headers, payloads, transforms)
 - IKE SA state machine (initial exchange, auth)
 - Child SA creation/deletion/rekeying
@@ -28,6 +30,7 @@ IPSec/IKEv2 **enhanced honeypot** that detects and logs IKE handshake attempts w
 - 80% test coverage (~7k LOC library, 400 LOC examples)
 
 **Current capabilities** (as of Jan 2025):
+
 - ✅ Initial exchange (IKE_SA_INIT, IKE_AUTH)
 - ✅ Child SA creation/deletion
 - ✅ Child SA rekeying
@@ -37,6 +40,7 @@ IPSec/IKEv2 **enhanced honeypot** that detects and logs IKE handshake attempts w
 - ❌ Certificate-based authentication (PSK only)
 
 **Why we use it for enhanced honeypot**:
+
 - Provides detailed IKE message analysis beyond basic header parsing
 - Can extract cipher suites, transforms, payloads for security research
 - Library-based design fits NetGet architecture (like WireGuard's defguard)
@@ -44,6 +48,7 @@ IPSec/IKEv2 **enhanced honeypot** that detects and logs IKE handshake attempts w
 - Active development by experienced cryptography maintainer
 
 **Why NOT full VPN implementation yet**:
+
 - Library is only 6 months old (very early stage)
 - Missing IKE SA rekeying (major limitation for production VPN)
 - Missing fragmentation support (large packets fail)
@@ -54,18 +59,22 @@ IPSec/IKEv2 **enhanced honeypot** that detects and logs IKE handshake attempts w
 ### Previous Research (Nov 2024)
 
 **Explored options**:
+
 1. **ipsec-parser** - Parser-only, cannot build responses or establish SAs
-2. **strongSwan + VICI** - Requires external daemon, root privileges, XFRM kernel integration (violates NetGet architecture)
+2. **strongSwan + VICI** - Requires external daemon, root privileges, XFRM kernel integration (violates NetGet
+   architecture)
 3. **Custom implementation** - 12-36 months minimum development time, massive complexity
 
 **Key findings**:
+
 - **strongSwan**: ~100,000+ LOC, requires external binary + root + XFRM netlink
 - **XFRM Kernel**: Undocumented, complex netlink protocol with hash tables and red-black trees
 - **Manual parsing**: Simple for basic honeypot, but limited analysis capabilities
 
 **Conclusion (Nov 2024)**: Honeypot-only was the correct choice at the time.
 
-**Update (Jan 2025)**: Swanny library emerged as viable path forward for enhanced analysis and future full implementation.
+**Update (Jan 2025)**: Swanny library emerged as viable path forward for enhanced analysis and future full
+implementation.
 
 ## Architecture Decisions
 
@@ -74,11 +83,13 @@ IPSec/IKEv2 **enhanced honeypot** that detects and logs IKE handshake attempts w
 **Design philosophy**: Enhanced detection and analysis WITHOUT establishing actual VPN tunnels.
 
 **UDP-based IKE listener**:
+
 - Port 500 for IKE (standard)
 - Port 4500 for NAT-T (NAT traversal)
 - Binds UDP socket: `UdpSocket::bind(bind_addr).await?`
 
 **Enhanced manual parsing** (no external dependencies):
+
 - Complete IKE header extraction (28 bytes)
 - Payload chain analysis (next payload indicators)
 - Payload type identification (SA, KE, Nonce, etc.)
@@ -86,6 +97,7 @@ IPSec/IKEv2 **enhanced honeypot** that detects and logs IKE handshake attempts w
 - Message ID tracking
 
 **Parsing flow**:
+
 ```rust
 // Parse IKE header (28 bytes)
 let initiator_spi = u64::from_be_bytes(packet[0..8]);
@@ -107,6 +119,7 @@ let payload_types = extract_payload_chain(packet, next_payload);
 ```
 
 **Why manual parsing**:
+
 - Swanny not yet on crates.io (git dependency)
 - GPL v3.0 license (incompatible with NetGet's licensing)
 - Experimental API (frequent breaking changes expected)
@@ -116,6 +129,7 @@ let payload_types = extract_payload_chain(packet, next_payload);
 ### Enhanced Detection Capabilities
 
 **Beyond basic honeypot** (current implementation):
+
 - ✅ Extract all IKE header fields (SPIs, flags, message ID)
 - ✅ Identify payload types in chain (SA, KE, Nonce, Notify, etc.)
 - ✅ Detect initiator vs responder messages
@@ -124,6 +138,7 @@ let payload_types = extract_payload_chain(packet, next_payload);
 - ✅ Provide detailed logs for security research
 
 **Future capabilities** (with swanny when mature):
+
 - Extract proposed cipher suites
 - Identify Diffie-Hellman groups
 - Parse transform attributes (key lengths, PRF, etc.)
@@ -132,12 +147,14 @@ let payload_types = extract_payload_chain(packet, next_payload);
 - Log certificate requests
 
 **Still honeypot**:
+
 - ❌ Does NOT send IKE responses
 - ❌ Does NOT establish SAs (Security Associations)
 - ❌ Does NOT create tunnels
 - ❌ Does NOT perform cryptographic operations
 
 **Why no responses**:
+
 - Prevents accidental tunnel establishment
 - Avoids revealing honeypot nature to scanners
 - Keeps implementation simple and safe
@@ -146,6 +163,7 @@ let payload_types = extract_payload_chain(packet, next_payload);
 ### IKE Version Detection
 
 Distinguishes IKEv1 and IKEv2 by version byte:
+
 ```rust
 let (ike_version, exchange_name) = if version == 0x20 {
     // IKEv2
@@ -187,6 +205,7 @@ let (ike_version, exchange_name) = if version == 0x20 {
 - `ipsec_data`: ESP encrypted data packet (future)
 
 **Event data example**:
+
 ```json
 {
   "peer_addr": "203.0.113.45:500",
@@ -204,6 +223,7 @@ let (ike_version, exchange_name) = if version == 0x20 {
 ### No Connection State
 
 UDP is connectionless, so "connections" are ephemeral:
+
 - Each packet logged independently
 - No SA (Security Association) tracking
 - No persistent peer state
@@ -211,6 +231,7 @@ UDP is connectionless, so "connections" are ephemeral:
 ### SPI Extraction
 
 IKE packets include SPIs (Security Parameter Indexes):
+
 ```rust
 let initiator_spi = u64::from_be_bytes([packet[0], packet[1], ..., packet[7]]);
 let responder_spi = u64::from_be_bytes([packet[8], packet[9], ..., packet[15]]);
@@ -246,6 +267,7 @@ Not applicable - honeypot doesn't track SAs.
 ### Detection Only
 
 Honeypot can:
+
 - ✅ Detect IKE handshake attempts (IKEv1 and IKEv2)
 - ✅ Extract SPIs, exchange types, version
 - ✅ Distinguish IKE_SA_INIT, IKE_AUTH, etc.
@@ -253,6 +275,7 @@ Honeypot can:
 - ✅ Provide data to LLM for analysis
 
 Honeypot cannot:
+
 - ❌ Complete IKE negotiation
 - ❌ Establish SAs (Security Associations)
 - ❌ Decrypt ESP traffic
@@ -266,12 +289,14 @@ Honeypot cannot:
 **Updated assessment (Jan 2025)**: Full implementation is now **viable but premature**.
 
 **Why deferred**:
+
 - Swanny library is only 6 months old (experimental stage)
 - Missing critical features (IKE SA rekeying, fragmentation, cert auth)
 - WireGuard already provides production-ready VPN in NetGet
 - Better to wait for swanny 1.0 (expected mid-2025)
 
 **Path to full implementation**:
+
 1. **Current**: Enhanced honeypot with swanny parsing (Jan 2025)
 2. **Mid-2025**: Evaluate swanny 1.0 for full VPN capability
 3. **Future**: Full IPSec VPN server when library matures
@@ -289,6 +314,7 @@ netget> Start an IPSec/IKEv2 honeypot on port 500
 ```
 
 Server output:
+
 ```
 [INFO] Starting IPSec/IKEv2 honeypot on 0.0.0.0:500 (reconnaissance detection only)
 [INFO] IPSec/IKEv2 honeypot listening on 0.0.0.0:500
@@ -298,12 +324,14 @@ Server output:
 ### IKEv2 Handshake Detection
 
 When client sends IKE_SA_INIT:
+
 ```
 [TRACE] IPSec: IKEv2 IKE_SA_INIT from 203.0.113.45:500 (256 bytes)
 [INFO] IPSec: IKEv2 handshake reconnaissance from 203.0.113.45:500
 ```
 
 LLM receives event:
+
 ```json
 {
   "event": "ipsec_handshake",
@@ -319,6 +347,7 @@ LLM receives event:
 ```
 
 LLM can respond:
+
 ```json
 {
   "actions": [
@@ -337,6 +366,7 @@ LLM can respond:
 ### IKEv1 Detection
 
 IKEv1 Identity Protection mode:
+
 ```
 [TRACE] IPSec: IKEv1 Identity Protection from 198.51.100.10:500 (128 bytes)
 [INFO] IPSec: IKEv1 handshake reconnaissance from 198.51.100.10:500
@@ -345,6 +375,7 @@ IKEv1 Identity Protection mode:
 ### Multiple Exchange Types
 
 After SA_INIT, client might send IKE_AUTH:
+
 ```
 [TRACE] IPSec: IKEv2 IKE_AUTH from 203.0.113.45:500 (512 bytes)
 [DEBUG] IPSec: IKEv2 IKE_AUTH from 203.0.113.45:500 (logged)
@@ -375,6 +406,7 @@ After SA_INIT, client might send IKE_AUTH:
 ### NOT for Production VPN
 
 IPSec honeypot should **not** be used when actual VPN tunnels are needed. Use WireGuard instead:
+
 ```
 netget> Start a WireGuard VPN server on port 51820
 ```

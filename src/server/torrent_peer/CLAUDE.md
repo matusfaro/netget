@@ -2,7 +2,9 @@
 
 ## Overview
 
-The BitTorrent Peer Wire Protocol is a TCP-based protocol for peer-to-peer data transfer between BitTorrent clients. This implementation provides a fully LLM-controlled peer/seeder that can handle handshakes, choke/unchoke, bitfield exchange, and piece requests.
+The BitTorrent Peer Wire Protocol is a TCP-based protocol for peer-to-peer data transfer between BitTorrent clients.
+This implementation provides a fully LLM-controlled peer/seeder that can handle handshakes, choke/unchoke, bitfield
+exchange, and piece requests.
 
 ## Protocol Specification
 
@@ -17,12 +19,14 @@ The BitTorrent Peer Wire Protocol is a TCP-based protocol for peer-to-peer data 
 ### Server Implementation (`mod.rs`)
 
 **Library Choice**: Pure Tokio implementation
+
 - No external peer library (binary protocol is straightforward)
 - `tokio::net::TcpListener` for accepting connections
 - `tokio::io::split()` for read/write halves
 - Manual binary message parsing/encoding
 
 **Key Components**:
+
 ```rust
 pub struct TorrentPeerServer;
 
@@ -36,22 +40,24 @@ impl TorrentPeerServer {
 ```
 
 **Connection Flow**:
+
 1. Accept TCP connection
 2. Wait for handshake (68 bytes)
 3. Parse handshake (protocol string, info_hash, peer_id)
 4. Send handshake to LLM
 5. LLM returns handshake response
 6. Enter message loop:
-   - Read length-prefixed message
-   - Parse message type and payload
-   - Convert to JSON for LLM
-   - LLM returns action (send_choke, send_piece, etc.)
-   - Send binary message back to peer
+    - Read length-prefixed message
+    - Parse message type and payload
+    - Convert to JSON for LLM
+    - LLM returns action (send_choke, send_piece, etc.)
+    - Send binary message back to peer
 7. Connection persists until closed by peer or error
 
 ### Binary Message Format
 
 **Handshake** (68 bytes, sent once at connection start):
+
 ```
 <pstrlen><pstr><reserved><info_hash><peer_id>
 
@@ -63,6 +69,7 @@ peer_id: 20 bytes (client identifier, e.g., "-NT0001-xxxxxxxxxxxx")
 ```
 
 **Messages** (after handshake):
+
 ```
 <length><message_id><payload>
 
@@ -75,17 +82,17 @@ payload: Variable length (depends on message type)
 
 ### Message Types
 
-| ID | Name          | Payload                                | Description                    |
-|----|---------------|----------------------------------------|--------------------------------|
-| 0  | choke         | None                                   | Choking peer (stop requests)   |
-| 1  | unchoke       | None                                   | Unchoking peer (allow requests)|
-| 2  | interested    | None                                   | Interested in peer's pieces    |
-| 3  | not_interested| None                                   | Not interested                 |
-| 4  | have          | 4 bytes (piece index)                  | Announce piece availability    |
-| 5  | bitfield      | Variable (bitfield bytes)              | Announce all piece availability|
-| 6  | request       | 12 bytes (index, begin, length)        | Request piece block            |
-| 7  | piece         | 8+ bytes (index, begin, block data)    | Send piece block               |
-| 8  | cancel        | 12 bytes (index, begin, length)        | Cancel request                 |
+| ID | Name           | Payload                             | Description                     |
+|----|----------------|-------------------------------------|---------------------------------|
+| 0  | choke          | None                                | Choking peer (stop requests)    |
+| 1  | unchoke        | None                                | Unchoking peer (allow requests) |
+| 2  | interested     | None                                | Interested in peer's pieces     |
+| 3  | not_interested | None                                | Not interested                  |
+| 4  | have           | 4 bytes (piece index)               | Announce piece availability     |
+| 5  | bitfield       | Variable (bitfield bytes)           | Announce all piece availability |
+| 6  | request        | 12 bytes (index, begin, length)     | Request piece block             |
+| 7  | piece          | 8+ bytes (index, begin, block data) | Send piece block                |
+| 8  | cancel         | 12 bytes (index, begin, length)     | Cancel request                  |
 
 ### LLM Actions (`actions.rs`)
 
@@ -94,9 +101,9 @@ payload: Variable length (depends on message type)
 **Sync Actions** (network-triggered):
 
 1. **send_handshake** - Respond to peer handshake
-   - Parameters: `info_hash` (hex, 40 chars), `peer_id` (20 chars, optional)
-   - Output: 68-byte binary handshake
-   - Example:
+    - Parameters: `info_hash` (hex, 40 chars), `peer_id` (20 chars, optional)
+    - Output: 68-byte binary handshake
+    - Example:
    ```json
    {
      "type": "send_handshake",
@@ -106,27 +113,27 @@ payload: Variable length (depends on message type)
    ```
 
 2. **send_choke** - Choke peer (stop accepting requests)
-   - Parameters: None
-   - Output: `00 00 00 01 00`
-   - Example: `{"type": "send_choke"}`
+    - Parameters: None
+    - Output: `00 00 00 01 00`
+    - Example: `{"type": "send_choke"}`
 
 3. **send_unchoke** - Unchoke peer (allow requests)
-   - Parameters: None
-   - Output: `00 00 00 01 01`
-   - Example: `{"type": "send_unchoke"}`
+    - Parameters: None
+    - Output: `00 00 00 01 01`
+    - Example: `{"type": "send_unchoke"}`
 
 4. **send_interested** - Express interest in peer's pieces
-   - Parameters: None
-   - Output: `00 00 00 01 02`
+    - Parameters: None
+    - Output: `00 00 00 01 02`
 
 5. **send_not_interested** - No interest in peer's pieces
-   - Parameters: None
-   - Output: `00 00 00 01 03`
+    - Parameters: None
+    - Output: `00 00 00 01 03`
 
 6. **send_have** - Announce piece availability
-   - Parameters: `piece_index` (number)
-   - Output: `00 00 00 05 04 <index>`
-   - Example:
+    - Parameters: `piece_index` (number)
+    - Output: `00 00 00 05 04 <index>`
+    - Example:
    ```json
    {
      "type": "send_have",
@@ -135,21 +142,21 @@ payload: Variable length (depends on message type)
    ```
 
 7. **send_bitfield** - Announce all pieces
-   - Parameters: `bitfield` (hex string, e.g., "ff" = all pieces)
-   - Output: `<length> 05 <bitfield bytes>`
-   - Example:
+    - Parameters: `bitfield` (hex string, e.g., "ff" = all pieces)
+    - Output: `<length> 05 <bitfield bytes>`
+    - Example:
    ```json
    {
      "type": "send_bitfield",
      "bitfield": "ff"
    }
    ```
-   - **Bitfield Encoding**: Each bit represents one piece (1 = have, 0 = don't have). Bits are big-endian within bytes.
+    - **Bitfield Encoding**: Each bit represents one piece (1 = have, 0 = don't have). Bits are big-endian within bytes.
 
 8. **send_piece** - Send piece data
-   - Parameters: `index` (piece index), `begin` (byte offset), `block_hex` (data in hex)
-   - Output: `<length> 07 <index> <begin> <block data>`
-   - Example:
+    - Parameters: `index` (piece index), `begin` (byte offset), `block_hex` (data in hex)
+    - Output: `<length> 07 <index> <begin> <block data>`
+    - Example:
    ```json
    {
      "type": "send_piece",
@@ -160,30 +167,31 @@ payload: Variable length (depends on message type)
    ```
 
 9. **send_keepalive** - Keep connection alive
-   - Parameters: None
-   - Output: `00 00 00 00`
+    - Parameters: None
+    - Output: `00 00 00 00`
 
 **Event Types** (incoming messages):
 
 1. **peer_handshake** - Peer initiates connection
-   - Payload: `{info_hash: "abc...", peer_id: "xyz..."}`
-   - Must respond with send_handshake
+    - Payload: `{info_hash: "abc...", peer_id: "xyz..."}`
+    - Must respond with send_handshake
 
 2. **peer_choke_message** - Peer state change (choke/unchoke/interested/not_interested)
-   - Payload: Empty `{}`
-   - Can respond with complementary message
+    - Payload: Empty `{}`
+    - Can respond with complementary message
 
 3. **peer_request_message** - Peer requests piece block
-   - Payload: `{index: 0, begin: 0, length: 16384}`
-   - Should respond with send_piece (if unchoked and have piece)
+    - Payload: `{index: 0, begin: 0, length: 16384}`
+    - Should respond with send_piece (if unchoked and have piece)
 
 4. **peer_bitfield_message** - Peer announces pieces
-   - Payload: `{bitfield: "ff00..."}`
-   - Can respond with send_interested or send_not_interested
+    - Payload: `{bitfield: "ff00..."}`
+    - Can respond with send_interested or send_not_interested
 
 ### Message Parsing
 
 **parse_handshake()**:
+
 ```rust
 // Validate length (min 68 bytes)
 // Check pstrlen == 19
@@ -193,6 +201,7 @@ payload: Variable length (depends on message type)
 ```
 
 **parse_message()**:
+
 ```rust
 // Read length (4 bytes, big-endian)
 // If length == 0: keepalive
@@ -209,6 +218,7 @@ payload: Variable length (depends on message type)
 ### Message Encoding
 
 **Handshake**:
+
 ```rust
 let mut handshake = Vec::new();
 handshake.push(19u8);                              // pstrlen
@@ -219,6 +229,7 @@ handshake.extend_from_slice(peer_id.as_bytes());   // 20 bytes
 ```
 
 **Messages**:
+
 ```rust
 let mut message = Vec::new();
 message.extend_from_slice(&length.to_be_bytes());  // 4 bytes
@@ -236,16 +247,19 @@ message.extend_from_slice(&payload);               // Variable
 ### Instruction Guidelines
 
 **Example Instruction (Seeder)**:
+
 ```
 You are a BitTorrent seeder. You have all pieces for any torrent. Respond to handshakes with your peer ID "-NT0001-xxxxxxxxxxxx". Send bitfield "ff" (all pieces). When peers request pieces, send the requested data. Keep all peers unchoked.
 ```
 
 **Example Instruction (Leecher)**:
+
 ```
 You are a BitTorrent leecher. You have no pieces initially. Respond to handshakes. Send interested message. When unchoked, request pieces sequentially starting from piece 0. Track downloaded pieces.
 ```
 
 **Behavior Control**:
+
 - **Choking Strategy**: Control when to choke/unchoke peers (e.g., tit-for-tat, optimistic unchoking)
 - **Piece Selection**: Rarest first, sequential, random
 - **Request Queue**: Pipeline multiple requests (typical: 5-10 outstanding)
@@ -254,18 +268,21 @@ You are a BitTorrent leecher. You have no pieces initially. Respond to handshake
 ### Typical LLM Response Flow
 
 **Connection Start**:
+
 1. Peer sends handshake
 2. LLM receives: `{info_hash: "abc...", peer_id: "xyz..."}`
 3. LLM returns: `{type: "send_handshake", info_hash: "abc...", peer_id: "-NT0001-..."}`
 4. LLM may also send: `{type: "send_bitfield", bitfield: "ff"}` or `{type: "send_unchoke"}`
 
 **Piece Request**:
+
 1. Peer sends: Request message
 2. LLM receives: `{index: 0, begin: 0, length: 16384}`
 3. LLM checks: Do I have piece 0? Is peer unchoked?
 4. LLM returns: `{type: "send_piece", index: 0, begin: 0, block_hex: "..."}`
 
 **Bitfield Exchange**:
+
 1. Peer sends: Bitfield message
 2. LLM receives: `{bitfield: "ff00..."}`
 3. LLM analyzes: Peer has pieces [0-7], missing [8+]
@@ -274,6 +291,7 @@ You are a BitTorrent leecher. You have no pieces initially. Respond to handshake
 ## Connection State Tracking
 
 **ProtocolConnectionInfo Variant**:
+
 ```rust
 TorrentPeer {
     write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
@@ -286,6 +304,7 @@ TorrentPeer {
 ```
 
 **State Machine**:
+
 - **Idle**: Ready for next message
 - **Processing**: LLM call in progress, queue incoming data
 - **Accumulating**: Data queued, will process after current LLM call
@@ -295,6 +314,7 @@ This prevents concurrent LLM calls for the same connection (would cause confusio
 ## Logging Strategy
 
 **DEBUG Level**:
+
 - Connection accepted/closed
 - Handshake parsed (info_hash, peer_id)
 - Message type identified
@@ -302,24 +322,29 @@ This prevents concurrent LLM calls for the same connection (would cause confusio
 - Bytes sent/received
 
 **TRACE Level**:
+
 - Full binary data (hex)
 - Parsed message details
 
 **INFO Level**:
+
 - LLM-generated messages
 
 **ERROR Level**:
+
 - Accept errors
 - Parse errors (invalid handshake, malformed messages)
 - LLM call failures
 
 ## Limitations
 
-1. **No Piece Storage**: LLM doesn't have actual torrent files. Piece data is fake/random unless LLM explicitly tracks it.
+1. **No Piece Storage**: LLM doesn't have actual torrent files. Piece data is fake/random unless LLM explicitly tracks
+   it.
 
 2. **No SHA-1 Verification**: Piece hashes are not validated. LLM can send any data for pieces.
 
-3. **No Fast Extension (BEP 6)**: Fast peer messages not supported (have_all, have_none, suggest_piece, reject_request, allowed_fast).
+3. **No Fast Extension (BEP 6)**: Fast peer messages not supported (have_all, have_none, suggest_piece, reject_request,
+   allowed_fast).
 
 4. **No Extension Protocol (BEP 10)**: No extension handshake, no DHT/PEX/metadata exchange.
 
@@ -340,6 +365,7 @@ This prevents concurrent LLM calls for the same connection (would cause confusio
 ## Protocol Extensions
 
 **Future Enhancements**:
+
 1. **BEP 6 (Fast Extension)**: Reduce latency with have_all, have_none, suggest_piece
 2. **BEP 10 (Extension Protocol)**: Support DHT, PEX, ut_metadata
 3. **BEP 29 (uTP)**: UDP-based transport
@@ -352,6 +378,7 @@ See `tests/server/torrent_peer/CLAUDE.md` for comprehensive testing documentatio
 ## Piece Transfer Example
 
 **Typical Flow**:
+
 1. Peer A (seeder) connects to Peer B (leecher)
 2. A sends: Handshake + Bitfield (all pieces) + Unchoke
 3. B sends: Handshake + Interested

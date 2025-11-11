@@ -52,19 +52,27 @@ impl ClientRegistry {
         self.register(Arc::new(crate::client::bgp::BgpClientProtocol::new()));
 
         #[cfg(feature = "bitcoin")]
-        self.register(Arc::new(crate::client::bitcoin::BitcoinClientProtocol::new()));
+        self.register(Arc::new(
+            crate::client::bitcoin::BitcoinClientProtocol::new(),
+        ));
 
         #[cfg(feature = "bluetooth-ble-client")]
-        self.register(Arc::new(crate::client::bluetooth::BluetoothClientProtocol::new()));
+        self.register(Arc::new(
+            crate::client::bluetooth::BluetoothClientProtocol::new(),
+        ));
 
         #[cfg(feature = "bootp")]
         self.register(Arc::new(crate::client::bootp::BootpClientProtocol::new()));
 
         #[cfg(feature = "cassandra")]
-        self.register(Arc::new(crate::client::cassandra::CassandraClientProtocol::new()));
+        self.register(Arc::new(
+            crate::client::cassandra::CassandraClientProtocol::new(),
+        ));
 
         #[cfg(feature = "datalink")]
-        self.register(Arc::new(crate::client::datalink::DataLinkClientProtocol::new()));
+        self.register(Arc::new(
+            crate::client::datalink::DataLinkClientProtocol::new(),
+        ));
 
         #[cfg(feature = "dhcp")]
         self.register(Arc::new(crate::client::dhcp::DhcpClientProtocol::new()));
@@ -79,10 +87,14 @@ impl ClientRegistry {
         self.register(Arc::new(crate::client::dot::DotClientProtocol::new()));
 
         #[cfg(feature = "dynamodb")]
-        self.register(Arc::new(crate::client::dynamodb::DynamoDbClientProtocol::new()));
+        self.register(Arc::new(
+            crate::client::dynamodb::DynamoDbClientProtocol::new(),
+        ));
 
         #[cfg(feature = "elasticsearch")]
-        self.register(Arc::new(crate::client::elasticsearch::ElasticsearchClientProtocol::new()));
+        self.register(Arc::new(
+            crate::client::elasticsearch::ElasticsearchClientProtocol::new(),
+        ));
 
         #[cfg(feature = "etcd")]
         self.register(Arc::new(crate::client::etcd::EtcdClientProtocol::new()));
@@ -107,7 +119,9 @@ impl ClientRegistry {
         self.register(Arc::new(crate::client::http3::Http3ClientProtocol::new()));
 
         #[cfg(feature = "http_proxy")]
-        self.register(Arc::new(crate::client::http_proxy::HttpProxyClientProtocol::new()));
+        self.register(Arc::new(
+            crate::client::http_proxy::HttpProxyClientProtocol::new(),
+        ));
 
         #[cfg(feature = "igmp")]
         self.register(Arc::new(crate::client::igmp::IgmpClientProtocol::new()));
@@ -125,13 +139,17 @@ impl ClientRegistry {
         self.register(Arc::new(crate::client::isis::IsisClientProtocol::new()));
 
         #[cfg(feature = "jsonrpc")]
-        self.register(Arc::new(crate::client::jsonrpc::JsonRpcClientProtocol::new()));
+        self.register(Arc::new(
+            crate::client::jsonrpc::JsonRpcClientProtocol::new(),
+        ));
 
         #[cfg(feature = "kafka")]
         self.register(Arc::new(crate::client::kafka::KafkaClientProtocol::new()));
 
         #[cfg(feature = "kubernetes")]
-        self.register(Arc::new(crate::client::kubernetes::KubernetesClientProtocol::new()));
+        self.register(Arc::new(
+            crate::client::kubernetes::KubernetesClientProtocol::new(),
+        ));
 
         #[cfg(feature = "ldap")]
         self.register(Arc::new(crate::client::ldap::LdapClientProtocol::new()));
@@ -173,13 +191,17 @@ impl ClientRegistry {
         self.register(Arc::new(crate::client::ollama::OllamaClientProtocol::new()));
 
         #[cfg(feature = "openidconnect")]
-        self.register(Arc::new(crate::client::openidconnect::OpenIdConnectClientProtocol::new()));
+        self.register(Arc::new(
+            crate::client::openidconnect::OpenIdConnectClientProtocol::new(),
+        ));
 
         #[cfg(feature = "ospf")]
         self.register(Arc::new(crate::client::ospf::OspfClientProtocol::new()));
 
         #[cfg(feature = "postgresql")]
-        self.register(Arc::new(crate::client::postgresql::PostgresqlClientProtocol::new()));
+        self.register(Arc::new(
+            crate::client::postgresql::PostgresqlClientProtocol::new(),
+        ));
 
         #[cfg(feature = "pypi")]
         self.register(Arc::new(crate::client::pypi::PypiClientProtocol::new()));
@@ -216,7 +238,9 @@ impl ClientRegistry {
         self.register(Arc::new(crate::client::socks5::Socks5ClientProtocol::new()));
 
         #[cfg(all(feature = "socket_file", unix))]
-        self.register(Arc::new(crate::client::socket_file::SocketFileClientProtocol::new()));
+        self.register(Arc::new(
+            crate::client::socket_file::SocketFileClientProtocol::new(),
+        ));
 
         #[cfg(feature = "sqs")]
         self.register(Arc::new(crate::client::sqs::SqsClientProtocol::new()));
@@ -225,7 +249,9 @@ impl ClientRegistry {
         self.register(Arc::new(crate::client::ssh::SshClientProtocol::new()));
 
         #[cfg(all(feature = "ssh-agent", unix))]
-        self.register(Arc::new(crate::client::ssh_agent::SshAgentClientProtocol::new()));
+        self.register(Arc::new(
+            crate::client::ssh_agent::SshAgentClientProtocol::new(),
+        ));
 
         #[cfg(feature = "stun")]
         self.register(Arc::new(crate::client::stun::StunClientProtocol::new()));
@@ -243,13 +269,19 @@ impl ClientRegistry {
         self.register(Arc::new(crate::client::tor::TorClientProtocol::new()));
 
         #[cfg(feature = "torrent-dht")]
-        self.register(Arc::new(crate::client::torrent_dht::TorrentDhtClientProtocol::new()));
+        self.register(Arc::new(
+            crate::client::torrent_dht::TorrentDhtClientProtocol::new(),
+        ));
 
         #[cfg(feature = "torrent-peer")]
-        self.register(Arc::new(crate::client::torrent_peer::TorrentPeerClientProtocol::new()));
+        self.register(Arc::new(
+            crate::client::torrent_peer::TorrentPeerClientProtocol::new(),
+        ));
 
         #[cfg(feature = "torrent-tracker")]
-        self.register(Arc::new(crate::client::torrent_tracker::TorrentTrackerClientProtocol::new()));
+        self.register(Arc::new(
+            crate::client::torrent_tracker::TorrentTrackerClientProtocol::new(),
+        ));
 
         #[cfg(feature = "turn")]
         self.register(Arc::new(crate::client::turn::TurnClientProtocol::new()));
@@ -273,7 +305,9 @@ impl ClientRegistry {
         self.register(Arc::new(crate::client::whois::WhoisClientProtocol::new()));
 
         #[cfg(feature = "wireguard")]
-        self.register(Arc::new(crate::client::wireguard::WireguardClientProtocol::new()));
+        self.register(Arc::new(
+            crate::client::wireguard::WireguardClientProtocol::new(),
+        ));
 
         #[cfg(feature = "xmlrpc")]
         self.register(Arc::new(crate::client::xmlrpc::XmlRpcClientProtocol::new()));
@@ -322,10 +356,10 @@ impl ClientRegistry {
             // Also collect the stack name as a keyword
             let stack_name = protocol.stack_name();
             let key = stack_name.to_lowercase();
-            keyword_to_protocols
-                .entry(key)
-                .or_default()
-                .push((protocol_name.clone(), format!("stack_name '{}'", stack_name)));
+            keyword_to_protocols.entry(key).or_default().push((
+                protocol_name.clone(),
+                format!("stack_name '{}'", stack_name),
+            ));
         }
 
         // Find all keywords that are claimed by multiple protocols
@@ -349,7 +383,9 @@ impl ClientRegistry {
             }
 
             warn!("Note: Each keyword should ideally be unique to a single protocol.");
-            warn!("      Run 'cargo test test_keyword_overlaps -- --ignored' to see all overlaps.\n");
+            warn!(
+                "      Run 'cargo test test_keyword_overlaps -- --ignored' to see all overlaps.\n"
+            );
         }
     }
 
@@ -468,4 +504,5 @@ impl ClientRegistry {
 /// This registry is initialized once at startup with all available client protocols
 /// based on compiled features. Use `CLIENT_REGISTRY.get(protocol_name)` to retrieve
 /// a client protocol implementation.
-pub static CLIENT_REGISTRY: std::sync::LazyLock<ClientRegistry> = std::sync::LazyLock::new(ClientRegistry::new);
+pub static CLIENT_REGISTRY: std::sync::LazyLock<ClientRegistry> =
+    std::sync::LazyLock::new(ClientRegistry::new);

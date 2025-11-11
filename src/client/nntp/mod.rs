@@ -9,15 +9,17 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{error, info, trace, debug};
+use tracing::{debug, error, info, trace};
 
+use crate::client::nntp::actions::{
+    NNTP_CLIENT_CONNECTED_EVENT, NNTP_CLIENT_RESPONSE_RECEIVED_EVENT,
+};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::nntp::actions::{NNTP_CLIENT_CONNECTED_EVENT, NNTP_CLIENT_RESPONSE_RECEIVED_EVENT};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -56,10 +58,15 @@ impl NntpClient {
         let local_addr = stream.local_addr()?;
         let remote_sock_addr = stream.peer_addr()?;
 
-        info!("NNTP client {} connected to {} (local: {})", client_id, remote_sock_addr, local_addr);
+        info!(
+            "NNTP client {} connected to {} (local: {})",
+            client_id, remote_sock_addr, local_addr
+        );
 
         // Update client state
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
         let _ = status_tx.send(format!("[CLIENT] NNTP client {} connected", client_id));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
@@ -85,7 +92,12 @@ impl NntpClient {
             match reader.read_line(&mut line).await {
                 Ok(0) => {
                     error!("NNTP server closed connection before sending welcome");
-                    app_state.update_client_status(client_id, ClientStatus::Error("No welcome message".to_string())).await;
+                    app_state
+                        .update_client_status(
+                            client_id,
+                            ClientStatus::Error("No welcome message".to_string()),
+                        )
+                        .await;
                     let _ = status_tx.send("__UPDATE_UI__".to_string());
                     return;
                 }
@@ -94,13 +106,17 @@ impl NntpClient {
                     info!("NNTP client {} received welcome: {}", client_id, welcome);
 
                     // Parse status code (for future use)
-                    let _status_code = welcome.split_whitespace().next()
+                    let _status_code = welcome
+                        .split_whitespace()
+                        .next()
                         .and_then(|s| s.parse::<u32>().ok())
                         .unwrap_or(0);
 
                     // Call LLM with connected event
-                    if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                        let protocol = Arc::new(crate::client::nntp::actions::NntpClientProtocol::new());
+                    if let Some(instruction) = app_state.get_instruction_for_client(client_id).await
+                    {
+                        let protocol =
+                            Arc::new(crate::client::nntp::actions::NntpClientProtocol::new());
                         let event = Event::new(
                             &NNTP_CLIENT_CONNECTED_EVENT,
                             serde_json::json!({
@@ -118,8 +134,13 @@ impl NntpClient {
                             Some(&event),
                             protocol.as_ref(),
                             &status_tx,
-                        ).await {
-                            Ok(ClientLlmResult { actions, memory_updates }) => {
+                        )
+                        .await
+                        {
+                            Ok(ClientLlmResult {
+                                actions,
+                                memory_updates,
+                            }) => {
                                 // Update memory
                                 if let Some(mem) = memory_updates {
                                     client_data.lock().await.memory = mem;
@@ -133,7 +154,8 @@ impl NntpClient {
                                     &client_data,
                                     client_id,
                                     &status_tx,
-                                ).await;
+                                )
+                                .await;
                             }
                             Err(e) => {
                                 error!("LLM error for NNTP client {}: {}", client_id, e);
@@ -143,7 +165,9 @@ impl NntpClient {
                 }
                 Err(e) => {
                     error!("NNTP client {} read error: {}", client_id, e);
-                    app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
+                    app_state
+                        .update_client_status(client_id, ClientStatus::Error(e.to_string()))
+                        .await;
                     let _ = status_tx.send("__UPDATE_UI__".to_string());
                     return;
                 }
@@ -155,8 +179,11 @@ impl NntpClient {
                 match reader.read_line(&mut line).await {
                     Ok(0) => {
                         info!("NNTP client {} disconnected", client_id);
-                        app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                        let _ = status_tx.send(format!("[CLIENT] NNTP client {} disconnected", client_id));
+                        app_state
+                            .update_client_status(client_id, ClientStatus::Disconnected)
+                            .await;
+                        let _ = status_tx
+                            .send(format!("[CLIENT] NNTP client {} disconnected", client_id));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         break;
                     }
@@ -169,12 +196,15 @@ impl NntpClient {
                         trace!("NNTP client {} received: {}", client_id, response);
 
                         // Parse status code
-                        let status_code = response.split_whitespace().next()
+                        let status_code = response
+                            .split_whitespace()
+                            .next()
                             .and_then(|s| s.parse::<u32>().ok())
                             .unwrap_or(0);
 
                         // Check if this is a multi-line response
-                        let is_multiline = matches!(status_code,
+                        let is_multiline = matches!(
+                            status_code,
                             100 | // HELP text
                             215 | // LIST response
                             220 | // ARTICLE follows
@@ -182,7 +212,7 @@ impl NntpClient {
                             222 | // BODY follows
                             224 | // XOVER follows
                             230 | // NEWNEWS follows
-                            231   // NEWGROUPS follows
+                            231 // NEWGROUPS follows
                         );
 
                         // Collect multi-line responses
@@ -216,14 +246,26 @@ impl NntpClient {
                         // Handle 340 POST response - send pending article immediately
                         if status_code == 340 {
                             let mut client_data_lock = client_data.lock().await;
-                            if let Some(article_data) = client_data_lock.pending_post_article.take() {
+                            if let Some(article_data) = client_data_lock.pending_post_article.take()
+                            {
                                 drop(client_data_lock);
 
                                 trace!("NNTP client {} sending article for POST", client_id);
-                                if let Err(e) = write_half_arc.lock().await.write_all(article_data.as_bytes()).await {
-                                    error!("NNTP client {} failed to send article: {}", client_id, e);
+                                if let Err(e) = write_half_arc
+                                    .lock()
+                                    .await
+                                    .write_all(article_data.as_bytes())
+                                    .await
+                                {
+                                    error!(
+                                        "NNTP client {} failed to send article: {}",
+                                        client_id, e
+                                    );
                                 } else {
-                                    let _ = status_tx.send(format!("[CLIENT] NNTP {} > [article sent]", client_id));
+                                    let _ = status_tx.send(format!(
+                                        "[CLIENT] NNTP {} > [article sent]",
+                                        client_id
+                                    ));
                                 }
                                 continue; // Skip LLM processing for 340
                             }
@@ -240,8 +282,12 @@ impl NntpClient {
                                 drop(client_data_lock);
 
                                 // Call LLM
-                                if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                                    let protocol = Arc::new(crate::client::nntp::actions::NntpClientProtocol::new());
+                                if let Some(instruction) =
+                                    app_state.get_instruction_for_client(client_id).await
+                                {
+                                    let protocol = Arc::new(
+                                        crate::client::nntp::actions::NntpClientProtocol::new(),
+                                    );
                                     let event = Event::new(
                                         &NNTP_CLIENT_RESPONSE_RECEIVED_EVENT,
                                         serde_json::json!({
@@ -260,8 +306,13 @@ impl NntpClient {
                                         Some(&event),
                                         protocol.as_ref(),
                                         &status_tx,
-                                    ).await {
-                                        Ok(ClientLlmResult { actions, memory_updates }) => {
+                                    )
+                                    .await
+                                    {
+                                        Ok(ClientLlmResult {
+                                            actions,
+                                            memory_updates,
+                                        }) => {
                                             // Update memory
                                             if let Some(mem) = memory_updates {
                                                 client_data.lock().await.memory = mem;
@@ -275,10 +326,14 @@ impl NntpClient {
                                                 &client_data,
                                                 client_id,
                                                 &status_tx,
-                                            ).await;
+                                            )
+                                            .await;
                                         }
                                         Err(e) => {
-                                            error!("LLM error for NNTP client {}: {}", client_id, e);
+                                            error!(
+                                                "LLM error for NNTP client {}: {}",
+                                                client_id, e
+                                            );
                                         }
                                     }
                                 }
@@ -303,7 +358,9 @@ impl NntpClient {
                     }
                     Err(e) => {
                         error!("NNTP client {} read error: {}", client_id, e);
-                        app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
+                        app_state
+                            .update_client_status(client_id, ClientStatus::Error(e.to_string()))
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         break;
                     }
@@ -327,20 +384,31 @@ impl NntpClient {
 
         for action in actions {
             match protocol.as_ref().execute_action(action) {
-                Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) => {
+                Ok(crate::llm::actions::client_trait::ClientActionResult::Custom {
+                    name,
+                    data,
+                }) => {
                     if name == "nntp_command" {
                         // Send NNTP command
                         if let Some(command) = data["command"].as_str() {
                             let command_line = format!("{}\r\n", command);
-                            if let Ok(_) = write_half_arc.lock().await.write_all(command_line.as_bytes()).await {
+                            if let Ok(_) = write_half_arc
+                                .lock()
+                                .await
+                                .write_all(command_line.as_bytes())
+                                .await
+                            {
                                 trace!("NNTP client {} sent: {}", client_id, command);
-                                let _ = status_tx.send(format!("[CLIENT] NNTP {} > {}", client_id, command));
+                                let _ = status_tx
+                                    .send(format!("[CLIENT] NNTP {} > {}", client_id, command));
                                 client_data.lock().await.last_command = Some(command.to_string());
                             }
                         }
                     } else if name == "nntp_post" {
                         // Handle POST command - send POST and wait for 340 response
-                        if let (Some(headers), Some(body)) = (data["headers"].as_object(), data["body"].as_str()) {
+                        if let (Some(headers), Some(body)) =
+                            (data["headers"].as_object(), data["body"].as_str())
+                        {
                             // Build article data to send after receiving 340
                             let mut article = String::new();
 
@@ -365,9 +433,15 @@ impl NntpClient {
 
                             // Send POST command
                             let post_command = "POST\r\n";
-                            if let Ok(_) = write_half_arc.lock().await.write_all(post_command.as_bytes()).await {
+                            if let Ok(_) = write_half_arc
+                                .lock()
+                                .await
+                                .write_all(post_command.as_bytes())
+                                .await
+                            {
                                 trace!("NNTP client {} sent: POST (waiting for 340)", client_id);
-                                let _ = status_tx.send(format!("[CLIENT] NNTP {} > POST", client_id));
+                                let _ =
+                                    status_tx.send(format!("[CLIENT] NNTP {} > POST", client_id));
                                 client_data.lock().await.last_command = Some("POST".to_string());
                             } else {
                                 // Failed to send POST, clear pending article
@@ -379,7 +453,12 @@ impl NntpClient {
                 Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
                     // Send QUIT command
                     let quit_command = "QUIT\r\n";
-                    if let Ok(_) = write_half_arc.lock().await.write_all(quit_command.as_bytes()).await {
+                    if let Ok(_) = write_half_arc
+                        .lock()
+                        .await
+                        .write_all(quit_command.as_bytes())
+                        .await
+                    {
                         info!("NNTP client {} disconnecting", client_id);
                         let _ = status_tx.send(format!("[CLIENT] NNTP {} > QUIT", client_id));
                     }
@@ -393,7 +472,10 @@ impl NntpClient {
                     // Other action results not applicable to NNTP
                 }
                 Err(e) => {
-                    error!("Error executing action for NNTP client {}: {}", client_id, e);
+                    error!(
+                        "Error executing action for NNTP client {}: {}",
+                        client_id, e
+                    );
                 }
             }
         }

@@ -67,11 +67,19 @@ impl ArpClient {
         status_tx: mpsc::UnboundedSender<String>,
         client_id: ClientId,
     ) -> Result<SocketAddr> {
-        info!("ARP client {} starting on interface: {}", client_id, interface);
-        let _ = status_tx.send(format!("[CLIENT] ARP client {} starting on interface: {}", client_id, interface));
+        info!(
+            "ARP client {} starting on interface: {}",
+            client_id, interface
+        );
+        let _ = status_tx.send(format!(
+            "[CLIENT] ARP client {} starting on interface: {}",
+            client_id, interface
+        ));
 
         // Update client state
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Initialize client data
@@ -174,8 +182,8 @@ impl ArpClient {
                 Ok(c) => c,
                 Err(e) => {
                     error!("Failed to open capture for sending: {}", e);
-                    let _ =
-                        status_tx_clone.send(format!("[ERROR] Failed to open capture for sending: {}", e));
+                    let _ = status_tx_clone
+                        .send(format!("[ERROR] Failed to open capture for sending: {}", e));
                     return;
                 }
             };
@@ -417,11 +425,7 @@ fn build_arp_request_from_action(data: &serde_json::Value) -> Option<Vec<u8>> {
     let sender_ip = Ipv4Addr::from_str(sender_ip).ok()?;
     let target_ip = Ipv4Addr::from_str(target_ip).ok()?;
 
-    Some(build_arp_request(
-        sender_mac,
-        sender_ip,
-        target_ip,
-    ))
+    Some(build_arp_request(sender_mac, sender_ip, target_ip))
 }
 
 /// Build an ARP reply packet from action data
@@ -437,10 +441,7 @@ fn build_arp_reply_from_action(data: &serde_json::Value) -> Option<Vec<u8>> {
     let target_ip = Ipv4Addr::from_str(target_ip).ok()?;
 
     Some(build_arp_reply(
-        sender_mac,
-        sender_ip,
-        target_mac,
-        target_ip,
+        sender_mac, sender_ip, target_mac, target_ip,
     ))
 }
 

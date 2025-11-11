@@ -5,10 +5,10 @@
 
 #![cfg(feature = "vnc")]
 
-use super::super::helpers::{self, ServerConfig, E2EResult};
+use super::super::helpers::{self, E2EResult, ServerConfig};
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use std::time::Duration;
 
 /// Simple VNC/RFB client for testing
 struct VncClient {
@@ -113,7 +113,9 @@ impl VncClient {
     ) -> E2EResult<()> {
         // FramebufferUpdateRequest message
         self.stream.write_u8(3).await?; // Message type
-        self.stream.write_u8(if incremental { 1 } else { 0 }).await?;
+        self.stream
+            .write_u8(if incremental { 1 } else { 0 })
+            .await?;
         self.stream.write_u16(x).await?;
         self.stream.write_u16(y).await?;
         self.stream.write_u16(width).await?;
@@ -146,8 +148,15 @@ impl VncClient {
             let height = self.stream.read_u16().await?;
             let encoding = self.stream.read_i32().await?;
 
-            println!("  Rectangle {}: {}x{} at ({}, {}), encoding {}",
-                     i + 1, width, height, x, y, encoding);
+            println!(
+                "  Rectangle {}: {}x{} at ({}, {}), encoding {}",
+                i + 1,
+                width,
+                height,
+                x,
+                y,
+                encoding
+            );
 
             // Read pixel data (assuming Raw encoding = 0)
             if encoding == 0 {
@@ -161,7 +170,10 @@ impl VncClient {
 
                 println!("  ✓ Received {} bytes of pixel data", data_size);
             } else {
-                println!("  Note: Encoding {} not implemented in test client", encoding);
+                println!(
+                    "  Note: Encoding {} not implemented in test client",
+                    encoding
+                );
             }
         }
 
@@ -192,7 +204,8 @@ async fn test_vnc_handshake() -> E2EResult<()> {
     println!("\n=== E2E Test: VNC RFB Handshake ===");
 
     // PROMPT: Tell the LLM to start a VNC server
-    let prompt = "listen on port {AVAILABLE_PORT} via vnc. Accept all connections without authentication. \
+    let prompt =
+        "listen on port {AVAILABLE_PORT} via vnc. Accept all connections without authentication. \
         Use 800x600 framebuffer.";
 
     // Start the server
@@ -244,13 +257,13 @@ async fn test_vnc_framebuffer_update() -> E2EResult<()> {
 
     // Request framebuffer update
     println!("Requesting framebuffer update...");
-    client.request_framebuffer_update(false, 0, 0, width, height).await?;
+    client
+        .request_framebuffer_update(false, 0, 0, width, height)
+        .await?;
 
     // Read the framebuffer update with timeout
-    let result = tokio::time::timeout(
-        Duration::from_secs(10),
-        client.read_framebuffer_update()
-    ).await;
+    let result =
+        tokio::time::timeout(Duration::from_secs(10), client.read_framebuffer_update()).await;
 
     match result {
         Ok(Ok(pixels)) => {
@@ -323,8 +336,12 @@ async fn test_vnc_input_events() -> E2EResult<()> {
 
     // Check if server logged the events
     let output = server.get_output().await;
-    let has_key_event = output.iter().any(|line| line.contains("KeyEvent") || line.contains("key"));
-    let has_pointer_event = output.iter().any(|line| line.contains("PointerEvent") || line.contains("mouse") || line.contains("pointer"));
+    let has_key_event = output
+        .iter()
+        .any(|line| line.contains("KeyEvent") || line.contains("key"));
+    let has_pointer_event = output.iter().any(|line| {
+        line.contains("PointerEvent") || line.contains("mouse") || line.contains("pointer")
+    });
 
     if has_key_event {
         println!("✓ Server logged keyboard events");

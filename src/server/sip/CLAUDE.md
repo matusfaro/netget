@@ -2,26 +2,31 @@
 
 ## Overview
 
-SIP (Session Initiation Protocol) server implementing RFC 3261 for VoIP signaling. Handles user registration, call setup/termination, and capability negotiation for voice/video sessions.
+SIP (Session Initiation Protocol) server implementing RFC 3261 for VoIP signaling. Handles user registration, call
+setup/termination, and capability negotiation for voice/video sessions.
 
 **Compliance**: RFC 3261 (SIP - Session Initiation Protocol)
 
-**Protocol Purpose**: SIP is a text-based signaling protocol for creating, modifying, and terminating multimedia sessions. It's the foundation for VoIP telephony, video conferencing, and unified communications.
+**Protocol Purpose**: SIP is a text-based signaling protocol for creating, modifying, and terminating multimedia
+sessions. It's the foundation for VoIP telephony, video conferencing, and unified communications.
 
 ## Library Choices
 
 **Manual Implementation** - Complete SIP protocol parsing implemented from scratch
+
 - **Why**: Available Rust SIP libraries (rsipstack, rsip) are either too complex for LLM integration or parser-only
 - SIP is a text-based HTTP-like protocol, straightforward to parse manually
 - Manual implementation provides full control over response generation for LLM
 
 **Alternative Considered - rsipstack v0.2.52**:
+
 - Full RFC 3261 compliant SIP stack with transaction/dialog management
 - **Pros**: Handles protocol complexity (state machines, retransmissions, digest auth)
 - **Cons**: Complex async architecture, requires deeper integration for LLM control points
 - **Decision**: Start with manual implementation for simplicity, can migrate to rsipstack later for production features
 
 **Text Protocol Handling**:
+
 - Line-based parsing (similar to HTTP)
 - Headers: `Name: Value\r\n` format
 - Body: Optional SDP (Session Description Protocol) after blank line
@@ -32,20 +37,24 @@ SIP (Session Initiation Protocol) server implementing RFC 3261 for VoIP signalin
 ### UDP-Based Protocol (with TCP option)
 
 **Primary Transport: UDP on port 5060**:
+
 - Connectionless: Each SIP request is independent transaction
 - Stateless server possible: No mandatory session tracking
 - Fast response: Single request-response round trip
 
 **TCP Support** (future):
+
 - Port 5060 (same as UDP)
 - For large messages (>MTU) or reliable delivery
 - Persistent connections for multiple transactions
 
 **TLS Support** (future):
+
 - Port 5061 (SIPS - SIP Secure)
 - For encrypted signaling in production
 
 **Connection Tracking**:
+
 - Each SIP dialog (INVITE→ACK→BYE) creates a "connection" in NetGet UI
 - Dialog ID = Call-ID + From tag + To tag
 - Tracks state: Idle, Early (ringing), Confirmed (active), Terminated
@@ -53,6 +62,7 @@ SIP (Session Initiation Protocol) server implementing RFC 3261 for VoIP signalin
 ### Message Format
 
 **SIP Message Structure** (RFC 3261 Section 7):
+
 ```
 Request Line:   METHOD sip:user@domain SIP/2.0
 Headers:        Header-Name: Header-Value
@@ -62,6 +72,7 @@ Body:           <SDP or other content>
 ```
 
 **Example REGISTER Request**:
+
 ```
 REGISTER sip:example.com SIP/2.0
 Via: SIP/2.0/UDP 192.0.2.1:5060;branch=z9hG4bK776asdhds
@@ -75,6 +86,7 @@ Content-Length: 0
 ```
 
 **Example 200 OK Response**:
+
 ```
 SIP/2.0 200 OK
 Via: SIP/2.0/UDP 192.0.2.1:5060;branch=z9hG4bK776asdhds
@@ -90,31 +102,37 @@ Content-Length: 0
 ### Core SIP Methods
 
 **REGISTER**:
+
 - Client registers current location (IP:port) with SIP server
 - Server stores binding in location database
 - Expires header controls registration lifetime (seconds)
 
 **INVITE**:
+
 - Initiates a session (phone call, video conference)
 - Includes SDP body describing media capabilities (codecs, IP addresses)
 - Response 200 OK also includes SDP (answer to offer)
 
 **ACK**:
+
 - Acknowledges final response to INVITE
 - Completes 3-way handshake (INVITE → 200 OK → ACK)
 - No SIP response to ACK (end of transaction)
 
 **BYE**:
+
 - Terminates active session
 - Either party can send BYE
 - Response is 200 OK
 
 **OPTIONS**:
+
 - Queries server capabilities
 - Response includes Allow header with supported methods
 - Used for presence checking ("is this user available?")
 
 **CANCEL**:
+
 - Cancels pending INVITE (before final response)
 - Useful for "call ringing, user hung up" scenario
 
@@ -134,6 +152,7 @@ Content-Length: 0
 **Purpose**: Describes multimedia session parameters (codecs, IP addresses, ports)
 
 **Example SDP in INVITE**:
+
 ```
 v=0
 o=alice 2890844526 2890844526 IN IP4 192.0.2.1
@@ -145,6 +164,7 @@ a=rtpmap:0 PCMU/8000
 ```
 
 **Fields**:
+
 - `v=0`: SDP version
 - `o=`: Originator (username, session ID, version, network type, IP)
 - `s=`: Session name
@@ -153,7 +173,8 @@ a=rtpmap:0 PCMU/8000
 - `m=`: Media description (type, port, protocol, format)
 - `a=`: Attributes (codec mappings, etc.)
 
-**LLM Generation**: For honeypot/testing, LLM generates simplified SDP with plausible values. No actual RTP media streams created.
+**LLM Generation**: For honeypot/testing, LLM generates simplified SDP with plausible values. No actual RTP media
+streams created.
 
 ## LLM Integration
 
@@ -162,6 +183,7 @@ a=rtpmap:0 PCMU/8000
 **LLM generates SIP responses** via actions for each method:
 
 **REGISTER Example**:
+
 ```json
 {
   "actions": [
@@ -176,6 +198,7 @@ a=rtpmap:0 PCMU/8000
 ```
 
 **INVITE Example (Accept)**:
+
 ```json
 {
   "actions": [
@@ -190,6 +213,7 @@ a=rtpmap:0 PCMU/8000
 ```
 
 **INVITE Example (Reject)**:
+
 ```json
 {
   "actions": [
@@ -203,6 +227,7 @@ a=rtpmap:0 PCMU/8000
 ```
 
 **Action Parameters**:
+
 - `status_code`: SIP response code (200=OK, 403=Forbidden, 486=Busy, etc.)
 - `reason_phrase`: Optional (defaults based on status code)
 - `expires`: For REGISTER responses (seconds)
@@ -212,42 +237,48 @@ a=rtpmap:0 PCMU/8000
 ### Event Types
 
 **`SIP_REGISTER_EVENT`**:
+
 - Triggered: Client sends REGISTER request
 - Context:
-  - `call_id`: Unique transaction identifier
-  - `from`: Caller identity (SIP URI)
-  - `to`: Callee identity (SIP URI)
-  - `contact`: Client's current location (SIP URI with IP:port)
-  - `expires`: Requested registration lifetime (seconds)
+    - `call_id`: Unique transaction identifier
+    - `from`: Caller identity (SIP URI)
+    - `to`: Callee identity (SIP URI)
+    - `contact`: Client's current location (SIP URI with IP:port)
+    - `expires`: Requested registration lifetime (seconds)
 - LLM decides: Accept (200), Reject (403), Require Auth (401)
 
 **`SIP_INVITE_EVENT`**:
+
 - Triggered: Client initiates session with INVITE
 - Context:
-  - `call_id`: Dialog identifier
-  - `from`: Caller
-  - `to`: Callee
-  - `sdp`: Session description (media offer)
+    - `call_id`: Dialog identifier
+    - `from`: Caller
+    - `to`: Callee
+    - `sdp`: Session description (media offer)
 - LLM decides: Accept (200 + SDP answer), Reject (486 Busy, 603 Decline), Redirect (302)
 
 **`SIP_BYE_EVENT`**:
+
 - Triggered: Client/server terminates session
 - Context:
-  - `call_id`: Dialog ID
-  - `from`, `to`: Parties
+    - `call_id`: Dialog ID
+    - `from`, `to`: Parties
 - LLM decides: Always 200 OK (acknowledge termination)
 
 **`SIP_ACK_EVENT`**:
+
 - Triggered: Client acknowledges INVITE response
 - Context: `call_id`, `from`, `to`
 - LLM action: Update dialog state (passive observation, no response)
 
 **`SIP_OPTIONS_EVENT`**:
+
 - Triggered: Client queries capabilities
 - Context: `call_id`, `from`, `to`
 - LLM decides: Return supported methods (200 OK + Allow header)
 
 **`SIP_CANCEL_EVENT`**:
+
 - Triggered: Client cancels pending INVITE
 - Context: `call_id`, `from`, `to`
 - LLM decides: Acknowledge cancellation (200 OK)
@@ -257,6 +288,7 @@ a=rtpmap:0 PCMU/8000
 ### Dialog Tracking
 
 **Per-Dialog State** (`ProtocolConnectionInfo::Sip`):
+
 ```rust
 Sip {
     dialog_id: Option<String>,    // Call-ID + From tag + To tag
@@ -268,6 +300,7 @@ Sip {
 ```
 
 **Dialog States** (RFC 3261 Section 12):
+
 - **Idle**: No dialog exists
 - **Early**: INVITE sent, waiting for final response (180 Ringing)
 - **Confirmed**: Session active (200 OK + ACK exchanged)
@@ -278,10 +311,12 @@ Sip {
 ### Registration Database
 
 **In-Memory Storage**: HashMap<String, ContactBinding>
+
 - Key: SIP URI (e.g., "sip:alice@example.com")
 - Value: Contact URI (e.g., "sip:alice@192.0.2.1:5060"), Expires timestamp
 
 **Registration Flow**:
+
 1. Client sends REGISTER with Contact header
 2. LLM decides to accept/reject
 3. If accepted, store binding in database
@@ -289,6 +324,7 @@ Sip {
 5. After expiration, remove binding
 
 **Call Routing** (future):
+
 - Lookup callee in registration database
 - Forward INVITE to registered Contact URI
 - Proxy mode: relay SIP messages between parties
@@ -308,6 +344,7 @@ Sip {
 ### Response Generation
 
 **Minimal Valid Response**:
+
 ```
 SIP/2.0 200 OK
 Via: <copied from request>
@@ -319,6 +356,7 @@ Content-Length: 0
 ```
 
 **Critical Headers to Copy**:
+
 - **Via**: All Via headers in reverse order (response routing)
 - **From**: Caller identity (unchanged)
 - **To**: Callee identity (add tag if not present in request)
@@ -326,6 +364,7 @@ Content-Length: 0
 - **CSeq**: Command sequence (unchanged)
 
 **Server-Generated Headers**:
+
 - **To tag**: Random hex string (identifies dialog)
 - **Expires**: Registration lifetime (REGISTER responses)
 - **Allow**: Supported methods (OPTIONS responses)
@@ -336,38 +375,39 @@ Content-Length: 0
 ### Current Implementation
 
 1. **UDP Only**
-   - TCP/TLS transports not implemented
-   - Max UDP packet size: 65535 bytes (sufficient for most SIP)
+    - TCP/TLS transports not implemented
+    - Max UDP packet size: 65535 bytes (sufficient for most SIP)
 
 2. **Manual SIP Parsing**
-   - Not using rsipstack or rsip crates
-   - May have edge cases in header parsing
-   - No automatic retransmission handling
+    - Not using rsipstack or rsip crates
+    - May have edge cases in header parsing
+    - No automatic retransmission handling
 
 3. **No Authentication**
-   - RFC 2617 digest authentication not implemented
-   - No 401 Unauthorized challenges
-   - Accept/reject based on LLM decision only
+    - RFC 2617 digest authentication not implemented
+    - No 401 Unauthorized challenges
+    - Accept/reject based on LLM decision only
 
 4. **Simplified SDP**
-   - No actual RTP media streams
-   - LLM generates plausible SDP strings
-   - No codec negotiation or media relay
+    - No actual RTP media streams
+    - LLM generates plausible SDP strings
+    - No codec negotiation or media relay
 
 5. **Stateless Server**
-   - No persistent registration database (in-memory only)
-   - No transaction retransmission tracking
-   - No dialog state persistence across restarts
+    - No persistent registration database (in-memory only)
+    - No transaction retransmission tracking
+    - No dialog state persistence across restarts
 
 6. **Limited Method Support**
-   - Core methods: REGISTER, INVITE, ACK, BYE, OPTIONS, CANCEL
-   - No SUBSCRIBE/NOTIFY (presence)
-   - No REFER (call transfer)
-   - No UPDATE (session modification)
+    - Core methods: REGISTER, INVITE, ACK, BYE, OPTIONS, CANCEL
+    - No SUBSCRIBE/NOTIFY (presence)
+    - No REFER (call transfer)
+    - No UPDATE (session modification)
 
 ### Protocol Compliance Gaps
 
 **RFC 3261 Features Not Implemented**:
+
 - Transaction layer (retransmissions, timeouts)
 - Digest authentication (MESSAGE-INTEGRITY, nonce, realm)
 - Proxy/redirect server modes (forwarding, forking)
@@ -383,6 +423,7 @@ Content-Length: 0
 ### VoIP Honeypot
 
 **Detect SIP Scanners**:
+
 ```
 listen on port 5060 via sip
 
@@ -393,6 +434,7 @@ Track attempted usernames, caller IDs, and target URIs.
 ```
 
 **Typical Attacks**:
+
 - SIP registration scanning (brute force username/password)
 - Toll fraud (unauthorized calls through server)
 - INVITE floods (DoS attacks)
@@ -401,6 +443,7 @@ Track attempted usernames, caller IDs, and target URIs.
 ### Basic Registrar Server
 
 **User Registration**:
+
 ```
 listen on port 5060 via sip
 
@@ -415,6 +458,7 @@ For OPTIONS requests, return Allow: INVITE, ACK, BYE, REGISTER, OPTIONS
 ### Call Routing Server
 
 **Simple Call Logic**:
+
 ```
 listen on port 5060 via sip
 
@@ -428,6 +472,7 @@ Route incoming INVITE requests:
 ### Testing SIP Clients
 
 **Comprehensive Test Server**:
+
 ```
 listen on port 5060 via sip
 
@@ -465,6 +510,7 @@ Use scripting mode for deterministic responses (0 LLM calls per request).
 ✅ Text-based (easy to generate from scripts)
 
 **Example Scripting Logic** (Python):
+
 ```python
 def handle_sip_request(event):
     method = event['method']
@@ -500,6 +546,7 @@ def handle_sip_request(event):
 ```
 
 **Expected Performance with Scripting**:
+
 - Setup: 5-10s (LLM generates script)
 - Per request: <1ms (script execution)
 - **Total test time: ~10s for 10+ test cases**
@@ -507,12 +554,14 @@ def handle_sip_request(event):
 ## Example Prompts
 
 ### Basic SIP Registrar
+
 ```
 Start a SIP server on port 5060. Accept REGISTER requests from any user.
 Store registrations for 1 hour. Log all registration attempts.
 ```
 
 ### Call Routing with Auth
+
 ```
 Start a SIP server on port 5060.
 
@@ -528,6 +577,7 @@ INVITE:
 ```
 
 ### VoIP Honeypot
+
 ```
 Start a SIP honeypot on port 5060.
 
@@ -543,7 +593,8 @@ Track attempted fraud (unusual destinations, high call rates).
 
 **Authentication Bypass**: No digest auth means anyone can register. Fine for honeypot, not for production.
 
-**Toll Fraud**: Attackers use open SIP servers to make expensive calls (international, premium numbers). Log all INVITE destinations.
+**Toll Fraud**: Attackers use open SIP servers to make expensive calls (international, premium numbers). Log all INVITE
+destinations.
 
 **SIP Message Injection**: Malformed SIP headers can crash parsers. Validate all headers.
 
@@ -561,17 +612,20 @@ Track attempted fraud (unusual destinations, high call rates).
 ## Future Enhancements
 
 **Priority 1** (Promote to Beta):
+
 - Digest authentication (401 challenges)
 - TCP transport support
 - Persistent registration database
 
 **Priority 2** (Advanced Features):
+
 - TLS (SIPS) on port 5061
 - Proxy mode (forward INVITE to registered contacts)
 - SUBSCRIBE/NOTIFY (presence)
 - REFER (call transfer)
 
 **Priority 3** (Production):
+
 - Transaction retransmission handling
 - Call state persistence
 - WebSocket transport (WebRTC)
@@ -582,6 +636,7 @@ Track attempted fraud (unusual destinations, high call rates).
 **When to Migrate**: If production features needed (auth, TCP, proxy mode)
 
 **Migration Path**:
+
 1. Replace manual parser with `rsip` crate
 2. Use `rsipstack::Endpoint` for transaction management
 3. Integrate LLM at transaction layer (decide response per transaction)

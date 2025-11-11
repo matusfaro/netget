@@ -2,11 +2,13 @@
 
 ## Test Strategy
 
-The IMAP client E2E tests use a black-box approach with the actual NetGet binary. Tests spawn both IMAP server and client instances to verify LLM-controlled behavior.
+The IMAP client E2E tests use a black-box approach with the actual NetGet binary. Tests spawn both IMAP server and
+client instances to verify LLM-controlled behavior.
 
 ## Test Approach
 
 ### Black-Box Testing
+
 - **Binary execution:** Tests spawn `target/release/netget` in scripting mode
 - **Real protocol:** Client connects to NetGet IMAP server (or real test server)
 - **LLM integration:** Tests validate that LLM interprets prompts and executes actions
@@ -23,13 +25,13 @@ The IMAP client E2E tests use a black-box approach with the actual NetGet binary
 
 Target: **< 10 LLM calls** for entire suite
 
-| Test | LLM Calls | Notes |
-|------|-----------|-------|
-| Connect & Authenticate | 2 | Server startup (1) + Client connection (1) |
-| Select Mailbox | 2 | Server startup (1) + Client mailbox selection (1) |
-| Search Messages | 2 | Server startup (1) + Client search (1) |
-| Fetch Messages | 2 | Server startup (1) + Client fetch (1) |
-| **Total** | **8** | Well under budget |
+| Test                   | LLM Calls | Notes                                             |
+|------------------------|-----------|---------------------------------------------------|
+| Connect & Authenticate | 2         | Server startup (1) + Client connection (1)        |
+| Select Mailbox         | 2         | Server startup (1) + Client mailbox selection (1) |
+| Search Messages        | 2         | Server startup (1) + Client search (1)            |
+| Fetch Messages         | 2         | Server startup (1) + Client fetch (1)             |
+| **Total**              | **8**     | Well under budget                                 |
 
 ## Runtime Expectations
 
@@ -40,14 +42,18 @@ Target: **< 10 LLM calls** for entire suite
 ## Test Infrastructure
 
 ### Server Setup
+
 Uses NetGet IMAP server protocol (if implemented) or fallback to mock:
+
 - Port: `{AVAILABLE_PORT}` (dynamic allocation via helpers)
 - Authentication: `testuser` / `testpass`
 - Mailboxes: INBOX, Sent, Drafts
 - Test messages: Pre-populated via LLM instruction
 
 ### Client Configuration
+
 IMAP clients require startup params:
+
 ```rust
 NetGetConfig::new_with_startup_params(
     "Connect to 127.0.0.1:{port} via IMAP...",
@@ -60,6 +66,7 @@ NetGetConfig::new_with_startup_params(
 ```
 
 ### Test Helpers
+
 - `start_netget_server()` - Spawn server instance
 - `start_netget_client()` - Spawn client instance
 - `client.output_contains()` - Verify output
@@ -68,13 +75,16 @@ NetGetConfig::new_with_startup_params(
 ## Known Issues
 
 ### 1. IMAP Server Dependency
+
 **Issue:** Tests assume IMAP server is implemented in NetGet
 
-**Workaround:** Tests will fail gracefully if IMAP server is not available. Alternative: Use external test server like GreenMail or Docker.
+**Workaround:** Tests will fail gracefully if IMAP server is not available. Alternative: Use external test server like
+GreenMail or Docker.
 
 **Future:** Add Docker container support for test IMAP server.
 
 ### 2. TLS Testing
+
 **Issue:** TLS certificate validation is disabled for testing (`use_tls: false`)
 
 **Impact:** Tests don't validate TLS handshake
@@ -82,6 +92,7 @@ NetGetConfig::new_with_startup_params(
 **Production:** Enable TLS with proper certificate validation
 
 ### 3. Async Email Parsing
+
 **Issue:** Email body parsing may be complex for multipart messages
 
 **Current:** Tests use simple text emails only
@@ -89,6 +100,7 @@ NetGetConfig::new_with_startup_params(
 **Future:** Add tests for MIME multipart messages
 
 ### 4. Search Criteria Complexity
+
 **Issue:** LLM may struggle with complex IMAP search syntax
 
 **Current:** Tests use simple criteria (UNSEEN, FROM, SUBJECT)
@@ -98,16 +110,19 @@ NetGetConfig::new_with_startup_params(
 ## CI/CD Considerations
 
 ### Test Isolation
+
 - **Port allocation:** Dynamic ports prevent conflicts
 - **Parallel execution:** Tests can run concurrently with `--test-threads`
 - **Cleanup:** Always call `.stop()` on server/client instances
 
 ### Flakiness Prevention
+
 - **Generous timeouts:** 2-3 second sleeps for server startup
 - **Output verification:** Flexible string matching (case-insensitive, substring)
 - **Retry logic:** Future enhancement for network failures
 
 ### Resource Usage
+
 - **Memory:** ~50MB per test (server + client + LLM)
 - **CPU:** Moderate (LLM inference is main bottleneck)
 - **Disk:** Logs written to `netget.log` (cleaned up automatically)
@@ -115,16 +130,19 @@ NetGetConfig::new_with_startup_params(
 ## Running Tests
 
 ### Single Test
+
 ```bash
 ./cargo-isolated.sh test --no-default-features --features imap --test client::imap::e2e_test test_imap_client_connect_and_authenticate
 ```
 
 ### Full Suite
+
 ```bash
 ./cargo-isolated.sh test --no-default-features --features imap --test client::imap::e2e_test
 ```
 
 ### With Logging
+
 ```bash
 RUST_LOG=debug ./cargo-isolated.sh test --no-default-features --features imap --test client::imap::e2e_test
 ```
@@ -141,21 +159,25 @@ RUST_LOG=debug ./cargo-isolated.sh test --no-default-features --features imap --
 ## Troubleshooting
 
 ### Test Hangs
+
 - Check Ollama is running (`ollama list`)
 - Verify server started (check `netget.log`)
 - Increase timeout in test
 
 ### Authentication Failures
+
 - Verify server accepts `testuser` / `testpass`
 - Check startup params are correctly passed
 - Review server logs for auth errors
 
 ### Connection Refused
+
 - Server may not have started in time (increase sleep duration)
 - Port may be in use (check `lsof -i :{port}`)
 - Firewall blocking localhost connections
 
 ### LLM Errors
+
 - Ollama may be down or unresponsive
 - Model not available (check default model)
 - Rate limiting (wait and retry)

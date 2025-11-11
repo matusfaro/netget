@@ -12,11 +12,7 @@ use std::sync::LazyLock;
 
 /// Battery level changed event
 pub static BATTERY_LEVEL_CHANGED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "battery_level_changed",
-        "Battery level was updated",
-    )
-    .with_parameters(vec![
+    EventType::new("battery_level_changed", "Battery level was updated").with_parameters(vec![
         Parameter {
             name: "level".to_string(),
             type_hint: "string".to_string(),
@@ -72,9 +68,7 @@ impl Protocol for BluetoothBleBatteryProtocol {
     }
 
     fn get_event_types(&self) -> Vec<EventType> {
-        vec![
-            BATTERY_LEVEL_CHANGED_EVENT.clone(),
-        ]
+        vec![BATTERY_LEVEL_CHANGED_EVENT.clone()]
     }
 
     fn stack_name(&self) -> &'static str {
@@ -86,14 +80,16 @@ impl Protocol for BluetoothBleBatteryProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
             .implementation("BLE Battery Service (builds on bluetooth-ble)")
             .llm_control("Battery actions: set_battery_level, simulate_drain, simulate_charge")
             .e2e_testing("Requires BLE-capable device to read battery level")
-            .notes("Standard GATT Battery Service (0x180F) with single Battery Level characteristic.")
+            .notes(
+                "Standard GATT Battery Service (0x180F) with single Battery Level characteristic.",
+            )
             .build()
     }
 
@@ -114,16 +110,17 @@ impl Server for BluetoothBleBatteryProtocol {
     fn spawn(
         &self,
         ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>,
-    > {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>>
+    {
         Box::pin(async move {
-            let device_name = ctx.startup_params
+            let device_name = ctx
+                .startup_params
                 .as_ref()
                 .and_then(|p| p.get_optional_string("device_name"))
                 .unwrap_or_else(|| "NetGet-Battery".to_string());
 
-            let initial_level = ctx.startup_params
+            let initial_level = ctx
+                .startup_params
                 .as_ref()
                 .and_then(|p| p.get_optional_u64("initial_level"))
                 .unwrap_or(100) as u8;
@@ -140,10 +137,7 @@ impl Server for BluetoothBleBatteryProtocol {
         })
     }
 
-    fn execute_action(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action["type"]
             .as_str()
             .context("Action must have 'type' field")?;
@@ -164,14 +158,12 @@ fn set_battery_level_action() -> ActionDefinition {
     ActionDefinition {
         name: "set_battery_level".to_string(),
         description: "Set battery level percentage".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "level".to_string(),
-                type_hint: "number".to_string(),
-                description: "Battery level (0-100)".to_string(),
-                required: true,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "level".to_string(),
+            type_hint: "number".to_string(),
+            description: "Battery level (0-100)".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "set_battery_level",
             "level": 75

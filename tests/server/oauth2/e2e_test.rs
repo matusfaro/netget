@@ -5,7 +5,7 @@
 
 #![cfg(all(test, feature = "oauth2"))]
 
-use crate::server::helpers::{self, ServerConfig, E2EResult};
+use crate::server::helpers::{self, E2EResult, ServerConfig};
 use serde_json::Value;
 use std::time::Duration;
 
@@ -39,8 +39,10 @@ async fn test_oauth2_authorization_code_flow() -> E2EResult<()> {
                 ("scope", "read write"),
                 ("state", "random_state_123"),
             ])
-            .send()
-    ).await {
+            .send(),
+    )
+    .await
+    {
         Ok(Ok(resp)) => {
             println!("✓ Received authorization response: {}", resp.status());
             resp
@@ -56,8 +58,10 @@ async fn test_oauth2_authorization_code_flow() -> E2EResult<()> {
     };
 
     // Authorization endpoint should redirect (302)
-    assert!(auth_response.status().is_redirection() || auth_response.status().as_u16() == 302,
-            "Authorization should redirect (302)");
+    assert!(
+        auth_response.status().is_redirection() || auth_response.status().as_u16() == 302,
+        "Authorization should redirect (302)"
+    );
 
     // Extract code from Location header or final URL
     let location = auth_response.url().to_string();
@@ -67,10 +71,12 @@ async fn test_oauth2_authorization_code_flow() -> E2EResult<()> {
     let code = location
         .split('?')
         .nth(1)
-        .and_then(|params| params
-            .split('&')
-            .find(|p| p.starts_with("code="))
-            .and_then(|p| p.split('=').nth(1)))
+        .and_then(|params| {
+            params
+                .split('&')
+                .find(|p| p.starts_with("code="))
+                .and_then(|p| p.split('=').nth(1))
+        })
         .unwrap_or("AUTH_xyz123");
 
     println!("✓ Authorization code: {}", code);
@@ -102,21 +108,32 @@ async fn test_oauth2_authorization_code_flow() -> E2EResult<()> {
         }
     };
 
-    assert_eq!(token_response.status(), 200, "Token endpoint should return 200 OK");
+    assert_eq!(
+        token_response.status(),
+        200,
+        "Token endpoint should return 200 OK"
+    );
 
     // Parse JSON token response
     let json: Value = token_response.json().await?;
     println!("Token response: {}", serde_json::to_string_pretty(&json)?);
 
     // Validate OAuth2 token response format (RFC 6749 Section 5.1)
-    assert!(json.get("access_token").and_then(|v| v.as_str()).is_some(),
-            "Expected 'access_token' field");
+    assert!(
+        json.get("access_token").and_then(|v| v.as_str()).is_some(),
+        "Expected 'access_token' field"
+    );
 
-    assert_eq!(json.get("token_type").and_then(|v| v.as_str()), Some("Bearer"),
-               "Expected 'token_type' to be 'Bearer'");
+    assert_eq!(
+        json.get("token_type").and_then(|v| v.as_str()),
+        Some("Bearer"),
+        "Expected 'token_type' to be 'Bearer'"
+    );
 
-    assert!(json.get("expires_in").and_then(|v| v.as_i64()).is_some(),
-            "Expected 'expires_in' field");
+    assert!(
+        json.get("expires_in").and_then(|v| v.as_i64()).is_some(),
+        "Expected 'expires_in' field"
+    );
 
     let access_token = json["access_token"].as_str().unwrap();
     println!("✓ Access token: {}", access_token);
@@ -167,18 +184,27 @@ async fn test_oauth2_client_credentials_flow() -> E2EResult<()> {
         }
     };
 
-    assert_eq!(token_response.status(), 200, "Token endpoint should return 200 OK");
+    assert_eq!(
+        token_response.status(),
+        200,
+        "Token endpoint should return 200 OK"
+    );
 
     // Parse JSON response
     let json: Value = token_response.json().await?;
     println!("Token response: {}", serde_json::to_string_pretty(&json)?);
 
     // Validate token response
-    assert!(json.get("access_token").and_then(|v| v.as_str()).is_some(),
-            "Expected 'access_token' field");
+    assert!(
+        json.get("access_token").and_then(|v| v.as_str()).is_some(),
+        "Expected 'access_token' field"
+    );
 
-    assert_eq!(json.get("token_type").and_then(|v| v.as_str()), Some("Bearer"),
-               "Expected 'token_type' to be 'Bearer'");
+    assert_eq!(
+        json.get("token_type").and_then(|v| v.as_str()),
+        Some("Bearer"),
+        "Expected 'token_type' to be 'Bearer'"
+    );
 
     println!("✓ Access token: {}", json["access_token"].as_str().unwrap());
 
@@ -210,8 +236,10 @@ async fn test_oauth2_token_introspection() -> E2EResult<()> {
             .post(format!("http://127.0.0.1:{}/introspect", server.port))
             .header("Content-Type", "application/x-www-form-urlencoded")
             .body("token=VALID_token_123&token_type_hint=access_token")
-            .send()
-    ).await {
+            .send(),
+    )
+    .await
+    {
         Ok(Ok(resp)) => {
             println!("✓ Received introspection response: {}", resp.status());
             resp
@@ -226,14 +254,24 @@ async fn test_oauth2_token_introspection() -> E2EResult<()> {
         }
     };
 
-    assert_eq!(response.status(), 200, "Introspection endpoint should return 200 OK");
+    assert_eq!(
+        response.status(),
+        200,
+        "Introspection endpoint should return 200 OK"
+    );
 
     let json: Value = response.json().await?;
-    println!("Introspection response: {}", serde_json::to_string_pretty(&json)?);
+    println!(
+        "Introspection response: {}",
+        serde_json::to_string_pretty(&json)?
+    );
 
     // Validate active token response (RFC 7662 Section 2.2)
-    assert_eq!(json.get("active").and_then(|v| v.as_bool()), Some(true),
-               "Expected 'active' to be true for valid token");
+    assert_eq!(
+        json.get("active").and_then(|v| v.as_bool()),
+        Some(true),
+        "Expected 'active' to be true for valid token"
+    );
 
     println!("✓ Token is active");
 
@@ -245,8 +283,10 @@ async fn test_oauth2_token_introspection() -> E2EResult<()> {
             .post(format!("http://127.0.0.1:{}/introspect", server.port))
             .header("Content-Type", "application/x-www-form-urlencoded")
             .body("token=INVALID_token_xyz")
-            .send()
-    ).await {
+            .send(),
+    )
+    .await
+    {
         Ok(Ok(resp)) => {
             println!("✓ Received introspection response: {}", resp.status());
             resp
@@ -261,13 +301,23 @@ async fn test_oauth2_token_introspection() -> E2EResult<()> {
         }
     };
 
-    assert_eq!(response.status(), 200, "Introspection endpoint should return 200 OK");
+    assert_eq!(
+        response.status(),
+        200,
+        "Introspection endpoint should return 200 OK"
+    );
 
     let json: Value = response.json().await?;
-    println!("Introspection response: {}", serde_json::to_string_pretty(&json)?);
+    println!(
+        "Introspection response: {}",
+        serde_json::to_string_pretty(&json)?
+    );
 
-    assert_eq!(json.get("active").and_then(|v| v.as_bool()), Some(false),
-               "Expected 'active' to be false for invalid token");
+    assert_eq!(
+        json.get("active").and_then(|v| v.as_bool()),
+        Some(false),
+        "Expected 'active' to be false for invalid token"
+    );
 
     println!("✓ Token is inactive");
 
@@ -296,8 +346,10 @@ async fn test_oauth2_token_revocation() -> E2EResult<()> {
             .post(format!("http://127.0.0.1:{}/revoke", server.port))
             .header("Content-Type", "application/x-www-form-urlencoded")
             .body("token=ACCESS_token_to_revoke&token_type_hint=access_token")
-            .send()
-    ).await {
+            .send(),
+    )
+    .await
+    {
         Ok(Ok(resp)) => {
             println!("✓ Received revocation response: {}", resp.status());
             resp
@@ -313,7 +365,11 @@ async fn test_oauth2_token_revocation() -> E2EResult<()> {
     };
 
     // RFC 7009: The authorization server responds with HTTP status code 200
-    assert_eq!(response.status(), 200, "Revocation endpoint should return 200 OK");
+    assert_eq!(
+        response.status(),
+        200,
+        "Revocation endpoint should return 200 OK"
+    );
 
     println!("✓ Token revoked successfully");
 

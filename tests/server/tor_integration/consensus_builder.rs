@@ -3,9 +3,9 @@
 //! Generates minimal valid consensus documents pointing to our test relay.
 
 use super::helpers::RelayKeys;
+use anyhow::Result;
 use chrono::Utc;
 use sha2::{Digest, Sha256};
-use anyhow::Result;
 
 /// Build a minimal Tor consensus document for testing
 pub fn build_consensus(relay: &RelayKeys) -> Result<String> {
@@ -51,7 +51,7 @@ m {}
         format_time(fresh_until),
         format_time(valid_until),
         relay.address,
-        relay.identity_fingerprint[..8].to_uppercase(),  // Truncated base64 identity
+        relay.identity_fingerprint[..8].to_uppercase(), // Truncated base64 identity
         "AAAAAAAAAAAAAAAAAAAAAAAAAAAA",                 // Descriptor digest (base64)
         format_time(now),
         relay.address,

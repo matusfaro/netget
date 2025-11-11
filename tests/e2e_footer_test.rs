@@ -11,11 +11,10 @@
 //!
 //! These tests ensure the fix remains effective.
 
-
 #[path = "server/helpers.rs"]
 mod helpers;
 
-use helpers::{ServerConfig, E2EResult};
+use helpers::{E2EResult, ServerConfig};
 use tokio::net::TcpStream;
 use tokio::time::{sleep, Duration};
 
@@ -37,9 +36,8 @@ async fn test_footer_updates_cleanly_on_server_start() -> E2EResult<()> {
     let prompt = format!("listen on port {} via tcp", port);
 
     // Start the server
-    let server = helpers::start_netget_server(
-        ServerConfig::new(prompt).with_log_level("info")
-    ).await?;
+    let server =
+        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("info")).await?;
     println!("TCP server started on port {}", server.port);
 
     // Give the server time to fully initialize and update UI
@@ -57,17 +55,31 @@ async fn test_footer_updates_cleanly_on_server_start() -> E2EResult<()> {
     let output_text = output.join("\n");
 
     // Verify [SERVER] message appears exactly once (not double-printed)
-    let server_msg_count = output.iter().filter(|line| line.contains("[SERVER]") || line.contains("listening on")).count();
-    assert!(server_msg_count >= 1, "Expected at least one server startup message");
+    let server_msg_count = output
+        .iter()
+        .filter(|line| line.contains("[SERVER]") || line.contains("listening on"))
+        .count();
+    assert!(
+        server_msg_count >= 1,
+        "Expected at least one server startup message"
+    );
 
     // Check for signs of garbling (multiple status lines would indicate the bug)
     // In the fixed version, there should be NO double status lines
     let status_line_pattern = "qwen3-coder:30b";
-    let status_count = output.iter().filter(|line| line.contains(status_line_pattern) && line.contains("↑") && line.contains("↓")).count();
+    let status_count = output
+        .iter()
+        .filter(|line| {
+            line.contains(status_line_pattern) && line.contains("↑") && line.contains("↓")
+        })
+        .count();
 
     // In non-interactive mode (which our e2e tests use), status lines aren't printed
     // So we can't test for double status lines here. Instead, we verify the server started correctly.
-    println!("Server output contained {} status-related lines", status_count);
+    println!(
+        "Server output contained {} status-related lines",
+        status_count
+    );
 
     // The key validation: server started successfully and output is clean
     assert!(
@@ -92,9 +104,8 @@ async fn test_footer_handles_multiple_server_startups() -> E2EResult<()> {
     // Start first server
     let port1 = helpers::get_available_port().await?;
     let prompt1 = format!("listen on port {} via tcp", port1);
-    let server1 = helpers::start_netget_server(
-        ServerConfig::new(prompt1).with_log_level("info")
-    ).await?;
+    let server1 =
+        helpers::start_netget_server(ServerConfig::new(prompt1).with_log_level("info")).await?;
     println!("Server 1 started on port {}", server1.port);
 
     // Verify first server works
@@ -104,9 +115,10 @@ async fn test_footer_handles_multiple_server_startups() -> E2EResult<()> {
 
     // Get output after first server
     let output1 = server1.get_output().await;
-    let startup_count1 = output1.iter().filter(|line|
-        line.contains("listening on") || line.contains("SERVER")
-    ).count();
+    let startup_count1 = output1
+        .iter()
+        .filter(|line| line.contains("listening on") || line.contains("SERVER"))
+        .count();
     println!("Server 1 output: {} startup-related lines", startup_count1);
 
     server1.stop().await?;
@@ -114,9 +126,8 @@ async fn test_footer_handles_multiple_server_startups() -> E2EResult<()> {
     // Start second server (tests that stopping/starting doesn't break footer)
     let port2 = helpers::get_available_port().await?;
     let prompt2 = format!("listen on port {} via tcp", port2);
-    let server2 = helpers::start_netget_server(
-        ServerConfig::new(prompt2).with_log_level("info")
-    ).await?;
+    let server2 =
+        helpers::start_netget_server(ServerConfig::new(prompt2).with_log_level("info")).await?;
     println!("Server 2 started on port {}", server2.port);
 
     // Verify second server works
@@ -126,9 +137,10 @@ async fn test_footer_handles_multiple_server_startups() -> E2EResult<()> {
 
     // Verify output is still clean
     let output2 = server2.get_output().await;
-    let startup_count2 = output2.iter().filter(|line|
-        line.contains("listening on") || line.contains("SERVER")
-    ).count();
+    let startup_count2 = output2
+        .iter()
+        .filter(|line| line.contains("listening on") || line.contains("SERVER"))
+        .count();
     println!("Server 2 output: {} startup-related lines", startup_count2);
 
     // Both servers should have similar, clean output
@@ -158,9 +170,8 @@ async fn test_server_output_spacing() -> E2EResult<()> {
     let port = helpers::get_available_port().await?;
     let prompt = format!("listen on port {} via tcp", port);
 
-    let server = helpers::start_netget_server(
-        ServerConfig::new(prompt).with_log_level("info")
-    ).await?;
+    let server =
+        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("info")).await?;
     println!("TCP server started on port {}", server.port);
 
     // Give server time to print all startup messages

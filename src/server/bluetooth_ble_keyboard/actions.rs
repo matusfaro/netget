@@ -16,14 +16,12 @@ pub static KEYBOARD_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(
         "keyboard_client_connected",
         "A device connected to the BLE keyboard",
     )
-    .with_parameters(vec![
-        Parameter {
-            name: "client_id".to_string(),
-            type_hint: "number".to_string(),
-            description: "Unique client connection ID".to_string(),
-            required: true,
-        },
-    ])
+    .with_parameters(vec![Parameter {
+        name: "client_id".to_string(),
+        type_hint: "number".to_string(),
+        description: "Unique client connection ID".to_string(),
+        required: true,
+    }])
 });
 
 /// Keyboard disconnection event
@@ -32,14 +30,12 @@ pub static KEYBOARD_CLIENT_DISCONNECTED_EVENT: LazyLock<EventType> = LazyLock::n
         "keyboard_client_disconnected",
         "A device disconnected from the BLE keyboard",
     )
-    .with_parameters(vec![
-        Parameter {
-            name: "client_id".to_string(),
-            type_hint: "number".to_string(),
-            description: "Unique client connection ID".to_string(),
-            required: true,
-        },
-    ])
+    .with_parameters(vec![Parameter {
+        name: "client_id".to_string(),
+        type_hint: "number".to_string(),
+        description: "Unique client connection ID".to_string(),
+        required: true,
+    }])
 });
 
 /// BLE HID Keyboard protocol handler
@@ -53,15 +49,13 @@ impl BluetoothBleKeyboardProtocol {
 
 impl Protocol for BluetoothBleKeyboardProtocol {
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-        vec![
-            ParameterDefinition {
-                name: "device_name".to_string(),
-                type_hint: "string".to_string(),
-                description: "Keyboard device name (default: NetGet-Keyboard)".to_string(),
-                required: false,
-                example: json!("MyKeyboard"),
-            },
-        ]
+        vec![ParameterDefinition {
+            name: "device_name".to_string(),
+            type_hint: "string".to_string(),
+            description: "Keyboard device name (default: NetGet-Keyboard)".to_string(),
+            required: false,
+            example: json!("MyKeyboard"),
+        }]
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
@@ -98,7 +92,7 @@ impl Protocol for BluetoothBleKeyboardProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
@@ -126,17 +120,22 @@ impl Server for BluetoothBleKeyboardProtocol {
     fn spawn(
         &self,
         ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>,
-    > {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>>
+    {
         Box::pin(async move {
-            let device_name = ctx.startup_params.as_ref().and_then(|p| p.get_optional_string("device_name"))
+            let device_name = ctx
+                .startup_params
+                .as_ref()
+                .and_then(|p| p.get_optional_string("device_name"))
                 .as_deref()
                 .unwrap_or("NetGet-Keyboard")
                 .to_string();
 
             // Get instruction from server instance
-            let instruction = ctx.state.get_server(ctx.server_id).await
+            let instruction = ctx
+                .state
+                .get_server(ctx.server_id)
+                .await
                 .map(|s| s.instruction)
                 .unwrap_or_default();
 
@@ -152,10 +151,7 @@ impl Server for BluetoothBleKeyboardProtocol {
         })
     }
 
-    fn execute_action(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action["type"]
             .as_str()
             .context("Action must have 'type' field")?;
@@ -175,7 +171,8 @@ impl Server for BluetoothBleKeyboardProtocol {
 fn type_text_action() -> ActionDefinition {
     ActionDefinition {
         name: "type_text".to_string(),
-        description: "Type a string of text on all connected devices or a specific client".to_string(),
+        description: "Type a string of text on all connected devices or a specific client"
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "text".to_string(),

@@ -2,17 +2,20 @@
 
 ## Test Strategy
 
-The USB keyboard E2E tests verify the virtual HID keyboard device by using real Linux `usbip` client tools to attach the device and read keyboard events.
+The USB keyboard E2E tests verify the virtual HID keyboard device by using real Linux `usbip` client tools to attach the
+device and read keyboard events.
 
 ## Test Environment Requirements
 
 ### System Requirements
+
 - **OS**: Linux (kernel 3.17+ with vhci-hcd support)
 - **Tools**: `usbip`, `evtest` (or similar event reader)
 - **Privileges**: Root access for `usbip attach` and `/dev/input` access
 - **Network**: Localhost (127.0.0.1) - no external endpoints
 
 ### Installation
+
 ```bash
 # Ubuntu/Debian
 sudo apt-get install usbip evtest
@@ -27,16 +30,19 @@ sudo modprobe vhci-hcd
 ## Test Approach
 
 ### Unit Tests
+
 **Current**: None (protocol implementation not complete)
 **Future**: Test descriptor builders, HID report generation, character mapping
 
 ### E2E Tests
+
 **Current**: Placeholder (waiting for USB/IP protocol integration)
 **Future**: Real client tests using usbip tools
 
 ## Planned E2E Test Cases
 
 ### Test 1: Device Enumeration
+
 **Objective**: Verify device appears in usbip list
 
 ```bash
@@ -57,6 +63,7 @@ usbip list -r 127.0.0.1 -p 3240
 **LLM Calls**: 0 (no LLM needed for enumeration)
 
 ### Test 2: Device Attachment
+
 **Objective**: Verify device can be attached and appears as /dev/input/eventX
 
 ```bash
@@ -74,9 +81,11 @@ ls /dev/input/by-id/ | grep keyboard
 **LLM Calls**: 1 (device attached event)
 
 ### Test 3: Simple Typing
+
 **Objective**: Verify LLM can type text
 
 **Setup**:
+
 ```bash
 # Start server with LLM instruction
 netget server usb-keyboard 127.0.0.1:3240 --instruction "Type 'test123' when keyboard is attached"
@@ -87,6 +96,7 @@ sudo evtest /dev/input/eventX
 ```
 
 **Expected Events**:
+
 - Key press events for: t, e, s, t, 1, 2, 3
 - Each key: press event, release event
 - Correct HID usage codes
@@ -94,15 +104,18 @@ sudo evtest /dev/input/eventX
 **LLM Calls**: 1 (on attach, executes type_text action)
 
 ### Test 4: Key Combinations
+
 **Objective**: Verify modifier keys (Ctrl, Shift, Alt)
 
 **Setup**:
+
 ```bash
 # Test Ctrl+C
 netget server usb-keyboard 127.0.0.1:3240 --instruction "Press Ctrl+C when attached"
 ```
 
 **Expected Events**:
+
 - Key press: Left Control (modifier)
 - Key press: C
 - Key release: C
@@ -111,9 +124,11 @@ netget server usb-keyboard 127.0.0.1:3240 --instruction "Press Ctrl+C when attac
 **LLM Calls**: 1
 
 ### Test 5: LED Status Feedback
+
 **Objective**: Verify server receives LED status from host
 
 **Setup**:
+
 ```bash
 # Start server with LED monitoring
 netget server usb-keyboard 127.0.0.1:3240 --instruction "Report LED status changes"
@@ -126,6 +141,7 @@ xdotool key Caps_Lock
 ```
 
 **Expected**:
+
 - Server logs LED status change (Caps Lock ON)
 - LLM receives usb_keyboard_led_status event
 
@@ -136,6 +152,7 @@ xdotool key Caps_Lock
 **Target**: < 10 LLM calls per full test suite
 
 ### Breakdown:
+
 - Device enumeration: 0 calls (no LLM)
 - Device attachment: 1 call (on connect)
 - Simple typing: 1 call (execute type_text)
@@ -144,6 +161,7 @@ xdotool key Caps_Lock
 - **Total**: ~5 calls
 
 ### Optimization Strategies:
+
 1. **Scripting Mode**: Use deterministic behavior, no LLM needed for predictable actions
 2. **Single Server Instance**: Reuse server across multiple test cases
 3. **Mock Mode**: Test protocol without LLM for unit tests
@@ -152,6 +170,7 @@ xdotool key Caps_Lock
 ## Expected Runtime
 
 **Per Test**:
+
 - Device enumeration: < 1 second
 - Device attachment: < 2 seconds
 - Typing test: < 5 seconds (depends on typing speed)
@@ -163,9 +182,11 @@ xdotool key Caps_Lock
 ## Known Issues / Flaky Tests
 
 ### Current Status: No Tests Yet
+
 Once tests are implemented, document any flaky behavior here.
 
 ### Potential Issues:
+
 1. **vhci-hcd Not Loaded**: Tests fail if kernel module missing
 2. **Port Conflicts**: Need unique port for each test or sequential execution
 3. **Root Privileges**: Tests require sudo (may need CI configuration)
@@ -175,6 +196,7 @@ Once tests are implemented, document any flaky behavior here.
 ## Running Tests
 
 ### Full Suite
+
 ```bash
 # Build with USB keyboard feature
 ./cargo-isolated.sh build --no-default-features --features usb-keyboard
@@ -185,12 +207,14 @@ sudo ./cargo-isolated.sh test --no-default-features --features usb-keyboard \
 ```
 
 ### Single Test
+
 ```bash
 sudo ./cargo-isolated.sh test --no-default-features --features usb-keyboard \
   --test usb_keyboard_e2e -- test_keyboard_typing
 ```
 
 ### Debug Mode
+
 ```bash
 # Enable trace logging
 RUST_LOG=netget=trace sudo ./cargo-isolated.sh test \
@@ -201,11 +225,13 @@ RUST_LOG=netget=trace sudo ./cargo-isolated.sh test \
 ## CI Considerations
 
 ### Docker/Container
+
 - Need privileged container for vhci-hcd module
 - Or use VM with full kernel access
 - Alternative: Mock tests without real usbip
 
 ### Permissions
+
 - Tests require root/sudo
 - May need special CI runner configuration
 - Consider marking tests as manual/optional

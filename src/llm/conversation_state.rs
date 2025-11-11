@@ -160,7 +160,10 @@ impl ConversationState {
                 MessageType::UserInput(input) => {
                     history.push_str(&format!("<user>{}</user>\n", input));
                 }
-                MessageType::LLMResponse { action_json, raw_output } => {
+                MessageType::LLMResponse {
+                    action_json,
+                    raw_output,
+                } => {
                     if action_json.is_some() {
                         // Valid JSON response
                         history.push_str(&format!("<assistant>{}</assistant>\n", raw_output));
@@ -172,8 +175,14 @@ impl ConversationState {
                 MessageType::RetryInstruction(instruction) => {
                     history.push_str(&format!("<system>Retry - {}</system>\n", instruction));
                 }
-                MessageType::ToolCall { tool_name, description } => {
-                    history.push_str(&format!("<system>Tool Call - {} ({})</system>\n", tool_name, description));
+                MessageType::ToolCall {
+                    tool_name,
+                    description,
+                } => {
+                    history.push_str(&format!(
+                        "<system>Tool Call - {} ({})</system>\n",
+                        tool_name, description
+                    ));
                 }
             }
         }

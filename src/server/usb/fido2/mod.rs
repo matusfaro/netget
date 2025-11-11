@@ -45,9 +45,9 @@
 
 pub mod actions;
 pub mod approval;
+pub mod ctap2;
 pub mod ctaphid;
 pub mod u2f;
-pub mod ctap2;
 
 #[cfg(feature = "usb-fido2")]
 use anyhow::Result;
@@ -69,11 +69,11 @@ use crate::state::app_state::AppState;
 use crate::server::usb::descriptors::FIDO_HID_REPORT_DESCRIPTOR;
 
 #[cfg(feature = "usb-fido2")]
+use ctap2::Ctap2Handler;
+#[cfg(feature = "usb-fido2")]
 use ctaphid::{CtapHidCommand, CtapHidHandler, CtapHidPacket};
 #[cfg(feature = "usb-fido2")]
 use u2f::U2fHandler;
-#[cfg(feature = "usb-fido2")]
-use ctap2::Ctap2Handler;
 
 /// USB FIDO2 Security Key server
 #[cfg(feature = "usb-fido2")]
@@ -112,8 +112,18 @@ impl Fido2HidHandler {
     }
 
     /// Process CTAPHID command
-    fn process_ctaphid_command(&mut self, cid: u32, cmd: CtapHidCommand, data: &[u8]) -> Vec<Vec<u8>> {
-        debug!("CTAPHID command: {:?}, cid={:#010x}, data_len={}", cmd, cid, data.len());
+    fn process_ctaphid_command(
+        &mut self,
+        cid: u32,
+        cmd: CtapHidCommand,
+        data: &[u8],
+    ) -> Vec<Vec<u8>> {
+        debug!(
+            "CTAPHID command: {:?}, cid={:#010x}, data_len={}",
+            cmd,
+            cid,
+            data.len()
+        );
 
         let response_data = match cmd {
             CtapHidCommand::Init => {
@@ -121,7 +131,10 @@ impl Fido2HidHandler {
                 // Request: 8-byte nonce
                 // Response: 8-byte nonce + 4-byte CID + protocol version + capabilities
                 if data.len() < 8 {
-                    return vec![CtapHidPacket::build_error(cid, ctaphid::CtapHidError::InvalidLen)];
+                    return vec![CtapHidPacket::build_error(
+                        cid,
+                        ctaphid::CtapHidError::InvalidLen,
+                    )];
                 }
 
                 let new_cid = self.ctaphid.allocate_channel();
@@ -172,7 +185,10 @@ impl Fido2HidHandler {
 
             _ => {
                 warn!("Unsupported CTAPHID command: {:?}", cmd);
-                return vec![CtapHidPacket::build_error(cid, ctaphid::CtapHidError::InvalidCmd)];
+                return vec![CtapHidPacket::build_error(
+                    cid,
+                    ctaphid::CtapHidError::InvalidCmd,
+                )];
             }
         };
 
@@ -202,33 +218,54 @@ impl usbip::UsbInterfaceHandler for Fido2HidHandler {
 
             match (setup.request_type, setup.request) {
                 // Get HID Report Descriptor
-                (request_type::DEVICE_TO_HOST | request_type::STANDARD | request_type::INTERFACE, request::GET_DESCRIPTOR) => {
+                (
+                    request_type::DEVICE_TO_HOST | request_type::STANDARD | request_type::INTERFACE,
+                    request::GET_DESCRIPTOR,
+                ) => {
                     let desc_type = (setup.value >> 8) as u8;
                     if desc_type == descriptor_type::HID_REPORT {
-                        debug!("GET_DESCRIPTOR: HID Report ({}bytes)", FIDO_HID_REPORT_DESCRIPTOR.len());
+                        debug!(
+                            "GET_DESCRIPTOR: HID Report ({}bytes)",
+                            FIDO_HID_REPORT_DESCRIPTOR.len()
+                        );
                         Ok(FIDO_HID_REPORT_DESCRIPTOR.to_vec())
                     } else {
                         warn!("Unsupported descriptor type: {:#04x}", desc_type);
-                        Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Unsupported descriptor"))
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "Unsupported descriptor",
+                        ))
                     }
                 }
 
                 // Get/Set Idle
-                (request_type::DEVICE_TO_HOST | request_type::CLASS | request_type::INTERFACE, hid_request::GET_IDLE) => {
+                (
+                    request_type::DEVICE_TO_HOST | request_type::CLASS | request_type::INTERFACE,
+                    hid_request::GET_IDLE,
+                ) => {
                     debug!("GET_IDLE");
                     Ok(vec![0])
                 }
-                (request_type::HOST_TO_DEVICE | request_type::CLASS | request_type::INTERFACE, hid_request::SET_IDLE) => {
+                (
+                    request_type::HOST_TO_DEVICE | request_type::CLASS | request_type::INTERFACE,
+                    hid_request::SET_IDLE,
+                ) => {
                     debug!("SET_IDLE");
                     Ok(vec![])
                 }
 
                 // Get/Set Protocol
-                (request_type::DEVICE_TO_HOST | request_type::CLASS | request_type::INTERFACE, hid_request::GET_PROTOCOL) => {
+                (
+                    request_type::DEVICE_TO_HOST | request_type::CLASS | request_type::INTERFACE,
+                    hid_request::GET_PROTOCOL,
+                ) => {
                     debug!("GET_PROTOCOL");
                     Ok(vec![0]) // Report protocol
                 }
-                (request_type::HOST_TO_DEVICE | request_type::CLASS | request_type::INTERFACE, hid_request::SET_PROTOCOL) => {
+                (
+                    request_type::HOST_TO_DEVICE | request_type::CLASS | request_type::INTERFACE,
+                    hid_request::SET_PROTOCOL,
+                ) => {
                     debug!("SET_PROTOCOL");
                     Ok(vec![])
                 }
@@ -238,12 +275,19 @@ impl usbip::UsbInterfaceHandler for Fido2HidHandler {
                         "Unsupported FIDO2 control request: type={:#04x}, request={:#04x}",
                         setup.request_type, setup.request
                     );
-                    Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Unsupported control request"))
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "Unsupported control request",
+                    ))
                 }
             }
         } else if endpoint.address & 0x80 == 0 {
             // Bulk/Interrupt OUT endpoint (host to device)
-            debug!("FIDO2 OUT: ep={:#04x}, {} bytes", endpoint.address, data.len());
+            debug!(
+                "FIDO2 OUT: ep={:#04x}, {} bytes",
+                endpoint.address,
+                data.len()
+            );
 
             // Process CTAPHID packet
             match self.ctaphid.process_packet(data) {
@@ -275,7 +319,11 @@ impl usbip::UsbInterfaceHandler for Fido2HidHandler {
             // Bulk/Interrupt IN endpoint (device to host)
             if let Some(packet) = self.response_packets.first().cloned() {
                 self.response_packets.remove(0);
-                debug!("FIDO2 IN: ep={:#04x}, sending {} bytes", endpoint.address, packet.len());
+                debug!(
+                    "FIDO2 IN: ep={:#04x}, sending {} bytes",
+                    endpoint.address,
+                    packet.len()
+                );
                 Ok(packet)
             } else {
                 // No data to send
@@ -307,7 +355,10 @@ impl UsbFido2Server {
         _support_fido2: Option<bool>,
         auto_approve: Option<bool>,
     ) -> Result<SocketAddr> {
-        info!("Starting USB FIDO2/U2F Security Key server on {}", listen_addr);
+        info!(
+            "Starting USB FIDO2/U2F Security Key server on {}",
+            listen_addr
+        );
 
         // Create approval manager with configuration
         let auto_approve_enabled = auto_approve.unwrap_or(false);
@@ -319,15 +370,18 @@ impl UsbFido2Server {
         let approval_manager = Arc::new(approval::ApprovalManager::new(approval_config));
 
         // Store approval manager in global storage for access by actions
-        approval::APPROVAL_MANAGERS.write().await.insert(server_id, approval_manager.clone());
+        approval::APPROVAL_MANAGERS
+            .write()
+            .await
+            .insert(server_id, approval_manager.clone());
 
         info!("FIDO2 approval mode: auto_approve={}", auto_approve_enabled);
 
         // Create FIDO2 HID handler with approval manager
-        let handler = Arc::new(std::sync::Mutex::new(
-            Box::new(Fido2HidHandler::new_with_approval_manager(Some(approval_manager)))
-                as Box<dyn usbip::UsbInterfaceHandler + Send>,
-        ));
+        let handler = Arc::new(std::sync::Mutex::new(Box::new(
+            Fido2HidHandler::new_with_approval_manager(Some(approval_manager)),
+        )
+            as Box<dyn usbip::UsbInterfaceHandler + Send>));
 
         // Create USB device with FIDO2 HID interface
         let device = usbip::UsbDevice::new(0) // Bus 0
@@ -338,16 +392,16 @@ impl UsbFido2Server {
                 "NetGet FIDO2 Security Key",
                 vec![
                     usbip::UsbEndpoint {
-                        address: 0x81,         // EP1 IN (interrupt)
-                        attributes: 0x03,      // Interrupt transfer
-                        max_packet_size: 64,   // 64 bytes (FIDO HID packet size)
-                        interval: 10,          // 10ms polling interval
+                        address: 0x81,       // EP1 IN (interrupt)
+                        attributes: 0x03,    // Interrupt transfer
+                        max_packet_size: 64, // 64 bytes (FIDO HID packet size)
+                        interval: 10,        // 10ms polling interval
                     },
                     usbip::UsbEndpoint {
-                        address: 0x01,         // EP1 OUT (interrupt)
-                        attributes: 0x03,      // Interrupt transfer
-                        max_packet_size: 64,   // 64 bytes
-                        interval: 10,          // 10ms polling interval
+                        address: 0x01,       // EP1 OUT (interrupt)
+                        attributes: 0x03,    // Interrupt transfer
+                        max_packet_size: 64, // 64 bytes
+                        interval: 10,        // 10ms polling interval
                     },
                 ],
                 handler.clone(),

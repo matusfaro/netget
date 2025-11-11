@@ -78,10 +78,7 @@ impl UsbKeyboardServer {
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         info!("USB Keyboard server listening on {}", local_addr);
-        let _ = status_tx.send(format!(
-            "USB Keyboard server listening on {}",
-            local_addr
-        ));
+        let _ = status_tx.send(format!("USB Keyboard server listening on {}", local_addr));
 
         let connections = Arc::new(Mutex::new(HashMap::new()));
         let protocol = Arc::new(crate::server::usb::keyboard::UsbKeyboardProtocol::new());
@@ -91,7 +88,8 @@ impl UsbKeyboardServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
                         info!(
                             "USB/IP connection {} from {} (USB keyboard device)",
@@ -192,10 +190,10 @@ impl UsbKeyboardServer {
         );
 
         // Create HID keyboard handler from usbip crate
-        let handler = Arc::new(std::sync::Mutex::new(
-            Box::new(usbip::hid::UsbHidKeyboardHandler::new_keyboard())
-                as Box<dyn usbip::UsbInterfaceHandler + Send>,
-        ));
+        let handler = Arc::new(std::sync::Mutex::new(Box::new(
+            usbip::hid::UsbHidKeyboardHandler::new_keyboard(),
+        )
+            as Box<dyn usbip::UsbInterfaceHandler + Send>));
 
         // Store handler in protocol for action execution
         protocol.set_handler(connection_id, handler.clone()).await;
@@ -235,7 +233,10 @@ impl UsbKeyboardServer {
         let connection_id_clone = connection_id;
         tokio::spawn(async move {
             usbip::server(usbip_addr, server).await;
-            debug!("USB/IP server task completed for keyboard connection {}", connection_id_clone);
+            debug!(
+                "USB/IP server task completed for keyboard connection {}",
+                connection_id_clone
+            );
         });
 
         // Wait a moment for server to start

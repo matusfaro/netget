@@ -2,7 +2,8 @@
 
 ## Overview
 
-The USB Keyboard server creates a virtual USB HID (Human Interface Device) keyboard using the USB/IP protocol. This allows an LLM to control keyboard input on a remote system as if a physical keyboard were attached.
+The USB Keyboard server creates a virtual USB HID (Human Interface Device) keyboard using the USB/IP protocol. This
+allows an LLM to control keyboard input on a remote system as if a physical keyboard were attached.
 
 ## Architecture
 
@@ -28,30 +29,30 @@ The USB Keyboard server creates a virtual USB HID (Human Interface Device) keybo
 ### Components
 
 1. **Common Layer** (`src/server/usb/common.rs`)
-   - USB/IP protocol constants and helpers
-   - Device class codes, descriptor types
-   - Request type/code definitions (standard, HID, CDC)
-   - Logging utilities (hex dump, setup packet formatting)
+    - USB/IP protocol constants and helpers
+    - Device class codes, descriptor types
+    - Request type/code definitions (standard, HID, CDC)
+    - Logging utilities (hex dump, setup packet formatting)
 
 2. **Descriptor Builders** (`src/server/usb/descriptors.rs`)
-   - Device descriptor (vendor ID, product ID, device class)
-   - HID keyboard report descriptor (boot protocol)
-   - Configuration descriptor (interface, HID, endpoint)
-   - String descriptors (manufacturer, product, serial)
-   - Keyboard report structure (modifiers + 6 keys)
-   - Character-to-HID-usage mapping
+    - Device descriptor (vendor ID, product ID, device class)
+    - HID keyboard report descriptor (boot protocol)
+    - Configuration descriptor (interface, HID, endpoint)
+    - String descriptors (manufacturer, product, serial)
+    - Keyboard report structure (modifiers + 6 keys)
+    - Character-to-HID-usage mapping
 
 3. **Server Implementation** (`src/server/usb/keyboard/mod.rs`)
-   - TCP server for USB/IP connections
-   - Connection state machine (Idle/Processing/Accumulating)
-   - Per-connection data (memory, LED status)
-   - LLM integration hook (called on device attach)
+    - TCP server for USB/IP connections
+    - Connection state machine (Idle/Processing/Accumulating)
+    - Per-connection data (memory, LED status)
+    - LLM integration hook (called on device attach)
 
 4. **Protocol Actions** (`src/server/usb/keyboard/actions.rs`)
-   - Action definitions (type_text, press_key, press_key_combo)
-   - Event definitions (attached, detached, led_status)
-   - Server trait implementation (spawn, execute_action)
-   - Protocol metadata (experimental state, no privileges required)
+    - Action definitions (type_text, press_key, press_key_combo)
+    - Event definitions (attached, detached, led_status)
+    - Server trait implementation (spawn, execute_action)
+    - Protocol metadata (experimental state, no privileges required)
 
 ## Build Requirements
 
@@ -71,6 +72,7 @@ brew install libusb pkg-config
 ```
 
 **Build Command**:
+
 ```bash
 ./cargo-isolated.sh build --no-default-features --features usb-keyboard
 ```
@@ -84,6 +86,7 @@ brew install libusb pkg-config
 **Maturity**: Active development, API not finalized
 
 **Why chosen**:
+
 - Pure Rust implementation of USB/IP protocol
 - No root privileges required on server side
 - No kernel modules needed on server side
@@ -91,17 +94,20 @@ brew install libusb pkg-config
 - Cross-platform client support (Linux via vhci-hcd)
 
 **Capabilities**:
+
 - Device export/import handling
 - URB (USB Request Block) processing
 - Descriptor management
 - Async/await support with tokio
 
 **Limitations**:
+
 - API stability: Marked as "not finalized", may have breaking changes
 - Documentation: Relies heavily on examples
 - Client requirements: Needs vhci-hcd kernel module and root access
 
 **Alternatives considered**:
+
 - **usb-gadget** crate: Requires root + kernel modules on server
 - **Raw Gadget**: No Rust bindings, very low-level
 - **usbip-device**: Alpha quality, development-only
@@ -119,6 +125,7 @@ Bytes 2-7: Up to 6 simultaneous key presses (HID usage codes)
 ```
 
 **Example**: Typing "a" with shift held:
+
 ```
 [0x02, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00]
  ^^^^         ^^^^
@@ -128,6 +135,7 @@ Bytes 2-7: Up to 6 simultaneous key presses (HID usage codes)
 ### HID Usage Codes
 
 Characters are mapped to HID keyboard usage codes (defined in USB HID specification):
+
 - `a-z`: 0x04-0x1d
 - `0-9`: 0x27, 0x1e-0x26
 - Special keys: Enter (0x28), Escape (0x29), Backspace (0x2a), etc.
@@ -136,6 +144,7 @@ Characters are mapped to HID keyboard usage codes (defined in USB HID specificat
 ### LED Output Report
 
 Host can set keyboard LEDs (1 byte):
+
 - Bit 0: Num Lock
 - Bit 1: Caps Lock
 - Bit 2: Scroll Lock
@@ -156,6 +165,7 @@ Host can set keyboard LEDs (1 byte):
 ### LLM Actions
 
 #### type_text
+
 ```json
 {
   "type": "type_text",
@@ -163,9 +173,11 @@ Host can set keyboard LEDs (1 byte):
   "typing_speed_ms": 50
 }
 ```
+
 Converts text to sequence of HID reports with press/release cycles.
 
 #### press_key
+
 ```json
 {
   "type": "press_key",
@@ -173,29 +185,36 @@ Converts text to sequence of HID reports with press/release cycles.
   "modifiers": ["ctrl"]
 }
 ```
+
 Sends single keypress with optional modifiers (Ctrl+C).
 
 #### press_key_combo
+
 ```json
 {
   "type": "press_key_combo",
   "keys": ["ctrl", "alt", "delete"]
 }
 ```
+
 Presses multiple keys simultaneously (Ctrl+Alt+Delete).
 
 #### release_all_keys
+
 ```json
 {
   "type": "release_all_keys"
 }
 ```
+
 Releases all currently pressed keys (emergency reset).
 
 ### LLM Events
 
 #### usb_keyboard_attached
+
 Triggered when Linux host imports the device.
+
 ```json
 {
   "type": "usb_keyboard_attached",
@@ -204,7 +223,9 @@ Triggered when Linux host imports the device.
 ```
 
 #### usb_keyboard_led_status
+
 Triggered when host changes LED state (Caps Lock, Num Lock, etc.).
+
 ```json
 {
   "type": "usb_keyboard_led_status",
@@ -218,6 +239,7 @@ Triggered when host changes LED state (Caps Lock, Num Lock, etc.).
 ## Current Status: Experimental (USB/IP Integrated)
 
 ### What Works
+
 - ✅ Protocol registration and discovery
 - ✅ Action/event definitions
 - ✅ HID descriptor builders (device, config, HID report)
@@ -231,6 +253,7 @@ Triggered when host changes LED state (Caps Lock, Num Lock, etc.).
 - ✅ Keyboard event queue (pending_key_events)
 
 ### What's Limited (Known Issues)
+
 - ⚠️ **Build Requirement**: Requires libusb-1.0-dev to compile (see Build Requirements above)
 - ⚠️ **press_key_combo**: Not yet implemented (requires custom HID report construction)
 - ⚠️ **LED status events**: Not yet implemented (requires URB output report parsing)
@@ -241,6 +264,7 @@ Triggered when host changes LED state (Caps Lock, Num Lock, etc.).
 ### Implementation Status
 
 **Phase 1 Complete** (USB/IP Integration):
+
 1. ✅ Integrated usbip crate (v0.3)
 2. ✅ Device export using UsbIpServer::new_simulated()
 3. ✅ Descriptor handling via usbip::hid::UsbHidKeyboardHandler
@@ -252,18 +276,21 @@ Triggered when host changes LED state (Caps Lock, Num Lock, etc.).
 ## Limitations
 
 ### Server Side
+
 - **API Instability**: usbip crate API may change (use specific version)
 - **Single Device**: One keyboard device per server instance
 - **No Hot-Unplug**: Device remains until client detaches
 - **Binary Protocol**: LLM cannot directly construct USB/IP messages
 
 ### Client Side
+
 - **Linux Only**: Requires vhci-hcd kernel module (Linux 3.17+)
 - **Root Access**: Client must run `sudo usbip attach`
 - **Manual Import**: User must run attach command (not automatic)
 - **No Windows/macOS Client**: Limited to Linux hosts for importing devices
 
 ### Protocol
+
 - **Boot Protocol Only**: No advanced HID features (multimedia keys, N-key rollover)
 - **6-Key Limit**: Maximum 6 simultaneous non-modifier keys
 - **No Latency Guarantee**: Network delays affect typing responsiveness
@@ -274,6 +301,7 @@ Triggered when host changes LED state (Caps Lock, Num Lock, etc.).
 See `tests/server/usb_keyboard/CLAUDE.md` for E2E testing approach.
 
 **Key Principles**:
+
 - < 10 LLM calls per test suite
 - Use real `usbip` client tools
 - Test on Linux VM or container
@@ -282,15 +310,18 @@ See `tests/server/usb_keyboard/CLAUDE.md` for E2E testing approach.
 ## Future Enhancements
 
 ### Phase 2: Additional Device Types
+
 - USB Mouse (usb-mouse protocol)
 - USB Serial Port (usb-serial protocol, CDC ACM)
 
 ### Phase 3: Low-Level Control
+
 - Custom USB devices (usb protocol)
 - Full descriptor customization
 - Vendor-specific requests
 
 ### Advanced Features
+
 - N-key rollover (non-boot protocol)
 - Multimedia keys (consumer control)
 - LED indicator control

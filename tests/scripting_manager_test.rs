@@ -1,5 +1,7 @@
 use netget::scripting::manager::ScriptManager;
-use netget::scripting::types::{ScriptConfig, ScriptInput, ScriptLanguage, ScriptSource, ServerContext};
+use netget::scripting::types::{
+    ScriptConfig, ScriptInput, ScriptLanguage, ScriptSource, ServerContext,
+};
 use netget::state::app_state::ScriptingMode;
 
 #[test]
@@ -66,8 +68,12 @@ fn test_build_config_no_language() {
 
 #[test]
 fn test_build_config_no_source() {
-    let result =
-        ScriptManager::build_config(ScriptingMode::Python, None, None, Some(vec!["ssh_auth".to_string()]));
+    let result = ScriptManager::build_config(
+        ScriptingMode::Python,
+        None,
+        None,
+        Some(vec!["ssh_auth".to_string()]),
+    );
 
     assert!(result.is_ok());
     assert!(result.unwrap().is_none());

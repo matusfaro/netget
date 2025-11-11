@@ -2,7 +2,9 @@
 
 ## Overview
 
-S3-compatible object storage server implementing the AWS S3 REST API. The server handles S3 operations (GetObject, PutObject, ListBuckets, etc.) with full LLM control over responses. This is a "virtual" object storage where the LLM maintains data through conversation context rather than persistent storage.
+S3-compatible object storage server implementing the AWS S3 REST API. The server handles S3 operations (GetObject,
+PutObject, ListBuckets, etc.) with full LLM control over responses. This is a "virtual" object storage where the LLM
+maintains data through conversation context rather than persistent storage.
 
 **Port**: 9000 (default MinIO convention)
 **Protocol**: HTTP/1.1 with REST API
@@ -12,23 +14,28 @@ S3-compatible object storage server implementing the AWS S3 REST API. The server
 ## Library Choices
 
 **hyper** (v1.5):
+
 - HTTP/1.1 server implementation
 - Async connection handling with tokio
 - Service-based request routing
 - Handles HTTP framing, headers, body parsing
 
 **http-body-util**:
+
 - Body aggregation (`BodyExt::collect()`)
 - Full body type (`Full<Bytes>`)
 - Efficient byte handling
 
 **Manual API Implementation**:
+
 - LLM controls all S3 operations through action system
 - No AWS SDK dependencies
 - Responses manually constructed as XML or binary
 - RESTful path parsing (bucket/key extraction)
 
-**Why no s3s framework**: While s3s provides a complete S3 trait implementation, it adds unnecessary complexity for an LLM-controlled virtual storage system. Manual implementation gives complete control over every aspect of S3 responses without framework constraints.
+**Why no s3s framework**: While s3s provides a complete S3 trait implementation, it adds unnecessary complexity for an
+LLM-controlled virtual storage system. Manual implementation gives complete control over every aspect of S3 responses
+without framework constraints.
 
 ## Architecture Decisions
 
@@ -37,12 +44,14 @@ S3-compatible object storage server implementing the AWS S3 REST API. The server
 S3 uses a RESTful design where resources are accessed via HTTP methods and URL paths:
 
 **URL Format**:
+
 - `/` - Root (ListBuckets)
 - `/bucket` - Bucket operations
 - `/bucket/key` - Object operations
 - `/bucket/path/to/key` - Nested object paths
 
 **HTTP Method Mapping**:
+
 - `GET /` → ListBuckets
 - `GET /bucket` → ListObjects
 - `PUT /bucket` → CreateBucket
@@ -69,16 +78,17 @@ S3 uses a RESTful design where resources are accessed via HTTP methods and URL p
 5. Create `S3_REQUEST_EVENT` with operation, bucket, key
 6. Call LLM via `action_helper::call_llm()`
 7. Process action result:
-   - `s3_object`: Build HTTP response with object content
-   - `s3_object_list`: Build ListObjects XML
-   - `s3_bucket_list`: Build ListBuckets XML
-   - `s3_error`: Build S3 error XML
+    - `s3_object`: Build HTTP response with object content
+    - `s3_object_list`: Build ListObjects XML
+    - `s3_bucket_list`: Build ListBuckets XML
+    - `s3_error`: Build S3 error XML
 8. Return HTTP response
 9. Close connection (HTTP/1.1 without keep-alive)
 
 ### Response Format
 
 **Object Content** (GetObject):
+
 ```http
 HTTP/1.1 200 OK
 Content-Type: text/plain
@@ -88,6 +98,7 @@ Hello, World!
 ```
 
 **XML Responses** (ListBuckets, ListObjects):
+
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
@@ -105,6 +116,7 @@ Hello, World!
 ```
 
 **Error Responses**:
+
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <Error>
@@ -118,18 +130,21 @@ Hello, World!
 ### Action-Based Responses
 
 **Sync Actions** (network event context required):
+
 - `send_s3_object`: Return object content with metadata
 - `send_s3_object_list`: Return list of objects in bucket
 - `send_s3_bucket_list`: Return list of all buckets
 - `send_s3_error`: Return S3 error response
 
 **Event Types**:
+
 - `S3_REQUEST_EVENT`: Fired for every S3 API request
-  - Data: `{ "operation": "GetObject", "bucket": "my-bucket", "key": "file.txt", "request_details": {...} }`
+    - Data: `{ "operation": "GetObject", "bucket": "my-bucket", "key": "file.txt", "request_details": {...} }`
 
 ### Example LLM Prompts
 
 **GetObject operation**:
+
 ```json
 {
   "actions": [
@@ -144,6 +159,7 @@ Hello, World!
 ```
 
 **PutObject operation** (acknowledge):
+
 ```json
 {
   "actions": [
@@ -156,6 +172,7 @@ Hello, World!
 ```
 
 **ListObjects operation**:
+
 ```json
 {
   "actions": [
@@ -182,6 +199,7 @@ Hello, World!
 ```
 
 **ListBuckets operation**:
+
 ```json
 {
   "actions": [
@@ -203,6 +221,7 @@ Hello, World!
 ```
 
 **Error responses**:
+
 ```json
 {
   "actions": [
@@ -286,21 +305,25 @@ Hello, World!
 Following NetGet's dual logging pattern (tracing macros + status_tx):
 
 ### TRACE Level
+
 - Full HTTP request/response details
 - Request path, method, headers
 - XML responses (pretty-printed)
 - Object content sizes
 
 ### DEBUG Level
+
 - Operation summaries: `GET /bucket/key → 200 OK (1024 bytes)`
 - Response types: "Sending S3 object 512 bytes"
 - Bucket/object operations
 
 ### INFO Level
+
 - Server lifecycle: "S3 server listening on 0.0.0.0:9000"
 - Connection events: "S3 client connected from 127.0.0.1:54321"
 
 ### ERROR Level
+
 - Server failures: "Failed to bind S3 server to port 9000"
 - Internal errors: "Failed to generate XML response"
 - LLM errors: "LLM error handling S3 request"

@@ -5,14 +5,14 @@
 
 #![cfg(feature = "tls")]
 
-use super::super::super::helpers::{self, ServerConfig, E2EResult};
+use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use rustls::{ClientConfig, RootCertStore};
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
-use rustls::{ClientConfig, RootCertStore};
-use std::sync::Arc;
 
 /// Certificate verifier that accepts all certificates (for testing only)
 #[derive(Debug)]
@@ -72,7 +72,9 @@ async fn tls_exchange(port: u16, send_data: &str) -> E2EResult<String> {
         .with_no_client_auth();
 
     // Disable certificate verification for self-signed certs in tests
-    config.dangerous().set_certificate_verifier(Arc::new(NoCertificateVerification));
+    config
+        .dangerous()
+        .set_certificate_verifier(Arc::new(NoCertificateVerification));
 
     let tls_config = Arc::new(config);
     let connector = TlsConnector::from(tls_config);
@@ -89,10 +91,7 @@ async fn tls_exchange(port: u16, send_data: &str) -> E2EResult<String> {
 
     // Read response (with timeout)
     let mut buffer = vec![0u8; 4096];
-    let n = tokio::time::timeout(
-        Duration::from_secs(5),
-        tls_stream.read(&mut buffer)
-    ).await??;
+    let n = tokio::time::timeout(Duration::from_secs(5), tls_stream.read(&mut buffer)).await??;
 
     let response = String::from_utf8_lossy(&buffer[..n]).to_string();
     Ok(response)
@@ -106,9 +105,8 @@ async fn test_tls_echo_server() -> E2EResult<()> {
     let prompt = r#"listen on port {AVAILABLE_PORT} via tls. When client connects, send "Welcome to secure echo server\n". Echo back any received data."#;
 
     // Start server (LLM will parse the prompt and create the script)
-    let server = helpers::start_netget_server(
-        ServerConfig::new(prompt).with_log_level("info")
-    ).await?;
+    let server =
+        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("info")).await?;
 
     println!("TLS server started on port {}", server.port);
 
@@ -118,23 +116,41 @@ async fn test_tls_echo_server() -> E2EResult<()> {
     // Test 1: Connect and check welcome message
     println!("\n[Test 1] Connect and check welcome message...");
     let response1 = tls_exchange(server.port, "").await?;
-    assert!(response1.contains("Welcome"), "Expected welcome message, got: {}", response1);
+    assert!(
+        response1.contains("Welcome"),
+        "Expected welcome message, got: {}",
+        response1
+    );
     println!("✓ Got welcome message: {:?}", response1.trim());
 
     // Test 2: Send data and check echo
     println!("\n[Test 2] Send data and check echo...");
     let test_data = "Hello, TLS!\n";
     let response2 = tls_exchange(server.port, test_data).await?;
-    assert!(response2.contains("Welcome"), "Expected welcome message in response");
-    assert!(response2.contains("Hello, TLS!"), "Expected echo of sent data, got: {}", response2);
+    assert!(
+        response2.contains("Welcome"),
+        "Expected welcome message in response"
+    );
+    assert!(
+        response2.contains("Hello, TLS!"),
+        "Expected echo of sent data, got: {}",
+        response2
+    );
     println!("✓ Got echo response");
 
     // Test 3: Different data
     println!("\n[Test 3] Send different data...");
     let test_data3 = "Testing 123\n";
     let response3 = tls_exchange(server.port, test_data3).await?;
-    assert!(response3.contains("Welcome"), "Expected welcome message in response");
-    assert!(response3.contains("Testing 123"), "Expected echo of sent data, got: {}", response3);
+    assert!(
+        response3.contains("Welcome"),
+        "Expected welcome message in response"
+    );
+    assert!(
+        response3.contains("Testing 123"),
+        "Expected echo of sent data, got: {}",
+        response3
+    );
     println!("✓ Got echo response");
 
     println!("\n=== All TLS tests passed! ===");
@@ -153,9 +169,8 @@ async fn test_tls_http_like_server() -> E2EResult<()> {
 - For anything else: return "HTTP/1.1 404 Not Found\r\n\r\n""#;
 
     // Start server
-    let server = helpers::start_netget_server(
-        ServerConfig::new(prompt).with_log_level("info")
-    ).await?;
+    let server =
+        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("info")).await?;
 
     println!("TLS HTTP-like server started on port {}", server.port);
 
@@ -165,21 +180,41 @@ async fn test_tls_http_like_server() -> E2EResult<()> {
     // Test 1: GET /
     println!("\n[Test 1] Request GET /...");
     let response1 = tls_exchange(server.port, "GET / HTTP/1.1\r\n\r\n").await?;
-    assert!(response1.contains("200 OK"), "Expected 200 OK, got: {}", response1);
-    assert!(response1.contains("Welcome"), "Expected 'Welcome', got: {}", response1);
+    assert!(
+        response1.contains("200 OK"),
+        "Expected 200 OK, got: {}",
+        response1
+    );
+    assert!(
+        response1.contains("Welcome"),
+        "Expected 'Welcome', got: {}",
+        response1
+    );
     println!("✓ Got 200 OK response");
 
     // Test 2: GET /api
     println!("\n[Test 2] Request GET /api...");
     let response2 = tls_exchange(server.port, "GET /api HTTP/1.1\r\n\r\n").await?;
-    assert!(response2.contains("200 OK"), "Expected 200 OK, got: {}", response2);
-    assert!(response2.contains("status"), "Expected JSON response, got: {}", response2);
+    assert!(
+        response2.contains("200 OK"),
+        "Expected 200 OK, got: {}",
+        response2
+    );
+    assert!(
+        response2.contains("status"),
+        "Expected JSON response, got: {}",
+        response2
+    );
     println!("✓ Got JSON response");
 
     // Test 3: GET /unknown
     println!("\n[Test 3] Request unknown path...");
     let response3 = tls_exchange(server.port, "GET /unknown HTTP/1.1\r\n\r\n").await?;
-    assert!(response3.contains("404"), "Expected 404, got: {}", response3);
+    assert!(
+        response3.contains("404"),
+        "Expected 404, got: {}",
+        response3
+    );
     println!("✓ Got 404 response");
 
     println!("\n=== All TLS HTTP-like tests passed! ===");

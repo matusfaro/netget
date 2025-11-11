@@ -2,7 +2,8 @@
 
 ## Overview
 
-SSH Agent client connects to an existing SSH Agent (OpenSSH agent, NetGet agent, or other compatible agents) and allows the LLM to interact with it - requesting identities, signing data, adding/removing keys.
+SSH Agent client connects to an existing SSH Agent (OpenSSH agent, NetGet agent, or other compatible agents) and allows
+the LLM to interact with it - requesting identities, signing data, adding/removing keys.
 
 ## Protocol Specification
 
@@ -16,6 +17,7 @@ SSH Agent client connects to an existing SSH Agent (OpenSSH agent, NetGet agent,
 ### Custom Implementation
 
 Uses a custom SSH Agent protocol implementation for:
+
 - Full control over message construction
 - Direct integration with NetGet's LLM action system
 - Simple, lightweight client without complex dependencies
@@ -48,33 +50,34 @@ Prevents concurrent LLM calls while processing responses.
 
 ### Supported Operations
 
-| Operation | Code | Direction | LLM Action | Response |
-|-----------|------|-----------|------------|----------|
-| REQUEST_IDENTITIES | 11 | Client→Agent | `request_identities` | IDENTITIES_ANSWER (12) |
-| SIGN_REQUEST | 13 | Client→Agent | `sign_request` | SIGN_RESPONSE (14) |
-| ADD_IDENTITY | 17 | Client→Agent | `add_identity` | SUCCESS (6) / FAILURE (5) |
-| REMOVE_IDENTITY | 18 | Client→Agent | `remove_identity` | SUCCESS / FAILURE |
-| REMOVE_ALL | 19 | Client→Agent | `remove_all_identities` | SUCCESS / FAILURE |
+| Operation          | Code | Direction    | LLM Action              | Response                  |
+|--------------------|------|--------------|-------------------------|---------------------------|
+| REQUEST_IDENTITIES | 11   | Client→Agent | `request_identities`    | IDENTITIES_ANSWER (12)    |
+| SIGN_REQUEST       | 13   | Client→Agent | `sign_request`          | SIGN_RESPONSE (14)        |
+| ADD_IDENTITY       | 17   | Client→Agent | `add_identity`          | SUCCESS (6) / FAILURE (5) |
+| REMOVE_IDENTITY    | 18   | Client→Agent | `remove_identity`       | SUCCESS / FAILURE         |
+| REMOVE_ALL         | 19   | Client→Agent | `remove_all_identities` | SUCCESS / FAILURE         |
 
 ## LLM Integration
 
 ### Control Points
 
 1. **Connected** (`ssh_agent_client_connected`)
-   - Triggered when client connects to agent
-   - LLM can immediately request identities or perform operations
-   - Parameters: `socket_path`
+    - Triggered when client connects to agent
+    - LLM can immediately request identities or perform operations
+    - Parameters: `socket_path`
 
 2. **Response Received** (`ssh_agent_client_response_received`)
-   - Triggered when agent responds to a request
-   - LLM interprets response and decides next action
-   - Parameters:
-     - `response_type`: "identities", "signature", "success", "failure"
-     - `response_data`: Structured response data
+    - Triggered when agent responds to a request
+    - LLM interprets response and decides next action
+    - Parameters:
+        - `response_type`: "identities", "signature", "success", "failure"
+        - `response_data`: Structured response data
 
 ### Action Design (Structured Data)
 
 **Request Identities**:
+
 ```json
 {
   "type": "request_identities"
@@ -82,6 +85,7 @@ Prevents concurrent LLM calls while processing responses.
 ```
 
 **Sign Request**:
+
 ```json
 {
   "type": "sign_request",
@@ -92,6 +96,7 @@ Prevents concurrent LLM calls while processing responses.
 ```
 
 **Add Identity**:
+
 ```json
 {
   "type": "add_identity",
@@ -105,6 +110,7 @@ Prevents concurrent LLM calls while processing responses.
 **Response Events**:
 
 Identities Response:
+
 ```json
 {
   "response_type": "identities",
@@ -121,6 +127,7 @@ Identities Response:
 ```
 
 Signature Response:
+
 ```json
 {
   "response_type": "signature",
@@ -133,6 +140,7 @@ Signature Response:
 ### Memory Usage
 
 The LLM can use memory to:
+
 - Track requested identities
 - Store signature results
 - Maintain state across multiple operations
@@ -141,10 +149,12 @@ The LLM can use memory to:
 ## Logging Strategy
 
 **Dual Logging**:
+
 - `trace!`, `info!`, `error!` macros → `netget.log`
 - `status_tx.send()` → TUI display
 
 **Log Levels**:
+
 - ERROR: Connection errors, parse failures
 - INFO: Connection lifecycle, operations
 - TRACE: Request/response details, hex data

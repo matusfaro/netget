@@ -1,7 +1,7 @@
 //! NFS protocol actions implementation
 
 use crate::llm::actions::{
-    protocol_trait::{ActionResult, Server, Protocol},
+    protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
 use crate::protocol::EventType;
@@ -57,7 +57,7 @@ impl Protocol for NfsProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
@@ -96,7 +96,8 @@ impl Server for NfsProtocol {
                 ctx.state,
                 ctx.status_tx,
                 ctx.server_id,
-            ).await
+            )
+            .await
         })
     }
 
@@ -650,7 +651,6 @@ fn nfs_setattr_response_action() -> ActionDefinition {
     }
 }
 
-
 // ============================================================================
 // NFS Event Type Constants
 // ============================================================================
@@ -683,8 +683,5 @@ pub static NFS_OPERATION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// Get NFS event types
 pub fn get_nfs_event_types() -> Vec<EventType> {
-    vec![
-        NFS_OPERATION_EVENT.clone(),
-    ]
+    vec![NFS_OPERATION_EVENT.clone()]
 }
-

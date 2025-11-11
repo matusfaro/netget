@@ -2,7 +2,8 @@
 
 ## Overview
 
-Standard Bluetooth Battery Service (0x180F) that reports battery level as a percentage (0-100%). This is one of the simplest BLE GATT services.
+Standard Bluetooth Battery Service (0x180F) that reports battery level as a percentage (0-100%). This is one of the
+simplest BLE GATT services.
 
 ## Service Structure
 
@@ -14,6 +15,7 @@ Standard Bluetooth Battery Service (0x180F) that reports battery level as a perc
 ## LLM Actions
 
 ### set_battery_level
+
 Set battery level percentage.
 
 ```json
@@ -24,6 +26,7 @@ Set battery level percentage.
 ```
 
 ### simulate_drain
+
 Gradually decrease battery level.
 
 ```json
@@ -35,6 +38,7 @@ Gradually decrease battery level.
 ```
 
 ### simulate_charge
+
 Gradually increase battery level.
 
 ```json

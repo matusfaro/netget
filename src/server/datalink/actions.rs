@@ -21,8 +21,8 @@ impl DataLinkProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for DataLinkProtocol {
-        fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
-            vec![
+    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        vec![
                 crate::llm::actions::ParameterDefinition {
                     name: "interface".to_string(),
                     type_hint: "string".to_string(),
@@ -38,107 +38,111 @@ impl Protocol for DataLinkProtocol {
                     example: json!("arp"),
                 },
             ]
-        }
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            vec![]
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                show_message_action(),
-                ignore_packet_action(),
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "DataLink"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            get_datalink_event_types()
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["datalink", "data link", "layer 2", "layer2", "l2", "ethernet", "pcap"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState, PrivilegeRequirement};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Beta)
-                .privilege_requirement(PrivilegeRequirement::RawSockets)
-                .implementation("libpcap (pcap crate) for Layer 2 packet capture")
-                .llm_control("Observation only - no packet injection")
-                .e2e_testing("libpcap for packet validation")
-                .notes("Requires root/CAP_NET_RAW for promiscuous mode")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "Layer 2 Ethernet frame server"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Listen on eth0 via Ethernet"
-        }
-        fn group_name(&self) -> &'static str {
-            "Core"
-        }
+    }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        vec![]
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![show_message_action(), ignore_packet_action()]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "DataLink"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_datalink_event_types()
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec![
+            "datalink",
+            "data link",
+            "layer 2",
+            "layer2",
+            "l2",
+            "ethernet",
+            "pcap",
+        ]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{
+            DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2,
+        };
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Beta)
+            .privilege_requirement(PrivilegeRequirement::RawSockets)
+            .implementation("libpcap (pcap crate) for Layer 2 packet capture")
+            .llm_control("Observation only - no packet injection")
+            .e2e_testing("libpcap for packet validation")
+            .notes("Requires root/CAP_NET_RAW for promiscuous mode")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "Layer 2 Ethernet frame server"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Listen on eth0 via Ethernet"
+    }
+    fn group_name(&self) -> &'static str {
+        "Core"
+    }
 }
 
 // Implement Server trait (server-specific functionality)
 impl Server for DataLinkProtocol {
-        fn spawn(
-            &self,
-            ctx: crate::protocol::SpawnContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::server::datalink::DataLinkServer;
-    
-                // DataLink doesn't use SocketAddr, it uses interface name
-                // Extract interface and filter from startup_params
-                let params = ctx.startup_params
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("DataLink requires startup parameters (interface)"))?;
-    
-                let interface = params.get_string("interface");
-                let filter = params.get_optional_string("filter");
-    
-                // Spawn the datalink server
-                let _interface_name = DataLinkServer::spawn_with_llm(
-                    interface,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    filter,
-                    ctx.server_id,
-                ).await?;
-    
-                // DataLink doesn't bind to a socket, so return a dummy address
-                // The listen_addr from context is just a placeholder
-                Ok(ctx.listen_addr)
-            })
-        }
-        fn execute_action(
-            &self,
-            action: serde_json::Value,
-        ) -> Result<ActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "show_message" => {
-                    // Message actions are handled by the LLM's text response
-                    // This action just acknowledges the intent
-                    Ok(ActionResult::NoAction)
-                }
-                "ignore_packet" => Ok(ActionResult::NoAction),
-                _ => Err(anyhow::anyhow!("Unknown DataLink action: {}", action_type)),
-            }
-        }
-}
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::datalink::DataLinkServer;
 
+            // DataLink doesn't use SocketAddr, it uses interface name
+            // Extract interface and filter from startup_params
+            let params = ctx.startup_params.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("DataLink requires startup parameters (interface)")
+            })?;
+
+            let interface = params.get_string("interface");
+            let filter = params.get_optional_string("filter");
+
+            // Spawn the datalink server
+            let _interface_name = DataLinkServer::spawn_with_llm(
+                interface,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                filter,
+                ctx.server_id,
+            )
+            .await?;
+
+            // DataLink doesn't bind to a socket, so return a dummy address
+            // The listen_addr from context is just a placeholder
+            Ok(ctx.listen_addr)
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
+
+        match action_type {
+            "show_message" => {
+                // Message actions are handled by the LLM's text response
+                // This action just acknowledges the intent
+                Ok(ActionResult::NoAction)
+            }
+            "ignore_packet" => Ok(ActionResult::NoAction),
+            _ => Err(anyhow::anyhow!("Unknown DataLink action: {}", action_type)),
+        }
+    }
+}
 
 /// Action definition for show_message
 fn show_message_action() -> ActionDefinition {
@@ -177,7 +181,7 @@ fn ignore_packet_action() -> ActionDefinition {
 pub static DATALINK_PACKET_CAPTURED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "datalink_packet_captured",
-        "Layer 2 Ethernet packet captured from network interface"
+        "Layer 2 Ethernet packet captured from network interface",
     )
     .with_parameters(vec![
         Parameter {
@@ -193,14 +197,9 @@ pub static DATALINK_PACKET_CAPTURED_EVENT: LazyLock<EventType> = LazyLock::new(|
             required: false,
         },
     ])
-    .with_actions(vec![
-        show_message_action(),
-        ignore_packet_action(),
-    ])
+    .with_actions(vec![show_message_action(), ignore_packet_action()])
 });
 
 pub fn get_datalink_event_types() -> Vec<EventType> {
-    vec![
-        DATALINK_PACKET_CAPTURED_EVENT.clone(),
-    ]
+    vec![DATALINK_PACKET_CAPTURED_EVENT.clone()]
 }

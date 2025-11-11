@@ -11,11 +11,11 @@ use tracing::{debug, error, info, trace};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
-use actions::SYSLOG_MESSAGE_EVENT;
-use crate::server::SyslogProtocol;
 use crate::protocol::Event;
+use crate::server::SyslogProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use actions::SYSLOG_MESSAGE_EVENT;
 
 /// Syslog server that forwards messages to LLM
 pub struct SyslogServer;
@@ -42,10 +42,14 @@ impl SyslogServer {
                 match socket.recv_from(&mut buffer).await {
                     Ok((n, peer_addr)) => {
                         let data = buffer[..n].to_vec();
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
 
                         // Add connection to ServerInstance (Syslog "connection" = recent peer)
-                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -60,7 +64,9 @@ impl SyslogServer {
                             status_changed_at: now,
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
-                        app_state.add_connection_to_server(server_id, conn_state).await;
+                        app_state
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         // DEBUG: Log summary
@@ -87,17 +93,23 @@ impl SyslogServer {
                         // Spawn task to handle message with LLM
                         tokio::spawn(async move {
                             // Create syslog_message event
-                            let event = Event::new(&SYSLOG_MESSAGE_EVENT, serde_json::json!({
-                                "facility": parsed.facility,
-                                "severity": parsed.severity,
-                                "timestamp": parsed.timestamp,
-                                "hostname": parsed.hostname,
-                                "appname": parsed.appname,
-                                "message": parsed.message
-                            }));
+                            let event = Event::new(
+                                &SYSLOG_MESSAGE_EVENT,
+                                serde_json::json!({
+                                    "facility": parsed.facility,
+                                    "severity": parsed.severity,
+                                    "timestamp": parsed.timestamp,
+                                    "hostname": parsed.hostname,
+                                    "appname": parsed.appname,
+                                    "message": parsed.message
+                                }),
+                            );
 
                             debug!("Syslog calling LLM for message from {}", peer_addr);
-                            let _ = status_clone.send(format!("[DEBUG] Syslog calling LLM for message from {}", peer_addr));
+                            let _ = status_clone.send(format!(
+                                "[DEBUG] Syslog calling LLM for message from {}",
+                                peer_addr
+                            ));
 
                             // Call LLM
                             match call_llm(
@@ -107,7 +119,9 @@ impl SyslogServer {
                                 None,
                                 &event,
                                 protocol_clone.as_ref(),
-                            ).await {
+                            )
+                            .await
+                            {
                                 Ok(execution_result) => {
                                     // Display messages from LLM
                                     for message in &execution_result.messages {
@@ -115,8 +129,14 @@ impl SyslogServer {
                                         let _ = status_clone.send(format!("[INFO] {}", message));
                                     }
 
-                                    debug!("Syslog got {} protocol results", execution_result.protocol_results.len());
-                                    let _ = status_clone.send(format!("[DEBUG] Syslog got {} protocol results", execution_result.protocol_results.len()));
+                                    debug!(
+                                        "Syslog got {} protocol results",
+                                        execution_result.protocol_results.len()
+                                    );
+                                    let _ = status_clone.send(format!(
+                                        "[DEBUG] Syslog got {} protocol results",
+                                        execution_result.protocol_results.len()
+                                    ));
 
                                     // Syslog is typically one-way (no response needed)
                                     // But LLM can perform actions like storing, forwarding, etc.
@@ -167,7 +187,10 @@ impl SyslogServer {
         };
 
         // Extract hostname
-        let hostname = parsed.hostname.map(|s| s.to_string()).unwrap_or_else(|| "unknown".to_string());
+        let hostname = parsed
+            .hostname
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
 
         // Extract app name (try structured data first, then process for RFC 3164)
         let appname = match &parsed.appname {

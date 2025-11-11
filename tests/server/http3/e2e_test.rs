@@ -9,9 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
 
-mod helpers {
-    pub use crate::server::helpers::*;
-}
+mod helpers {}
 use helpers::{spawn_test_server, TestServerHandle};
 
 /// Test HTTP3 echo server - send data and receive it back
@@ -49,10 +47,7 @@ async fn test_http3_echo() {
     // Connect to HTTP3 server
     let connection = timeout(
         Duration::from_secs(10),
-        endpoint.connect(
-            format!("127.0.0.1:{}", port).parse().unwrap(),
-            "localhost",
-        ),
+        endpoint.connect(format!("127.0.0.1:{}", port).parse().unwrap(), "localhost"),
     )
     .await
     .expect("Connection timeout")
@@ -61,13 +56,10 @@ async fn test_http3_echo() {
     .expect("Failed to complete connection");
 
     // Open bidirectional stream
-    let (mut send, mut recv) = timeout(
-        Duration::from_secs(10),
-        connection.open_bi(),
-    )
-    .await
-    .expect("Stream open timeout")
-    .expect("Failed to open stream");
+    let (mut send, mut recv) = timeout(Duration::from_secs(10), connection.open_bi())
+        .await
+        .expect("Stream open timeout")
+        .expect("Failed to open stream");
 
     // Send test data
     let test_data = b"Hello, HTTP3!";
@@ -77,13 +69,10 @@ async fn test_http3_echo() {
     send.finish().expect("Failed to finish stream");
 
     // Read echo response
-    let response = timeout(
-        Duration::from_secs(10),
-        recv.read_to_end(1024),
-    )
-    .await
-    .expect("Read timeout")
-    .expect("Failed to read response");
+    let response = timeout(Duration::from_secs(10), recv.read_to_end(1024))
+        .await
+        .expect("Read timeout")
+        .expect("Failed to read response");
 
     // Verify echo
     assert_eq!(response, test_data, "Expected echo of sent data");
@@ -129,10 +118,7 @@ async fn test_http3_custom_response() {
     // Connect to HTTP3 server
     let connection = timeout(
         Duration::from_secs(10),
-        endpoint.connect(
-            format!("127.0.0.1:{}", port).parse().unwrap(),
-            "localhost",
-        ),
+        endpoint.connect(format!("127.0.0.1:{}", port).parse().unwrap(), "localhost"),
     )
     .await
     .expect("Connection timeout")
@@ -141,28 +127,20 @@ async fn test_http3_custom_response() {
     .expect("Failed to complete connection");
 
     // Open bidirectional stream
-    let (mut send, mut recv) = timeout(
-        Duration::from_secs(10),
-        connection.open_bi(),
-    )
-    .await
-    .expect("Stream open timeout")
-    .expect("Failed to open stream");
+    let (mut send, mut recv) = timeout(Duration::from_secs(10), connection.open_bi())
+        .await
+        .expect("Stream open timeout")
+        .expect("Failed to open stream");
 
     // Send PING
-    send.write_all(b"PING")
-        .await
-        .expect("Failed to send data");
+    send.write_all(b"PING").await.expect("Failed to send data");
     send.finish().expect("Failed to finish stream");
 
     // Read PONG response
-    let response = timeout(
-        Duration::from_secs(10),
-        recv.read_to_end(1024),
-    )
-    .await
-    .expect("Read timeout")
-    .expect("Failed to read response");
+    let response = timeout(Duration::from_secs(10), recv.read_to_end(1024))
+        .await
+        .expect("Read timeout")
+        .expect("Failed to read response");
 
     let response_str = String::from_utf8_lossy(&response);
     assert!(
@@ -212,10 +190,7 @@ async fn test_http3_multiple_streams() {
     // Connect to HTTP3 server
     let connection = timeout(
         Duration::from_secs(10),
-        endpoint.connect(
-            format!("127.0.0.1:{}", port).parse().unwrap(),
-            "localhost",
-        ),
+        endpoint.connect(format!("127.0.0.1:{}", port).parse().unwrap(), "localhost"),
     )
     .await
     .expect("Connection timeout")

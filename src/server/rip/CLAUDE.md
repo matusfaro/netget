@@ -2,10 +2,12 @@
 
 ## Overview
 
-Routing Information Protocol version 2 (RIPv2) server implementing RFC 2453. RIP is a distance-vector routing protocol where the LLM controls route advertisements, routing decisions, and authentication.
+Routing Information Protocol version 2 (RIPv2) server implementing RFC 2453. RIP is a distance-vector routing protocol
+where the LLM controls route advertisements, routing decisions, and authentication.
 
 **Status**: Experimental (fully implemented, needs testing)
-**Protocol Spec**: [RFC 2453 (RIPv2)](https://datatracker.ietf.org/doc/html/rfc2453), [RFC 1058 (RIPv1)](https://datatracker.ietf.org/doc/html/rfc1058)
+**Protocol Spec
+**: [RFC 2453 (RIPv2)](https://datatracker.ietf.org/doc/html/rfc2453), [RFC 1058 (RIPv1)](https://datatracker.ietf.org/doc/html/rfc1058)
 **Port**: UDP 520
 
 ## Library Choices
@@ -13,6 +15,7 @@ Routing Information Protocol version 2 (RIPv2) server implementing RFC 2453. RIP
 ### No Library - Manual Protocol Implementation
 
 **Why no library**:
+
 - No mature Rust RIP server library exists
 - Available crates focus on routing table manipulation, not RIP protocol
 - Holo routing suite includes RIP but is too heavy (full YANG models, gRPC interfaces)
@@ -20,12 +23,14 @@ Routing Information Protocol version 2 (RIPv2) server implementing RFC 2453. RIP
 - Manual implementation provides full LLM control over routing decisions
 
 **What we implement manually**:
+
 - RIP packet construction (Request and Response messages)
 - Route entry parsing (AFI, IP, subnet mask, next hop, metric)
 - Message header parsing (command, version)
 - Metric handling (1-15 = reachable, 16 = unreachable)
 
 **Why not alternatives**:
+
 - `net-route` - Routing table manipulation, not RIP protocol
 - `holo` - Full routing suite with YANG/gRPC, too heavyweight
 - External RIP daemon (Quagga, FRR) - Violates NetGet architecture
@@ -35,6 +40,7 @@ Routing Information Protocol version 2 (RIPv2) server implementing RFC 2453. RIP
 ### UDP-Based Protocol
 
 RIP uses UDP for lightweight message exchange:
+
 ```rust
 let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
 ```
@@ -46,6 +52,7 @@ Each message is independent (stateless), similar to NTP.
 RIP packets consist of a 4-byte header followed by up to 25 route entries:
 
 **Header (4 bytes)**:
+
 ```
 +--------+--------+--------+--------+
 |Command | Version|     Unused      |
@@ -57,6 +64,7 @@ RIP packets consist of a 4-byte header followed by up to 25 route entries:
 - Unused: Must be zero
 
 **Route Entry (20 bytes each, max 25 per packet)**:
+
 ```
 +---------+---------+---------+---------+
 |    AFI (2 bytes)  | Route Tag (2 bytes)|
@@ -81,11 +89,13 @@ RIP packets consist of a 4-byte header followed by up to 25 route entries:
 ### Message Types
 
 **Request (Command = 1)**:
+
 - Query for routing information
 - Can request entire table (AFI=0, metric=16) or specific routes
 - Typically sent on startup or when triggered
 
 **Response (Command = 2)**:
+
 - Advertise routing table entries
 - Sent in response to requests or periodically (every 30 seconds in production)
 - Contains up to 25 route entries per packet
@@ -93,6 +103,7 @@ RIP packets consist of a 4-byte header followed by up to 25 route entries:
 ### Metric and Hop Count
 
 RIP uses hop count as its metric:
+
 - 1-15: Valid metric (number of hops to destination)
 - 16: Infinity (unreachable route)
 - Maximum 15 hops prevents routing loops
@@ -100,6 +111,7 @@ RIP uses hop count as its metric:
 ### Stateless Processing
 
 Each RIP message is processed independently:
+
 - No session state (unlike BGP)
 - No connection tracking (unlike TCP)
 - Each datagram creates a new "connection" for UI display
@@ -110,6 +122,7 @@ Each RIP message is processed independently:
 ### Startup Parameters
 
 Server configured with routing table:
+
 ```json
 {
   "routes": [
@@ -124,21 +137,22 @@ Extracted from LLM-generated startup prompt.
 ### Sync Actions (Network event triggered)
 
 1. **send_rip_response**: Send routing table response
-   - Routes: Array of route entries (ip_address, subnet_mask, next_hop, metric)
-   - Max 25 routes per packet
+    - Routes: Array of route entries (ip_address, subnet_mask, next_hop, metric)
+    - Max 25 routes per packet
 
 2. **send_rip_request**: Request routing information
-   - Optional routes parameter for specific queries
-   - Omit routes to request entire table
+    - Optional routes parameter for specific queries
+    - Omit routes to request entire table
 
 3. **ignore_request**: Don't send any response
 
 ### Event Types
 
 - `rip_request`: Triggered when any RIP message is received (request or response)
-  - Parameters: command, version, message_type, routes, peer_address, bytes_received
+    - Parameters: command, version, message_type, routes, peer_address, bytes_received
 
 **Event data example**:
+
 ```json
 {
   "event": "rip_request",
@@ -189,6 +203,7 @@ No persistent connections - each message is independent.
 ### Partial Implementation
 
 **Implemented**:
+
 - ✅ RIPv2 packet parsing and construction
 - ✅ Request and Response messages
 - ✅ Route entry parsing (AFI, IP, subnet, next hop, metric)
@@ -196,6 +211,7 @@ No persistent connections - each message is independent.
 - ✅ Message validation
 
 **Not Implemented**:
+
 - ❌ Routing table storage (LLM provides routes on-demand)
 - ❌ Periodic updates (no 30-second timer, only responds to requests)
 - ❌ Route timeout/garbage collection
@@ -210,6 +226,7 @@ No persistent connections - each message is independent.
 ### No Routing Table
 
 Server doesn't maintain routing table:
+
 - LLM generates routes on-demand for each request
 - Cannot learn routes from other RIP speakers
 - Cannot propagate learned routes
@@ -218,6 +235,7 @@ Server doesn't maintain routing table:
 ### No Loop Prevention
 
 Standard RIP loop prevention not implemented:
+
 - No split horizon (don't advertise routes back to source)
 - No poison reverse (advertise unreachable routes to source)
 - No hold-down timers
@@ -226,6 +244,7 @@ Standard RIP loop prevention not implemented:
 ### Testing Limitations
 
 RIP protocol requires multiple routers:
+
 - E2E tests cover basic request/response
 - No tests for route convergence or loop prevention
 - No tests for triggered updates or periodic updates
@@ -233,6 +252,7 @@ RIP protocol requires multiple routers:
 ### No Production Use
 
 **DO NOT use for production routing**:
+
 - No routing table persistence
 - No route learning or propagation
 - No loop prevention mechanisms
@@ -249,6 +269,7 @@ netget> Listen on port 520 via RIP. Advertise routes for 192.168.1.0/24 (metric 
 ```
 
 Server output:
+
 ```
 [INFO] RIP server listening on 0.0.0.0:520
 → RIP server ready on 0.0.0.0:520
@@ -257,12 +278,14 @@ Server output:
 ### Request Entire Routing Table
 
 Client sends request (AFI=0, metric=16):
+
 ```
 [DEBUG] RIP received 24 bytes from 192.0.2.10:520 (cmd=1, ver=2, entries=1)
 [TRACE] RIP data (hex): 010200000000000000000000000000000000000000000010
 ```
 
 LLM receives event:
+
 ```json
 {
   "event": "rip_request",
@@ -275,6 +298,7 @@ LLM receives event:
 ```
 
 LLM responds with routes:
+
 ```json
 {
   "actions": [
@@ -300,6 +324,7 @@ LLM responds with routes:
 ```
 
 Server sends response:
+
 ```
 [DEBUG] RIP sent 44 bytes to 192.0.2.10:520
 → RIP response to 192.0.2.10:520 (44 bytes)
@@ -308,11 +333,13 @@ Server sends response:
 ### Receiving Route Advertisement
 
 Peer sends response with routes:
+
 ```
 [DEBUG] RIP received 44 bytes from 192.0.2.10:520 (cmd=2, ver=2, entries=2)
 ```
 
 LLM receives event:
+
 ```json
 {
   "event": "rip_request",
@@ -342,6 +369,7 @@ LLM can log, store, or respond to received routes.
 ### Advertising Unreachable Route
 
 LLM responds with metric 16 (infinity):
+
 ```json
 {
   "type": "send_rip_response",
@@ -386,6 +414,7 @@ This indicates the route is unreachable (withdrawn).
 ### NOT for Production Routing
 
 RIP server should **not** be used for production routing:
+
 - No routing table or route learning
 - No loop prevention mechanisms
 - No periodic updates or route expiration
@@ -410,11 +439,13 @@ For production routing, use FRR, Quagga, or BIRD.
 ### Scripting Compatibility
 
 RIP is excellent for scripting:
+
 - Simple request/response logic
 - Deterministic responses
 - No complex state machine
 
 When scripting enabled:
+
 - Server startup generates script (1 LLM call)
 - All requests handled by script (0 LLM calls)
 - Script can generate routing table instantly

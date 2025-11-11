@@ -86,14 +86,7 @@ pub async fn try_execute_event_handler(
 
         EventHandlerType::Static { actions } => {
             // Execute static handler
-            execute_static_handler(
-                state,
-                event_type_id,
-                event_description,
-                actions,
-                protocol,
-            )
-            .await
+            execute_static_handler(state, event_type_id, event_description, actions, protocol).await
         }
     }
 }
@@ -115,7 +108,10 @@ async fn execute_script_handler(
     let server_info = state.get_server(server_id).await;
 
     let Some(server) = server_info else {
-        warn!("Server #{} not found for script execution", server_id.as_u32());
+        warn!(
+            "Server #{} not found for script execution",
+            server_id.as_u32()
+        );
         return Ok(EventHandlerResult::FallbackToLlm);
     };
 
@@ -134,9 +130,8 @@ async fn execute_script_handler(
     };
 
     // Build structured input for script
-    let event_json = event_data.unwrap_or_else(|| {
-        serde_json::json!({"description": event_description})
-    });
+    let event_json =
+        event_data.unwrap_or_else(|| serde_json::json!({"description": event_description}));
 
     let script_input = crate::scripting::types::ScriptInput {
         event_type_id: event_type_id.to_string(),
@@ -161,7 +156,10 @@ async fn execute_script_handler(
         "go" => crate::scripting::ScriptLanguage::Go,
         "perl" => crate::scripting::ScriptLanguage::Perl,
         _ => {
-            warn!("Unknown script language '{}', falling back to LLM", language);
+            warn!(
+                "Unknown script language '{}', falling back to LLM",
+                language
+            );
             return Ok(EventHandlerResult::FallbackToLlm);
         }
     };

@@ -13,12 +13,14 @@ The Socket File client tests use a **hybrid approach**:
 **Target:** 0 LLM calls per test run
 
 **Rationale:**
+
 - Socket File is essentially TCP over Unix domain sockets
 - Same patterns as TCP client (already validated)
 - Unit tests provide sufficient coverage for protocol implementation
 - E2E would require complex test setup with Unix socket servers
 
 **Alternative Testing:**
+
 - Manual testing with real services (Docker, Redis, PostgreSQL)
 - Integration tests in larger test suites (if needed)
 
@@ -27,6 +29,7 @@ The Socket File client tests use a **hybrid approach**:
 **Total:** < 1 second
 
 **Breakdown:**
+
 - `test_socket_file_metadata`: < 10ms (protocol metadata verification)
 - `test_socket_file_actions`: < 10ms (action parsing and execution)
 - `test_socket_file_events`: < 10ms (event type validation)
@@ -37,6 +40,7 @@ The Socket File client tests use a **hybrid approach**:
 ### What We Test
 
 **✅ Protocol Metadata:**
+
 - Protocol name ("SocketFile")
 - Stack name ("UnixSocket")
 - Keywords (socket file, unix socket, domain socket)
@@ -44,17 +48,20 @@ The Socket File client tests use a **hybrid approach**:
 - Development state (Experimental)
 
 **✅ Action Definitions:**
+
 - Async actions (send_socket_file_data, disconnect)
 - Sync actions (send_socket_file_data, wait_for_more)
 - Action parameter validation
 - Action execution (hex decoding, result types)
 
 **✅ Event Types:**
+
 - socket_file_connected event
 - socket_file_data_received event
 - Event parameter definitions
 
 **✅ Basic Connectivity:**
+
 - Connection to Unix socket server
 - Socket path handling
 - Error handling (missing socket file)
@@ -62,16 +69,19 @@ The Socket File client tests use a **hybrid approach**:
 ### What We Don't Test (Yet)
 
 **❌ Full LLM Integration:**
+
 - LLM interpreting received data
 - LLM generating response actions
 - Memory updates across interactions
 
 **❌ Real-World Services:**
+
 - Docker daemon (/var/run/docker.sock)
 - PostgreSQL socket
 - Redis socket
 
 **❌ Advanced Features:**
+
 - Credential passing (SCM_CREDENTIALS)
 - File descriptor passing
 - Abstract namespace sockets (Linux)
@@ -85,6 +95,7 @@ The Socket File client tests use a **hybrid approach**:
 **Impact:** Tests will fail on Windows (except Windows 10+ with AF_UNIX support)
 
 **Mitigation:**
+
 - Feature-gated tests (`#[cfg(all(test, feature = "socket_file"))]`)
 - Skip tests on unsupported platforms
 
@@ -95,6 +106,7 @@ The Socket File client tests use a **hybrid approach**:
 **Impact:** Subsequent test runs may fail if socket file already exists
 
 **Mitigation:**
+
 - Always clean up socket files in test teardown
 - Use unique socket paths per test (include PID)
 - `let _ = std::fs::remove_file(&socket_path);` before and after tests
@@ -106,6 +118,7 @@ The Socket File client tests use a **hybrid approach**:
 **Impact:** Tests may fail in restricted environments
 
 **Mitigation:**
+
 - Use ./tmp directory (project-local)
 - Fall back to test-specific directory if ./tmp unavailable
 
@@ -125,6 +138,7 @@ The Socket File client tests use a **hybrid approach**:
 **Status:** Not implemented
 
 **If Needed:**
+
 - Test with Docker socket (if Docker installed)
 - Test with Redis socket (if Redis running)
 - Requires conditional test execution (`#[ignore]` or environment checks)
@@ -135,6 +149,7 @@ The Socket File client tests use a **hybrid approach**:
 **Status:** Not implemented
 
 **If Needed:**
+
 - Full E2E test with LLM controlling socket communication
 - Test protocol-specific interactions (HTTP over Unix socket)
 - Budget: 5-10 LLM calls
@@ -226,6 +241,7 @@ let socket_path = tmp_dir.path().join("test.sock");
 ### Benchmarking
 
 Add criterion benchmarks for:
+
 - Connection latency
 - Throughput (bytes/second)
 - Comparison with TCP loopback

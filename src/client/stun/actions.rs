@@ -14,7 +14,7 @@ use std::sync::LazyLock;
 pub static STUN_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "stun_connected",
-        "STUN client initialized and ready to query external address"
+        "STUN client initialized and ready to query external address",
     )
     .with_parameters(vec![
         Parameter {
@@ -36,7 +36,7 @@ pub static STUN_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 pub static STUN_CLIENT_BINDING_RESPONSE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "stun_binding_response",
-        "STUN binding response received with external address information"
+        "STUN binding response received with external address information",
     )
     .with_parameters(vec![
         Parameter {
@@ -111,7 +111,8 @@ impl crate::llm::actions::protocol_trait::Protocol for StunClientProtocol {
         vec![
             ActionDefinition {
                 name: "send_binding_request".to_string(),
-                description: "Send another STUN binding request to refresh external address".to_string(),
+                description: "Send another STUN binding request to refresh external address"
+                    .to_string(),
                 parameters: vec![],
                 example: json!({
                     "type": "send_binding_request"
@@ -154,7 +155,13 @@ impl crate::llm::actions::protocol_trait::Protocol for StunClientProtocol {
     }
 
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["stun", "stun client", "nat traversal", "external ip", "public ip"]
+        vec![
+            "stun",
+            "stun client",
+            "nat traversal",
+            "external ip",
+            "public ip",
+        ]
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
@@ -208,15 +215,16 @@ impl Client for StunClientProtocol {
             .context("Missing 'type' field in action")?;
 
         match action_type {
-            "send_binding_request" => {
-                Ok(ClientActionResult::Custom {
-                    name: "send_binding_request".to_string(),
-                    data: json!({}),
-                })
-            }
+            "send_binding_request" => Ok(ClientActionResult::Custom {
+                name: "send_binding_request".to_string(),
+                data: json!({}),
+            }),
             "disconnect" => Ok(ClientActionResult::Disconnect),
             "wait_for_more" => Ok(ClientActionResult::WaitForMore),
-            _ => Err(anyhow::anyhow!("Unknown STUN client action: {}", action_type)),
+            _ => Err(anyhow::anyhow!(
+                "Unknown STUN client action: {}",
+                action_type
+            )),
         }
     }
 }

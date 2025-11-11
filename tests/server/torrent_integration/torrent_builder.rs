@@ -66,7 +66,8 @@ impl TorrentBuilder {
         );
 
         // Calculate info_hash
-        let info_bencode = serde_bencode::to_bytes(&serde_bencode::value::Value::Dict(info.clone()))?;
+        let info_bencode =
+            serde_bencode::to_bytes(&serde_bencode::value::Value::Dict(info.clone()))?;
         let mut hasher = Sha1::new();
         hasher.update(&info_bencode);
         let info_hash = hex::encode(hasher.finalize());
@@ -77,10 +78,7 @@ impl TorrentBuilder {
             b"announce".to_vec(),
             serde_bencode::value::Value::Bytes(self.announce.as_bytes().to_vec()),
         );
-        torrent.insert(
-            b"info".to_vec(),
-            serde_bencode::value::Value::Dict(info),
-        );
+        torrent.insert(b"info".to_vec(), serde_bencode::value::Value::Dict(info));
 
         let torrent_bytes = serde_bencode::to_bytes(&serde_bencode::value::Value::Dict(torrent))?;
 
@@ -131,7 +129,8 @@ impl TorrentInfo {
         let piece_length = info_dict
             .get(b"piece length".as_ref())
             .and_then(|v| v.as_int())
-            .ok_or_else(|| anyhow::anyhow!("Missing piece length"))? as usize;
+            .ok_or_else(|| anyhow::anyhow!("Missing piece length"))?
+            as usize;
 
         // Extract pieces
         let pieces_bytes = info_dict

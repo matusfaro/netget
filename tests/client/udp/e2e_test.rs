@@ -14,7 +14,9 @@ mod udp_client_tests {
     #[tokio::test]
     async fn test_udp_client_connect_to_server() -> E2EResult<()> {
         // Start a UDP server listening on an available port
-        let server_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via UDP. Echo received datagrams back to sender.");
+        let server_config = NetGetConfig::new(
+            "Listen on port {AVAILABLE_PORT} via UDP. Echo received datagrams back to sender.",
+        );
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -52,9 +54,10 @@ mod udp_client_tests {
     /// LLM calls: 2 (client startup)
     #[tokio::test]
     async fn test_udp_client_send_datagram() -> E2EResult<()> {
-
         // Start a simple UDP server
-        let server_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via UDP. Log all incoming datagrams.");
+        let server_config = NetGetConfig::new(
+            "Listen on port {AVAILABLE_PORT} via UDP. Log all incoming datagrams.",
+        );
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -125,12 +128,16 @@ mod udp_client_tests {
     #[tokio::test]
     async fn test_udp_client_change_target() -> E2EResult<()> {
         // Start two UDP servers
-        let server1_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via UDP. Log 'SERVER1' for each datagram.");
+        let server1_config = NetGetConfig::new(
+            "Listen on port {AVAILABLE_PORT} via UDP. Log 'SERVER1' for each datagram.",
+        );
         let mut server1 = start_netget_server(server1_config).await?;
 
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-        let server2_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via UDP. Log 'SERVER2' for each datagram.");
+        let server2_config = NetGetConfig::new(
+            "Listen on port {AVAILABLE_PORT} via UDP. Log 'SERVER2' for each datagram.",
+        );
         let mut server2 = start_netget_server(server2_config).await?;
 
         tokio::time::sleep(Duration::from_millis(500)).await;

@@ -5,7 +5,7 @@
 
 #![cfg(all(test, feature = "smb", feature = "smb"))]
 
-use crate::server::helpers::{start_netget_server, ServerConfig, E2EResult};
+use crate::server::helpers::{start_netget_server, E2EResult, ServerConfig};
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -148,11 +148,7 @@ async fn test_smb_negotiate() -> E2EResult<()> {
     assert!(n >= 68, "Response too short for SMB2 message");
 
     // Check SMB2 signature
-    assert_eq!(
-        &response[4..8],
-        b"\xFESMB",
-        "Invalid SMB2 signature"
-    );
+    assert_eq!(&response[4..8], b"\xFESMB", "Invalid SMB2 signature");
 
     // Check status (should be 0 = success)
     if let Some(status) = parse_smb2_status(&response) {
@@ -212,11 +208,7 @@ async fn test_smb_session_setup() -> E2EResult<()> {
 
     // Verify SMB2 response
     assert!(n >= 68, "Response too short for SMB2 message");
-    assert_eq!(
-        &response[4..8],
-        b"\xFESMB",
-        "Invalid SMB2 signature"
-    );
+    assert_eq!(&response[4..8], b"\xFESMB", "Invalid SMB2 signature");
 
     if let Some(status) = parse_smb2_status(&response) {
         println!("  [TEST] Session Setup status: 0x{:08X}", status);
@@ -450,7 +442,10 @@ async fn test_smb_auth_llm_controlled() -> E2EResult<()> {
         if status == 0 {
             println!("  [TEST] ✓ Guest authentication successful (LLM allowed)");
         } else {
-            println!("  [TEST] Note: Authentication status 0x{:08X} (LLM may have denied guest)", status);
+            println!(
+                "  [TEST] Note: Authentication status 0x{:08X} (LLM may have denied guest)",
+                status
+            );
         }
     }
 
@@ -493,9 +488,9 @@ async fn test_smb_connection_tracking() -> E2EResult<()> {
     // Check server output for connection tracking indicators
     let output = server.get_output().await;
     let has_connection_tracking = output.iter().any(|line| {
-        line.contains("SMB connection") ||
-        line.contains("connection from") ||
-        line.contains("bytes")
+        line.contains("SMB connection")
+            || line.contains("connection from")
+            || line.contains("bytes")
     });
 
     if has_connection_tracking {

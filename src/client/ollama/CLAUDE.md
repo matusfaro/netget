@@ -2,7 +2,8 @@
 
 ## Overview
 
-The Ollama client connects to Ollama API servers (real or mock) and allows the LLM to control API requests and interpret responses. This is useful for testing, automation, and LLM-driven interactions with Ollama models.
+The Ollama client connects to Ollama API servers (real or mock) and allows the LLM to control API requests and interpret
+responses. This is useful for testing, automation, and LLM-driven interactions with Ollama models.
 
 ## Architecture
 
@@ -43,11 +44,13 @@ This pattern matches OpenAI client implementation.
 **`ollama_connected`** - Client initialized
 
 Parameters:
+
 - `api_endpoint` - Ollama server URL
 
 **`ollama_response_received`** - Response received from API
 
 Parameters:
+
 - `response_type` - Type: "generate", "chat", "models", "error"
 - `content` - Response text or error message
 - `model` - Model used (if applicable)
@@ -165,11 +168,13 @@ Current implementation sets `"stream": false` in all requests. Streaming would r
 ### 2. Limited API Coverage
 
 Only implements core endpoints:
+
 - `/api/tags`
 - `/api/generate`
 - `/api/chat`
 
 Missing:
+
 - `/api/embeddings`
 - `/api/pull`
 - `/api/show`
@@ -179,11 +184,13 @@ Missing:
 
 ### 3. No Error Recovery
 
-If a request fails, the error is logged but no automatic retry. LLM can decide to retry via actions, but no built-in backoff/retry logic.
+If a request fails, the error is logged but no automatic retry. LLM can decide to retry via actions, but no built-in
+backoff/retry logic.
 
 ### 4. No Request Cancellation
 
-Long-running generate requests cannot be cancelled mid-flight. Ollama API supports this via DELETE to `/api/generate`, but not implemented.
+Long-running generate requests cannot be cancelled mid-flight. Ollama API supports this via DELETE to `/api/generate`,
+but not implemented.
 
 ## Startup Parameters
 
@@ -198,6 +205,7 @@ ParameterDefinition {
 ```
 
 Example:
+
 ```
 open_client ollama http://localhost:11434 "Ask llama2 about Rust" default_model=llama2
 ```
@@ -207,6 +215,7 @@ open_client ollama http://localhost:11434 "Ask llama2 about Rust" default_model=
 See `tests/client/ollama/CLAUDE.md` for E2E testing approach.
 
 Key test scenarios:
+
 - Connect to Ollama server
 - Send generate request
 - Send chat request
@@ -252,14 +261,14 @@ Connect to my local Ollama and list all available models
 
 ## Comparison with OpenAI Client
 
-| Feature | Ollama Client | OpenAI Client |
-|---------|---------------|---------------|
-| **API Library** | `reqwest` (direct) | `async-openai` |
-| **Auth** | None | API key required |
-| **Endpoints** | 3 (tags, generate, chat) | 2 (chat, embeddings) |
-| **Streaming** | Not yet | Not yet |
-| **Complexity** | Simple | Moderate |
-| **Use Case** | Local models | Cloud API |
+| Feature         | Ollama Client            | OpenAI Client        |
+|-----------------|--------------------------|----------------------|
+| **API Library** | `reqwest` (direct)       | `async-openai`       |
+| **Auth**        | None                     | API key required     |
+| **Endpoints**   | 3 (tags, generate, chat) | 2 (chat, embeddings) |
+| **Streaming**   | Not yet                  | Not yet              |
+| **Complexity**  | Simple                   | Moderate             |
+| **Use Case**    | Local models             | Cloud API            |
 
 ## Error Handling
 
@@ -270,6 +279,7 @@ Errors are categorized:
 3. **Parse Errors**: Invalid JSON → Logged and sent to LLM as error event
 
 LLM can decide how to handle errors:
+
 - Retry with different model
 - Disconnect
 - Log and continue

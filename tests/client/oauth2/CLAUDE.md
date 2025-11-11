@@ -4,7 +4,9 @@
 
 **Approach**: Black-box E2E testing with mock OAuth2 server
 
-**Rationale**: OAuth2 flows involve HTTP requests to provider endpoints. Testing against a real provider introduces dependencies and rate limits. A mock server provides:
+**Rationale**: OAuth2 flows involve HTTP requests to provider endpoints. Testing against a real provider introduces
+dependencies and rate limits. A mock server provides:
+
 1. Full control over responses
 2. Fast, reliable tests
 3. No external dependencies
@@ -15,26 +17,28 @@
 **Target**: < 10 LLM calls per test suite
 
 **Breakdown**:
+
 1. **Password Flow Test** (2 calls)
-   - Call 1: Initialize client, trigger password exchange
-   - Call 2: Process token obtained event
+    - Call 1: Initialize client, trigger password exchange
+    - Call 2: Process token obtained event
 
 2. **Client Credentials Flow Test** (2 calls)
-   - Call 1: Initialize client, trigger credentials exchange
-   - Call 2: Process token obtained event
+    - Call 1: Initialize client, trigger credentials exchange
+    - Call 2: Process token obtained event
 
 3. **Token Refresh Test** (3 calls)
-   - Call 1: Initial authentication
-   - Call 2: Token obtained event
-   - Call 3: Refresh token event
+    - Call 1: Initial authentication
+    - Call 2: Token obtained event
+    - Call 3: Refresh token event
 
 4. **Error Handling Test** (2 calls)
-   - Call 1: Initialize client, trigger invalid auth
-   - Call 2: Process error event
+    - Call 1: Initialize client, trigger invalid auth
+    - Call 2: Process error event
 
 **Total**: 9 LLM calls (within budget)
 
 **Optimization Strategies**:
+
 - Use single client instance where possible
 - Test device code flow manually (not automated, requires polling)
 - Skip authorization code flow in automated tests (requires browser)
@@ -44,6 +48,7 @@
 **Target**: < 30 seconds for full test suite
 
 **Breakdown**:
+
 - Mock server startup: < 1 second
 - Password flow test: ~5 seconds (LLM + HTTP)
 - Client credentials test: ~5 seconds
@@ -52,6 +57,7 @@
 - Mock server shutdown: < 1 second
 
 **Assumptions**:
+
 - Local Ollama instance with fast model (qwen3-coder:30b or similar)
 - Mock OAuth2 server responds instantly
 - No external network dependencies
@@ -61,13 +67,15 @@
 ### Mock OAuth2 Server
 
 **Implementation**: ✅ **COMPLETED**
-   - Uses `axum` (from mcp feature) to create simple token endpoint
-   - Responds to POST `/oauth/token` with mock tokens
-   - Supports all grant_types: password, client_credentials, refresh_token, device_code
-   - Dynamically allocates ports to avoid conflicts
-   - Separate error server for testing error scenarios
+
+- Uses `axum` (from mcp feature) to create simple token endpoint
+- Responds to POST `/oauth/token` with mock tokens
+- Supports all grant_types: password, client_credentials, refresh_token, device_code
+- Dynamically allocates ports to avoid conflicts
+- Separate error server for testing error scenarios
 
 **Features**:
+
 - `start_mock_oauth_server()` - Returns different tokens based on grant type
 - `start_mock_oauth_server_with_errors()` - Returns 400 errors for testing error handling
 - Automatic port allocation using `TcpListener::bind("127.0.0.1:0")`
@@ -76,6 +84,7 @@
 ### Test Utilities
 
 **Helper Functions**:
+
 - `start_mock_oauth_server()` - Spawn mock server, return URL
 - `stop_mock_oauth_server()` - Graceful shutdown
 - `assert_token_stored(client_id)` - Verify token in protocol_data
@@ -86,15 +95,18 @@
 ### Test 1: Password Flow
 
 **Setup**:
+
 1. Start mock OAuth2 server
 2. Open OAuth2 client with password flow instruction
 
 **Execution**:
+
 1. LLM triggers `exchange_password` action
 2. Client sends POST to `/oauth/token` with grant_type=password
 3. Mock server returns access token
 
 **Assertions**:
+
 - Client status is Connected
 - Access token stored in protocol_data
 - Token type is "Bearer"
@@ -106,15 +118,18 @@
 ### Test 2: Client Credentials Flow
 
 **Setup**:
+
 1. Reuse mock OAuth2 server
 2. Open OAuth2 client with client credentials instruction
 
 **Execution**:
+
 1. LLM triggers `exchange_client_credentials` action
 2. Client sends POST to `/oauth/token` with grant_type=client_credentials
 3. Mock server returns access token (no refresh token)
 
 **Assertions**:
+
 - Access token stored
 - No refresh token (expected for client credentials)
 - Correct scopes granted
@@ -124,15 +139,18 @@
 ### Test 3: Token Refresh
 
 **Setup**:
+
 1. Reuse mock OAuth2 server
 2. Authenticate with password flow to get initial tokens
 
 **Execution**:
+
 1. LLM triggers `refresh_token` action
 2. Client sends POST to `/oauth/token` with grant_type=refresh_token
 3. Mock server returns new access token
 
 **Assertions**:
+
 - New access token stored
 - Old access token replaced
 - Refresh token may be rotated
@@ -142,15 +160,18 @@
 ### Test 4: Error Handling
 
 **Setup**:
+
 1. Configure mock server to return error
 2. Open OAuth2 client with invalid credentials
 
 **Execution**:
+
 1. LLM triggers authentication
 2. Client sends request
 3. Mock server returns `{"error": "invalid_grant", "error_description": "Invalid credentials"}`
 
 **Assertions**:
+
 - Client status remains Connected (error doesn't disconnect)
 - LLM received `oauth2_error` event
 - Error details captured
@@ -162,6 +183,7 @@
 **Note**: Not automated due to polling complexity and timing
 
 **Manual Test Steps**:
+
 1. Start OAuth2 client with device code flow
 2. Verify verification URL and user code displayed
 3. Simulate user authorization (mock server marks code as authorized)
@@ -175,6 +197,7 @@
 **Note**: Not automated due to browser redirect requirement
 
 **Manual Test Steps**:
+
 1. Generate authorization URL with `generate_auth_url`
 2. Manually visit URL (or use HTTP client to fetch)
 3. Extract authorization code from callback
@@ -185,25 +208,27 @@
 ## Known Issues
 
 1. **Device Code Polling**: Background polling task may not be properly cleaned up in tests
-   - **Mitigation**: Use timeout to stop polling automatically
+    - **Mitigation**: Use timeout to stop polling automatically
 
 2. **PKCE Randomness**: PKCE verifier is random, hard to test deterministically
-   - **Mitigation**: Test that PKCE fields are populated, not specific values
+    - **Mitigation**: Test that PKCE fields are populated, not specific values
 
 3. **Token Expiration**: Time-based expiration not tested
-   - **Mitigation**: Manual test or long-running test (not in CI)
+    - **Mitigation**: Manual test or long-running test (not in CI)
 
 4. **Provider Compatibility**: Different providers have different requirements
-   - **Mitigation**: Document provider-specific quirks in implementation CLAUDE.md
+    - **Mitigation**: Document provider-specific quirks in implementation CLAUDE.md
 
 ## Flaky Test Mitigation
 
 **Potential Issues**:
+
 - Network timeouts (mock server startup)
 - LLM response latency
 - Race conditions in polling
 
 **Mitigations**:
+
 - Increase test timeouts to 30 seconds per test
 - Retry mock server startup if bind fails
 - Use explicit waits for async operations
@@ -222,6 +247,7 @@ RUST_LOG=debug ./cargo-isolated.sh test --no-default-features --features oauth2 
 ## Feature Gating
 
 All tests MUST be feature-gated:
+
 ```rust
 #[cfg(all(test, feature = "oauth2"))]
 mod tests {
@@ -232,6 +258,7 @@ mod tests {
 ## Dependencies for Tests
 
 Test-only dependencies (in `[dev-dependencies]`):
+
 - `axum` - Mock HTTP server
 - `tower-http` - Middleware for axum
 - Existing: `tokio-test`, `ctor`

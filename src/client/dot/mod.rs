@@ -13,8 +13,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
 use tokio_rustls::client::TlsStream;
-use tokio_rustls::rustls::{ClientConfig, RootCertStore};
 use tokio_rustls::rustls::pki_types::ServerName;
+use tokio_rustls::rustls::{ClientConfig, RootCertStore};
 use tokio_rustls::TlsConnector;
 use tracing::{debug, error, info, trace};
 
@@ -55,10 +55,14 @@ impl DotClient {
         client_id: ClientId,
     ) -> Result<SocketAddr> {
         info!("DoT client {} connecting to {}", client_id, remote_addr);
-        let _ = status_tx.send(format!("[CLIENT] DoT client {} connecting to {}", client_id, remote_addr));
+        let _ = status_tx.send(format!(
+            "[CLIENT] DoT client {} connecting to {}",
+            client_id, remote_addr
+        ));
 
         // Parse remote address
-        let remote_socket_addr: SocketAddr = remote_addr.parse()
+        let remote_socket_addr: SocketAddr = remote_addr
+            .parse()
             .context("Invalid remote address format")?;
 
         // Extract hostname for SNI (or use IP as fallback)
@@ -92,7 +96,8 @@ impl DotClient {
             }
         };
 
-        let tls_stream = connector.connect(server_name, tcp_stream)
+        let tls_stream = connector
+            .connect(server_name, tcp_stream)
             .await
             .context("TLS handshake failed")?;
 
@@ -100,7 +105,9 @@ impl DotClient {
         let _ = status_tx.send(format!("[CLIENT] DoT client {} connected", client_id));
 
         // Update status
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Split stream for bidirectional communication
@@ -130,7 +137,9 @@ impl DotClient {
                 read_llm_client,
                 read_status_tx,
                 client_data_for_read,
-            ).await {
+            )
+            .await
+            {
                 error!("DoT client {} read loop error: {}", client_id, e);
             }
         });
@@ -154,8 +163,13 @@ impl DotClient {
                 Some(&event),
                 protocol.as_ref(),
                 &status_tx,
-            ).await {
-                Ok(ClientLlmResult { actions, memory_updates }) => {
+            )
+            .await
+            {
+                Ok(ClientLlmResult {
+                    actions,
+                    memory_updates,
+                }) => {
                     // Update memory
                     if let Some(mem) = memory_updates {
                         client_data.lock().await.memory = mem;
@@ -169,7 +183,9 @@ impl DotClient {
                             &write_half_arc,
                             &status_tx,
                             &app_state,
-                        ).await {
+                        )
+                        .await
+                        {
                             error!("DoT client {} action execution failed: {}", client_id, e);
                         }
                     }
@@ -193,7 +209,6 @@ impl DotClient {
         status_tx: mpsc::UnboundedSender<String>,
         client_data: Arc<Mutex<ClientData>>,
     ) -> Result<()> {
-
         loop {
             // Check client status
             if app_state.get_client(client_id).await.is_none() {
@@ -207,12 +222,18 @@ impl DotClient {
                 Ok(_) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                     debug!("DoT client {} connection closed by server", client_id);
-                    let _ = status_tx.send(format!("[CLIENT] DoT client {} disconnected", client_id));
-                    app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
+                    let _ =
+                        status_tx.send(format!("[CLIENT] DoT client {} disconnected", client_id));
+                    app_state
+                        .update_client_status(client_id, ClientStatus::Disconnected)
+                        .await;
                     break;
                 }
                 Err(e) => {
-                    error!("DoT client {} failed to read length prefix: {}", client_id, e);
+                    error!(
+                        "DoT client {} failed to read length prefix: {}",
+                        client_id, e
+                    );
                     break;
                 }
             }
@@ -220,7 +241,10 @@ impl DotClient {
             let dns_len = u16::from_be_bytes(len_buf) as usize;
 
             if dns_len == 0 || dns_len > 65535 {
-                error!("DoT client {} invalid DNS message length: {}", client_id, dns_len);
+                error!(
+                    "DoT client {} invalid DNS message length: {}",
+                    client_id, dns_len
+                );
                 break;
             }
 
@@ -238,7 +262,10 @@ impl DotClient {
             let dns_message = match DnsMessage::from_vec(&dns_buf) {
                 Ok(msg) => msg,
                 Err(e) => {
-                    error!("DoT client {} failed to parse DNS message: {}", client_id, e);
+                    error!(
+                        "DoT client {} failed to parse DNS message: {}",
+                        client_id, e
+                    );
                     continue;
                 }
             };
@@ -247,7 +274,8 @@ impl DotClient {
             let query_id = dns_message.id();
             let response_code = format!("{:?}", dns_message.response_code());
 
-            let answers: Vec<serde_json::Value> = dns_message.answers()
+            let answers: Vec<serde_json::Value> = dns_message
+                .answers()
                 .iter()
                 .map(|record| {
                     let data_str = match record.data() {
@@ -263,7 +291,8 @@ impl DotClient {
                 })
                 .collect();
 
-            let authorities: Vec<serde_json::Value> = dns_message.name_servers()
+            let authorities: Vec<serde_json::Value> = dns_message
+                .name_servers()
                 .iter()
                 .map(|record| {
                     let data_str = match record.data() {
@@ -279,7 +308,8 @@ impl DotClient {
                 })
                 .collect();
 
-            let additionals: Vec<serde_json::Value> = dns_message.additionals()
+            let additionals: Vec<serde_json::Value> = dns_message
+                .additionals()
                 .iter()
                 .map(|record| {
                     let data_str = match record.data() {
@@ -295,8 +325,13 @@ impl DotClient {
                 })
                 .collect();
 
-            info!("DoT client {} received response: ID={}, Code={}, Answers={}",
-                  client_id, query_id, response_code, answers.len());
+            info!(
+                "DoT client {} received response: ID={}, Code={}, Answers={}",
+                client_id,
+                query_id,
+                response_code,
+                answers.len()
+            );
 
             // Check state machine
             let mut client_data_lock = client_data.lock().await;
@@ -345,8 +380,13 @@ impl DotClient {
                     Some(&event),
                     protocol.as_ref(),
                     &status_tx,
-                ).await {
-                    Ok(ClientLlmResult { actions, memory_updates }) => {
+                )
+                .await
+                {
+                    Ok(ClientLlmResult {
+                        actions,
+                        memory_updates,
+                    }) => {
                         // Update memory
                         if let Some(mem) = memory_updates {
                             client_data.lock().await.memory = mem;
@@ -360,7 +400,9 @@ impl DotClient {
                                 &write_half,
                                 &status_tx,
                                 &app_state,
-                            ).await {
+                            )
+                            .await
+                            {
                                 error!("DoT client {} action execution failed: {}", client_id, e);
                             }
                         }
@@ -398,12 +440,21 @@ impl DotClient {
                 // Send DNS query
                 Self::send_dns_query(
                     client_id,
-                    data.get("domain").and_then(|v| v.as_str()).context("Missing domain")?.to_string(),
-                    data.get("query_type").and_then(|v| v.as_str()).context("Missing query_type")?.to_string(),
-                    data.get("recursive").and_then(|v| v.as_bool()).unwrap_or(true),
+                    data.get("domain")
+                        .and_then(|v| v.as_str())
+                        .context("Missing domain")?
+                        .to_string(),
+                    data.get("query_type")
+                        .and_then(|v| v.as_str())
+                        .context("Missing query_type")?
+                        .to_string(),
+                    data.get("recursive")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true),
                     write_half,
                     status_tx,
-                ).await?;
+                )
+                .await?;
             }
             ClientActionResult::Disconnect => {
                 info!("DoT client {} disconnecting", client_id);
@@ -430,7 +481,10 @@ impl DotClient {
         write_half: &Arc<Mutex<WriteHalf<TlsStream<TcpStream>>>>,
         status_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<()> {
-        info!("DoT client {} querying {} {}", client_id, domain, query_type);
+        info!(
+            "DoT client {} querying {} {}",
+            client_id, domain, query_type
+        );
         let _ = status_tx.send(format!("[CLIENT] DoT query: {} {}", domain, query_type));
 
         // Parse record type
@@ -438,8 +492,7 @@ impl DotClient {
             .context(format!("Invalid query type: {}", query_type))?;
 
         // Parse domain name
-        let name = Name::from_str(&domain)
-            .context(format!("Invalid domain name: {}", domain))?;
+        let name = Name::from_str(&domain).context(format!("Invalid domain name: {}", domain))?;
 
         // Create DNS query message
         let mut message = DnsMessage::new();
@@ -452,8 +505,7 @@ impl DotClient {
         message.add_query(query);
 
         // Encode message
-        let dns_bytes = message.to_vec()
-            .context("Failed to encode DNS message")?;
+        let dns_bytes = message.to_vec().context("Failed to encode DNS message")?;
 
         trace!("DoT query hex: {}", hex::encode(&dns_bytes));
 
@@ -463,10 +515,18 @@ impl DotClient {
         prefixed_message.extend_from_slice(&dns_bytes);
 
         // Send via TLS stream
-        write_half.lock().await.write_all(&prefixed_message).await
+        write_half
+            .lock()
+            .await
+            .write_all(&prefixed_message)
+            .await
             .context("Failed to send DNS query over TLS")?;
 
-        debug!("DoT client {} sent DNS query ({} bytes)", client_id, prefixed_message.len());
+        debug!(
+            "DoT client {} sent DNS query ({} bytes)",
+            client_id,
+            prefixed_message.len()
+        );
 
         Ok(())
     }

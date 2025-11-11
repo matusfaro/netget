@@ -16,7 +16,8 @@ mod tests {
         netget.start("qwen2.5-coder:7b", vec![]).await?;
 
         // Create TCP echo server
-        let prompt = "Start a TCP server on port {AVAILABLE_PORT} that echoes back whatever it receives";
+        let prompt =
+            "Start a TCP server on port {AVAILABLE_PORT} that echoes back whatever it receives";
         let server = netget.create_server(prompt).await?;
 
         // Create validator
@@ -28,7 +29,9 @@ mod tests {
         validator.test_echo("Test message 123\n").await?;
 
         // Test with binary-like data
-        validator.expect_response("BINARY\x00\x01\x02\n", "BINARY\x00\x01\x02\n").await?;
+        validator
+            .expect_response("BINARY\x00\x01\x02\n", "BINARY\x00\x01\x02\n")
+            .await?;
 
         netget.stop().await?;
         Ok(())
@@ -92,7 +95,9 @@ mod tests {
         let time_response = validator.send_receive_text("TIME\n").await?;
         assert!(time_response.len() > 0); // Should contain timestamp
 
-        validator.expect_response("ECHO hello world\n", "hello world\n").await?;
+        validator
+            .expect_response("ECHO hello world\n", "hello world\n")
+            .await?;
         validator.expect_contains("INVALID\n", "ERROR").await?;
 
         netget.stop().await?;
@@ -119,12 +124,7 @@ mod tests {
 
         // Test stateful interaction
         let responses = validator
-            .send_sequence(&[
-                "Alice\n",
-                "How are you?\n",
-                "FORGET\n",
-                "Bob\n",
-            ])
+            .send_sequence(&["Alice\n", "How are you?\n", "FORGET\n", "Bob\n"])
             .await?;
 
         // First response should ask for name or acknowledge it

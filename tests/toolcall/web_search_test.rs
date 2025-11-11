@@ -12,10 +12,11 @@ async fn test_web_search_htcpcp_tea() {
     println!("Search results:\n{}", result.result);
 
     // The search should return results containing the RFC title or key terms
-    let has_title_parts =
-        result.result.contains("Hyper Text Coffee Pot Control Protocol") ||
-        result.result.contains("Coffee Pot Control Protocol") ||
-        result.result.contains("HTCPCP");
+    let has_title_parts = result
+        .result
+        .contains("Hyper Text Coffee Pot Control Protocol")
+        || result.result.contains("Coffee Pot Control Protocol")
+        || result.result.contains("HTCPCP");
 
     assert!(
         has_title_parts,

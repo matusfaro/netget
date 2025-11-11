@@ -33,10 +33,10 @@ mod http2_client_tests {
 
         // Verify client output shows connection/response
         assert!(
-            client.output_contains("HTTP2").await ||
-            client.output_contains("http2").await ||
-            client.output_contains("HTTP/2").await ||
-            client.output_contains("connected").await,
+            client.output_contains("HTTP2").await
+                || client.output_contains("http2").await
+                || client.output_contains("HTTP/2").await
+                || client.output_contains("connected").await,
             "Client should show HTTP/2 protocol or connection message. Output: {:?}",
             client.get_output().await
         );
@@ -55,7 +55,9 @@ mod http2_client_tests {
     #[tokio::test]
     async fn test_http2_client_llm_controlled_request() -> E2EResult<()> {
         // Start a simple HTTP/2 server
-        let server_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via HTTP/2. Log all incoming requests.");
+        let server_config = NetGetConfig::new(
+            "Listen on port {AVAILABLE_PORT} via HTTP/2. Log all incoming requests.",
+        );
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -88,7 +90,9 @@ mod http2_client_tests {
     #[tokio::test]
     async fn test_http2_client_multiplexing() -> E2EResult<()> {
         // Start an HTTP/2 server
-        let server_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via HTTP/2. Respond to all requests with their path.");
+        let server_config = NetGetConfig::new(
+            "Listen on port {AVAILABLE_PORT} via HTTP/2. Respond to all requests with their path.",
+        );
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -106,9 +110,9 @@ mod http2_client_tests {
 
         // Verify client shows HTTP/2 protocol
         assert!(
-            client.output_contains("HTTP2").await ||
-            client.output_contains("http2").await ||
-            client.output_contains("HTTP/2").await,
+            client.output_contains("HTTP2").await
+                || client.output_contains("http2").await
+                || client.output_contains("HTTP/2").await,
             "Client should show HTTP/2 protocol"
         );
 

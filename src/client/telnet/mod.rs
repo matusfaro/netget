@@ -11,22 +11,22 @@ use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace};
 
+use crate::client::telnet::actions::TELNET_CLIENT_DATA_RECEIVED_EVENT;
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::telnet::actions::TELNET_CLIENT_DATA_RECEIVED_EVENT;
 
 /// Telnet protocol constants
-const IAC: u8 = 255;  // Interpret As Command
+const IAC: u8 = 255; // Interpret As Command
 const WILL: u8 = 251;
 const WONT: u8 = 252;
 const DO: u8 = 253;
 const DONT: u8 = 254;
-const SB: u8 = 250;   // Subnegotiation Begin
-const SE: u8 = 240;   // Subnegotiation End
+const SB: u8 = 250; // Subnegotiation Begin
+const SE: u8 = 240; // Subnegotiation End
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -63,10 +63,15 @@ impl TelnetClient {
         let local_addr = stream.local_addr()?;
         let remote_sock_addr = stream.peer_addr()?;
 
-        info!("Telnet client {} connected to {} (local: {})", client_id, remote_sock_addr, local_addr);
+        info!(
+            "Telnet client {} connected to {} (local: {})",
+            client_id, remote_sock_addr, local_addr
+        );
 
         // Update client state
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
         let _ = status_tx.send(format!("[CLIENT] Telnet client {} connected", client_id));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
@@ -93,8 +98,11 @@ impl TelnetClient {
                 match read_half.read(&mut buffer).await {
                     Ok(0) => {
                         info!("Telnet client {} disconnected", client_id);
-                        app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                        let _ = status_tx.send(format!("[CLIENT] Telnet client {} disconnected", client_id));
+                        app_state
+                            .update_client_status(client_id, ClientStatus::Disconnected)
+                            .await;
+                        let _ = status_tx
+                            .send(format!("[CLIENT] Telnet client {} disconnected", client_id));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         break;
                     }
@@ -107,9 +115,22 @@ impl TelnetClient {
 
                         // Handle Telnet option negotiations
                         for cmd in &telnet_commands {
-                            if let Some(response) = Self::handle_telnet_command(cmd, client_id, &status_tx_for_negotiation) {
-                                if let Ok(_) = write_half_for_negotiation.lock().await.write_all(&response).await {
-                                    trace!("Telnet client {} sent negotiation response: {:?}", client_id, response);
+                            if let Some(response) = Self::handle_telnet_command(
+                                cmd,
+                                client_id,
+                                &status_tx_for_negotiation,
+                            ) {
+                                if let Ok(_) = write_half_for_negotiation
+                                    .lock()
+                                    .await
+                                    .write_all(&response)
+                                    .await
+                                {
+                                    trace!(
+                                        "Telnet client {} sent negotiation response: {:?}",
+                                        client_id,
+                                        response
+                                    );
                                 }
                             }
                         }
@@ -129,8 +150,12 @@ impl TelnetClient {
                                 drop(client_data_lock);
 
                                 // Call LLM with received data
-                                if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                                    let protocol = Arc::new(crate::client::telnet::actions::TelnetClientProtocol::new());
+                                if let Some(instruction) =
+                                    app_state.get_instruction_for_client(client_id).await
+                                {
+                                    let protocol = Arc::new(
+                                        crate::client::telnet::actions::TelnetClientProtocol::new(),
+                                    );
 
                                     // Convert data to UTF-8 string (lossy)
                                     let data_str = String::from_utf8_lossy(&data).to_string();
@@ -152,8 +177,13 @@ impl TelnetClient {
                                         Some(&event),
                                         protocol.as_ref(),
                                         &status_tx,
-                                    ).await {
-                                        Ok(ClientLlmResult { actions, memory_updates }) => {
+                                    )
+                                    .await
+                                    {
+                                        Ok(ClientLlmResult {
+                                            actions,
+                                            memory_updates,
+                                        }) => {
                                             // Update memory
                                             if let Some(mem) = memory_updates {
                                                 client_data.lock().await.memory = mem;
@@ -177,7 +207,10 @@ impl TelnetClient {
                                             }
                                         }
                                         Err(e) => {
-                                            error!("LLM error for Telnet client {}: {}", client_id, e);
+                                            error!(
+                                                "LLM error for Telnet client {}: {}",
+                                                client_id, e
+                                            );
                                         }
                                     }
                                 }
@@ -202,7 +235,9 @@ impl TelnetClient {
                     }
                     Err(e) => {
                         error!("Telnet client {} read error: {}", client_id, e);
-                        app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
+                        app_state
+                            .update_client_status(client_id, ClientStatus::Error(e.to_string()))
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         break;
                     }
@@ -252,7 +287,8 @@ impl TelnetClient {
                         // Subnegotiation - find SE
                         let mut sb_end = i + 2;
                         while sb_end < raw.len() {
-                            if raw[sb_end] == IAC && sb_end + 1 < raw.len() && raw[sb_end + 1] == SE {
+                            if raw[sb_end] == IAC && sb_end + 1 < raw.len() && raw[sb_end + 1] == SE
+                            {
                                 break;
                             }
                             sb_end += 1;
@@ -293,7 +329,10 @@ impl TelnetClient {
                 };
 
                 let option_name = Self::get_option_name(*option);
-                debug!("Telnet client {} received {} {}", client_id, cmd_name, option_name);
+                debug!(
+                    "Telnet client {} received {} {}",
+                    client_id, cmd_name, option_name
+                );
 
                 let _ = status_tx.send(format!(
                     "[CLIENT] Telnet {} negotiation: {} {}",

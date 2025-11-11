@@ -45,89 +45,91 @@ impl DhcpProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for DhcpProtocol {
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            Vec::new()
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                send_dhcp_offer_action(),
-                send_dhcp_ack_action(),
-                send_dhcp_nak_action(),
-                send_dhcp_response_action(),
-                ignore_request_action(),
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "DHCP"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            get_dhcp_event_types()
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>UDP>DHCP"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["dhcp"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState, PrivilegeRequirement};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Beta)
-                .privilege_requirement(PrivilegeRequirement::PrivilegedPort(67))
-                .implementation("dhcproto v0.11 for parsing")
-                .llm_control("DISCOVER→OFFER, REQUEST→ACK flow + lease options")
-                .e2e_testing("Manual DHCP packet construction - 3 LLM calls")
-                .notes("Lenient validation for testing")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "DHCP server for IP address assignment"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Start a DHCP server on interface eth0"
-        }
-        fn group_name(&self) -> &'static str {
-            "Core"
-        }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        Vec::new()
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            send_dhcp_offer_action(),
+            send_dhcp_ack_action(),
+            send_dhcp_nak_action(),
+            send_dhcp_response_action(),
+            ignore_request_action(),
+        ]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "DHCP"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_dhcp_event_types()
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>UDP>DHCP"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["dhcp"]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{
+            DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2,
+        };
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Beta)
+            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(67))
+            .implementation("dhcproto v0.11 for parsing")
+            .llm_control("DISCOVER→OFFER, REQUEST→ACK flow + lease options")
+            .e2e_testing("Manual DHCP packet construction - 3 LLM calls")
+            .notes("Lenient validation for testing")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "DHCP server for IP address assignment"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Start a DHCP server on interface eth0"
+    }
+    fn group_name(&self) -> &'static str {
+        "Core"
+    }
 }
 
 // Implement Server trait (server-specific functionality)
 impl Server for DhcpProtocol {
-        fn spawn(
-            &self,
-            ctx: crate::protocol::SpawnContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::server::dhcp::DhcpServer;
-                DhcpServer::spawn_with_llm_actions(
-                    ctx.listen_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.server_id,
-                ).await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "send_dhcp_offer" => self.execute_send_dhcp_offer(action),
-                "send_dhcp_ack" => self.execute_send_dhcp_ack(action),
-                "send_dhcp_nak" => self.execute_send_dhcp_nak(action),
-                "send_dhcp_response" => self.execute_send_dhcp_response(action),
-                "ignore_request" => Ok(ActionResult::NoAction),
-                _ => Err(anyhow::anyhow!("Unknown DHCP action: {}", action_type)),
-            }
-        }
-}
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::dhcp::DhcpServer;
+            DhcpServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
 
+        match action_type {
+            "send_dhcp_offer" => self.execute_send_dhcp_offer(action),
+            "send_dhcp_ack" => self.execute_send_dhcp_ack(action),
+            "send_dhcp_nak" => self.execute_send_dhcp_nak(action),
+            "send_dhcp_response" => self.execute_send_dhcp_response(action),
+            "ignore_request" => Ok(ActionResult::NoAction),
+            _ => Err(anyhow::anyhow!("Unknown DHCP action: {}", action_type)),
+        }
+    }
+}
 
 impl DhcpProtocol {
     #[cfg(feature = "dhcp")]
@@ -554,7 +556,7 @@ fn ignore_request_action() -> ActionDefinition {
 pub static DHCP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "dhcp_request",
-        "DHCP client sent a request (DISCOVER, REQUEST, INFORM, etc.)"
+        "DHCP client sent a request (DISCOVER, REQUEST, INFORM, etc.)",
     )
     .with_parameters(vec![
         Parameter {
@@ -586,7 +588,5 @@ pub static DHCP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 });
 
 pub fn get_dhcp_event_types() -> Vec<EventType> {
-    vec![
-        DHCP_REQUEST_EVENT.clone(),
-    ]
+    vec![DHCP_REQUEST_EVENT.clone()]
 }

@@ -79,9 +79,13 @@ impl MockSshAgent {
 
                                                 // Length: 1 (type) + 4 (sig len) + sig data
                                                 let total_len = 1 + 4 + dummy_sig.len();
-                                                response.extend_from_slice(&(total_len as u32).to_be_bytes());
+                                                response.extend_from_slice(
+                                                    &(total_len as u32).to_be_bytes(),
+                                                );
                                                 response.push(14); // Type: SIGN_RESPONSE
-                                                response.extend_from_slice(&(dummy_sig.len() as u32).to_be_bytes());
+                                                response.extend_from_slice(
+                                                    &(dummy_sig.len() as u32).to_be_bytes(),
+                                                );
                                                 response.extend_from_slice(dummy_sig);
 
                                                 let _ = stream.write_all(&response).await;

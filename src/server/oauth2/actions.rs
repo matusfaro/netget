@@ -21,86 +21,92 @@ impl OAuth2Protocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for OAuth2Protocol {
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            // OAuth2 has no async actions - it's purely request-response
-            Vec::new()
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                oauth2_authorize_response_action(),
-                oauth2_token_response_action(),
-                oauth2_introspect_response_action(),
-                oauth2_error_response_action(),
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "OAuth2"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            get_oauth2_event_types()
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>TCP>HTTP>OAuth2"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["oauth2", "oauth", "oauth 2.0", "via oauth2", "authorization server"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Experimental)
-                .implementation("Manual OAuth2 implementation over hyper HTTP")
-                .llm_control("Authorization decisions, token generation, client validation")
-                .e2e_testing("reqwest HTTP client - OAuth2 flow testing")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "OAuth2 authorization server for token-based authentication"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Act as an OAuth2 server on port 8080. Accept client 'testapp' with secret 'secret123'. Issue tokens with 1-hour expiry."
-        }
-        fn group_name(&self) -> &'static str {
-            "AI & API"
-        }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        // OAuth2 has no async actions - it's purely request-response
+        Vec::new()
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            oauth2_authorize_response_action(),
+            oauth2_token_response_action(),
+            oauth2_introspect_response_action(),
+            oauth2_error_response_action(),
+        ]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "OAuth2"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_oauth2_event_types()
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>HTTP>OAuth2"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec![
+            "oauth2",
+            "oauth",
+            "oauth 2.0",
+            "via oauth2",
+            "authorization server",
+        ]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("Manual OAuth2 implementation over hyper HTTP")
+            .llm_control("Authorization decisions, token generation, client validation")
+            .e2e_testing("reqwest HTTP client - OAuth2 flow testing")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "OAuth2 authorization server for token-based authentication"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Act as an OAuth2 server on port 8080. Accept client 'testapp' with secret 'secret123'. Issue tokens with 1-hour expiry."
+    }
+    fn group_name(&self) -> &'static str {
+        "AI & API"
+    }
 }
 
 // Implement Server trait (server-specific functionality)
 impl Server for OAuth2Protocol {
-        fn spawn(
-            &self,
-            ctx: crate::protocol::SpawnContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::server::oauth2::OAuth2Server;
-                OAuth2Server::spawn_with_llm_actions(
-                    ctx.listen_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.server_id,
-                ).await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "oauth2_authorize_response" => self.execute_oauth2_authorize_response(action),
-                "oauth2_token_response" => self.execute_oauth2_token_response(action),
-                "oauth2_introspect_response" => self.execute_oauth2_introspect_response(action),
-                "oauth2_error_response" => self.execute_oauth2_error_response(action),
-                _ => Err(anyhow::anyhow!("Unknown OAuth2 action: {action_type}")),
-            }
-        }
-}
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::oauth2::OAuth2Server;
+            OAuth2Server::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
 
+        match action_type {
+            "oauth2_authorize_response" => self.execute_oauth2_authorize_response(action),
+            "oauth2_token_response" => self.execute_oauth2_token_response(action),
+            "oauth2_introspect_response" => self.execute_oauth2_introspect_response(action),
+            "oauth2_error_response" => self.execute_oauth2_error_response(action),
+            _ => Err(anyhow::anyhow!("Unknown OAuth2 action: {action_type}")),
+        }
+    }
+}
 
 impl OAuth2Protocol {
     /// Execute oauth2_authorize_response sync action
@@ -109,10 +115,7 @@ impl OAuth2Protocol {
             .get("code")
             .and_then(|v| v.as_str())
             .context("Missing 'code' field")?;
-        let state = action
-            .get("state")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let state = action.get("state").and_then(|v| v.as_str()).unwrap_or("");
 
         let response = json!({
             "code": code,
@@ -156,7 +159,10 @@ impl OAuth2Protocol {
     }
 
     /// Execute oauth2_introspect_response sync action
-    fn execute_oauth2_introspect_response(&self, action: serde_json::Value) -> Result<ActionResult> {
+    fn execute_oauth2_introspect_response(
+        &self,
+        action: serde_json::Value,
+    ) -> Result<ActionResult> {
         let active = action
             .get("active")
             .and_then(|v| v.as_bool())
@@ -334,7 +340,8 @@ fn oauth2_error_response_action() -> ActionDefinition {
             Parameter {
                 name: "error".to_string(),
                 type_hint: "string".to_string(),
-                description: "Error code (e.g., 'invalid_request', 'unauthorized_client')".to_string(),
+                description: "Error code (e.g., 'invalid_request', 'unauthorized_client')"
+                    .to_string(),
                 required: true,
             },
             Parameter {
@@ -364,173 +371,160 @@ fn oauth2_error_response_action() -> ActionDefinition {
 
 /// OAuth2 authorize event - triggered when client requests authorization
 pub static OAUTH2_AUTHORIZE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "oauth2_authorize",
-        "OAuth2 authorization request received"
-    )
-    .with_parameters(vec![
-        Parameter {
-            name: "response_type".to_string(),
-            type_hint: "string".to_string(),
-            description: "Response type (e.g., 'code', 'token')".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "client_id".to_string(),
-            type_hint: "string".to_string(),
-            description: "Client identifier".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "redirect_uri".to_string(),
-            type_hint: "string".to_string(),
-            description: "Redirection URI".to_string(),
-            required: false,
-        },
-        Parameter {
-            name: "scope".to_string(),
-            type_hint: "string".to_string(),
-            description: "Requested scopes".to_string(),
-            required: false,
-        },
-        Parameter {
-            name: "state".to_string(),
-            type_hint: "string".to_string(),
-            description: "State parameter for CSRF protection".to_string(),
-            required: false,
-        },
-    ])
-    .with_actions(vec![
-        ActionDefinition {
-            name: "oauth2_authorize_response".to_string(),
-            description: "Approve authorization and return code".to_string(),
-            parameters: vec![],
-            example: json!({}),
-        },
-        ActionDefinition {
-            name: "oauth2_error_response".to_string(),
-            description: "Deny authorization with error".to_string(),
-            parameters: vec![],
-            example: json!({}),
-        },
-    ])
+    EventType::new("oauth2_authorize", "OAuth2 authorization request received")
+        .with_parameters(vec![
+            Parameter {
+                name: "response_type".to_string(),
+                type_hint: "string".to_string(),
+                description: "Response type (e.g., 'code', 'token')".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "client_id".to_string(),
+                type_hint: "string".to_string(),
+                description: "Client identifier".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "redirect_uri".to_string(),
+                type_hint: "string".to_string(),
+                description: "Redirection URI".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "scope".to_string(),
+                type_hint: "string".to_string(),
+                description: "Requested scopes".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "state".to_string(),
+                type_hint: "string".to_string(),
+                description: "State parameter for CSRF protection".to_string(),
+                required: false,
+            },
+        ])
+        .with_actions(vec![
+            ActionDefinition {
+                name: "oauth2_authorize_response".to_string(),
+                description: "Approve authorization and return code".to_string(),
+                parameters: vec![],
+                example: json!({}),
+            },
+            ActionDefinition {
+                name: "oauth2_error_response".to_string(),
+                description: "Deny authorization with error".to_string(),
+                parameters: vec![],
+                example: json!({}),
+            },
+        ])
 });
 
 /// OAuth2 token event - triggered when client requests access token
 pub static OAUTH2_TOKEN_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "oauth2_token",
-        "OAuth2 token request received"
-    )
-    .with_parameters(vec![
-        Parameter {
-            name: "grant_type".to_string(),
-            type_hint: "string".to_string(),
-            description: "Grant type (authorization_code, refresh_token, password, client_credentials)".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "code".to_string(),
-            type_hint: "string".to_string(),
-            description: "Authorization code (for authorization_code grant)".to_string(),
-            required: false,
-        },
-        Parameter {
-            name: "redirect_uri".to_string(),
-            type_hint: "string".to_string(),
-            description: "Redirection URI".to_string(),
-            required: false,
-        },
-        Parameter {
-            name: "client_id".to_string(),
-            type_hint: "string".to_string(),
-            description: "Client identifier".to_string(),
-            required: false,
-        },
-        Parameter {
-            name: "client_secret".to_string(),
-            type_hint: "string".to_string(),
-            description: "Client secret".to_string(),
-            required: false,
-        },
-        Parameter {
-            name: "refresh_token".to_string(),
-            type_hint: "string".to_string(),
-            description: "Refresh token (for refresh_token grant)".to_string(),
-            required: false,
-        },
-        Parameter {
-            name: "username".to_string(),
-            type_hint: "string".to_string(),
-            description: "Username (for password grant)".to_string(),
-            required: false,
-        },
-        Parameter {
-            name: "password".to_string(),
-            type_hint: "string".to_string(),
-            description: "Password (for password grant)".to_string(),
-            required: false,
-        },
-        Parameter {
-            name: "scope".to_string(),
-            type_hint: "string".to_string(),
-            description: "Requested scopes".to_string(),
-            required: false,
-        },
-    ])
-    .with_actions(vec![
-        ActionDefinition {
-            name: "oauth2_token_response".to_string(),
-            description: "Issue access token".to_string(),
-            parameters: vec![],
-            example: json!({}),
-        },
-        ActionDefinition {
-            name: "oauth2_error_response".to_string(),
-            description: "Deny token request with error".to_string(),
-            parameters: vec![],
-            example: json!({}),
-        },
-    ])
+    EventType::new("oauth2_token", "OAuth2 token request received")
+        .with_parameters(vec![
+            Parameter {
+                name: "grant_type".to_string(),
+                type_hint: "string".to_string(),
+                description:
+                    "Grant type (authorization_code, refresh_token, password, client_credentials)"
+                        .to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "code".to_string(),
+                type_hint: "string".to_string(),
+                description: "Authorization code (for authorization_code grant)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "redirect_uri".to_string(),
+                type_hint: "string".to_string(),
+                description: "Redirection URI".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "client_id".to_string(),
+                type_hint: "string".to_string(),
+                description: "Client identifier".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "client_secret".to_string(),
+                type_hint: "string".to_string(),
+                description: "Client secret".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "refresh_token".to_string(),
+                type_hint: "string".to_string(),
+                description: "Refresh token (for refresh_token grant)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "username".to_string(),
+                type_hint: "string".to_string(),
+                description: "Username (for password grant)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "password".to_string(),
+                type_hint: "string".to_string(),
+                description: "Password (for password grant)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "scope".to_string(),
+                type_hint: "string".to_string(),
+                description: "Requested scopes".to_string(),
+                required: false,
+            },
+        ])
+        .with_actions(vec![
+            ActionDefinition {
+                name: "oauth2_token_response".to_string(),
+                description: "Issue access token".to_string(),
+                parameters: vec![],
+                example: json!({}),
+            },
+            ActionDefinition {
+                name: "oauth2_error_response".to_string(),
+                description: "Deny token request with error".to_string(),
+                parameters: vec![],
+                example: json!({}),
+            },
+        ])
 });
 
 /// OAuth2 introspect event - triggered when token introspection is requested
 pub static OAUTH2_INTROSPECT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "oauth2_introspect",
-        "OAuth2 token introspection request"
-    )
-    .with_parameters(vec![
-        Parameter {
-            name: "token".to_string(),
-            type_hint: "string".to_string(),
-            description: "Token to introspect".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "token_type_hint".to_string(),
-            type_hint: "string".to_string(),
-            description: "Hint about token type (access_token, refresh_token)".to_string(),
-            required: false,
-        },
-    ])
-    .with_actions(vec![
-        ActionDefinition {
+    EventType::new("oauth2_introspect", "OAuth2 token introspection request")
+        .with_parameters(vec![
+            Parameter {
+                name: "token".to_string(),
+                type_hint: "string".to_string(),
+                description: "Token to introspect".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "token_type_hint".to_string(),
+                type_hint: "string".to_string(),
+                description: "Hint about token type (access_token, refresh_token)".to_string(),
+                required: false,
+            },
+        ])
+        .with_actions(vec![ActionDefinition {
             name: "oauth2_introspect_response".to_string(),
             description: "Return token introspection result".to_string(),
             parameters: vec![],
             example: json!({}),
-        },
-    ])
+        }])
 });
 
 /// OAuth2 revoke event - triggered when token revocation is requested
 pub static OAUTH2_REVOKE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "oauth2_revoke",
-        "OAuth2 token revocation request"
-    )
-    .with_parameters(vec![
+    EventType::new("oauth2_revoke", "OAuth2 token revocation request").with_parameters(vec![
         Parameter {
             name: "token".to_string(),
             type_hint: "string".to_string(),

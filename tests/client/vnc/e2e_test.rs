@@ -16,7 +16,7 @@ mod vnc_client_tests {
         // Start a VNC server listening on an available port
         let server_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via VNC. Accept connections with no password. \
-             Provide a 800x600 framebuffer with name 'NetGet Test VNC'."
+             Provide a 800x600 framebuffer with name 'NetGet Test VNC'.",
         );
 
         let mut server = start_netget_server(server_config).await?;
@@ -59,7 +59,7 @@ mod vnc_client_tests {
         // Start a VNC server
         let server_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via VNC. Accept connections with no password. \
-             Log all pointer events received."
+             Log all pointer events received.",
         );
 
         let mut server = start_netget_server(server_config).await?;
@@ -96,7 +96,7 @@ mod vnc_client_tests {
         // Start a VNC server
         let server_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via VNC. Accept connections with no password. \
-             Log all key events received."
+             Log all key events received.",
         );
 
         let mut server = start_netget_server(server_config).await?;
@@ -137,7 +137,7 @@ mod vnc_client_tests {
         // Start a VNC server with password
         let server_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via VNC with password 'test123'. \
-             Accept connections from clients with matching password."
+             Accept connections from clients with matching password.",
         );
 
         let mut server = start_netget_server(server_config).await?;

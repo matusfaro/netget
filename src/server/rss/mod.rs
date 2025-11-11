@@ -72,21 +72,13 @@ impl RssServer {
                                 let proto = Arc::clone(&proto);
 
                                 async move {
-                                    Self::handle_request(
-                                        req,
-                                        llm,
-                                        state,
-                                        status,
-                                        server_id,
-                                        proto,
-                                    )
-                                    .await
+                                    Self::handle_request(req, llm, state, status, server_id, proto)
+                                        .await
                                 }
                             });
 
-                            if let Err(e) = http1::Builder::new()
-                                .serve_connection(io, service)
-                                .await
+                            if let Err(e) =
+                                http1::Builder::new().serve_connection(io, service).await
                             {
                                 error!("RSS connection error: {}", e);
                             }
@@ -183,21 +175,35 @@ impl RssServer {
                                 match rss_xml {
                                     Ok(xml) => {
                                         let xml_bytes = xml.into_bytes();
-                                        info!("RSS feed generated: {} ({} bytes)", path, xml_bytes.len());
+                                        info!(
+                                            "RSS feed generated: {} ({} bytes)",
+                                            path,
+                                            xml_bytes.len()
+                                        );
                                         status_tx
-                                            .send(format!("[RSS] Generated feed: {} ({} bytes)", path, xml_bytes.len()))
+                                            .send(format!(
+                                                "[RSS] Generated feed: {} ({} bytes)",
+                                                path,
+                                                xml_bytes.len()
+                                            ))
                                             .ok();
 
                                         return Ok(Response::builder()
                                             .status(StatusCode::OK)
-                                            .header("Content-Type", "application/rss+xml; charset=utf-8")
+                                            .header(
+                                                "Content-Type",
+                                                "application/rss+xml; charset=utf-8",
+                                            )
                                             .body(http_body_util::Full::new(Bytes::from(xml_bytes)))
                                             .unwrap());
                                     }
                                     Err(e) => {
                                         error!("Failed to build RSS feed: {}", e);
                                         status_tx
-                                            .send(format!("[ERROR] Failed to build RSS feed: {}", e))
+                                            .send(format!(
+                                                "[ERROR] Failed to build RSS feed: {}",
+                                                e
+                                            ))
                                             .ok();
                                     }
                                 }
@@ -215,13 +221,13 @@ impl RssServer {
             }
             Err(e) => {
                 error!("LLM error for RSS request: {}", e);
-                status_tx
-                    .send(format!("[ERROR] LLM error: {}", e))
-                    .ok();
+                status_tx.send(format!("[ERROR] LLM error: {}", e)).ok();
 
                 Ok(Response::builder()
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
-                    .body(http_body_util::Full::new(Bytes::from("Internal Server Error")))
+                    .body(http_body_util::Full::new(Bytes::from(
+                        "Internal Server Error",
+                    )))
                     .unwrap())
             }
         }
@@ -298,7 +304,8 @@ impl RssServer {
                                 let name = cat_obj.get("name")?.as_str()?.to_string();
                                 let mut builder = CategoryBuilder::default();
                                 builder.name(name);
-                                if let Some(domain) = cat_obj.get("domain").and_then(|v| v.as_str()) {
+                                if let Some(domain) = cat_obj.get("domain").and_then(|v| v.as_str())
+                                {
                                     builder.domain(Some(domain.to_string()));
                                 }
                                 Some(builder.build())

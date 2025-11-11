@@ -12,10 +12,10 @@ use tracing::{debug, error, info, trace};
 use crate::llm::action_helper::call_llm;
 use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
-use actions::{XmppProtocol, XMPP_DATA_RECEIVED_EVENT};
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use actions::{XmppProtocol, XMPP_DATA_RECEIVED_EVENT};
 
 /// XMPP server that forwards XML stanzas to LLM
 pub struct XmppServer;
@@ -29,7 +29,8 @@ impl XmppServer {
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
     ) -> Result<SocketAddr> {
-        let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let listener =
+            crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         info!("XMPP server (action-based) listening on {}", local_addr);
         let _ = status_tx.send(format!("[INFO] XMPP server listening on {}", local_addr));
@@ -40,7 +41,8 @@ impl XmppServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -48,14 +50,20 @@ impl XmppServer {
                         let protocol_clone = protocol.clone();
 
                         debug!("XMPP connection {} from {}", connection_id, remote_addr);
-                        let _ = status_clone.send(format!("[DEBUG] XMPP connection {} from {}", connection_id, remote_addr));
+                        let _ = status_clone.send(format!(
+                            "[DEBUG] XMPP connection {} from {}",
+                            connection_id, remote_addr
+                        ));
 
                         tokio::spawn(async move {
                             let (read_half, write_half) = tokio::io::split(stream);
                             let write_half_arc = Arc::new(tokio::sync::Mutex::new(write_half));
 
                             // Add connection to ServerInstance
-                            use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                            use crate::state::server::{
+                                ConnectionState as ServerConnectionState, ConnectionStatus,
+                                ProtocolConnectionInfo,
+                            };
                             let now = std::time::Instant::now();
                             let conn_state = ServerConnectionState {
                                 id: connection_id,
@@ -70,7 +78,9 @@ impl XmppServer {
                                 status_changed_at: now,
                                 protocol_info: ProtocolConnectionInfo::empty(),
                             };
-                            state_clone.add_connection_to_server(server_id, conn_state).await;
+                            state_clone
+                                .add_connection_to_server(server_id, conn_state)
+                                .await;
                             let _ = status_clone.send("__UPDATE_UI__".to_string());
 
                             // Create XML buffer for streaming parsing
@@ -81,21 +91,34 @@ impl XmppServer {
                             loop {
                                 match read_half.read(&mut temp_buf).await {
                                     Ok(0) => {
-                                        debug!("XMPP connection {} closed by client", connection_id);
-                                        let _ = status_clone.send(format!("[DEBUG] XMPP connection {} closed", connection_id));
+                                        debug!(
+                                            "XMPP connection {} closed by client",
+                                            connection_id
+                                        );
+                                        let _ = status_clone.send(format!(
+                                            "[DEBUG] XMPP connection {} closed",
+                                            connection_id
+                                        ));
                                         break;
                                     }
                                     Ok(n) => {
                                         buffer.extend_from_slice(&temp_buf[..n]);
 
                                         // DEBUG: Log summary
-                                        debug!("XMPP received {} bytes on connection {}", n, connection_id);
-                                        let _ = status_clone.send(format!("[DEBUG] XMPP received {} bytes on connection {}", n, connection_id));
+                                        debug!(
+                                            "XMPP received {} bytes on connection {}",
+                                            n, connection_id
+                                        );
+                                        let _ = status_clone.send(format!(
+                                            "[DEBUG] XMPP received {} bytes on connection {}",
+                                            n, connection_id
+                                        ));
 
                                         // TRACE: Log full XML data
                                         let xml_str = String::from_utf8_lossy(&buffer);
                                         trace!("XMPP data (XML): {}", xml_str);
-                                        let _ = status_clone.send(format!("[TRACE] XMPP data (XML): {}", xml_str));
+                                        let _ = status_clone
+                                            .send(format!("[TRACE] XMPP data (XML): {}", xml_str));
 
                                         // Try to parse XML stanzas from buffer
                                         // For simplicity, we'll pass the entire buffer to LLM for parsing
@@ -104,12 +127,18 @@ impl XmppServer {
                                         let xml_data = String::from_utf8_lossy(&buffer).to_string();
 
                                         // Create event for LLM
-                                        let event = Event::new(&XMPP_DATA_RECEIVED_EVENT, serde_json::json!({
-                                            "xml_data": xml_data
-                                        }));
+                                        let event = Event::new(
+                                            &XMPP_DATA_RECEIVED_EVENT,
+                                            serde_json::json!({
+                                                "xml_data": xml_data
+                                            }),
+                                        );
 
                                         debug!("XMPP calling LLM for connection {}", connection_id);
-                                        let _ = status_clone.send(format!("[DEBUG] XMPP calling LLM for connection {}", connection_id));
+                                        let _ = status_clone.send(format!(
+                                            "[DEBUG] XMPP calling LLM for connection {}",
+                                            connection_id
+                                        ));
 
                                         match call_llm(
                                             &llm_clone,
@@ -118,23 +147,36 @@ impl XmppServer {
                                             Some(connection_id),
                                             &event,
                                             protocol_clone.as_ref(),
-                                        ).await {
+                                        )
+                                        .await
+                                        {
                                             Ok(execution_result) => {
                                                 for message in &execution_result.messages {
                                                     info!("{}", message);
-                                                    let _ = status_clone.send(format!("[INFO] {}", message));
+                                                    let _ = status_clone
+                                                        .send(format!("[INFO] {}", message));
                                                 }
 
-                                                debug!("XMPP got {} protocol results", execution_result.protocol_results.len());
-                                                let _ = status_clone.send(format!("[DEBUG] XMPP got {} protocol results", execution_result.protocol_results.len()));
+                                                debug!(
+                                                    "XMPP got {} protocol results",
+                                                    execution_result.protocol_results.len()
+                                                );
+                                                let _ = status_clone.send(format!(
+                                                    "[DEBUG] XMPP got {} protocol results",
+                                                    execution_result.protocol_results.len()
+                                                ));
 
                                                 let mut should_close = false;
 
-                                                for protocol_result in execution_result.protocol_results {
+                                                for protocol_result in
+                                                    execution_result.protocol_results
+                                                {
                                                     match protocol_result {
                                                         ActionResult::Output(data) => {
-                                                            let xml_str = String::from_utf8_lossy(&data);
-                                                            let mut write = write_half_arc.lock().await;
+                                                            let xml_str =
+                                                                String::from_utf8_lossy(&data);
+                                                            let mut write =
+                                                                write_half_arc.lock().await;
                                                             let _ = write.write_all(&data).await;
                                                             let _ = write.flush().await;
                                                             drop(write);
@@ -145,7 +187,10 @@ impl XmppServer {
 
                                                             // TRACE: Log full XML
                                                             trace!("XMPP sent (XML): {}", xml_str);
-                                                            let _ = status_clone.send(format!("[TRACE] XMPP sent (XML): {}", xml_str));
+                                                            let _ = status_clone.send(format!(
+                                                                "[TRACE] XMPP sent (XML): {}",
+                                                                xml_str
+                                                            ));
                                                         }
                                                         ActionResult::CloseConnection => {
                                                             should_close = true;
@@ -168,20 +213,27 @@ impl XmppServer {
                                             }
                                             Err(e) => {
                                                 error!("XMPP LLM call failed: {}", e);
-                                                let _ = status_clone.send(format!("[ERROR] XMPP LLM error: {}", e));
+                                                let _ = status_clone
+                                                    .send(format!("[ERROR] XMPP LLM error: {}", e));
                                             }
                                         }
                                     }
                                     Err(e) => {
-                                        error!("XMPP read error on connection {}: {}", connection_id, e);
-                                        let _ = status_clone.send(format!("[ERROR] XMPP read error: {}", e));
+                                        error!(
+                                            "XMPP read error on connection {}: {}",
+                                            connection_id, e
+                                        );
+                                        let _ = status_clone
+                                            .send(format!("[ERROR] XMPP read error: {}", e));
                                         break;
                                     }
                                 }
                             }
 
                             // Connection closed - mark as closed
-                            state_clone.close_connection_on_server(server_id, connection_id).await;
+                            state_clone
+                                .close_connection_on_server(server_id, connection_id)
+                                .await;
                             let _ = status_clone.send("__UPDATE_UI__".to_string());
                         });
                     }

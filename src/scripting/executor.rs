@@ -1,6 +1,8 @@
 //! Script execution engine
 
-use super::types::{parse_script_response, ScriptConfig, ScriptInput, ScriptLanguage, ScriptResponse};
+use super::types::{
+    parse_script_response, ScriptConfig, ScriptInput, ScriptLanguage, ScriptResponse,
+};
 use anyhow::{Context as AnyhowContext, Result};
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -41,8 +43,8 @@ pub fn execute_script(config: &ScriptConfig, input: &ScriptInput) -> Result<Scri
 
     // Serialize input to JSON (pretty-printed for logs)
     let input_json = serde_json::to_string(&input).context("Failed to serialize input to JSON")?;
-    let input_json_pretty = serde_json::to_string_pretty(&input)
-        .unwrap_or_else(|_| input_json.clone());
+    let input_json_pretty =
+        serde_json::to_string_pretty(&input).unwrap_or_else(|_| input_json.clone());
 
     debug!(
         "Executing {} script for context '{}' (timeout: {}s)",
@@ -221,21 +223,27 @@ fn execute_go_file(script_path: &std::path::PathBuf, input_json: &str) -> Result
         .context("Go script execution timed out or failed")?;
 
     // Parse stdout and stderr
-    let stdout = String::from_utf8(output.stdout.clone())
-        .context("Go script stdout is not valid UTF-8")?;
+    let stdout =
+        String::from_utf8(output.stdout.clone()).context("Go script stdout is not valid UTF-8")?;
     let stderr = String::from_utf8(output.stderr.clone())
         .unwrap_or_else(|_| String::from_utf8_lossy(&output.stderr).to_string());
 
     // Check exit status
     if !output.status.success() {
-        error!("Go script execution failed with exit code {:?}", output.status.code());
+        error!(
+            "Go script execution failed with exit code {:?}",
+            output.status.code()
+        );
         error!("Go script stderr: {}", stderr);
         anyhow::bail!("Go script exited with non-zero status. stderr: {}", stderr);
     }
 
     // Log warnings if stderr is present
     if !stderr.is_empty() {
-        warn!("Go script produced stderr output (but succeeded): {}", stderr);
+        warn!(
+            "Go script produced stderr output (but succeeded): {}",
+            stderr
+        );
     }
 
     Ok((stdout.trim().to_string(), stderr))
@@ -272,14 +280,17 @@ fn execute_with_command(
         .context("Script execution timed out or failed")?;
 
     // Parse stdout and stderr
-    let stdout = String::from_utf8(output.stdout.clone())
-        .context("Script stdout is not valid UTF-8")?;
+    let stdout =
+        String::from_utf8(output.stdout.clone()).context("Script stdout is not valid UTF-8")?;
     let stderr = String::from_utf8(output.stderr.clone())
         .unwrap_or_else(|_| String::from_utf8_lossy(&output.stderr).to_string());
 
     // Check exit status
     if !output.status.success() {
-        error!("Script execution failed with exit code {:?}", output.status.code());
+        error!(
+            "Script execution failed with exit code {:?}",
+            output.status.code()
+        );
         error!("Script stderr: {}", stderr);
         anyhow::bail!("Script exited with non-zero status. stderr: {}", stderr);
     }
@@ -331,4 +342,3 @@ fn wait_with_timeout(
         }
     }
 }
-

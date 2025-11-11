@@ -5,7 +5,7 @@
 
 #[cfg(all(test, feature = "isis"))]
 mod e2e_isis {
-    use crate::server::helpers::{start_netget_server, ServerConfig, E2EResult};
+    use crate::server::helpers::{start_netget_server, E2EResult, ServerConfig};
     use tokio::net::UdpSocket;
     use tokio::time::{timeout, Duration};
 
@@ -15,25 +15,21 @@ mod e2e_isis {
     const ISIS_HELLO_LAN_L2: u8 = 16; // Level 2 LAN Hello
 
     /// Helper to build a basic IS-IS Hello PDU
-    fn build_isis_hello(
-        system_id: [u8; 6],
-        area_id: &[u8],
-        holding_time: u16,
-    ) -> Vec<u8> {
+    fn build_isis_hello(system_id: [u8; 6], area_id: &[u8], holding_time: u16) -> Vec<u8> {
         let mut pdu = Vec::new();
 
         // Common Header (8 bytes)
         pdu.push(ISIS_DISCRIMINATOR); // 0x83
         pdu.push(27); // Length Indicator (header length, will update)
-        pdu.push(1);  // Version/Protocol ID Extension
-        pdu.push(0);  // ID Length (0 = 6 bytes)
+        pdu.push(1); // Version/Protocol ID Extension
+        pdu.push(0); // ID Length (0 = 6 bytes)
         pdu.push(ISIS_HELLO_LAN_L2); // PDU Type
         pdu.push(ISIS_VERSION); // Version
-        pdu.push(0);  // Reserved
-        pdu.push(0);  // Max Area Addresses
+        pdu.push(0); // Reserved
+        pdu.push(0); // Max Area Addresses
 
         // LAN Hello specific header
-        pdu.push(2);  // Circuit Type (Level 2)
+        pdu.push(2); // Circuit Type (Level 2)
 
         // Source ID (6 bytes)
         pdu.extend_from_slice(&system_id);
@@ -61,7 +57,7 @@ mod e2e_isis {
 
         // TLV 129: Protocols Supported (IPv4)
         pdu.push(129); // Type
-        pdu.push(1);   // Length
+        pdu.push(1); // Length
         pdu.push(0xCC); // IPv4 NLPID
 
         // Update PDU Length
@@ -117,10 +113,8 @@ mod e2e_isis {
         // Wait for response
         println!("  [TEST] Waiting for IS-IS Hello response");
         let mut buf = vec![0u8; 1500];
-        let (n, _peer_addr) = timeout(
-            Duration::from_secs(120),
-            client.recv_from(&mut buf)
-        ).await??;
+        let (n, _peer_addr) =
+            timeout(Duration::from_secs(120), client.recv_from(&mut buf)).await??;
 
         println!("  [TEST] Received {} bytes from server", n);
 
@@ -139,7 +133,10 @@ mod e2e_isis {
         assert_eq!(version, ISIS_VERSION, "IS-IS version should be 1");
 
         // Verify the response contains valid IS-IS structure
-        assert!(response.len() >= 27, "IS-IS Hello PDU should be at least 27 bytes");
+        assert!(
+            response.len() >= 27,
+            "IS-IS Hello PDU should be at least 27 bytes"
+        );
 
         println!("  [TEST] ✓ IS-IS Hello exchange successful");
         Ok(())
@@ -149,7 +146,8 @@ mod e2e_isis {
     async fn test_isis_multiple_hellos() -> E2EResult<()> {
         println!("\n=== Test: IS-IS Multiple Hello Exchanges ===");
 
-        let prompt = "Start an IS-IS router on port 0 with system-id 0000.0000.0001 in area 49.0001. \
+        let prompt =
+            "Start an IS-IS router on port 0 with system-id 0000.0000.0001 in area 49.0001. \
              Respond to all Hello PDUs with your own Hello PDU.";
 
         let server = start_netget_server(ServerConfig::new(prompt)).await?;
@@ -173,10 +171,7 @@ mod e2e_isis {
 
             // Wait for response
             let mut buf = vec![0u8; 1500];
-            let (n, _) = timeout(
-                Duration::from_secs(120),
-                client.recv_from(&mut buf)
-            ).await??;
+            let (n, _) = timeout(Duration::from_secs(120), client.recv_from(&mut buf)).await??;
 
             let (pdu_type, _) = parse_isis_header(&buf[..n])?;
             assert!(

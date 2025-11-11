@@ -12,12 +12,12 @@ Unit tests for HTTP client state management. Full integration tests would use ht
 ## Tests
 
 1. **test_http_client_initialization** (0 LLM calls)
-   - Create HTTP client instance
-   - Verify fields
+    - Create HTTP client instance
+    - Verify fields
 
 2. **test_http_client_status** (0 LLM calls)
-   - Test status transitions
-   - Verify state management
+    - Test status transitions
+    - Verify state management
 
 ## Runtime
 

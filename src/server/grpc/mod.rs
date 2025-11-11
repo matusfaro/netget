@@ -5,41 +5,41 @@
 
 pub mod actions;
 
+use anyhow::{bail, Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
-use anyhow::{Result, Context, bail};
 
-#[cfg(feature = "grpc")]
-use crate::llm::ollama_client::OllamaClient;
 #[cfg(feature = "grpc")]
 use crate::llm::action_helper::call_llm;
 #[cfg(feature = "grpc")]
+use crate::llm::ollama_client::OllamaClient;
+#[cfg(feature = "grpc")]
 use crate::llm::ActionResult;
-#[cfg(feature = "grpc")]
-use crate::state::app_state::AppState;
-#[cfg(feature = "grpc")]
-use crate::server::GrpcProtocol;
 #[cfg(feature = "grpc")]
 use crate::protocol::Event;
 #[cfg(feature = "grpc")]
 use crate::server::grpc::actions::GRPC_UNARY_REQUEST_EVENT;
 #[cfg(feature = "grpc")]
+use crate::server::GrpcProtocol;
+#[cfg(feature = "grpc")]
+use crate::state::app_state::AppState;
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+#[cfg(feature = "grpc")]
+use bytes::Bytes;
+#[cfg(feature = "grpc")]
+use http_body_util::{BodyExt, Full};
+#[cfg(feature = "grpc")]
+use hyper::{body::Incoming, Request, Response, StatusCode};
+#[cfg(feature = "grpc")]
+use prost::Message;
+#[cfg(feature = "grpc")]
 use prost_reflect::{DescriptorPool, DynamicMessage, ReflectMessage};
 #[cfg(feature = "grpc")]
 use prost_types::FileDescriptorSet;
 #[cfg(feature = "grpc")]
-use prost::Message;
-#[cfg(feature = "grpc")]
 use serde_json::json;
-#[cfg(feature = "grpc")]
-use hyper::{Request, Response, body::Incoming, StatusCode};
-#[cfg(feature = "grpc")]
-use http_body_util::{BodyExt, Full};
-#[cfg(feature = "grpc")]
-use bytes::Bytes;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// gRPC server with dynamic schema support
 pub struct GrpcServer;
@@ -62,7 +62,9 @@ impl GrpcServer {
         let proto_schema = startup_params
             .as_ref()
             .map(|p| p.get_string("proto_schema"))
-            .context("Missing 'proto_schema' in startup_params. LLM must provide protobuf definition.")?;
+            .context(
+                "Missing 'proto_schema' in startup_params. LLM must provide protobuf definition.",
+            )?;
 
         // Enable reflection by default (can be disabled in startup_params)
         let enable_reflection = startup_params
@@ -92,9 +94,16 @@ impl GrpcServer {
 
         info!("gRPC server starting with {} service(s)", services.len());
         for service in &services {
-            info!("  Service: {} ({} methods)", service.full_name(), service.methods().count());
-            let _ = status_tx.send(format!("[INFO] gRPC service: {} ({} methods)",
-                service.full_name(), service.methods().count()));
+            info!(
+                "  Service: {} ({} methods)",
+                service.full_name(),
+                service.methods().count()
+            );
+            let _ = status_tx.send(format!(
+                "[INFO] gRPC service: {} ({} methods)",
+                service.full_name(),
+                service.methods().count()
+            ));
         }
 
         // Create gRPC server with dynamic handler
@@ -109,10 +118,12 @@ impl GrpcServer {
             let mut fd_bytes_refl = Vec::new();
             file_descriptor_set.encode(&mut fd_bytes_refl)?;
 
-            Some(tonic_reflection::server::Builder::configure()
-                .register_encoded_file_descriptor_set(fd_bytes_refl.as_slice())
-                .build_v1()
-                .context("Failed to build gRPC reflection service")?)
+            Some(
+                tonic_reflection::server::Builder::configure()
+                    .register_encoded_file_descriptor_set(fd_bytes_refl.as_slice())
+                    .build_v1()
+                    .context("Failed to build gRPC reflection service")?,
+            )
         } else {
             info!("gRPC reflection disabled");
             None
@@ -129,7 +140,8 @@ impl GrpcServer {
         };
 
         // Start HTTP/2 server for gRPC
-        let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let listener =
+            crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let actual_addr = listener.local_addr()?;
 
         console_info!(status_tx, "gRPC server listening on {}", actual_addr);
@@ -141,13 +153,17 @@ impl GrpcServer {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
                         let connection_id = crate::server::connection::ConnectionId::new(
-                            service.app_state.get_next_unified_id().await
+                            service.app_state.get_next_unified_id().await,
                         );
                         debug!("gRPC connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!("[DEBUG] gRPC connection from {}", remote_addr));
+                        let _ =
+                            status_tx.send(format!("[DEBUG] gRPC connection from {}", remote_addr));
 
                         // Add connection to server state
-                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -162,7 +178,9 @@ impl GrpcServer {
                             status_changed_at: now,
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
-                        app_state.add_connection_to_server(server_id, conn_state).await;
+                        app_state
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let service_clone = service.clone();
@@ -177,22 +195,25 @@ impl GrpcServer {
                             let grpc_service = hyper::service::service_fn(move |req| {
                                 let service = service_clone.clone();
                                 let conn_id = connection_id;
-                                async move {
-                                    service.handle_grpc_request(req, conn_id).await
-                                }
+                                async move { service.handle_grpc_request(req, conn_id).await }
                             });
 
                             // Serve HTTP/2 connection
-                            if let Err(e) = hyper::server::conn::http2::Builder::new(hyper_util::rt::TokioExecutor::new())
-                                .serve_connection(io, grpc_service)
-                                .await
+                            if let Err(e) = hyper::server::conn::http2::Builder::new(
+                                hyper_util::rt::TokioExecutor::new(),
+                            )
+                            .serve_connection(io, grpc_service)
+                            .await
                             {
                                 debug!("gRPC connection error: {}", e);
-                                let _ = status_tx_clone.send(format!("[DEBUG] gRPC connection error: {}", e));
+                                let _ = status_tx_clone
+                                    .send(format!("[DEBUG] gRPC connection error: {}", e));
                             }
 
                             // Clean up connection
-                            app_state_clone.remove_connection_from_server(server_id, connection_id).await;
+                            app_state_clone
+                                .remove_connection_from_server(server_id, connection_id)
+                                .await;
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
@@ -221,14 +242,20 @@ impl GrpcServer {
         if let Ok(decoded) = STANDARD.decode(proto_schema.trim()) {
             match FileDescriptorSet::decode(decoded.as_slice()) {
                 Ok(fds) => {
-                    debug!("Loaded FileDescriptorSet from base64 ({} bytes)", decoded.len());
+                    debug!(
+                        "Loaded FileDescriptorSet from base64 ({} bytes)",
+                        decoded.len()
+                    );
                     return Ok(fds);
                 }
                 Err(e) => {
                     // Base64 decoded successfully but FileDescriptorSet decode failed
                     // This is likely the correct format but corrupted data
-                    bail!("Successfully decoded base64 but failed to parse FileDescriptorSet: {}. \
-                           The base64 string may be corrupted or not a valid FileDescriptorSet.", e);
+                    bail!(
+                        "Successfully decoded base64 but failed to parse FileDescriptorSet: {}. \
+                           The base64 string may be corrupted or not a valid FileDescriptorSet.",
+                        e
+                    );
                 }
             }
         }
@@ -256,7 +283,11 @@ impl GrpcServer {
             let bytes = std::fs::read(path)?;
             let fds = FileDescriptorSet::decode(bytes.as_slice())
                 .context("Failed to decode .pb file as FileDescriptorSet")?;
-            debug!("Loaded FileDescriptorSet from {} ({} files)", path.display(), fds.file.len());
+            debug!(
+                "Loaded FileDescriptorSet from {} ({} files)",
+                path.display(),
+                fds.file.len()
+            );
             return Ok(fds);
         }
 
@@ -294,7 +325,11 @@ impl GrpcServer {
         let fds = FileDescriptorSet::decode(bytes.as_slice())
             .context("Failed to decode protoc output")?;
 
-        debug!("Compiled {} with protoc ({} files)", path.display(), fds.file.len());
+        debug!(
+            "Compiled {} with protoc ({} files)",
+            path.display(),
+            fds.file.len()
+        );
         Ok(fds)
     }
 
@@ -346,17 +381,30 @@ impl DynamicGrpcService {
             Ok((svc, method)) => (svc, method),
             Err(e) => {
                 debug!("Invalid gRPC path: {} - {}", path, e);
-                return Ok(Self::grpc_error_response(StatusCode::NOT_FOUND, "Invalid path"));
+                return Ok(Self::grpc_error_response(
+                    StatusCode::NOT_FOUND,
+                    "Invalid path",
+                ));
             }
         };
 
         debug!("gRPC request: {}/{}", service_name, method_name);
-        let _ = self.status_tx.send(format!("[DEBUG] gRPC request: {}/{}", service_name, method_name));
+        let _ = self.status_tx.send(format!(
+            "[DEBUG] gRPC request: {}/{}",
+            service_name, method_name
+        ));
 
         // Validate content-type
         if let Some(content_type) = req.headers().get("content-type") {
-            if !content_type.to_str().unwrap_or("").starts_with("application/grpc") {
-                return Ok(Self::grpc_error_response(StatusCode::UNSUPPORTED_MEDIA_TYPE, "Expected application/grpc"));
+            if !content_type
+                .to_str()
+                .unwrap_or("")
+                .starts_with("application/grpc")
+            {
+                return Ok(Self::grpc_error_response(
+                    StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                    "Expected application/grpc",
+                ));
             }
         }
 
@@ -365,7 +413,10 @@ impl DynamicGrpcService {
             Ok(collected) => collected.to_bytes(),
             Err(e) => {
                 debug!("Failed to read gRPC request body: {}", e);
-                return Ok(Self::grpc_error_response(StatusCode::BAD_REQUEST, "Failed to read body"));
+                return Ok(Self::grpc_error_response(
+                    StatusCode::BAD_REQUEST,
+                    "Failed to read body",
+                ));
             }
         };
 
@@ -374,19 +425,30 @@ impl DynamicGrpcService {
             Ok(payload) => payload,
             Err(e) => {
                 debug!("Failed to decode gRPC frame: {}", e);
-                return Ok(Self::grpc_error_response(StatusCode::BAD_REQUEST, "Invalid gRPC frame"));
+                return Ok(Self::grpc_error_response(
+                    StatusCode::BAD_REQUEST,
+                    "Invalid gRPC frame",
+                ));
             }
         };
 
         trace!("gRPC request payload: {} bytes", request_payload.len());
 
         // Handle the unary request
-        let response_payload = match self.handle_unary(&service_name, &method_name, request_payload, connection_id).await {
+        let response_payload = match self
+            .handle_unary(&service_name, &method_name, request_payload, connection_id)
+            .await
+        {
             Ok(payload) => payload,
             Err(e) => {
                 debug!("gRPC handler error: {}", e);
-                let _ = self.status_tx.send(format!("[ERROR] gRPC handler error: {}", e));
-                return Ok(Self::grpc_error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()));
+                let _ = self
+                    .status_tx
+                    .send(format!("[ERROR] gRPC handler error: {}", e));
+                return Ok(Self::grpc_error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &e.to_string(),
+                ));
             }
         };
 
@@ -397,12 +459,15 @@ impl DynamicGrpcService {
         let response = Response::builder()
             .status(StatusCode::OK)
             .header("content-type", "application/grpc")
-            .header("grpc-status", "0")  // OK
+            .header("grpc-status", "0") // OK
             .body(Full::new(Bytes::from(response_frame)))
             .unwrap();
 
         debug!("gRPC response: {} bytes", response_payload.len());
-        let _ = self.status_tx.send(format!("[DEBUG] gRPC response: {} bytes", response_payload.len()));
+        let _ = self.status_tx.send(format!(
+            "[DEBUG] gRPC response: {} bytes",
+            response_payload.len()
+        ));
 
         Ok(response)
     }
@@ -437,7 +502,11 @@ impl DynamicGrpcService {
         let length = u32::from_be_bytes([frame[1], frame[2], frame[3], frame[4]]) as usize;
 
         if frame.len() < 5 + length {
-            bail!("Frame length mismatch (expected {} bytes, got {})", 5 + length, frame.len());
+            bail!(
+                "Frame length mismatch (expected {} bytes, got {})",
+                5 + length,
+                frame.len()
+            );
         }
 
         Ok(frame[5..5 + length].to_vec())
@@ -465,7 +534,7 @@ impl DynamicGrpcService {
         Response::builder()
             .status(status)
             .header("content-type", "application/grpc")
-            .header("grpc-status", "13")  // INTERNAL
+            .header("grpc-status", "13") // INTERNAL
             .header("grpc-message", message)
             .body(Full::new(Bytes::new()))
             .unwrap()
@@ -480,7 +549,8 @@ impl DynamicGrpcService {
         connection_id: crate::server::connection::ConnectionId,
     ) -> Result<Vec<u8>> {
         // Find service and method descriptors
-        let service_desc = self.descriptor_pool
+        let service_desc = self
+            .descriptor_pool
             .services()
             .find(|s| s.full_name() == service_name)
             .context("Service not found in schema")?;
@@ -494,7 +564,10 @@ impl DynamicGrpcService {
         let output_desc = method_desc.output();
 
         debug!("gRPC unary call: {}/{}", service_name, method_name);
-        let _ = self.status_tx.send(format!("[DEBUG] gRPC call: {}/{}", service_name, method_name));
+        let _ = self.status_tx.send(format!(
+            "[DEBUG] gRPC call: {}/{}",
+            service_name, method_name
+        ));
 
         // Decode request using dynamic message
         let request_msg = DynamicMessage::decode(input_desc.clone(), request_bytes.as_slice())
@@ -503,19 +576,28 @@ impl DynamicGrpcService {
         // Convert DynamicMessage to JSON using prost-reflect's JSON serialization
         let request_json = Self::dynamic_message_to_json(&request_msg)?;
 
-        trace!("gRPC request JSON: {}", serde_json::to_string_pretty(&request_json)?);
-        let _ = self.status_tx.send(format!("[TRACE] Request: {}", serde_json::to_string(&request_json)?));
+        trace!(
+            "gRPC request JSON: {}",
+            serde_json::to_string_pretty(&request_json)?
+        );
+        let _ = self.status_tx.send(format!(
+            "[TRACE] Request: {}",
+            serde_json::to_string(&request_json)?
+        ));
 
         // Build response schema description for LLM
         let response_schema = Self::build_message_schema(&output_desc);
 
         // Create event for LLM
-        let event = Event::new(&GRPC_UNARY_REQUEST_EVENT, json!({
-            "service": service_name,
-            "method": method_name,
-            "request": request_json,
-            "expected_response_schema": response_schema,
-        }));
+        let event = Event::new(
+            &GRPC_UNARY_REQUEST_EVENT,
+            json!({
+                "service": service_name,
+                "method": method_name,
+                "request": request_json,
+                "expected_response_schema": response_schema,
+            }),
+        );
 
         // Call LLM
         let execution_result = call_llm(
@@ -534,7 +616,8 @@ impl DynamicGrpcService {
             match protocol_result {
                 ActionResult::Custom { name, data } if name == "grpc_unary_response" => {
                     // Extract response message from LLM
-                    let response_json = data.get("message")
+                    let response_json = data
+                        .get("message")
                         .context("Missing 'message' in grpc_unary_response")?;
 
                     // Convert JSON to DynamicMessage
@@ -545,13 +628,21 @@ impl DynamicGrpcService {
                     response_msg.encode(&mut response_bytes)?;
 
                     debug!("gRPC response: {} bytes", response_bytes.len());
-                    let _ = self.status_tx.send(format!("[DEBUG] Response: {} bytes", response_bytes.len()));
+                    let _ = self
+                        .status_tx
+                        .send(format!("[DEBUG] Response: {} bytes", response_bytes.len()));
 
                     return Ok(response_bytes);
                 }
                 ActionResult::Custom { name, data } if name == "grpc_error" => {
-                    let code = data.get("code").and_then(|c| c.as_str()).unwrap_or("INTERNAL");
-                    let message = data.get("message").and_then(|m| m.as_str()).unwrap_or("Internal error");
+                    let code = data
+                        .get("code")
+                        .and_then(|c| c.as_str())
+                        .unwrap_or("INTERNAL");
+                    let message = data
+                        .get("message")
+                        .and_then(|m| m.as_str())
+                        .unwrap_or("Internal error");
 
                     debug!("gRPC error: {} - {}", code, message);
                     bail!("gRPC error: {} - {}", code, message);
@@ -607,13 +698,12 @@ impl DynamicGrpcService {
                 use base64::engine::general_purpose::STANDARD;
                 use base64::Engine;
                 json!(STANDARD.encode(b))
-            },
+            }
             Value::EnumNumber(e) => json!(*e),
             Value::Message(m) => Self::dynamic_message_to_json(m)?,
             Value::List(l) => {
-                let items: Result<Vec<_>> = l.iter()
-                    .map(|v| Self::proto_value_to_json(v))
-                    .collect();
+                let items: Result<Vec<_>> =
+                    l.iter().map(|v| Self::proto_value_to_json(v)).collect();
                 json!(items?)
             }
             Value::Map(m) => {
@@ -723,8 +813,12 @@ impl DynamicGrpcService {
             let field_type = match field.kind() {
                 prost_reflect::Kind::Double => "number (double)",
                 prost_reflect::Kind::Float => "number (float)",
-                prost_reflect::Kind::Int32 | prost_reflect::Kind::Sint32 | prost_reflect::Kind::Sfixed32 => "int32",
-                prost_reflect::Kind::Int64 | prost_reflect::Kind::Sint64 | prost_reflect::Kind::Sfixed64 => "int64",
+                prost_reflect::Kind::Int32
+                | prost_reflect::Kind::Sint32
+                | prost_reflect::Kind::Sfixed32 => "int32",
+                prost_reflect::Kind::Int64
+                | prost_reflect::Kind::Sint64
+                | prost_reflect::Kind::Sfixed64 => "int64",
                 prost_reflect::Kind::Uint32 | prost_reflect::Kind::Fixed32 => "uint32",
                 prost_reflect::Kind::Uint64 | prost_reflect::Kind::Fixed64 => "uint64",
                 prost_reflect::Kind::Bool => "boolean",

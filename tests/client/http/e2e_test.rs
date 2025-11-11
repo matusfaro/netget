@@ -52,7 +52,9 @@ mod http_client_tests {
     #[tokio::test]
     async fn test_http_client_lllm_controlled_request() -> E2EResult<()> {
         // Start a simple HTTP server
-        let server_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via HTTP. Log all incoming requests.");
+        let server_config = NetGetConfig::new(
+            "Listen on port {AVAILABLE_PORT} via HTTP. Log all incoming requests.",
+        );
 
         let server = start_netget_server(server_config).await?;
 

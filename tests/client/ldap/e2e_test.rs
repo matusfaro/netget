@@ -6,7 +6,7 @@
 
 use anyhow::Result;
 use netget::llm::ollama_client::OllamaClient;
-use netget::protocol::{CLIENT_REGISTRY, ConnectContext, StartupParams};
+use netget::protocol::{ConnectContext, StartupParams, CLIENT_REGISTRY};
 use netget::state::app_state::AppState;
 use netget::state::{ClientId, ClientInstance, ClientStatus};
 use std::sync::Arc;
@@ -16,15 +16,17 @@ use tokio::sync::mpsc;
 async fn create_test_app_state() -> (Arc<AppState>, ClientId) {
     let state = Arc::new(AppState::new());
 
-    let client_id = state.add_client(ClientInstance {
-        id: ClientId::from(1),
-        protocol_name: "LDAP".to_string(),
-        remote_addr: "localhost:1389".to_string(),
-        status: ClientStatus::Connecting,
-        instruction: "Connect to LDAP server and search for users".to_string(),
-        memory: vec![],
-        startup_params: None,
-    }).await;
+    let client_id = state
+        .add_client(ClientInstance {
+            id: ClientId::from(1),
+            protocol_name: "LDAP".to_string(),
+            remote_addr: "localhost:1389".to_string(),
+            status: ClientStatus::Connecting,
+            instruction: "Connect to LDAP server and search for users".to_string(),
+            memory: vec![],
+            startup_params: None,
+        })
+        .await;
 
     (state, client_id)
 }
@@ -41,7 +43,9 @@ async fn test_ldap_client_connect() -> Result<()> {
     let (status_tx, mut _status_rx) = mpsc::unbounded_channel();
 
     // Get protocol from registry
-    let protocol = CLIENT_REGISTRY.get("LDAP").expect("LDAP protocol not found");
+    let protocol = CLIENT_REGISTRY
+        .get("LDAP")
+        .expect("LDAP protocol not found");
 
     // Create LLM client (mocked for testing)
     let llm_client = OllamaClient::new(
@@ -84,14 +88,19 @@ async fn test_ldap_client_bind_and_search() -> Result<()> {
     let (status_tx, mut status_rx) = mpsc::unbounded_channel();
 
     // Update instruction to bind and search
-    state.update_client_instruction(
-        client_id,
-        "Connect to LDAP, bind as cn=admin,dc=example,dc=com with password 'admin', \
-         then search for all entries under dc=example,dc=com".to_string()
-    ).await;
+    state
+        .update_client_instruction(
+            client_id,
+            "Connect to LDAP, bind as cn=admin,dc=example,dc=com with password 'admin', \
+         then search for all entries under dc=example,dc=com"
+                .to_string(),
+        )
+        .await;
 
     // Get protocol from registry
-    let protocol = CLIENT_REGISTRY.get("LDAP").expect("LDAP protocol not found");
+    let protocol = CLIENT_REGISTRY
+        .get("LDAP")
+        .expect("LDAP protocol not found");
 
     // Create LLM client
     let llm_client = OllamaClient::new(
@@ -144,15 +153,20 @@ async fn test_ldap_client_add_modify_delete() -> Result<()> {
     let (status_tx, mut _status_rx) = mpsc::unbounded_channel();
 
     // Update instruction to perform CRUD operations
-    state.update_client_instruction(
-        client_id,
-        "Connect to LDAP, bind as cn=admin,dc=example,dc=com with password 'admin', \
+    state
+        .update_client_instruction(
+            client_id,
+            "Connect to LDAP, bind as cn=admin,dc=example,dc=com with password 'admin', \
          add a new user cn=testuser,dc=example,dc=com with mail testuser@example.com, \
-         modify the mail to newemail@example.com, then delete the user".to_string()
-    ).await;
+         modify the mail to newemail@example.com, then delete the user"
+                .to_string(),
+        )
+        .await;
 
     // Get protocol from registry
-    let protocol = CLIENT_REGISTRY.get("LDAP").expect("LDAP protocol not found");
+    let protocol = CLIENT_REGISTRY
+        .get("LDAP")
+        .expect("LDAP protocol not found");
 
     // Create LLM client
     let llm_client = OllamaClient::new(
@@ -189,8 +203,8 @@ async fn test_ldap_client_add_modify_delete() -> Result<()> {
 
 #[test]
 fn test_ldap_client_protocol_metadata() {
-    use netget::llm::actions::Client;
     use netget::client::ldap::LdapClientProtocol;
+    use netget::llm::actions::Client;
 
     let protocol = LdapClientProtocol::new();
 
@@ -214,8 +228,8 @@ fn test_ldap_client_protocol_metadata() {
 
 #[test]
 fn test_ldap_client_actions() {
-    use netget::llm::actions::Client;
     use netget::client::ldap::LdapClientProtocol;
+    use netget::llm::actions::Client;
     use netget::state::app_state::AppState;
 
     let protocol = LdapClientProtocol::new();
@@ -235,14 +249,18 @@ fn test_ldap_client_actions() {
 
     // Verify all actions have examples
     for action in &async_actions {
-        assert!(!action.example.is_null(), "Action {} missing example", action.name);
+        assert!(
+            !action.example.is_null(),
+            "Action {} missing example",
+            action.name
+        );
     }
 }
 
 #[test]
 fn test_ldap_client_execute_bind_action() {
-    use netget::llm::actions::Client;
     use netget::client::ldap::LdapClientProtocol;
+    use netget::llm::actions::Client;
     use serde_json::json;
 
     let protocol = LdapClientProtocol::new();
@@ -259,8 +277,8 @@ fn test_ldap_client_execute_bind_action() {
 
 #[test]
 fn test_ldap_client_execute_search_action() {
-    use netget::llm::actions::Client;
     use netget::client::ldap::LdapClientProtocol;
+    use netget::llm::actions::Client;
     use serde_json::json;
 
     let protocol = LdapClientProtocol::new();

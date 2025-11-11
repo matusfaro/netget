@@ -59,7 +59,9 @@ pub async fn run() -> Result<()> {
         debug!("Parsing scripting mode...");
         let mode_to_set = if let Some(mode) = args.parse_scripting_mode()? {
             Some(mode)
-        } else { settings.parse_scripting_mode() };
+        } else {
+            settings.parse_scripting_mode()
+        };
         debug!("Scripting mode to set: {:?}", mode_to_set);
 
         if let Some(mode) = mode_to_set {
@@ -71,7 +73,9 @@ pub async fn run() -> Result<()> {
                 crate::state::app_state::ScriptingMode::On => true, // LLM chooses runtime
                 crate::state::app_state::ScriptingMode::Off => true, // Always available
                 crate::state::app_state::ScriptingMode::Python => scripting_env.python.is_some(),
-                crate::state::app_state::ScriptingMode::JavaScript => scripting_env.javascript.is_some(),
+                crate::state::app_state::ScriptingMode::JavaScript => {
+                    scripting_env.javascript.is_some()
+                }
                 crate::state::app_state::ScriptingMode::Go => scripting_env.go.is_some(),
                 crate::state::app_state::ScriptingMode::Perl => scripting_env.perl.is_some(),
             };
@@ -118,7 +122,16 @@ pub async fn run() -> Result<()> {
 
         // Note: init_terminal not needed for rolling TUI (manages terminal itself)
         debug!("Entering rolling TUI...");
-        rolling_tui::run_rolling_tui(state, app, event_handler, llm, settings, &args, color_palette).await
+        rolling_tui::run_rolling_tui(
+            state,
+            app,
+            event_handler,
+            llm,
+            settings,
+            &args,
+            color_palette,
+        )
+        .await
     } else {
         // No prompt and no terminal available
         anyhow::bail!(

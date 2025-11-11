@@ -13,12 +13,20 @@ use serde_json::json;
 use std::sync::LazyLock;
 
 /// WireGuard peer authorization request event
-pub static WIREGUARD_PEER_REQUEST_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("wireguard_peer_request", "WireGuard peer requesting authorization"));
+pub static WIREGUARD_PEER_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "wireguard_peer_request",
+        "WireGuard peer requesting authorization",
+    )
+});
 
 /// WireGuard peer connected event
-pub static WIREGUARD_PEER_CONNECTED_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("wireguard_peer_connected", "WireGuard peer successfully connected"));
+pub static WIREGUARD_PEER_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "wireguard_peer_connected",
+        "WireGuard peer successfully connected",
+    )
+});
 
 /// Get all WireGuard event types
 pub fn get_wireguard_event_types() -> Vec<EventType> {
@@ -75,7 +83,9 @@ impl Protocol for WireguardProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState, PrivilegeRequirement};
+        use crate::protocol::metadata::{
+            DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2,
+        };
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Stable)
@@ -117,7 +127,8 @@ impl Server for WireguardProtocol {
                 ctx.state,
                 ctx.server_id,
                 ctx.status_tx,
-            ).await
+            )
+            .await
         })
     }
 
@@ -172,15 +183,13 @@ impl WireguardProtocol {
             .unwrap_or("Peer authorized");
 
         // Return authorization details to be executed by server
-        Ok(ActionResult::Output(
-            serde_json::to_vec(&json!({
-                "action": "authorize_peer",
-                "public_key": public_key,
-                "allowed_ips": allowed_ips,
-                "endpoint": endpoint.map(|e: std::net::SocketAddr| e.to_string()),
-                "message": message,
-            }))?
-        ))
+        Ok(ActionResult::Output(serde_json::to_vec(&json!({
+            "action": "authorize_peer",
+            "public_key": public_key,
+            "allowed_ips": allowed_ips,
+            "endpoint": endpoint.map(|e: std::net::SocketAddr| e.to_string()),
+            "message": message,
+        }))?))
     }
 
     /// Execute reject_peer action - deny peer connection
@@ -206,13 +215,9 @@ impl WireguardProtocol {
             .and_then(|v| v.as_str())
             .context("Missing public_key")?;
 
-        let _limit_mbps = action
-            .get("limit_mbps")
-            .and_then(|v| v.as_u64());
+        let _limit_mbps = action.get("limit_mbps").and_then(|v| v.as_u64());
 
-        let _limit_total_mb = action
-            .get("limit_total_mb")
-            .and_then(|v| v.as_u64());
+        let _limit_total_mb = action.get("limit_total_mb").and_then(|v| v.as_u64());
 
         // Note: Traffic limiting would require iptables/tc configuration
         Ok(ActionResult::NoAction)
@@ -232,13 +237,11 @@ impl WireguardProtocol {
             .unwrap_or("Disconnected by admin");
 
         // Return disconnect command to be executed by server
-        Ok(ActionResult::Output(
-            serde_json::to_vec(&json!({
-                "action": "disconnect_peer",
-                "public_key": public_key,
-                "reason": reason,
-            }))?
-        ))
+        Ok(ActionResult::Output(serde_json::to_vec(&json!({
+            "action": "disconnect_peer",
+            "public_key": public_key,
+            "reason": reason,
+        }))?))
     }
 }
 
@@ -257,7 +260,9 @@ fn authorize_peer_action() -> ActionDefinition {
             Parameter {
                 name: "allowed_ips".to_string(),
                 type_hint: "array".to_string(),
-                description: "List of allowed IP ranges for this peer (CIDR notation, e.g. 10.20.30.2/32)".to_string(),
+                description:
+                    "List of allowed IP ranges for this peer (CIDR notation, e.g. 10.20.30.2/32)"
+                        .to_string(),
                 required: true,
             },
             Parameter {
@@ -388,14 +393,12 @@ fn remove_peer_action() -> ActionDefinition {
     ActionDefinition {
         name: "remove_peer".to_string(),
         description: "Permanently remove a peer from the server configuration".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "public_key".to_string(),
-                type_hint: "string".to_string(),
-                description: "Peer's public key (base64)".to_string(),
-                required: true,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "public_key".to_string(),
+            type_hint: "string".to_string(),
+            description: "Peer's public key (base64)".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "remove_peer",
             "public_key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg="
@@ -414,4 +417,3 @@ fn get_server_info_action() -> ActionDefinition {
         }),
     }
 }
-

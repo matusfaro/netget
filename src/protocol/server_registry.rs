@@ -39,7 +39,12 @@ impl ServerRegistry {
     fn register_protocols(&mut self) {
         // Create a shared dummy AppState for protocols that need it during registration
         // This avoids creating multiple AppState instances which trigger expensive environment detection
-        #[cfg(any(feature = "mysql", feature = "postgresql", feature = "redis", feature = "cassandra"))]
+        #[cfg(any(
+            feature = "mysql",
+            feature = "postgresql",
+            feature = "redis",
+            feature = "cassandra"
+        ))]
         let dummy_state = Arc::new(crate::state::app_state::AppState::new());
 
         #[cfg(feature = "tcp")]
@@ -64,14 +69,10 @@ impl ServerRegistry {
         self.register(Arc::new(crate::server::UdpProtocol::new()));
 
         #[cfg(feature = "datalink")]
-        self.register(
-            Arc::new(crate::server::DataLinkProtocol::new()),
-        );
+        self.register(Arc::new(crate::server::DataLinkProtocol::new()));
 
         #[cfg(feature = "arp")]
-        self.register(
-            Arc::new(crate::server::ArpProtocol::new()),
-        );
+        self.register(Arc::new(crate::server::ArpProtocol::new()));
 
         #[cfg(feature = "dc")]
         self.register(Arc::new(crate::server::DcProtocol::new()));
@@ -122,9 +123,7 @@ impl ServerRegistry {
         self.register(Arc::new(crate::server::XmppProtocol::new()));
 
         #[cfg(feature = "telnet")]
-        self.register(
-            Arc::new(crate::server::TelnetProtocol::new()),
-        );
+        self.register(Arc::new(crate::server::TelnetProtocol::new()));
 
         #[cfg(feature = "smtp")]
         self.register(Arc::new(crate::server::SmtpProtocol::new()));
@@ -149,13 +148,11 @@ impl ServerRegistry {
             use crate::server::connection::ConnectionId;
             use tokio::sync::mpsc;
             let (tx, _rx) = mpsc::unbounded_channel();
-            self.register(
-                Arc::new(crate::server::MysqlProtocol::new(
-                    ConnectionId::new(0), // Placeholder for protocol registry
-                    dummy_state.clone(),
-                    tx,
-                )),
-            );
+            self.register(Arc::new(crate::server::MysqlProtocol::new(
+                ConnectionId::new(0), // Placeholder for protocol registry
+                dummy_state.clone(),
+                tx,
+            )));
         }
 
         #[cfg(feature = "postgresql")]
@@ -163,13 +160,11 @@ impl ServerRegistry {
             use crate::server::connection::ConnectionId;
             use tokio::sync::mpsc;
             let (tx, _rx) = mpsc::unbounded_channel();
-            self.register(
-                Arc::new(crate::server::PostgresqlProtocol::new(
-                    ConnectionId::new(0), // Placeholder for protocol registry
-                    dummy_state.clone(),
-                    tx,
-                )),
-            );
+            self.register(Arc::new(crate::server::PostgresqlProtocol::new(
+                ConnectionId::new(0), // Placeholder for protocol registry
+                dummy_state.clone(),
+                tx,
+            )));
         }
 
         #[cfg(feature = "redis")]
@@ -177,13 +172,11 @@ impl ServerRegistry {
             use crate::server::connection::ConnectionId;
             use tokio::sync::mpsc;
             let (tx, _rx) = mpsc::unbounded_channel();
-            self.register(
-                Arc::new(crate::server::RedisProtocol::new(
-                    ConnectionId::new(0), // Placeholder for protocol registry
-                    dummy_state.clone(),
-                    tx,
-                )),
-            );
+            self.register(Arc::new(crate::server::RedisProtocol::new(
+                ConnectionId::new(0), // Placeholder for protocol registry
+                dummy_state.clone(),
+                tx,
+            )));
         }
 
         #[cfg(feature = "rss")]
@@ -194,47 +187,33 @@ impl ServerRegistry {
             use crate::server::connection::ConnectionId;
             use tokio::sync::mpsc;
             let (tx, _rx) = mpsc::unbounded_channel();
-            self.register(
-                Arc::new(crate::server::CassandraProtocol::new(
-                    ConnectionId::new(0), // Placeholder for protocol registry
-                    dummy_state.clone(),
-                    tx,
-                )),
-            );
+            self.register(Arc::new(crate::server::CassandraProtocol::new(
+                ConnectionId::new(0), // Placeholder for protocol registry
+                dummy_state.clone(),
+                tx,
+            )));
         }
 
         #[cfg(feature = "dynamo")]
-        self.register(
-            Arc::new(crate::server::DynamoProtocol::new()),
-        );
+        self.register(Arc::new(crate::server::DynamoProtocol::new()));
 
         #[cfg(feature = "s3")]
-        self.register(
-            Arc::new(crate::server::S3Protocol::new()),
-        );
+        self.register(Arc::new(crate::server::S3Protocol::new()));
 
         #[cfg(feature = "sqs")]
-        self.register(
-            Arc::new(crate::server::SqsProtocol::new()),
-        );
+        self.register(Arc::new(crate::server::SqsProtocol::new()));
 
         #[cfg(feature = "elasticsearch")]
-        self.register(
-            Arc::new(crate::server::ElasticsearchProtocol::new()),
-        );
+        self.register(Arc::new(crate::server::ElasticsearchProtocol::new()));
 
         #[cfg(feature = "npm")]
-        self.register(
-            Arc::new(crate::server::NpmProtocol::new()),
-        );
+        self.register(Arc::new(crate::server::NpmProtocol::new()));
 
         #[cfg(feature = "ipp")]
         self.register(Arc::new(crate::server::IppProtocol::new()));
 
         #[cfg(feature = "webdav")]
-        self.register(
-            Arc::new(crate::server::WebDavProtocol::new()),
-        );
+        self.register(Arc::new(crate::server::WebDavProtocol::new()));
 
         #[cfg(feature = "nfs")]
         self.register(Arc::new(crate::server::NfsProtocol::new()));
@@ -243,29 +222,19 @@ impl ServerRegistry {
         self.register(Arc::new(crate::server::SmbProtocol::new()));
 
         #[cfg(feature = "proxy")]
-        self.register(
-            Arc::new(crate::server::ProxyProtocol::new()),
-        );
+        self.register(Arc::new(crate::server::ProxyProtocol::new()));
 
         #[cfg(feature = "socks5")]
-        self.register(
-            Arc::new(crate::server::Socks5Protocol::new()),
-        );
+        self.register(Arc::new(crate::server::Socks5Protocol::new()));
 
         #[cfg(feature = "wireguard")]
-        self.register(
-            Arc::new(crate::server::WireguardProtocol::new()),
-        );
+        self.register(Arc::new(crate::server::WireguardProtocol::new()));
 
         #[cfg(feature = "openvpn")]
-        self.register(
-            Arc::new(crate::server::OpenvpnProtocol::new()),
-        );
+        self.register(Arc::new(crate::server::OpenvpnProtocol::new()));
 
         #[cfg(feature = "ipsec")]
-        self.register(
-            Arc::new(crate::server::IpsecProtocol::new()),
-        );
+        self.register(Arc::new(crate::server::IpsecProtocol::new()));
 
         #[cfg(feature = "stun")]
         self.register(Arc::new(crate::server::StunProtocol::new()));
@@ -295,29 +264,19 @@ impl ServerRegistry {
         self.register(Arc::new(crate::server::McpProtocol::new()));
 
         #[cfg(feature = "openai")]
-        self.register(
-            Arc::new(crate::server::OpenAiProtocol::new()),
-        );
+        self.register(Arc::new(crate::server::OpenAiProtocol::new()));
 
         #[cfg(feature = "ollama")]
-        self.register(
-            Arc::new(crate::server::OllamaProtocol::new()),
-        );
+        self.register(Arc::new(crate::server::OllamaProtocol::new()));
 
         #[cfg(feature = "oauth2")]
-        self.register(
-            Arc::new(crate::server::OAuth2Protocol::new()),
-        );
+        self.register(Arc::new(crate::server::OAuth2Protocol::new()));
 
         #[cfg(feature = "jsonrpc")]
-        self.register(
-            Arc::new(crate::server::JsonRpcProtocol::new()),
-        );
+        self.register(Arc::new(crate::server::JsonRpcProtocol::new()));
 
         #[cfg(feature = "xmlrpc")]
-        self.register(
-            Arc::new(crate::server::XmlRpcProtocol::new()),
-        );
+        self.register(Arc::new(crate::server::XmlRpcProtocol::new()));
 
         #[cfg(feature = "grpc")]
         self.register(Arc::new(crate::server::GrpcProtocol::new()));
@@ -326,27 +285,19 @@ impl ServerRegistry {
         self.register(Arc::new(crate::server::EtcdProtocol::new()));
 
         #[cfg(feature = "tor")]
-        self.register(
-            Arc::new(crate::server::TorDirectoryProtocol::new()),
-        );
+        self.register(Arc::new(crate::server::TorDirectoryProtocol::new()));
 
         #[cfg(feature = "tor")]
-        self.register(
-            Arc::new(crate::server::TorRelayProtocol::new()),
-        );
+        self.register(Arc::new(crate::server::TorRelayProtocol::new()));
 
         #[cfg(feature = "vnc")]
         self.register(Arc::new(crate::server::VncProtocol::new()));
 
         #[cfg(feature = "openapi")]
-        self.register(
-            Arc::new(crate::server::OpenApiProtocol::new()),
-        );
+        self.register(Arc::new(crate::server::OpenApiProtocol::new()));
 
         #[cfg(feature = "openid")]
-        self.register(
-            Arc::new(crate::server::OpenIdProtocol::new()),
-        );
+        self.register(Arc::new(crate::server::OpenIdProtocol::new()));
 
         #[cfg(feature = "git")]
         self.register(Arc::new(crate::server::GitProtocol::new()));
@@ -418,10 +369,14 @@ impl ServerRegistry {
         self.register(Arc::new(crate::server::BluetoothBleHeartRateProtocol::new()));
 
         #[cfg(feature = "bluetooth-ble-thermometer")]
-        self.register(Arc::new(crate::server::BluetoothBleThermometerProtocol::new()));
+        self.register(Arc::new(
+            crate::server::BluetoothBleThermometerProtocol::new(),
+        ));
 
         #[cfg(feature = "bluetooth-ble-environmental")]
-        self.register(Arc::new(crate::server::BluetoothBleEnvironmentalProtocol::new()));
+        self.register(Arc::new(
+            crate::server::BluetoothBleEnvironmentalProtocol::new(),
+        ));
 
         #[cfg(feature = "bluetooth-ble-proximity")]
         self.register(Arc::new(crate::server::BluetoothBleProximityProtocol::new()));
@@ -433,10 +388,14 @@ impl ServerRegistry {
         self.register(Arc::new(crate::server::BluetoothBlePresenterProtocol::new()));
 
         #[cfg(feature = "bluetooth-ble-file-transfer")]
-        self.register(Arc::new(crate::server::BluetoothBleFileTransferProtocol::new()));
+        self.register(Arc::new(
+            crate::server::BluetoothBleFileTransferProtocol::new(),
+        ));
 
         #[cfg(feature = "bluetooth-ble-data-stream")]
-        self.register(Arc::new(crate::server::BluetoothBleDataStreamProtocol::new()));
+        self.register(Arc::new(
+            crate::server::BluetoothBleDataStreamProtocol::new(),
+        ));
 
         #[cfg(feature = "bluetooth-ble-cycling")]
         self.register(Arc::new(crate::server::BluetoothBleCyclingProtocol::new()));
@@ -445,7 +404,9 @@ impl ServerRegistry {
         self.register(Arc::new(crate::server::BluetoothBleRunningProtocol::new()));
 
         #[cfg(feature = "bluetooth-ble-weight-scale")]
-        self.register(Arc::new(crate::server::BluetoothBleWeightScaleProtocol::new()));
+        self.register(Arc::new(
+            crate::server::BluetoothBleWeightScaleProtocol::new(),
+        ));
     }
 
     /// Build keyword map for fast protocol parsing
@@ -488,10 +449,10 @@ impl ServerRegistry {
             // Also collect the stack name as a keyword
             let stack_name = protocol.stack_name();
             let key = stack_name.to_lowercase();
-            keyword_to_protocols
-                .entry(key)
-                .or_default()
-                .push((protocol_name.clone(), format!("stack_name '{}'", stack_name)));
+            keyword_to_protocols.entry(key).or_default().push((
+                protocol_name.clone(),
+                format!("stack_name '{}'", stack_name),
+            ));
         }
 
         // Find all keywords that are claimed by multiple protocols
@@ -525,7 +486,9 @@ impl ServerRegistry {
             }
 
             warn!("Note: Each keyword should ideally be unique to a single protocol.");
-            warn!("      Run 'cargo test test_keyword_overlaps -- --ignored' to see all overlaps.\n");
+            warn!(
+                "      Run 'cargo test test_keyword_overlaps -- --ignored' to see all overlaps.\n"
+            );
         }
     }
 
@@ -620,7 +583,11 @@ impl ServerRegistry {
     ///
     /// This method checks ALL keywords defined by the protocol, not just a hardcoded subset.
     /// Returns the protocol name if any keyword matches.
-    fn match_protocol_by_any_keyword(&self, input_lower: &str, protocol_name: &str) -> Option<String> {
+    fn match_protocol_by_any_keyword(
+        &self,
+        input_lower: &str,
+        protocol_name: &str,
+    ) -> Option<String> {
         if let Some(protocol) = self.protocols.get(protocol_name) {
             for keyword in protocol.keywords() {
                 if input_lower.contains(&keyword.to_lowercase()) {
@@ -633,10 +600,8 @@ impl ServerRegistry {
 
     /// Get list of available protocol names
     pub fn available_protocols(&self) -> Vec<&'static str> {
-        let mut protocols: Vec<&'static str> = self.protocols
-            .values()
-            .map(|p| p.protocol_name())
-            .collect();
+        let mut protocols: Vec<&'static str> =
+            self.protocols.values().map(|p| p.protocol_name()).collect();
         // Sort alphabetically for deterministic output
         protocols.sort();
         protocols
@@ -726,4 +691,3 @@ static REGISTRY: once_cell::sync::Lazy<ServerRegistry> =
 pub fn registry() -> &'static ServerRegistry {
     &REGISTRY
 }
-

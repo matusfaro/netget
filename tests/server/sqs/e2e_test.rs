@@ -72,7 +72,9 @@ Remember messages across operations: when a message is sent, it should be retrie
 "#;
 
     let config = ServerConfig::new(prompt);
-    let server = start_netget_server(config).await.expect("Failed to start server");
+    let server = start_netget_server(config)
+        .await
+        .expect("Failed to start server");
     let port = server.port;
 
     // Configure AWS SDK to use local endpoint
@@ -88,11 +90,7 @@ Remember messages across operations: when a message is sent, it should be retrie
     let client = Client::new(&sdk_config);
 
     // Test 1: CreateQueue
-    let create_result = client
-        .create_queue()
-        .queue_name("test-queue")
-        .send()
-        .await;
+    let create_result = client.create_queue().queue_name("test-queue").send().await;
 
     assert!(
         create_result.is_ok(),
@@ -152,14 +150,8 @@ Remember messages across operations: when a message is sent, it should be retrie
 
     let receive_output = receive_result.unwrap();
     let messages = receive_output.messages.unwrap_or_default();
-    assert!(
-        !messages.is_empty(),
-        "Should receive messages"
-    );
-    assert!(
-        messages.len() <= 3,
-        "Should not exceed max messages"
-    );
+    assert!(!messages.is_empty(), "Should receive messages");
+    assert!(messages.len() <= 3, "Should not exceed max messages");
 
     sleep(Duration::from_millis(500)).await;
 
@@ -233,7 +225,9 @@ Remember: Once a message is received, it should not appear in subsequent Receive
 "#;
 
     let config = ServerConfig::new(prompt);
-    let server = start_netget_server(config).await.expect("Failed to start server");
+    let server = start_netget_server(config)
+        .await
+        .expect("Failed to start server");
     let port = server.port;
 
     let sdk_config = aws_config::defaults(BehaviorVersion::latest())
@@ -333,7 +327,9 @@ Do not create any queues automatically - all queues must be explicitly created v
 "#;
 
     let config = ServerConfig::new(prompt);
-    let server = start_netget_server(config).await.expect("Failed to start server");
+    let server = start_netget_server(config)
+        .await
+        .expect("Failed to start server");
     let port = server.port;
 
     let sdk_config = aws_config::defaults(BehaviorVersion::latest())

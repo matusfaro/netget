@@ -36,7 +36,7 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::server::connection::ConnectionId;
 use crate::server::mercurial::actions::MercurialProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 
 /// Mercurial HTTP server
 pub struct MercurialServer;
@@ -63,9 +63,13 @@ impl MercurialServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        info!("Mercurial connection {} from {}", connection_id, remote_addr);
+                        info!(
+                            "Mercurial connection {} from {}",
+                            connection_id, remote_addr
+                        );
                         let _ = status_tx
                             .send(format!("[INFO] Mercurial connection from {}", remote_addr));
 
@@ -143,8 +147,10 @@ impl MercurialServer {
                     }
                     Err(e) => {
                         error!("Failed to accept Mercurial connection: {}", e);
-                        let _ = status_tx
-                            .send(format!("[ERROR] Failed to accept Mercurial connection: {}", e));
+                        let _ = status_tx.send(format!(
+                            "[ERROR] Failed to accept Mercurial connection: {}",
+                            e
+                        ));
                         break;
                     }
                 }
@@ -226,7 +232,10 @@ async fn handle_mercurial_request(
             .await
         }
         "listkeys" => {
-            let namespace = params.get("namespace").map(|s| s.as_str()).unwrap_or("bookmarks");
+            let namespace = params
+                .get("namespace")
+                .map(|s| s.as_str())
+                .unwrap_or("bookmarks");
             handle_listkeys(
                 repo_name,
                 namespace,
@@ -308,9 +317,10 @@ fn parse_query_params(query: &str) -> HashMap<String, String> {
         .filter_map(|pair| {
             let mut parts = pair.splitn(2, '=');
             match (parts.next(), parts.next()) {
-                (Some(key), Some(value)) => {
-                    Some((key.to_string(), urlencoding::decode(value).ok()?.to_string()))
-                }
+                (Some(key), Some(value)) => Some((
+                    key.to_string(),
+                    urlencoding::decode(value).ok()?.to_string(),
+                )),
                 _ => None,
             }
         })
@@ -381,11 +391,7 @@ Provide standard Mercurial capabilities for this repository."#,
         }
     };
     let llm_response = match llm_client
-        .generate_with_retry(
-            &model_str,
-            &prompt,
-            r#"[{"type": "hg_capabilities", ...}]"#
-        )
+        .generate_with_retry(&model_str, &prompt, r#"[{"type": "hg_capabilities", ...}]"#)
         .await
     {
         Ok(response) => response,
@@ -448,12 +454,11 @@ Provide standard Mercurial capabilities for this repository."#,
                 Ok(build_text_response(StatusCode::OK, &capabilities))
             }
             Ok(ActionResult::Custom { name, data }) if name == "hg_error_response" => {
-                let message = data.get("message").and_then(|v| v.as_str()).unwrap_or("Error");
-                let code = data
-                    .get("code")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(500)
-                    as u16;
+                let message = data
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Error");
+                let code = data.get("code").and_then(|v| v.as_u64()).unwrap_or(500) as u16;
 
                 Ok(build_error_response(
                     StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
@@ -599,7 +604,10 @@ Provide repository heads."#,
                 Ok(build_text_response(StatusCode::OK, &heads))
             }
             Ok(ActionResult::Custom { name, data }) if name == "hg_error_response" => {
-                let message = data.get("message").and_then(|v| v.as_str()).unwrap_or("Error");
+                let message = data
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Error");
                 let code = data.get("code").and_then(|v| v.as_u64()).unwrap_or(500) as u16;
 
                 Ok(build_error_response(
@@ -741,13 +749,17 @@ Provide branch mappings for this repository."#,
                         }
                     }
                 } else {
-                    response_text = "default 0000000000000000000000000000000000000000\n".to_string();
+                    response_text =
+                        "default 0000000000000000000000000000000000000000\n".to_string();
                 }
 
                 Ok(build_text_response(StatusCode::OK, &response_text))
             }
             Ok(ActionResult::Custom { name, data }) if name == "hg_error_response" => {
-                let message = data.get("message").and_then(|v| v.as_str()).unwrap_or("Error");
+                let message = data
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Error");
                 let code = data.get("code").and_then(|v| v.as_u64()).unwrap_or(500) as u16;
 
                 Ok(build_error_response(
@@ -785,7 +797,10 @@ async fn handle_listkeys(
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let repo = repo_name.unwrap_or_else(|| "default".to_string());
 
-    debug!("Mercurial listkeys for repository: {}, namespace: {}", repo, namespace);
+    debug!(
+        "Mercurial listkeys for repository: {}, namespace: {}",
+        repo, namespace
+    );
     let _ = status_tx.send(format!(
         "[DEBUG] Mercurial listkeys for repo: {}, namespace: {}",
         repo, namespace
@@ -831,7 +846,10 @@ Provide key-value mappings for this namespace."#,
         repo, namespace, actions_desc
     );
 
-    debug!("Calling LLM for Mercurial listkeys: {}, {}", repo, namespace);
+    debug!(
+        "Calling LLM for Mercurial listkeys: {}, {}",
+        repo, namespace
+    );
     let _ = status_tx.send("[DEBUG] Calling LLM for listkeys".to_string());
 
     let model_str = match crate::llm::ensure_model_selected(model).await {
@@ -898,7 +916,10 @@ Provide key-value mappings for this namespace."#,
                 Ok(build_text_response(StatusCode::OK, &response_text))
             }
             Ok(ActionResult::Custom { name, data }) if name == "hg_error_response" => {
-                let message = data.get("message").and_then(|v| v.as_str()).unwrap_or("Error");
+                let message = data
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Error");
                 let code = data.get("code").and_then(|v| v.as_u64()).unwrap_or(500) as u16;
 
                 Ok(build_error_response(
@@ -1030,7 +1051,10 @@ Generate a bundle response."#,
     if let Some(action) = actions.first() {
         match protocol.execute_action(action.clone()) {
             Ok(ActionResult::Custom { name, data }) if name == "hg_bundle_response" => {
-                let bundle_data = data.get("bundle_data").and_then(|v| v.as_str()).unwrap_or("");
+                let bundle_data = data
+                    .get("bundle_data")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
 
                 // For now, return empty or minimal bundle
                 let bundle_bytes = if bundle_data.is_empty() {
@@ -1048,7 +1072,10 @@ Generate a bundle response."#,
                     .unwrap())
             }
             Ok(ActionResult::Custom { name, data }) if name == "hg_error_response" => {
-                let message = data.get("message").and_then(|v| v.as_str()).unwrap_or("Error");
+                let message = data
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Error");
                 let code = data.get("code").and_then(|v| v.as_u64()).unwrap_or(500) as u16;
 
                 Ok(build_error_response(
@@ -1080,13 +1107,12 @@ async fn track_repo_access(
     connection_id: ConnectionId,
     repo_name: &str,
 ) -> anyhow::Result<()> {
-    
-
     app_state
         .with_server_mut(server_id, |server| {
             if let Some(conn) = server.connections.get_mut(&connection_id) {
                 if let Some(obj) = conn.protocol_info.data.as_object_mut() {
-                    let mut recent_repos: Vec<String> = obj.get("recent_repos")
+                    let mut recent_repos: Vec<String> = obj
+                        .get("recent_repos")
                         .and_then(|v| serde_json::from_value(v.clone()).ok())
                         .unwrap_or_default();
                     if !recent_repos.contains(&repo_name.to_string()) {
@@ -1096,7 +1122,10 @@ async fn track_repo_access(
                             recent_repos.remove(0);
                         }
                     }
-                    obj.insert("recent_repos".to_string(), serde_json::to_value(&recent_repos).unwrap_or(serde_json::json!([])));
+                    obj.insert(
+                        "recent_repos".to_string(),
+                        serde_json::to_value(&recent_repos).unwrap_or(serde_json::json!([])),
+                    );
                 }
             }
         })

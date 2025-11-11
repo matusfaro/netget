@@ -2,7 +2,9 @@
 
 ## Overview
 
-VNC (Virtual Network Computing) implements the RFB (Remote Frame Buffer) protocol for remote desktop access. This is an Alpha-status implementation where the LLM controls display content generation, authentication decisions, and input event handling.
+VNC (Virtual Network Computing) implements the RFB (Remote Frame Buffer) protocol for remote desktop access. This is an
+Alpha-status implementation where the LLM controls display content generation, authentication decisions, and input event
+handling.
 
 **Protocol Compliance**: RFB Protocol 3.8 (RFC 6143)
 **Transport**: TCP (port 5900 default)
@@ -11,23 +13,29 @@ VNC (Virtual Network Computing) implements the RFB (Remote Frame Buffer) protoco
 ## Library Choices
 
 ### Display Rendering
+
 - **Custom display module** (`src/display/`) - Canvas-based rendering with DisplayCommand API
 - **image** crate - Pixel buffer manipulation (RGB888 format)
 - **imageproc** - Drawing primitives (rectangles, text, lines)
 
-**Rationale**: No VNC server library exists in Rust that allows LLM control of display content. Custom display system allows LLM to specify drawing commands (rectangles, text, etc.) that are rendered to pixel buffer.
+**Rationale**: No VNC server library exists in Rust that allows LLM control of display content. Custom display system
+allows LLM to specify drawing commands (rectangles, text, etc.) that are rendered to pixel buffer.
 
 ### Protocol Implementation
+
 - **Manual RFB parsing** - Custom implementation of protocol handshake
 - **tokio::io** - AsyncReadExt/AsyncWriteExt for binary protocol I/O
 - **Manual pixel format encoding** - RGB888 (32-bit true color)
 
-**Rationale**: VNC protocol is well-documented and relatively simple. Manual implementation allows full control over authentication, pixel formats, and encoding types.
+**Rationale**: VNC protocol is well-documented and relatively simple. Manual implementation allows full control over
+authentication, pixel formats, and encoding types.
 
 ### No External VNC Library
+
 - **No vnc-rs or similar** - Existing libraries are client-focused or incomplete
 
 **Manual Implementation Components**:
+
 - Protocol version negotiation (RFB 003.008)
 - Security type selection (None authentication)
 - ClientInit / ServerInit exchange
@@ -42,6 +50,7 @@ VNC (Virtual Network Computing) implements the RFB (Remote Frame Buffer) protoco
 **Design Philosophy**: LLM generates visual content using high-level drawing commands instead of raw pixel data.
 
 **DisplayCommand API**:
+
 ```rust
 pub enum DisplayCommand {
     FillRect { x, y, width, height, color },
@@ -53,6 +62,7 @@ pub enum DisplayCommand {
 ```
 
 **Rendering Pipeline**:
+
 1. LLM returns actions with `Vec<DisplayCommand>`
 2. `DisplayCanvas::new(width, height)` creates pixel buffer
 3. `canvas.add_commands(commands)` queues drawing operations
@@ -60,6 +70,7 @@ pub enum DisplayCommand {
 5. Image buffer sent as Raw encoding in FramebufferUpdate message
 
 **Benefits**:
+
 - LLM doesn't need to understand pixel formats
 - High-level API (rectangles, text, not pixels)
 - Flexible content generation
@@ -68,6 +79,7 @@ pub enum DisplayCommand {
 ### 2. RFB Protocol Handshake
 
 **Handshake Flow** (RFC 6143 section 7.1):
+
 1. **ProtocolVersion**: Server sends "RFB 003.008\n", client echoes back
 2. **SecurityTypes**: Server offers [1] (None = no authentication), client chooses
 3. **SecurityResult**: Server sends 0 (OK) for None security
@@ -77,6 +89,7 @@ pub enum DisplayCommand {
 **Security**: Currently only "None" authentication (no password). VNC-Auth (DES challenge-response) not yet implemented.
 
 **Pixel Format**: 32-bit RGB888 (bits_per_pixel=32, depth=24, true_color=1)
+
 - Red: 8 bits at shift 16
 - Green: 8 bits at shift 8
 - Blue: 8 bits at shift 0
@@ -85,21 +98,24 @@ pub enum DisplayCommand {
 ### 3. Framebuffer Update Protocol
 
 **Client Request**:
+
 - Message type: 3 (FramebufferUpdateRequest)
 - incremental: 0 (full update) or 1 (incremental)
 - x, y, width, height: Region to update
 
 **Server Response**:
+
 - Message type: 0 (FramebufferUpdate)
 - Number of rectangles: u16
 - For each rectangle:
-  - x, y, width, height: u16
-  - encoding-type: i32 (0 = Raw)
-  - pixel-data: width × height × 4 bytes (RGB888)
+    - x, y, width, height: u16
+    - encoding-type: i32 (0 = Raw)
+    - pixel-data: width × height × 4 bytes (RGB888)
 
 **Raw Encoding**: Uncompressed pixel data (BGRX byte order for 32-bit RGB)
 
 **Future Encodings** (not implemented):
+
 - 1 = CopyRect (copy from another region)
 - 2 = RRE (Rise-and-Run-length Encoding)
 - 5 = Hextile (16×16 tile encoding)
@@ -108,11 +124,13 @@ pub enum DisplayCommand {
 ### 4. Input Event Handling
 
 **KeyEvent** (message type 4):
+
 - down-flag: 1 (key press) or 0 (key release)
 - padding: 2 bytes
 - key: u32 (X11 keysym)
 
 **PointerEvent** (message type 5):
+
 - button-mask: u8 (bit flags for buttons 1-8)
 - x-position: u16
 - y-position: u16
@@ -124,6 +142,7 @@ pub enum DisplayCommand {
 ### 5. Connection Lifecycle
 
 **Single Connection Pattern**:
+
 1. Accept TCP connection
 2. Perform RFB handshake
 3. Send ServerInit
@@ -139,14 +158,17 @@ pub enum DisplayCommand {
 **Current Status**: Limited LLM integration
 
 **Implemented**:
+
 - LLM receives server startup event (could set display policy)
 
 **Not Yet Implemented**:
+
 - LLM-generated framebuffer content (DisplayCommand actions)
 - LLM handling of KeyEvent and PointerEvent
 - Dynamic display updates based on user input
 
 **Planned Action System**:
+
 ```json
 {
   "actions": [
@@ -162,6 +184,7 @@ pub enum DisplayCommand {
 ```
 
 **Event Types** (planned):
+
 - `VNC_FRAMEBUFFER_REQUEST_EVENT` - Client requests display update
 - `VNC_KEY_EVENT` - Client presses key
 - `VNC_POINTER_EVENT` - Client moves mouse or clicks
@@ -171,6 +194,7 @@ pub enum DisplayCommand {
 ## Connection Management
 
 **Connection State** (tracked in AppState):
+
 ```rust
 ProtocolConnectionInfo::Vnc {
     write_half: Arc<Mutex<WriteHalf<TcpStream>>>,
@@ -185,6 +209,7 @@ ProtocolConnectionInfo::Vnc {
 ```
 
 **Connection Tracking**:
+
 - Connection ID, remote address, local address
 - Bytes sent/received (framebuffer updates are large)
 - Packets sent/received (each framebuffer update is a "packet")
@@ -195,6 +220,7 @@ ProtocolConnectionInfo::Vnc {
 ## Limitations
 
 ### Not Implemented
+
 1. **VNC Authentication** - SecurityType 2 (DES challenge-response)
 2. **Compressed Encodings** - Hextile, ZRLE, Tight encoding
 3. **SetPixelFormat handling** - Server ignores client's preferred format
@@ -205,6 +231,7 @@ ProtocolConnectionInfo::Vnc {
 8. **Input event LLM forwarding** - KeyEvent/PointerEvent not sent to LLM
 
 ### Current Capabilities
+
 - RFB 3.8 protocol handshake
 - No-authentication mode
 - Raw encoding framebuffer updates
@@ -213,6 +240,7 @@ ProtocolConnectionInfo::Vnc {
 - Connection tracking in UI
 
 ### Known Issues
+
 - Test pattern only (no LLM-generated content yet)
 - Large framebuffer updates (no compression)
 - Single-threaded framebuffer rendering
@@ -221,16 +249,19 @@ ProtocolConnectionInfo::Vnc {
 ## Example Prompts
 
 ### Start a VNC server
+
 ```
 listen on port 5900 via vnc. Accept all connections without authentication. Use 800x600 framebuffer.
 ```
 
 ### VNC with custom display
+
 ```
 listen on port 5900 via vnc. Show a blue background with white text saying "NetGet VNC Server" in the center.
 ```
 
 ### Interactive VNC (future)
+
 ```
 listen on port 5900 via vnc. When user clicks the mouse, draw a red circle at that position.
 ```
@@ -244,11 +275,12 @@ listen on port 5900 via vnc. When user clicks the mouse, draw a red circle at th
 
 ## Implementation Statistics
 
-| Module | Lines of Code | Purpose |
-|--------|--------------|---------|
-| `mod.rs` | 486 | RFB handshake, message loop, framebuffer updates |
-| `actions.rs` | ~100 | Action definitions (minimal currently) |
-| `src/display/mod.rs` | ~200 | DisplayCanvas, DisplayCommand rendering |
-| **Total** | **~800** | Basic VNC server implementation |
+| Module               | Lines of Code | Purpose                                          |
+|----------------------|---------------|--------------------------------------------------|
+| `mod.rs`             | 486           | RFB handshake, message loop, framebuffer updates |
+| `actions.rs`         | ~100          | Action definitions (minimal currently)           |
+| `src/display/mod.rs` | ~200          | DisplayCanvas, DisplayCommand rendering          |
+| **Total**            | **~800**      | Basic VNC server implementation                  |
 
-This is an Alpha implementation with working RFB protocol and test pattern display. Future work includes full LLM integration for dynamic content generation and input handling.
+This is an Alpha implementation with working RFB protocol and test pattern display. Future work includes full LLM
+integration for dynamic content generation and input handling.

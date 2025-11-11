@@ -2,7 +2,8 @@
 
 ## Overview
 
-RIP (Routing Information Protocol) client implementation for querying routing tables from RIP routers. Supports both RIPv1 and RIPv2.
+RIP (Routing Information Protocol) client implementation for querying routing tables from RIP routers. Supports both
+RIPv1 and RIPv2.
 
 ## Protocol Details
 
@@ -14,11 +15,13 @@ RIP (Routing Information Protocol) client implementation for querying routing ta
 ## Library Choices
 
 **UDP Socket**: `tokio::net::UdpSocket`
+
 - Standard async UDP socket
 - No external dependencies
 - Direct packet construction/parsing
 
 **Why no external RIP library?**
+
 - RIP is a simple protocol (4-byte header + 20-byte route entries)
 - No mature Rust RIP client libraries
 - Custom implementation allows full LLM control
@@ -28,6 +31,7 @@ RIP (Routing Information Protocol) client implementation for querying routing ta
 ### Packet Structure
 
 **RIP Message** (4 + N*20 bytes):
+
 ```
 0                   1                   2                   3
 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
@@ -48,14 +52,17 @@ RIP (Routing Information Protocol) client implementation for querying routing ta
 ```
 
 **Command Types**:
+
 - `1` = Request (query routing table)
 - `2` = Response (routing table data)
 
 **Version**:
+
 - `1` = RIPv1 (no subnet masks, classful routing)
 - `2` = RIPv2 (CIDR support, authentication)
 
 **Metric**:
+
 - Hop count (1-15)
 - `16` = Infinity (unreachable)
 
@@ -80,6 +87,7 @@ RIP (Routing Information Protocol) client implementation for querying routing ta
 ```
 
 **Flow**:
+
 1. Client binds to any available port (not 520, which requires root)
 2. Client sends RIP Request to router:520
 3. Router sends RIP Response with routing table
@@ -89,11 +97,13 @@ RIP (Routing Information Protocol) client implementation for querying routing ta
 ### State Machine
 
 **Connection States**:
+
 - **Idle**: No LLM call in progress, ready to process responses
 - **Processing**: LLM call active, queue incoming responses
 - **Accumulating**: Continue queuing responses until LLM completes
 
 **State Transitions**:
+
 ```
 Idle ─(response received)─> Processing
 Processing ─(more responses)─> Accumulating
@@ -108,20 +118,24 @@ This prevents concurrent LLM calls for the same client.
 ### Events
 
 **rip_connected**
+
 - Triggered when client binds UDP socket
 - LLM decides to send initial request or wait
 
 **rip_response_received**
+
 - Triggered when routing table response arrives
 - LLM analyzes routes, decides next action
 
 ### Actions
 
 **Async Actions** (user-triggered):
+
 - `send_rip_request(version)` - Query routing table (RIPv1 or RIPv2)
 - `disconnect()` - Close client
 
 **Sync Actions** (in response to events):
+
 - `send_rip_request(version)` - Send follow-up query
 - `wait_for_more()` - Queue responses, wait for more data
 
@@ -152,12 +166,14 @@ This prevents concurrent LLM calls for the same client.
 ## RIPv1 vs RIPv2
 
 ### RIPv1
+
 - **Classful routing**: No subnet masks (inferred from IP class)
 - **No authentication**: Open protocol
 - **Broadcast**: 255.255.255.255
 - **Fields**: Only `ip_address` and `metric` used
 
 ### RIPv2
+
 - **CIDR support**: Subnet masks included
 - **Authentication**: MD5 or simple password (not yet implemented)
 - **Multicast**: 224.0.0.9
@@ -166,12 +182,14 @@ This prevents concurrent LLM calls for the same client.
 ## Dual Logging
 
 All logs use tracing macros AND send to TUI:
+
 ```rust
 info!("RIP client {} received response", client_id);
 let _ = status_tx.send(format!("[CLIENT] RIP response: {} routes", route_count));
 ```
 
 **Log Levels**:
+
 - `ERROR`: Failed to parse RIP message, socket errors
 - `WARN`: (none currently)
 - `INFO`: Connection lifecycle, request/response summary

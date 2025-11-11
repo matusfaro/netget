@@ -21,22 +21,24 @@ pub fn build_device_descriptor(
     serial_str_index: u8,
 ) -> Vec<u8> {
     vec![
-        18,   // bLength
+        18,                      // bLength
         descriptor_type::DEVICE, // bDescriptorType
-        0x00, 0x02, // bcdUSB (USB 2.0)
-        device_class, // bDeviceClass
-        device_subclass, // bDeviceSubClass
-        device_protocol, // bDeviceProtocol
-        64,   // bMaxPacketSize0 (EP0)
-        (vendor_id & 0xff) as u8, // idVendor (low byte)
-        (vendor_id >> 8) as u8,   // idVendor (high byte)
+        0x00,
+        0x02,                      // bcdUSB (USB 2.0)
+        device_class,              // bDeviceClass
+        device_subclass,           // bDeviceSubClass
+        device_protocol,           // bDeviceProtocol
+        64,                        // bMaxPacketSize0 (EP0)
+        (vendor_id & 0xff) as u8,  // idVendor (low byte)
+        (vendor_id >> 8) as u8,    // idVendor (high byte)
         (product_id & 0xff) as u8, // idProduct (low byte)
         (product_id >> 8) as u8,   // idProduct (high byte)
-        0x00, 0x01, // bcdDevice (1.0)
+        0x00,
+        0x01,                   // bcdDevice (1.0)
         manufacturer_str_index, // iManufacturer
         product_str_index,      // iProduct
         serial_str_index,       // iSerialNumber
-        1,    // bNumConfigurations
+        1,                      // bNumConfigurations
     ]
 }
 
@@ -51,7 +53,6 @@ pub fn build_hid_keyboard_report_descriptor() -> Vec<u8> {
         0x05, 0x01, // Usage Page (Generic Desktop)
         0x09, 0x06, // Usage (Keyboard)
         0xA1, 0x01, // Collection (Application)
-
         // Modifier keys (byte 0)
         0x05, 0x07, //   Usage Page (Key Codes)
         0x19, 0xE0, //   Usage Minimum (224) - Left Control
@@ -61,12 +62,10 @@ pub fn build_hid_keyboard_report_descriptor() -> Vec<u8> {
         0x75, 0x01, //   Report Size (1 bit)
         0x95, 0x08, //   Report Count (8 bits = 8 modifier keys)
         0x81, 0x02, //   Input (Data, Variable, Absolute) - Modifier byte
-
         // Reserved byte (byte 1)
         0x95, 0x01, //   Report Count (1)
         0x75, 0x08, //   Report Size (8 bits)
         0x81, 0x01, //   Input (Constant) - Reserved byte
-
         // LED output report (Num Lock, Caps Lock, Scroll Lock, etc.)
         0x95, 0x05, //   Report Count (5)
         0x75, 0x01, //   Report Size (1 bit)
@@ -74,12 +73,10 @@ pub fn build_hid_keyboard_report_descriptor() -> Vec<u8> {
         0x19, 0x01, //   Usage Minimum (1) - Num Lock
         0x29, 0x05, //   Usage Maximum (5) - Kana
         0x91, 0x02, //   Output (Data, Variable, Absolute) - LED bits
-
         // LED padding (3 bits)
         0x95, 0x01, //   Report Count (1)
         0x75, 0x03, //   Report Size (3 bits)
         0x91, 0x01, //   Output (Constant) - Padding
-
         // Key array (bytes 2-7)
         0x95, 0x06, //   Report Count (6) - Up to 6 simultaneous keys
         0x75, 0x08, //   Report Size (8 bits)
@@ -89,7 +86,6 @@ pub fn build_hid_keyboard_report_descriptor() -> Vec<u8> {
         0x19, 0x00, //   Usage Minimum (0)
         0x29, 0x65, //   Usage Maximum (101)
         0x81, 0x00, //   Input (Data, Array) - Key array
-
         0xC0, // End Collection
     ]
 }
@@ -102,9 +98,10 @@ pub fn build_hid_keyboard_config_descriptor() -> Vec<u8> {
 
     // Configuration descriptor (9 bytes)
     desc.extend_from_slice(&[
-        9,    // bLength
+        9,                              // bLength
         descriptor_type::CONFIGURATION, // bDescriptorType
-        34, 0, // wTotalLength (34 bytes total) - will be calculated
+        34,
+        0,    // wTotalLength (34 bytes total) - will be calculated
         1,    // bNumInterfaces
         1,    // bConfigurationValue
         0,    // iConfiguration (no string)
@@ -114,38 +111,40 @@ pub fn build_hid_keyboard_config_descriptor() -> Vec<u8> {
 
     // Interface descriptor (9 bytes)
     desc.extend_from_slice(&[
-        9,    // bLength
+        9,                          // bLength
         descriptor_type::INTERFACE, // bDescriptorType
-        0,    // bInterfaceNumber
-        0,    // bAlternateSetting
-        1,    // bNumEndpoints (1 interrupt IN endpoint)
-        device_class::HID, // bInterfaceClass (HID)
-        1,    // bInterfaceSubClass (Boot Interface)
-        1,    // bInterfaceProtocol (Keyboard)
-        0,    // iInterface (no string)
+        0,                          // bInterfaceNumber
+        0,                          // bAlternateSetting
+        1,                          // bNumEndpoints (1 interrupt IN endpoint)
+        device_class::HID,          // bInterfaceClass (HID)
+        1,                          // bInterfaceSubClass (Boot Interface)
+        1,                          // bInterfaceProtocol (Keyboard)
+        0,                          // iInterface (no string)
     ]);
 
     // HID descriptor (9 bytes)
     let report_desc = build_hid_keyboard_report_descriptor();
     let report_desc_len = report_desc.len() as u16;
     desc.extend_from_slice(&[
-        9,    // bLength
+        9,                    // bLength
         descriptor_type::HID, // bDescriptorType (HID)
-        0x11, 0x01, // bcdHID (HID 1.11)
-        0x00, // bCountryCode (not localized)
-        0x01, // bNumDescriptors
-        descriptor_type::HID_REPORT, // bDescriptorType (Report)
+        0x11,
+        0x01,                           // bcdHID (HID 1.11)
+        0x00,                           // bCountryCode (not localized)
+        0x01,                           // bNumDescriptors
+        descriptor_type::HID_REPORT,    // bDescriptorType (Report)
         (report_desc_len & 0xff) as u8, // wDescriptorLength (low)
         (report_desc_len >> 8) as u8,   // wDescriptorLength (high)
     ]);
 
     // Endpoint descriptor (7 bytes) - Interrupt IN
     desc.extend_from_slice(&[
-        7,    // bLength
+        7,                         // bLength
         descriptor_type::ENDPOINT, // bDescriptorType
-        0x81, // bEndpointAddress (EP1 IN)
-        transfer_type::INTERRUPT, // bmAttributes (Interrupt)
-        0x08, 0x00, // wMaxPacketSize (8 bytes)
+        0x81,                      // bEndpointAddress (EP1 IN)
+        transfer_type::INTERRUPT,  // bmAttributes (Interrupt)
+        0x08,
+        0x00, // wMaxPacketSize (8 bytes)
         10,   // bInterval (10ms polling interval)
     ]);
 
@@ -184,9 +183,10 @@ pub fn build_string_descriptor(s: &str) -> Vec<u8> {
 #[cfg(feature = "usb-common")]
 pub fn build_language_id_descriptor() -> Vec<u8> {
     vec![
-        4,    // bLength
+        4,                       // bLength
         descriptor_type::STRING, // bDescriptorType
-        0x09, 0x04, // wLANGID[0] (US English)
+        0x09,
+        0x04, // wLANGID[0] (US English)
     ]
 }
 
@@ -194,8 +194,8 @@ pub fn build_language_id_descriptor() -> Vec<u8> {
 /// 8 bytes: [modifiers, reserved, key1, key2, key3, key4, key5, key6]
 #[cfg(feature = "usb-keyboard")]
 pub struct KeyboardReport {
-    pub modifiers: u8,  // Bit flags for Ctrl, Shift, Alt, GUI
-    pub keys: [u8; 6],  // Up to 6 simultaneous key presses
+    pub modifiers: u8, // Bit flags for Ctrl, Shift, Alt, GUI
+    pub keys: [u8; 6], // Up to 6 simultaneous key presses
 }
 
 #[cfg(feature = "usb-keyboard")]
@@ -380,10 +380,8 @@ pub fn build_hid_mouse_report_descriptor() -> Vec<u8> {
         0x05, 0x01, // Usage Page (Generic Desktop)
         0x09, 0x02, // Usage (Mouse)
         0xA1, 0x01, // Collection (Application)
-
         0x09, 0x01, //   Usage (Pointer)
         0xA1, 0x00, //   Collection (Physical)
-
         // Buttons (byte 0)
         0x05, 0x09, //     Usage Page (Button)
         0x19, 0x01, //     Usage Minimum (1) - Left button
@@ -393,12 +391,10 @@ pub fn build_hid_mouse_report_descriptor() -> Vec<u8> {
         0x95, 0x03, //     Report Count (3 buttons)
         0x75, 0x01, //     Report Size (1 bit)
         0x81, 0x02, //     Input (Data, Variable, Absolute) - Button bits
-
         // Padding (5 bits to complete the byte)
         0x95, 0x01, //     Report Count (1)
         0x75, 0x05, //     Report Size (5 bits)
         0x81, 0x01, //     Input (Constant) - Padding
-
         // X and Y movement (bytes 1-2)
         0x05, 0x01, //     Usage Page (Generic Desktop)
         0x09, 0x30, //     Usage (X)
@@ -408,7 +404,6 @@ pub fn build_hid_mouse_report_descriptor() -> Vec<u8> {
         0x75, 0x08, //     Report Size (8 bits)
         0x95, 0x02, //     Report Count (2) - X and Y
         0x81, 0x06, //     Input (Data, Variable, Relative) - X,Y movement
-
         // Wheel (byte 3)
         0x09, 0x38, //     Usage (Wheel)
         0x15, 0x81, //     Logical Minimum (-127)
@@ -416,9 +411,8 @@ pub fn build_hid_mouse_report_descriptor() -> Vec<u8> {
         0x75, 0x08, //     Report Size (8 bits)
         0x95, 0x01, //     Report Count (1)
         0x81, 0x06, //     Input (Data, Variable, Relative) - Wheel
-
-        0xC0,       //   End Collection (Physical)
-        0xC0,       // End Collection (Application)
+        0xC0, //   End Collection (Physical)
+        0xC0, // End Collection (Application)
     ]
 }
 
@@ -430,9 +424,10 @@ pub fn build_hid_mouse_config_descriptor() -> Vec<u8> {
 
     // Configuration descriptor (9 bytes)
     desc.extend_from_slice(&[
-        9,    // bLength
+        9,                              // bLength
         descriptor_type::CONFIGURATION, // bDescriptorType
-        34, 0, // wTotalLength (will be calculated)
+        34,
+        0,    // wTotalLength (will be calculated)
         1,    // bNumInterfaces
         1,    // bConfigurationValue
         0,    // iConfiguration (no string)
@@ -442,38 +437,40 @@ pub fn build_hid_mouse_config_descriptor() -> Vec<u8> {
 
     // Interface descriptor (9 bytes)
     desc.extend_from_slice(&[
-        9,    // bLength
+        9,                          // bLength
         descriptor_type::INTERFACE, // bDescriptorType
-        0,    // bInterfaceNumber
-        0,    // bAlternateSetting
-        1,    // bNumEndpoints (1 interrupt IN endpoint)
-        device_class::HID, // bInterfaceClass (HID)
-        1,    // bInterfaceSubClass (Boot Interface)
-        2,    // bInterfaceProtocol (Mouse)
-        0,    // iInterface (no string)
+        0,                          // bInterfaceNumber
+        0,                          // bAlternateSetting
+        1,                          // bNumEndpoints (1 interrupt IN endpoint)
+        device_class::HID,          // bInterfaceClass (HID)
+        1,                          // bInterfaceSubClass (Boot Interface)
+        2,                          // bInterfaceProtocol (Mouse)
+        0,                          // iInterface (no string)
     ]);
 
     // HID descriptor (9 bytes)
     let report_desc = build_hid_mouse_report_descriptor();
     let report_desc_len = report_desc.len() as u16;
     desc.extend_from_slice(&[
-        9,    // bLength
+        9,                    // bLength
         descriptor_type::HID, // bDescriptorType (HID)
-        0x11, 0x01, // bcdHID (HID 1.11)
-        0x00, // bCountryCode (not localized)
-        0x01, // bNumDescriptors
-        descriptor_type::HID_REPORT, // bDescriptorType (Report)
+        0x11,
+        0x01,                           // bcdHID (HID 1.11)
+        0x00,                           // bCountryCode (not localized)
+        0x01,                           // bNumDescriptors
+        descriptor_type::HID_REPORT,    // bDescriptorType (Report)
         (report_desc_len & 0xff) as u8, // wDescriptorLength (low)
         (report_desc_len >> 8) as u8,   // wDescriptorLength (high)
     ]);
 
     // Endpoint descriptor (7 bytes) - Interrupt IN
     desc.extend_from_slice(&[
-        7,    // bLength
+        7,                         // bLength
         descriptor_type::ENDPOINT, // bDescriptorType
-        0x81, // bEndpointAddress (EP1 IN)
-        transfer_type::INTERRUPT, // bmAttributes (Interrupt)
-        0x04, 0x00, // wMaxPacketSize (4 bytes)
+        0x81,                      // bEndpointAddress (EP1 IN)
+        transfer_type::INTERRUPT,  // bmAttributes (Interrupt)
+        0x04,
+        0x00, // wMaxPacketSize (4 bytes)
         10,   // bInterval (10ms polling interval)
     ]);
 
@@ -489,10 +486,10 @@ pub fn build_hid_mouse_config_descriptor() -> Vec<u8> {
 /// 4 bytes: [buttons, x, y, wheel]
 #[cfg(feature = "usb-mouse")]
 pub struct MouseReport {
-    pub buttons: u8,  // Bit 0: left, Bit 1: right, Bit 2: middle
-    pub x: i8,        // X movement (-127 to 127)
-    pub y: i8,        // Y movement (-127 to 127)
-    pub wheel: i8,    // Wheel movement (-127 to 127)
+    pub buttons: u8, // Bit 0: left, Bit 1: right, Bit 2: middle
+    pub x: i8,       // X movement (-127 to 127)
+    pub y: i8,       // Y movement (-127 to 127)
+    pub wheel: i8,   // Wheel movement (-127 to 127)
 }
 
 #[cfg(feature = "usb-mouse")]
@@ -509,12 +506,7 @@ impl MouseReport {
 
     /// Convert to 4-byte array for USB transmission
     pub fn to_bytes(&self) -> [u8; 4] {
-        [
-            self.buttons,
-            self.x as u8,
-            self.y as u8,
-            self.wheel as u8,
-        ]
+        [self.buttons, self.x as u8, self.y as u8, self.wheel as u8]
     }
 }
 
@@ -542,26 +534,23 @@ pub mod mouse_buttons {
 #[cfg(feature = "usb-fido2")]
 pub const FIDO_HID_REPORT_DESCRIPTOR: &[u8] = &[
     0x06, 0xD0, 0xF1, // Usage Page (FIDO Alliance)
-    0x09, 0x01,       // Usage (U2F Authenticator Device)
-    0xA1, 0x01,       // Collection (Application)
-
+    0x09, 0x01, // Usage (U2F Authenticator Device)
+    0xA1, 0x01, // Collection (Application)
     // Input report (device to host)
-    0x09, 0x20,       //   Usage (Input Report Data)
-    0x15, 0x00,       //   Logical Minimum (0)
+    0x09, 0x20, //   Usage (Input Report Data)
+    0x15, 0x00, //   Logical Minimum (0)
     0x26, 0xFF, 0x00, //   Logical Maximum (255)
-    0x75, 0x08,       //   Report Size (8 bits)
-    0x95, 0x40,       //   Report Count (64 bytes)
-    0x81, 0x02,       //   Input (Data, Variable, Absolute)
-
+    0x75, 0x08, //   Report Size (8 bits)
+    0x95, 0x40, //   Report Count (64 bytes)
+    0x81, 0x02, //   Input (Data, Variable, Absolute)
     // Output report (host to device)
-    0x09, 0x21,       //   Usage (Output Report Data)
-    0x15, 0x00,       //   Logical Minimum (0)
+    0x09, 0x21, //   Usage (Output Report Data)
+    0x15, 0x00, //   Logical Minimum (0)
     0x26, 0xFF, 0x00, //   Logical Maximum (255)
-    0x75, 0x08,       //   Report Size (8 bits)
-    0x95, 0x40,       //   Report Count (64 bytes)
-    0x91, 0x02,       //   Output (Data, Variable, Absolute)
-
-    0xC0,             // End Collection
+    0x75, 0x08, //   Report Size (8 bits)
+    0x95, 0x40, //   Report Count (64 bytes)
+    0x91, 0x02, //   Output (Data, Variable, Absolute)
+    0xC0, // End Collection
 ];
 
 /// Build a complete FIDO2 HID configuration descriptor
@@ -572,9 +561,10 @@ pub fn build_fido2_hid_config_descriptor() -> Vec<u8> {
 
     // Configuration descriptor (9 bytes)
     desc.extend_from_slice(&[
-        9,    // bLength
+        9, // bLength
         descriptor_type::CONFIGURATION,
-        34, 0, // wTotalLength (9 + 9 + 9 + 7 + 7 = 41, but we'll calculate)
+        34,
+        0,    // wTotalLength (9 + 9 + 9 + 7 + 7 = 41, but we'll calculate)
         1,    // bNumInterfaces
         1,    // bConfigurationValue
         0,    // iConfiguration
@@ -584,24 +574,25 @@ pub fn build_fido2_hid_config_descriptor() -> Vec<u8> {
 
     // Interface descriptor (9 bytes)
     desc.extend_from_slice(&[
-        9,    // bLength
+        9, // bLength
         descriptor_type::INTERFACE,
-        0,    // bInterfaceNumber
-        0,    // bAlternateSetting
-        2,    // bNumEndpoints (IN and OUT)
+        0,                 // bInterfaceNumber
+        0,                 // bAlternateSetting
+        2,                 // bNumEndpoints (IN and OUT)
         device_class::HID, // bInterfaceClass (HID)
-        0,    // bInterfaceSubClass (No subclass)
-        0,    // bInterfaceProtocol (None)
-        0,    // iInterface
+        0,                 // bInterfaceSubClass (No subclass)
+        0,                 // bInterfaceProtocol (None)
+        0,                 // iInterface
     ]);
 
     // HID descriptor (9 bytes)
     desc.extend_from_slice(&[
-        9,    // bLength
+        9,                    // bLength
         descriptor_type::HID, // bDescriptorType (HID)
-        0x11, 0x01, // bcdHID (HID 1.11)
-        0,    // bCountryCode (not localized)
-        1,    // bNumDescriptors (1 report descriptor)
+        0x11,
+        0x01,                        // bcdHID (HID 1.11)
+        0,                           // bCountryCode (not localized)
+        1,                           // bNumDescriptors (1 report descriptor)
         descriptor_type::HID_REPORT, // bDescriptorType (Report)
         (FIDO_HID_REPORT_DESCRIPTOR.len() & 0xFF) as u8,
         ((FIDO_HID_REPORT_DESCRIPTOR.len() >> 8) & 0xFF) as u8,
@@ -609,22 +600,24 @@ pub fn build_fido2_hid_config_descriptor() -> Vec<u8> {
 
     // Endpoint descriptor - IN (7 bytes)
     desc.extend_from_slice(&[
-        7,    // bLength
+        7, // bLength
         descriptor_type::ENDPOINT,
         0x81, // bEndpointAddress (IN, endpoint 1)
         0x03, // bmAttributes (Interrupt)
-        64, 0, // wMaxPacketSize (64 bytes)
-        5,    // bInterval (5ms polling)
+        64,
+        0, // wMaxPacketSize (64 bytes)
+        5, // bInterval (5ms polling)
     ]);
 
     // Endpoint descriptor - OUT (7 bytes)
     desc.extend_from_slice(&[
-        7,    // bLength
+        7, // bLength
         descriptor_type::ENDPOINT,
         0x01, // bEndpointAddress (OUT, endpoint 1)
         0x03, // bmAttributes (Interrupt)
-        64, 0, // wMaxPacketSize (64 bytes)
-        5,    // bInterval (5ms polling)
+        64,
+        0, // wMaxPacketSize (64 bytes)
+        5, // bInterval (5ms polling)
     ]);
 
     // Update total length
@@ -656,9 +649,10 @@ pub fn build_cdc_acm_config_descriptor() -> Vec<u8> {
 
     // Configuration descriptor (9 bytes)
     desc.extend_from_slice(&[
-        9,    // bLength
+        9, // bLength
         descriptor_type::CONFIGURATION,
-        67, 0, // wTotalLength (will be calculated)
+        67,
+        0,    // wTotalLength (will be calculated)
         2,    // bNumInterfaces (Communication + Data)
         1,    // bConfigurationValue
         0,    // iConfiguration
@@ -668,15 +662,15 @@ pub fn build_cdc_acm_config_descriptor() -> Vec<u8> {
 
     // Interface 0: Communication Class Interface (control)
     desc.extend_from_slice(&[
-        9,    // bLength
+        9, // bLength
         descriptor_type::INTERFACE,
-        0,    // bInterfaceNumber
-        0,    // bAlternateSetting
-        1,    // bNumEndpoints (1 interrupt endpoint)
+        0,                  // bInterfaceNumber
+        0,                  // bAlternateSetting
+        1,                  // bNumEndpoints (1 interrupt endpoint)
         device_class::COMM, // bInterfaceClass (CDC)
-        0x02, // bInterfaceSubClass (ACM)
-        0x01, // bInterfaceProtocol (AT commands)
-        0,    // iInterface
+        0x02,               // bInterfaceSubClass (ACM)
+        0x01,               // bInterfaceProtocol (AT commands)
+        0,                  // iInterface
     ]);
 
     // CDC Header Functional Descriptor (5 bytes)
@@ -684,7 +678,8 @@ pub fn build_cdc_acm_config_descriptor() -> Vec<u8> {
         5,    // bLength
         0x24, // bDescriptorType (CS_INTERFACE)
         cdc_descriptor_subtype::HEADER,
-        0x10, 0x01, // bcdCDC (1.10)
+        0x10,
+        0x01, // bcdCDC (1.10)
     ]);
 
     // CDC Call Management Functional Descriptor (5 bytes)
@@ -715,44 +710,47 @@ pub fn build_cdc_acm_config_descriptor() -> Vec<u8> {
 
     // Endpoint descriptor: Interrupt IN (control)
     desc.extend_from_slice(&[
-        7,    // bLength
+        7, // bLength
         descriptor_type::ENDPOINT,
         0x81, // bEndpointAddress (EP1 IN)
         transfer_type::INTERRUPT,
-        0x08, 0x00, // wMaxPacketSize (8 bytes)
+        0x08,
+        0x00, // wMaxPacketSize (8 bytes)
         16,   // bInterval (16ms)
     ]);
 
     // Interface 1: Data Class Interface (bulk data)
     desc.extend_from_slice(&[
-        9,    // bLength
+        9, // bLength
         descriptor_type::INTERFACE,
-        1,    // bInterfaceNumber
-        0,    // bAlternateSetting
-        2,    // bNumEndpoints (bulk IN + bulk OUT)
+        1,                      // bInterfaceNumber
+        0,                      // bAlternateSetting
+        2,                      // bNumEndpoints (bulk IN + bulk OUT)
         device_class::CDC_DATA, // bInterfaceClass
-        0x00, // bInterfaceSubClass
-        0x00, // bInterfaceProtocol
-        0,    // iInterface
+        0x00,                   // bInterfaceSubClass
+        0x00,                   // bInterfaceProtocol
+        0,                      // iInterface
     ]);
 
     // Endpoint descriptor: Bulk OUT (host to device)
     desc.extend_from_slice(&[
-        7,    // bLength
+        7, // bLength
         descriptor_type::ENDPOINT,
         0x02, // bEndpointAddress (EP2 OUT)
         transfer_type::BULK,
-        0x40, 0x00, // wMaxPacketSize (64 bytes)
+        0x40,
+        0x00, // wMaxPacketSize (64 bytes)
         0,    // bInterval (ignored for bulk)
     ]);
 
     // Endpoint descriptor: Bulk IN (device to host)
     desc.extend_from_slice(&[
-        7,    // bLength
+        7, // bLength
         descriptor_type::ENDPOINT,
         0x83, // bEndpointAddress (EP3 IN)
         transfer_type::BULK,
-        0x40, 0x00, // wMaxPacketSize (64 bytes)
+        0x40,
+        0x00, // wMaxPacketSize (64 bytes)
         0,    // bInterval (ignored for bulk)
     ]);
 
@@ -769,10 +767,10 @@ pub fn build_cdc_acm_config_descriptor() -> Vec<u8> {
 #[cfg(feature = "usb-serial")]
 #[derive(Debug, Clone, Copy)]
 pub struct LineCoding {
-    pub baud_rate: u32,     // Bits per second
-    pub stop_bits: u8,      // 0=1 stop bit, 1=1.5, 2=2 stop bits
-    pub parity: u8,         // 0=None, 1=Odd, 2=Even, 3=Mark, 4=Space
-    pub data_bits: u8,      // 5, 6, 7, 8, or 16
+    pub baud_rate: u32, // Bits per second
+    pub stop_bits: u8,  // 0=1 stop bit, 1=1.5, 2=2 stop bits
+    pub parity: u8,     // 0=None, 1=Odd, 2=Even, 3=Mark, 4=Space
+    pub data_bits: u8,  // 5, 6, 7, 8, or 16
 }
 
 #[cfg(feature = "usb-serial")]
@@ -853,9 +851,10 @@ pub fn build_msc_config_descriptor() -> Vec<u8> {
 
     // Configuration descriptor (9 bytes)
     desc.extend_from_slice(&[
-        9,    // bLength
+        9, // bLength
         descriptor_type::CONFIGURATION,
-        32, 0, // wTotalLength (32 bytes total) - will be updated
+        32,
+        0,    // wTotalLength (32 bytes total) - will be updated
         1,    // bNumInterfaces
         1,    // bConfigurationValue
         0,    // iConfiguration (no string)
@@ -865,7 +864,7 @@ pub fn build_msc_config_descriptor() -> Vec<u8> {
 
     // Interface descriptor (9 bytes)
     desc.extend_from_slice(&[
-        9,    // bLength
+        9, // bLength
         descriptor_type::INTERFACE,
         0,    // bInterfaceNumber
         0,    // bAlternateSetting
@@ -878,21 +877,23 @@ pub fn build_msc_config_descriptor() -> Vec<u8> {
 
     // Endpoint descriptor: Bulk IN (7 bytes)
     desc.extend_from_slice(&[
-        7,    // bLength
+        7, // bLength
         descriptor_type::ENDPOINT,
-        0x81, // bEndpointAddress (EP1 IN)
+        0x81,                // bEndpointAddress (EP1 IN)
         transfer_type::BULK, // bmAttributes (Bulk)
-        0x00, 0x02, // wMaxPacketSize (512 bytes for High Speed)
+        0x00,
+        0x02, // wMaxPacketSize (512 bytes for High Speed)
         0,    // bInterval (ignored for bulk)
     ]);
 
     // Endpoint descriptor: Bulk OUT (7 bytes)
     desc.extend_from_slice(&[
-        7,    // bLength
+        7, // bLength
         descriptor_type::ENDPOINT,
-        0x02, // bEndpointAddress (EP2 OUT)
+        0x02,                // bEndpointAddress (EP2 OUT)
         transfer_type::BULK, // bmAttributes (Bulk)
-        0x00, 0x02, // wMaxPacketSize (512 bytes for High Speed)
+        0x00,
+        0x02, // wMaxPacketSize (512 bytes for High Speed)
         0,    // bInterval (ignored for bulk)
     ]);
 
@@ -910,13 +911,13 @@ pub fn build_msc_config_descriptor() -> Vec<u8> {
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct CommandBlockWrapper {
-    pub signature: u32,         // 0x43425355 ("USBC")
-    pub tag: u32,              // Command tag (echo in CSW)
+    pub signature: u32,            // 0x43425355 ("USBC")
+    pub tag: u32,                  // Command tag (echo in CSW)
     pub data_transfer_length: u32, // Expected data transfer bytes
-    pub flags: u8,             // Direction: 0x80=IN, 0x00=OUT
-    pub lun: u8,               // Logical Unit Number (0-15)
-    pub cb_length: u8,         // Command Block length (1-16)
-    pub cb: [u8; 16],          // SCSI command block
+    pub flags: u8,                 // Direction: 0x80=IN, 0x00=OUT
+    pub lun: u8,                   // Logical Unit Number (0-15)
+    pub cb_length: u8,             // Command Block length (1-16)
+    pub cb: [u8; 16],              // SCSI command block
 }
 
 #[cfg(feature = "usb-msc")]
@@ -969,10 +970,10 @@ impl CommandBlockWrapper {
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct CommandStatusWrapper {
-    pub signature: u32,        // 0x53425355 ("USBS")
-    pub tag: u32,             // Echo of CBW tag
-    pub data_residue: u32,    // Difference (expected - actual)
-    pub status: u8,           // 0x00=success, 0x01=fail, 0x02=phase_error
+    pub signature: u32,    // 0x53425355 ("USBS")
+    pub tag: u32,          // Echo of CBW tag
+    pub data_residue: u32, // Difference (expected - actual)
+    pub status: u8,        // 0x00=success, 0x01=fail, 0x02=phase_error
 }
 
 #[cfg(feature = "usb-msc")]

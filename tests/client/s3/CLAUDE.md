@@ -9,6 +9,7 @@ The S3 client tests verify LLM-controlled interactions with AWS S3 and S3-compat
 ### Option 1: MinIO (Recommended for Local Testing)
 
 **Run MinIO in Docker:**
+
 ```bash
 docker run -d \
   -p 9000:9000 \
@@ -20,6 +21,7 @@ docker run -d \
 ```
 
 **Create test bucket:**
+
 ```bash
 # Install MinIO client
 brew install minio/stable/mc  # macOS
@@ -33,6 +35,7 @@ mc mb local/test-bucket
 ```
 
 **Test credentials:**
+
 - Endpoint: `http://localhost:9000`
 - Access Key: `minioadmin`
 - Secret Key: `minioadmin`
@@ -41,6 +44,7 @@ mc mb local/test-bucket
 ### Option 2: LocalStack (AWS Emulator)
 
 **Run LocalStack in Docker:**
+
 ```bash
 docker run -d \
   -p 4566:4566 \
@@ -50,6 +54,7 @@ docker run -d \
 ```
 
 **Test credentials:**
+
 - Endpoint: `http://localhost:4566`
 - Access Key: `test`
 - Secret Key: `test`
@@ -58,16 +63,19 @@ docker run -d \
 ### Option 3: Real AWS S3 (CI/Production Tests)
 
 **Prerequisites:**
+
 - AWS account with S3 access
 - IAM user with S3 permissions (ListBuckets, GetObject, PutObject, DeleteObject)
 - AWS credentials configured (`~/.aws/credentials` or environment variables)
 
 **Create test bucket:**
+
 ```bash
 aws s3 mb s3://netget-test-bucket-$(uuidgen | tr '[:upper:]' '[:lower:]')
 ```
 
 **Clean up after tests:**
+
 ```bash
 aws s3 rb s3://netget-test-bucket-xxx --force
 ```
@@ -77,6 +85,7 @@ aws s3 rb s3://netget-test-bucket-xxx --force
 ### Black-Box Testing
 
 All tests use the compiled `netget` binary as a black box:
+
 - Spawn NetGet with S3 client instructions
 - Monitor output for expected behavior
 - Verify LLM-controlled actions execute correctly
@@ -84,16 +93,19 @@ All tests use the compiled `netget` binary as a black box:
 ### Test Categories
 
 **1. Connection Tests**
+
 - Verify S3 client initialization
 - Test endpoint configuration (AWS, MinIO, LocalStack)
 - Validate credential handling
 
 **2. Bucket Operations**
+
 - List buckets
 - Create bucket
 - Delete bucket
 
 **3. Object Operations**
+
 - Put object (upload)
 - Get object (download)
 - Head object (metadata)
@@ -101,6 +113,7 @@ All tests use the compiled `netget` binary as a black box:
 - List objects
 
 **4. Error Handling**
+
 - Invalid credentials
 - Non-existent bucket
 - Non-existent object
@@ -112,13 +125,13 @@ All tests use the compiled `netget` binary as a black box:
 
 ### Current Budget Breakdown
 
-| Test | LLM Calls | Rationale |
-|------|-----------|-----------|
-| `test_s3_client_connect` | 1 | Client initialization |
-| `test_s3_client_list_buckets` | 2 | Init + list buckets |
-| `test_s3_client_object_operations` | 3 | Init + put + get |
-| `test_s3_client_invalid_credentials` | 1 | Init with bad creds |
-| **Total** | **7** | ✅ Under budget |
+| Test                                 | LLM Calls | Rationale             |
+|--------------------------------------|-----------|-----------------------|
+| `test_s3_client_connect`             | 1         | Client initialization |
+| `test_s3_client_list_buckets`        | 2         | Init + list buckets   |
+| `test_s3_client_object_operations`   | 3         | Init + put + get      |
+| `test_s3_client_invalid_credentials` | 1         | Init with bad creds   |
+| **Total**                            | **7**     | ✅ Under budget        |
 
 ### Optimization Strategies
 
@@ -129,14 +142,17 @@ All tests use the compiled `netget` binary as a black box:
 ## Expected Runtime
 
 **With MinIO (local):**
+
 - Per test: 2-5 seconds
 - Full suite: 15-30 seconds
 
 **With LocalStack:**
+
 - Per test: 3-6 seconds
 - Full suite: 20-35 seconds
 
 **With real AWS S3:**
+
 - Per test: 5-10 seconds (network latency)
 - Full suite: 30-60 seconds
 
@@ -203,6 +219,7 @@ export AWS_REGION=us-east-1
 ### 5. Advanced Features Not Tested
 
 Not tested due to complexity or LLM limitations:
+
 - Multipart uploads
 - Presigned URLs
 - Object versioning
@@ -268,6 +285,7 @@ jobs:
 **Symptom:** "Failed to connect to S3"
 
 **Checks:**
+
 - MinIO/LocalStack running? (`docker ps`)
 - Correct endpoint? (`http://localhost:9000` not `https://`)
 - Credentials correct? (check Docker logs)
@@ -277,6 +295,7 @@ jobs:
 **Symptom:** "NoSuchBucket"
 
 **Checks:**
+
 - Test bucket created? (`mc ls local/`)
 - Bucket name correct? (no typos)
 - Region matches? (MinIO accepts any region)
@@ -286,6 +305,7 @@ jobs:
 **Symptom:** "AccessDenied"
 
 **Checks:**
+
 - Credentials valid? (test with `mc` client)
 - IAM policy correct? (for AWS S3)
 - Bucket policy allows access? (for AWS S3)
@@ -295,6 +315,7 @@ jobs:
 **Symptom:** Test hangs or times out
 
 **Checks:**
+
 - LLM responding? (check Ollama logs)
 - Network issues? (check Docker network)
 - S3 service slow? (check MinIO/LocalStack logs)

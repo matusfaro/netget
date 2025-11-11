@@ -23,8 +23,8 @@ use crate::llm::ActionResult;
 use crate::protocol::Event;
 use crate::server::TlsProtocol;
 use crate::state::app_state::AppState;
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 use actions::{TLS_CONNECTION_OPENED_EVENT, TLS_DATA_RECEIVED_EVENT};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -80,7 +80,8 @@ impl TlsServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
                         debug!("TLS TCP connection from {}", remote_addr);
 
@@ -97,22 +98,34 @@ impl TlsServer {
                                 Ok(stream) => stream,
                                 Err(e) => {
                                     error!("TLS handshake failed with {}: {}", remote_addr, e);
-                                    let _ = status_tx_clone.send(format!("[ERROR] TLS handshake failed with {}: {}", remote_addr, e));
+                                    let _ = status_tx_clone.send(format!(
+                                        "[ERROR] TLS handshake failed with {}: {}",
+                                        remote_addr, e
+                                    ));
                                     return;
                                 }
                             };
 
                             debug!("TLS handshake complete with {}", remote_addr);
-                            let _ = status_tx_clone.send(format!("[DEBUG] TLS handshake complete with {}", remote_addr));
+                            let _ = status_tx_clone.send(format!(
+                                "[DEBUG] TLS handshake complete with {}",
+                                remote_addr
+                            ));
 
-                            info!("Accepted TLS connection {} from {}", connection_id, remote_addr);
+                            info!(
+                                "Accepted TLS connection {} from {}",
+                                connection_id, remote_addr
+                            );
 
                             // Split stream
                             let (read_half, write_half) = tokio::io::split(tls_stream);
                             let write_half_arc = Arc::new(Mutex::new(write_half));
 
                             // Add connection to ServerInstance
-                            use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                            use crate::state::server::{
+                                ConnectionState as ServerConnectionState, ConnectionStatus,
+                                ProtocolConnectionInfo,
+                            };
                             let now = std::time::Instant::now();
                             let conn_state = ServerConnectionState {
                                 id: connection_id,
@@ -130,7 +143,9 @@ impl TlsServer {
                                     "tls_handshake": "complete"
                                 })),
                             };
-                            app_state_clone.add_connection_to_server(server_id, conn_state).await;
+                            app_state_clone
+                                .add_connection_to_server(server_id, conn_state)
+                                .await;
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
 
                             // Handle connection (send data first if needed)
@@ -151,7 +166,8 @@ impl TlsServer {
                                     connections_for_conn,
                                     write_half_for_conn,
                                     protocol_for_conn,
-                                ).await;
+                                )
+                                .await;
                             });
 
                             // Spawn reader task
@@ -168,37 +184,65 @@ impl TlsServer {
                                     match read_half.read(&mut buffer).await {
                                         Ok(0) => {
                                             // Connection closed
-                                            connections_for_read.lock().await.remove(&connection_id);
-                                            app_state_for_read.close_connection_on_server(server_id, connection_id).await;
-                                            let _ = status_tx_for_read.send(format!("✗ TLS connection {connection_id} closed"));
-                                            let _ = status_tx_for_read.send("__UPDATE_UI__".to_string());
+                                            connections_for_read
+                                                .lock()
+                                                .await
+                                                .remove(&connection_id);
+                                            app_state_for_read
+                                                .close_connection_on_server(
+                                                    server_id,
+                                                    connection_id,
+                                                )
+                                                .await;
+                                            let _ = status_tx_for_read.send(format!(
+                                                "✗ TLS connection {connection_id} closed"
+                                            ));
+                                            let _ = status_tx_for_read
+                                                .send("__UPDATE_UI__".to_string());
                                             break;
                                         }
                                         Ok(n) => {
                                             let data = Bytes::copy_from_slice(&buffer[..n]);
 
                                             // DEBUG: Log summary with data preview
-                                            if data.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
+                                            if data.iter().all(|&b| {
+                                                b.is_ascii_graphic() || b.is_ascii_whitespace()
+                                            }) {
                                                 let data_str = String::from_utf8_lossy(&data);
                                                 let preview = if data_str.len() > 100 {
                                                     format!("{}...", &data_str[..100])
                                                 } else {
                                                     data_str.to_string()
                                                 };
-                                                debug!("TLS received {} bytes on {}: {}", n, connection_id, preview);
-                                                let _ = status_tx_for_read.send(format!("[DEBUG] TLS received {} bytes on {}: {}", n, connection_id, preview));
+                                                debug!(
+                                                    "TLS received {} bytes on {}: {}",
+                                                    n, connection_id, preview
+                                                );
+                                                let _ = status_tx_for_read.send(format!(
+                                                    "[DEBUG] TLS received {} bytes on {}: {}",
+                                                    n, connection_id, preview
+                                                ));
 
                                                 // TRACE: Log full text payload
                                                 trace!("TLS data (text): {:?}", data_str);
-                                                let _ = status_tx_for_read.send(format!("[TRACE] TLS data (text): {:?}", data_str));
+                                                let _ = status_tx_for_read.send(format!(
+                                                    "[TRACE] TLS data (text): {:?}",
+                                                    data_str
+                                                ));
                                             } else {
-                                                debug!("TLS received {} bytes on {} (binary data)", n, connection_id);
+                                                debug!(
+                                                    "TLS received {} bytes on {} (binary data)",
+                                                    n, connection_id
+                                                );
                                                 let _ = status_tx_for_read.send(format!("[DEBUG] TLS received {} bytes on {} (binary data)", n, connection_id));
 
                                                 // TRACE: Log full hex payload
                                                 let hex_str = hex::encode(&data);
                                                 trace!("TLS data (hex): {}", hex_str);
-                                                let _ = status_tx_for_read.send(format!("[TRACE] TLS data (hex): {}", hex_str));
+                                                let _ = status_tx_for_read.send(format!(
+                                                    "[TRACE] TLS data (hex): {}",
+                                                    hex_str
+                                                ));
                                             }
 
                                             // Handle data in separate task
@@ -217,12 +261,16 @@ impl TlsServer {
                                                     status_clone,
                                                     conns_clone,
                                                     protocol_clone,
-                                                ).await;
+                                                )
+                                                .await;
                                             });
                                         }
                                         Err(e) => {
                                             error!("Read error on {}: {}", connection_id, e);
-                                            connections_for_read.lock().await.remove(&connection_id);
+                                            connections_for_read
+                                                .lock()
+                                                .await
+                                                .remove(&connection_id);
                                             break;
                                         }
                                     }
@@ -254,12 +302,15 @@ impl TlsServer {
         protocol: Arc<TlsProtocol>,
     ) {
         // Add connection to tracking
-        connections.lock().await.insert(connection_id, ConnectionData {
-            state: ConnectionState::Idle,
-            queued_data: Vec::new(),
-            memory: String::new(),
-            write_half: write_half.clone(),
-        });
+        connections.lock().await.insert(
+            connection_id,
+            ConnectionData {
+                state: ConnectionState::Idle,
+                queued_data: Vec::new(),
+                memory: String::new(),
+                write_half: write_half.clone(),
+            },
+        );
 
         // Send data first if requested
         if send_first {
@@ -274,7 +325,9 @@ impl TlsServer {
                 Some(connection_id),
                 &event,
                 protocol.as_ref(),
-            ).await {
+            )
+            .await
+            {
                 Ok(execution_result) => {
                     debug!("LLM TLS banner response received");
 
@@ -292,30 +345,51 @@ impl TlsServer {
                                     error!("Failed to send banner: {}", e);
                                 } else {
                                     // DEBUG: Log summary with data preview
-                                    if output_data.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
+                                    if output_data
+                                        .iter()
+                                        .all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace())
+                                    {
                                         let data_str = String::from_utf8_lossy(&output_data);
                                         let preview = if data_str.len() > 100 {
                                             format!("{}...", &data_str[..100])
                                         } else {
                                             data_str.to_string()
                                         };
-                                        console_debug!(status_tx, "TLS sent {} bytes to {}: {}", output_data.len(), connection_id, preview);
+                                        console_debug!(
+                                            status_tx,
+                                            "TLS sent {} bytes to {}: {}",
+                                            output_data.len(),
+                                            connection_id,
+                                            preview
+                                        );
 
                                         // TRACE: Log full text payload
-                                        console_trace!(status_tx, "TLS sent (text): {:?}", data_str);
+                                        console_trace!(
+                                            status_tx,
+                                            "TLS sent (text): {:?}",
+                                            data_str
+                                        );
                                     } else {
-                                        console_debug!(status_tx, "TLS sent {} bytes to {} (binary data)", output_data.len(), connection_id);
+                                        console_debug!(
+                                            status_tx,
+                                            "TLS sent {} bytes to {} (binary data)",
+                                            output_data.len(),
+                                            connection_id
+                                        );
 
                                         // TRACE: Log full hex payload
                                         let hex_str = hex::encode(&output_data);
                                         console_trace!(status_tx, "TLS sent (hex): {}", hex_str);
                                     }
-                                    let _ = status_tx.send(format!("→ Sent banner to {connection_id}"));
+                                    let _ =
+                                        status_tx.send(format!("→ Sent banner to {connection_id}"));
                                 }
                             }
                             ActionResult::CloseConnection => {
                                 connections.lock().await.remove(&connection_id);
-                                let _ = status_tx.send(format!("✗ Closed TLS connection {connection_id} after banner"));
+                                let _ = status_tx.send(format!(
+                                    "✗ Closed TLS connection {connection_id} after banner"
+                                ));
                             }
                             _ => {}
                         }
@@ -352,12 +426,18 @@ impl TlsServer {
 
         // If processing, queue the data
         if current_state == ConnectionState::Processing {
-            connections.lock().await
+            connections
+                .lock()
+                .await
                 .entry(connection_id)
                 .and_modify(|conn| {
                     conn.queued_data.extend_from_slice(&data);
                 });
-            let _ = status_tx.send(format!("⏸ Queued {} bytes for {}", data.len(), connection_id));
+            let _ = status_tx.send(format!(
+                "⏸ Queued {} bytes for {}",
+                data.len(),
+                connection_id
+            ));
             return;
         }
 
@@ -376,7 +456,10 @@ impl TlsServer {
             // Get memory
             let memory = {
                 let conns = connections.lock().await;
-                conns.get(&connection_id).map(|c| c.memory.clone()).unwrap_or_default()
+                conns
+                    .get(&connection_id)
+                    .map(|c| c.memory.clone())
+                    .unwrap_or_default()
             };
 
             // Get write_half for context
@@ -390,16 +473,22 @@ impl TlsServer {
             };
 
             // Format data for event parameter
-            let data_str = if all_data.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
+            let data_str = if all_data
+                .iter()
+                .all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace())
+            {
                 String::from_utf8_lossy(&all_data).to_string()
             } else {
                 hex::encode(&all_data)
             };
 
             // Create data received event
-            let event = Event::new(&TLS_DATA_RECEIVED_EVENT, serde_json::json!({
-                "data": data_str
-            }));
+            let event = Event::new(
+                &TLS_DATA_RECEIVED_EVENT,
+                serde_json::json!({
+                    "data": data_str
+                }),
+            );
 
             // Call LLM
             match call_llm(
@@ -409,12 +498,16 @@ impl TlsServer {
                 Some(connection_id),
                 &event,
                 protocol.as_ref(),
-            ).await {
+            )
+            .await
+            {
                 Ok(execution_result) => {
                     debug!("LLM TLS response received");
 
                     // Update memory
-                    connections.lock().await
+                    connections
+                        .lock()
+                        .await
                         .entry(connection_id)
                         .and_modify(|conn| conn.memory = memory.clone());
 
@@ -435,25 +528,47 @@ impl TlsServer {
                                     error!("Failed to send response: {}", e);
                                 } else {
                                     // DEBUG: Log summary with data preview
-                                    if output_data.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
+                                    if output_data
+                                        .iter()
+                                        .all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace())
+                                    {
                                         let data_str = String::from_utf8_lossy(&output_data);
                                         let preview = if data_str.len() > 100 {
                                             format!("{}...", &data_str[..100])
                                         } else {
                                             data_str.to_string()
                                         };
-                                        console_debug!(status_tx, "TLS sent {} bytes to {}: {}", output_data.len(), connection_id, preview);
+                                        console_debug!(
+                                            status_tx,
+                                            "TLS sent {} bytes to {}: {}",
+                                            output_data.len(),
+                                            connection_id,
+                                            preview
+                                        );
 
                                         // TRACE: Log full text payload
-                                        console_trace!(status_tx, "TLS sent (text): {:?}", data_str);
+                                        console_trace!(
+                                            status_tx,
+                                            "TLS sent (text): {:?}",
+                                            data_str
+                                        );
                                     } else {
-                                        console_debug!(status_tx, "TLS sent {} bytes to {} (binary data)", output_data.len(), connection_id);
+                                        console_debug!(
+                                            status_tx,
+                                            "TLS sent {} bytes to {} (binary data)",
+                                            output_data.len(),
+                                            connection_id
+                                        );
 
                                         // TRACE: Log full hex payload
                                         let hex_str = hex::encode(&output_data);
                                         console_trace!(status_tx, "TLS sent (hex): {}", hex_str);
                                     }
-                                    let _ = status_tx.send(format!("→ Sent {} bytes to {}", output_data.len(), connection_id));
+                                    let _ = status_tx.send(format!(
+                                        "→ Sent {} bytes to {}",
+                                        output_data.len(),
+                                        connection_id
+                                    ));
                                 }
                             }
                             ActionResult::CloseConnection => {
@@ -468,10 +583,13 @@ impl TlsServer {
 
                     // Handle wait_for_more
                     if should_wait {
-                        connections.lock().await
+                        connections
+                            .lock()
+                            .await
                             .entry(connection_id)
                             .and_modify(|conn| conn.state = ConnectionState::Accumulating);
-                        let _ = status_tx.send(format!("⏳ Waiting for more data from {connection_id}"));
+                        let _ = status_tx
+                            .send(format!("⏳ Waiting for more data from {connection_id}"));
                         return;
                     }
 
@@ -485,17 +603,21 @@ impl TlsServer {
                     // Check for queued data
                     let has_queued = {
                         let conns = connections.lock().await;
-                        conns.get(&connection_id)
+                        conns
+                            .get(&connection_id)
                             .map(|c| !c.queued_data.is_empty())
                             .unwrap_or(false)
                     };
 
                     if has_queued {
-                        let _ = status_tx.send(format!("▶ Processing queued data for {connection_id}"));
+                        let _ =
+                            status_tx.send(format!("▶ Processing queued data for {connection_id}"));
                         // Loop continues to process queued data
                     } else {
                         // Go to Idle state
-                        connections.lock().await
+                        connections
+                            .lock()
+                            .await
                             .entry(connection_id)
                             .and_modify(|conn| conn.state = ConnectionState::Idle);
                         return;
@@ -504,7 +626,9 @@ impl TlsServer {
                 Err(e) => {
                     error!("LLM error for TLS data: {}", e);
                     let _ = status_tx.send(format!("✗ LLM error: {e}"));
-                    connections.lock().await
+                    connections
+                        .lock()
+                        .await
                         .entry(connection_id)
                         .and_modify(|conn| conn.state = ConnectionState::Idle);
                     return;

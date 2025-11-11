@@ -14,17 +14,16 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
+use crate::client::bluetooth::actions::{
+    BLUETOOTH_CONNECTED_EVENT, BLUETOOTH_DATA_READ_EVENT, BLUETOOTH_NOTIFICATION_RECEIVED_EVENT,
+    BLUETOOTH_SCAN_COMPLETE_EVENT, BLUETOOTH_SERVICES_DISCOVERED_EVENT,
+};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::bluetooth::actions::{
-    BLUETOOTH_CONNECTED_EVENT, BLUETOOTH_DATA_READ_EVENT,
-    BLUETOOTH_NOTIFICATION_RECEIVED_EVENT, BLUETOOTH_SCAN_COMPLETE_EVENT,
-    BLUETOOTH_SERVICES_DISCOVERED_EVENT,
-};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -74,11 +73,20 @@ impl BluetoothClient {
             .next()
             .context("No Bluetooth adapters found")?;
 
-        info!("Bluetooth client {} using adapter: {:?}", client_id, adapter.adapter_info().await?);
+        info!(
+            "Bluetooth client {} using adapter: {:?}",
+            client_id,
+            adapter.adapter_info().await?
+        );
 
         // Update client state
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] Bluetooth client {} initialized", client_id));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] Bluetooth client {} initialized",
+            client_id
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Initialize client data
@@ -106,7 +114,9 @@ impl BluetoothClient {
                     &llm_client_clone,
                     client_id,
                     5,
-                ).await {
+                )
+                .await
+                {
                     error!("Bluetooth scan error: {}", e);
                 }
             } else {
@@ -119,9 +129,13 @@ impl BluetoothClient {
                     client_id,
                     Some(remote_addr.clone()),
                     None,
-                ).await {
+                )
+                .await
+                {
                     error!("Bluetooth connection error: {}", e);
-                    app_state_clone.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
+                    app_state_clone
+                        .update_client_status(client_id, ClientStatus::Error(e.to_string()))
+                        .await;
                     let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                 }
             }
@@ -132,7 +146,10 @@ impl BluetoothClient {
 
                 // Check if client is still active
                 if let Some(client) = app_state_clone.get_client(client_id).await {
-                    if matches!(client.status, ClientStatus::Disconnected | ClientStatus::Error(_)) {
+                    if matches!(
+                        client.status,
+                        ClientStatus::Disconnected | ClientStatus::Error(_)
+                    ) {
                         break;
                     }
                 } else {
@@ -161,7 +178,10 @@ impl BluetoothClient {
             data.adapter.clone()
         };
 
-        info!("Bluetooth client {} starting scan for {} seconds", client_id, duration_secs);
+        info!(
+            "Bluetooth client {} starting scan for {} seconds",
+            client_id, duration_secs
+        );
         let _ = status_tx.send(format!("[CLIENT] Scanning for BLE devices..."));
 
         adapter.start_scan(ScanFilter::default()).await?;
@@ -183,7 +203,11 @@ impl BluetoothClient {
             }
         }
 
-        info!("Bluetooth client {} found {} devices", client_id, devices.len());
+        info!(
+            "Bluetooth client {} found {} devices",
+            client_id,
+            devices.len()
+        );
         let _ = status_tx.send(format!("[CLIENT] Found {} BLE devices", devices.len()));
 
         // Call LLM with scan results
@@ -205,8 +229,13 @@ impl BluetoothClient {
                 Some(&event),
                 protocol.as_ref(),
                 status_tx,
-            ).await {
-                Ok(ClientLlmResult { actions, memory_updates }) => {
+            )
+            .await
+            {
+                Ok(ClientLlmResult {
+                    actions,
+                    memory_updates,
+                }) => {
                     // Update memory
                     if let Some(mem) = memory_updates {
                         client_data.lock().await.memory = mem;
@@ -221,7 +250,9 @@ impl BluetoothClient {
                             status_tx,
                             llm_client,
                             client_id,
-                        ).await {
+                        )
+                        .await
+                        {
                             error!("Error executing Bluetooth action: {}", e);
                         }
                     }
@@ -246,186 +277,215 @@ impl BluetoothClient {
         device_name: Option<String>,
     ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
-        let adapter = {
-            let data = client_data.lock().await;
-            data.adapter.clone()
-        };
+            let adapter = {
+                let data = client_data.lock().await;
+                data.adapter.clone()
+            };
 
-        // Scan for devices if we need to find by name
-        if device_name.is_some() {
-            info!("Bluetooth client {} scanning for device by name", client_id);
-            adapter.start_scan(ScanFilter::default()).await?;
-            tokio::time::sleep(Duration::from_secs(5)).await;
-            adapter.stop_scan().await?;
-        }
+            // Scan for devices if we need to find by name
+            if device_name.is_some() {
+                info!("Bluetooth client {} scanning for device by name", client_id);
+                adapter.start_scan(ScanFilter::default()).await?;
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                adapter.stop_scan().await?;
+            }
 
-        let peripherals = adapter.peripherals().await?;
+            let peripherals = adapter.peripherals().await?;
 
-        // Find the target device
-        let mut target_peripheral: Option<Peripheral> = None;
-        for peripheral in peripherals {
-            if let Ok(Some(props)) = peripheral.properties().await {
-                let matches = if let Some(ref addr) = device_address {
-                    props.address.to_string().eq_ignore_ascii_case(addr)
-                } else if let Some(ref name) = device_name {
-                    props.local_name.as_ref().map_or(false, |n| n.contains(name))
-                } else {
-                    false
-                };
+            // Find the target device
+            let mut target_peripheral: Option<Peripheral> = None;
+            for peripheral in peripherals {
+                if let Ok(Some(props)) = peripheral.properties().await {
+                    let matches = if let Some(ref addr) = device_address {
+                        props.address.to_string().eq_ignore_ascii_case(addr)
+                    } else if let Some(ref name) = device_name {
+                        props
+                            .local_name
+                            .as_ref()
+                            .map_or(false, |n| n.contains(name))
+                    } else {
+                        false
+                    };
 
-                if matches {
-                    target_peripheral = Some(peripheral);
-                    break;
+                    if matches {
+                        target_peripheral = Some(peripheral);
+                        break;
+                    }
                 }
             }
-        }
 
-        let peripheral = target_peripheral
-            .context("Device not found")?;
+            let peripheral = target_peripheral.context("Device not found")?;
 
-        // Connect to the device
-        info!("Bluetooth client {} connecting to device", client_id);
-        let _ = status_tx.send(format!("[CLIENT] Connecting to BLE device..."));
+            // Connect to the device
+            info!("Bluetooth client {} connecting to device", client_id);
+            let _ = status_tx.send(format!("[CLIENT] Connecting to BLE device..."));
 
-        peripheral.connect().await?;
-        peripheral.discover_services().await?;
+            peripheral.connect().await?;
+            peripheral.discover_services().await?;
 
-        let device_props = peripheral.properties().await?.context("No device properties")?;
-        let device_addr = device_props.address.to_string();
-        let device_name_str = device_props.local_name.unwrap_or_else(|| "Unknown".to_string());
+            let device_props = peripheral
+                .properties()
+                .await?
+                .context("No device properties")?;
+            let device_addr = device_props.address.to_string();
+            let device_name_str = device_props
+                .local_name
+                .unwrap_or_else(|| "Unknown".to_string());
 
-        info!("Bluetooth client {} connected to {} ({})", client_id, device_name_str, device_addr);
-        let _ = status_tx.send(format!("[CLIENT] Connected to {}", device_name_str));
+            info!(
+                "Bluetooth client {} connected to {} ({})",
+                client_id, device_name_str, device_addr
+            );
+            let _ = status_tx.send(format!("[CLIENT] Connected to {}", device_name_str));
 
-        // Store peripheral
-        {
-            let mut data = client_data.lock().await;
-            data.peripheral = Some(peripheral.clone());
-        }
+            // Store peripheral
+            {
+                let mut data = client_data.lock().await;
+                data.peripheral = Some(peripheral.clone());
+            }
 
-        // Set up notification handler using stream-based API
-        let client_data_clone = client_data.clone();
-        let app_state_clone = app_state.clone();
-        let status_tx_clone = status_tx.clone();
-        let llm_client_clone = llm_client.clone();
-        let peripheral_clone = peripheral.clone();
+            // Set up notification handler using stream-based API
+            let client_data_clone = client_data.clone();
+            let app_state_clone = app_state.clone();
+            let status_tx_clone = status_tx.clone();
+            let llm_client_clone = llm_client.clone();
+            let peripheral_clone = peripheral.clone();
 
-        // Spawn task to handle notification stream
-        tokio::spawn(async move {
-            match peripheral_clone.notifications().await {
-                Ok(mut notification_stream) => {
-                    use futures::StreamExt;
-                    while let Some(notification) = notification_stream.next().await {
-                        let client_data = client_data_clone.clone();
-                        let app_state = app_state_clone.clone();
-                        let status_tx = status_tx_clone.clone();
-                        let llm_client = llm_client_clone.clone();
+            // Spawn task to handle notification stream
+            tokio::spawn(async move {
+                match peripheral_clone.notifications().await {
+                    Ok(mut notification_stream) => {
+                        use futures::StreamExt;
+                        while let Some(notification) = notification_stream.next().await {
+                            let client_data = client_data_clone.clone();
+                            let app_state = app_state_clone.clone();
+                            let status_tx = status_tx_clone.clone();
+                            let llm_client = llm_client_clone.clone();
 
-                        trace!("Bluetooth notification received from {:?}", notification.uuid);
+                            trace!(
+                                "Bluetooth notification received from {:?}",
+                                notification.uuid
+                            );
 
-                        // Call LLM with notification
-                        let protocol = Arc::new(BluetoothClientProtocol::new());
-                        let event = Event::new(
-                            &BLUETOOTH_NOTIFICATION_RECEIVED_EVENT,
-                            serde_json::json!({
-                                "service_uuid": "unknown", // btleplug doesn't provide service UUID in notification
-                                "characteristic_uuid": notification.uuid.to_string(),
-                                "value_hex": hex::encode(&notification.value),
-                            }),
-                        );
+                            // Call LLM with notification
+                            let protocol = Arc::new(BluetoothClientProtocol::new());
+                            let event = Event::new(
+                                &BLUETOOTH_NOTIFICATION_RECEIVED_EVENT,
+                                serde_json::json!({
+                                    "service_uuid": "unknown", // btleplug doesn't provide service UUID in notification
+                                    "characteristic_uuid": notification.uuid.to_string(),
+                                    "value_hex": hex::encode(&notification.value),
+                                }),
+                            );
 
-                        if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                            match call_llm_for_client(
-                                &llm_client,
-                                &app_state,
-                                client_id.to_string(),
-                                &instruction,
-                                &client_data.lock().await.memory,
-                                Some(&event),
-                                protocol.as_ref(),
-                                &status_tx,
-                            ).await {
-                                Ok(ClientLlmResult { actions, memory_updates }) => {
-                                    // Update memory
-                                    if let Some(mem) = memory_updates {
-                                        client_data.lock().await.memory = mem;
-                                    }
+                            if let Some(instruction) =
+                                app_state.get_instruction_for_client(client_id).await
+                            {
+                                match call_llm_for_client(
+                                    &llm_client,
+                                    &app_state,
+                                    client_id.to_string(),
+                                    &instruction,
+                                    &client_data.lock().await.memory,
+                                    Some(&event),
+                                    protocol.as_ref(),
+                                    &status_tx,
+                                )
+                                .await
+                                {
+                                    Ok(ClientLlmResult {
+                                        actions,
+                                        memory_updates,
+                                    }) => {
+                                        // Update memory
+                                        if let Some(mem) = memory_updates {
+                                            client_data.lock().await.memory = mem;
+                                        }
 
-                                    // Execute actions
-                                    for action in actions {
-                                        if let Err(e) = Self::execute_llm_action(
-                                            action,
-                                            &client_data,
-                                            &app_state,
-                                            &status_tx,
-                                            &llm_client,
-                                            client_id,
-                                        ).await {
-                                            error!("Error executing Bluetooth action: {}", e);
+                                        // Execute actions
+                                        for action in actions {
+                                            if let Err(e) = Self::execute_llm_action(
+                                                action,
+                                                &client_data,
+                                                &app_state,
+                                                &status_tx,
+                                                &llm_client,
+                                                client_id,
+                                            )
+                                            .await
+                                            {
+                                                error!("Error executing Bluetooth action: {}", e);
+                                            }
                                         }
                                     }
-                                }
-                                Err(e) => {
-                                    error!("LLM error for Bluetooth notification: {}", e);
+                                    Err(e) => {
+                                        error!("LLM error for Bluetooth notification: {}", e);
+                                    }
                                 }
                             }
                         }
                     }
-                }
-                Err(e) => {
-                    error!("Failed to get notification stream: {}", e);
-                }
-            }
-        });
-
-        // Call LLM with connected event
-        let protocol = Arc::new(BluetoothClientProtocol::new());
-        let event = Event::new(
-            &BLUETOOTH_CONNECTED_EVENT,
-            serde_json::json!({
-                "device_address": device_addr,
-                "device_name": device_name_str,
-            }),
-        );
-
-        if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-            match call_llm_for_client(
-                llm_client,
-                app_state,
-                client_id.to_string(),
-                &instruction,
-                &client_data.lock().await.memory,
-                Some(&event),
-                protocol.as_ref(),
-                status_tx,
-            ).await {
-                Ok(ClientLlmResult { actions, memory_updates }) => {
-                    // Update memory
-                    if let Some(mem) = memory_updates {
-                        client_data.lock().await.memory = mem;
+                    Err(e) => {
+                        error!("Failed to get notification stream: {}", e);
                     }
+                }
+            });
 
-                    // Execute actions
-                    for action in actions {
-                        if let Err(e) = Self::execute_llm_action(
-                            action,
-                            client_data,
-                            app_state,
-                            status_tx,
-                            llm_client,
-                            client_id,
-                        ).await {
-                            error!("Error executing Bluetooth action: {}", e);
+            // Call LLM with connected event
+            let protocol = Arc::new(BluetoothClientProtocol::new());
+            let event = Event::new(
+                &BLUETOOTH_CONNECTED_EVENT,
+                serde_json::json!({
+                    "device_address": device_addr,
+                    "device_name": device_name_str,
+                }),
+            );
+
+            if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
+                match call_llm_for_client(
+                    llm_client,
+                    app_state,
+                    client_id.to_string(),
+                    &instruction,
+                    &client_data.lock().await.memory,
+                    Some(&event),
+                    protocol.as_ref(),
+                    status_tx,
+                )
+                .await
+                {
+                    Ok(ClientLlmResult {
+                        actions,
+                        memory_updates,
+                    }) => {
+                        // Update memory
+                        if let Some(mem) = memory_updates {
+                            client_data.lock().await.memory = mem;
+                        }
+
+                        // Execute actions
+                        for action in actions {
+                            if let Err(e) = Self::execute_llm_action(
+                                action,
+                                client_data,
+                                app_state,
+                                status_tx,
+                                llm_client,
+                                client_id,
+                            )
+                            .await
+                            {
+                                error!("Error executing Bluetooth action: {}", e);
+                            }
                         }
                     }
-                }
-                Err(e) => {
-                    error!("LLM error for Bluetooth client {}: {}", client_id, e);
+                    Err(e) => {
+                        error!("LLM error for Bluetooth client {}: {}", client_id, e);
+                    }
                 }
             }
-        }
 
-        Ok(())
+            Ok(())
         })
     }
 
@@ -439,64 +499,140 @@ impl BluetoothClient {
         client_id: ClientId,
     ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
-        use crate::llm::actions::client_trait::Client;
-        let protocol = BluetoothClientProtocol::new();
+            use crate::llm::actions::client_trait::Client;
+            let protocol = BluetoothClientProtocol::new();
 
-        match protocol.execute_action(action)? {
-            crate::llm::actions::client_trait::ClientActionResult::Custom { name, data } => {
-                match name.as_str() {
-                    "scan_devices" => {
-                        let duration_secs = data["duration_secs"].as_u64().unwrap_or(5);
-                        Box::pin(Self::perform_scan(client_data, app_state, status_tx, llm_client, client_id, duration_secs)).await?;
-                    }
-                    "connect_device" => {
-                        let device_address = data["device_address"].as_str().map(|s| s.to_string());
-                        let device_name = data["device_name"].as_str().map(|s| s.to_string());
-                        Self::connect_to_device(client_data, app_state, status_tx, llm_client, client_id, device_address, device_name).await?;
-                    }
-                    "discover_services" => {
-                        Self::discover_services(client_data, app_state, status_tx, llm_client, client_id).await?;
-                    }
-                    "read_characteristic" => {
-                        let service_uuid = Uuid::parse_str(data["service_uuid"].as_str().context("Missing service_uuid")?)?;
-                        let char_uuid = Uuid::parse_str(data["characteristic_uuid"].as_str().context("Missing characteristic_uuid")?)?;
-                        Self::read_characteristic(client_data, app_state, status_tx, llm_client, client_id, service_uuid, char_uuid).await?;
-                    }
-                    "write_characteristic" => {
-                        let service_uuid = Uuid::parse_str(data["service_uuid"].as_str().context("Missing service_uuid")?)?;
-                        let char_uuid = Uuid::parse_str(data["characteristic_uuid"].as_str().context("Missing characteristic_uuid")?)?;
-                        let value_bytes = data["value_bytes"].as_array()
-                            .context("Missing value_bytes")?
-                            .iter()
-                            .map(|v| v.as_u64().unwrap_or(0) as u8)
-                            .collect::<Vec<u8>>();
-                        let with_response = data["with_response"].as_bool().unwrap_or(true);
-                        Self::write_characteristic(client_data, service_uuid, char_uuid, value_bytes, with_response).await?;
-                    }
-                    "subscribe_notifications" => {
-                        let service_uuid = Uuid::parse_str(data["service_uuid"].as_str().context("Missing service_uuid")?)?;
-                        let char_uuid = Uuid::parse_str(data["characteristic_uuid"].as_str().context("Missing characteristic_uuid")?)?;
-                        Self::subscribe_notifications(client_data, service_uuid, char_uuid).await?;
-                    }
-                    "unsubscribe_notifications" => {
-                        let service_uuid = Uuid::parse_str(data["service_uuid"].as_str().context("Missing service_uuid")?)?;
-                        let char_uuid = Uuid::parse_str(data["characteristic_uuid"].as_str().context("Missing characteristic_uuid")?)?;
-                        Self::unsubscribe_notifications(client_data, service_uuid, char_uuid).await?;
-                    }
-                    _ => {
-                        warn!("Unknown custom action: {}", name);
+            match protocol.execute_action(action)? {
+                crate::llm::actions::client_trait::ClientActionResult::Custom { name, data } => {
+                    match name.as_str() {
+                        "scan_devices" => {
+                            let duration_secs = data["duration_secs"].as_u64().unwrap_or(5);
+                            Box::pin(Self::perform_scan(
+                                client_data,
+                                app_state,
+                                status_tx,
+                                llm_client,
+                                client_id,
+                                duration_secs,
+                            ))
+                            .await?;
+                        }
+                        "connect_device" => {
+                            let device_address =
+                                data["device_address"].as_str().map(|s| s.to_string());
+                            let device_name = data["device_name"].as_str().map(|s| s.to_string());
+                            Self::connect_to_device(
+                                client_data,
+                                app_state,
+                                status_tx,
+                                llm_client,
+                                client_id,
+                                device_address,
+                                device_name,
+                            )
+                            .await?;
+                        }
+                        "discover_services" => {
+                            Self::discover_services(
+                                client_data,
+                                app_state,
+                                status_tx,
+                                llm_client,
+                                client_id,
+                            )
+                            .await?;
+                        }
+                        "read_characteristic" => {
+                            let service_uuid = Uuid::parse_str(
+                                data["service_uuid"]
+                                    .as_str()
+                                    .context("Missing service_uuid")?,
+                            )?;
+                            let char_uuid = Uuid::parse_str(
+                                data["characteristic_uuid"]
+                                    .as_str()
+                                    .context("Missing characteristic_uuid")?,
+                            )?;
+                            Self::read_characteristic(
+                                client_data,
+                                app_state,
+                                status_tx,
+                                llm_client,
+                                client_id,
+                                service_uuid,
+                                char_uuid,
+                            )
+                            .await?;
+                        }
+                        "write_characteristic" => {
+                            let service_uuid = Uuid::parse_str(
+                                data["service_uuid"]
+                                    .as_str()
+                                    .context("Missing service_uuid")?,
+                            )?;
+                            let char_uuid = Uuid::parse_str(
+                                data["characteristic_uuid"]
+                                    .as_str()
+                                    .context("Missing characteristic_uuid")?,
+                            )?;
+                            let value_bytes = data["value_bytes"]
+                                .as_array()
+                                .context("Missing value_bytes")?
+                                .iter()
+                                .map(|v| v.as_u64().unwrap_or(0) as u8)
+                                .collect::<Vec<u8>>();
+                            let with_response = data["with_response"].as_bool().unwrap_or(true);
+                            Self::write_characteristic(
+                                client_data,
+                                service_uuid,
+                                char_uuid,
+                                value_bytes,
+                                with_response,
+                            )
+                            .await?;
+                        }
+                        "subscribe_notifications" => {
+                            let service_uuid = Uuid::parse_str(
+                                data["service_uuid"]
+                                    .as_str()
+                                    .context("Missing service_uuid")?,
+                            )?;
+                            let char_uuid = Uuid::parse_str(
+                                data["characteristic_uuid"]
+                                    .as_str()
+                                    .context("Missing characteristic_uuid")?,
+                            )?;
+                            Self::subscribe_notifications(client_data, service_uuid, char_uuid)
+                                .await?;
+                        }
+                        "unsubscribe_notifications" => {
+                            let service_uuid = Uuid::parse_str(
+                                data["service_uuid"]
+                                    .as_str()
+                                    .context("Missing service_uuid")?,
+                            )?;
+                            let char_uuid = Uuid::parse_str(
+                                data["characteristic_uuid"]
+                                    .as_str()
+                                    .context("Missing characteristic_uuid")?,
+                            )?;
+                            Self::unsubscribe_notifications(client_data, service_uuid, char_uuid)
+                                .await?;
+                        }
+                        _ => {
+                            warn!("Unknown custom action: {}", name);
+                        }
                     }
                 }
+                crate::llm::actions::client_trait::ClientActionResult::Disconnect => {
+                    Self::disconnect(client_data, app_state, client_id).await?;
+                }
+                _ => {
+                    debug!("Unhandled action result type");
+                }
             }
-            crate::llm::actions::client_trait::ClientActionResult::Disconnect => {
-                Self::disconnect(client_data, app_state, client_id).await?;
-            }
-            _ => {
-                debug!("Unhandled action result type");
-            }
-        }
 
-        Ok(())
+            Ok(())
         })
     }
 
@@ -529,7 +665,10 @@ impl BluetoothClient {
                 if char.properties.contains(CharPropFlags::WRITE) {
                     properties.push("write".to_string());
                 }
-                if char.properties.contains(CharPropFlags::WRITE_WITHOUT_RESPONSE) {
+                if char
+                    .properties
+                    .contains(CharPropFlags::WRITE_WITHOUT_RESPONSE)
+                {
                     properties.push("write_without_response".to_string());
                 }
                 if char.properties.contains(CharPropFlags::NOTIFY) {
@@ -552,7 +691,11 @@ impl BluetoothClient {
             }));
         }
 
-        info!("Bluetooth client {} discovered {} services", client_id, services_data.len());
+        info!(
+            "Bluetooth client {} discovered {} services",
+            client_id,
+            services_data.len()
+        );
 
         // Call LLM with services discovered event
         let protocol = Arc::new(BluetoothClientProtocol::new());
@@ -573,8 +716,13 @@ impl BluetoothClient {
                 Some(&event),
                 protocol.as_ref(),
                 status_tx,
-            ).await {
-                Ok(ClientLlmResult { actions, memory_updates }) => {
+            )
+            .await
+            {
+                Ok(ClientLlmResult {
+                    actions,
+                    memory_updates,
+                }) => {
                     // Update memory
                     if let Some(mem) = memory_updates {
                         client_data.lock().await.memory = mem;
@@ -589,7 +737,9 @@ impl BluetoothClient {
                             status_tx,
                             llm_client,
                             client_id,
-                        ).await {
+                        )
+                        .await
+                        {
                             error!("Error executing Bluetooth action: {}", e);
                         }
                     }
@@ -618,7 +768,10 @@ impl BluetoothClient {
             data.peripheral.clone().context("Not connected to device")?
         };
 
-        debug!("Reading characteristic {} from service {}", char_uuid, service_uuid);
+        debug!(
+            "Reading characteristic {} from service {}",
+            char_uuid, service_uuid
+        );
 
         // Find the characteristic
         let services = peripheral.services();
@@ -630,7 +783,11 @@ impl BluetoothClient {
 
         let value = peripheral.read(characteristic).await?;
 
-        info!("Read {} bytes from characteristic {}", value.len(), char_uuid);
+        info!(
+            "Read {} bytes from characteristic {}",
+            value.len(),
+            char_uuid
+        );
 
         // Call LLM with read data
         let protocol = Arc::new(BluetoothClientProtocol::new());
@@ -653,8 +810,13 @@ impl BluetoothClient {
                 Some(&event),
                 protocol.as_ref(),
                 status_tx,
-            ).await {
-                Ok(ClientLlmResult { actions, memory_updates }) => {
+            )
+            .await
+            {
+                Ok(ClientLlmResult {
+                    actions,
+                    memory_updates,
+                }) => {
                     // Update memory
                     if let Some(mem) = memory_updates {
                         client_data.lock().await.memory = mem;
@@ -669,7 +831,9 @@ impl BluetoothClient {
                             status_tx,
                             llm_client,
                             client_id,
-                        ).await {
+                        )
+                        .await
+                        {
                             error!("Error executing Bluetooth action: {}", e);
                         }
                     }
@@ -696,7 +860,12 @@ impl BluetoothClient {
             data.peripheral.clone().context("Not connected to device")?
         };
 
-        debug!("Writing {} bytes to characteristic {} from service {}", value.len(), char_uuid, service_uuid);
+        debug!(
+            "Writing {} bytes to characteristic {} from service {}",
+            value.len(),
+            char_uuid,
+            service_uuid
+        );
 
         // Find the characteristic
         let services = peripheral.services();
@@ -714,7 +883,11 @@ impl BluetoothClient {
 
         peripheral.write(characteristic, &value, write_type).await?;
 
-        info!("Wrote {} bytes to characteristic {}", value.len(), char_uuid);
+        info!(
+            "Wrote {} bytes to characteristic {}",
+            value.len(),
+            char_uuid
+        );
 
         Ok(())
     }
@@ -730,7 +903,10 @@ impl BluetoothClient {
             data.peripheral.clone().context("Not connected to device")?
         };
 
-        debug!("Subscribing to characteristic {} from service {}", char_uuid, service_uuid);
+        debug!(
+            "Subscribing to characteristic {} from service {}",
+            char_uuid, service_uuid
+        );
 
         // Find the characteristic
         let services = peripheral.services();
@@ -742,7 +918,10 @@ impl BluetoothClient {
 
         peripheral.subscribe(characteristic).await?;
 
-        info!("Subscribed to notifications from characteristic {}", char_uuid);
+        info!(
+            "Subscribed to notifications from characteristic {}",
+            char_uuid
+        );
 
         Ok(())
     }
@@ -758,7 +937,10 @@ impl BluetoothClient {
             data.peripheral.clone().context("Not connected to device")?
         };
 
-        debug!("Unsubscribing from characteristic {} from service {}", char_uuid, service_uuid);
+        debug!(
+            "Unsubscribing from characteristic {} from service {}",
+            char_uuid, service_uuid
+        );
 
         // Find the characteristic
         let services = peripheral.services();
@@ -770,7 +952,10 @@ impl BluetoothClient {
 
         peripheral.unsubscribe(characteristic).await?;
 
-        info!("Unsubscribed from notifications from characteristic {}", char_uuid);
+        info!(
+            "Unsubscribed from notifications from characteristic {}",
+            char_uuid
+        );
 
         Ok(())
     }
@@ -789,7 +974,9 @@ impl BluetoothClient {
         if let Some(peripheral) = peripheral {
             peripheral.disconnect().await?;
             info!("Bluetooth client {} disconnected", client_id);
-            app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
+            app_state
+                .update_client_status(client_id, ClientStatus::Disconnected)
+                .await;
         }
 
         Ok(())

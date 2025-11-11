@@ -55,7 +55,10 @@ impl ScriptManager {
         // Execute the script
         match execute_script(config, input) {
             Ok(response) => {
-                debug!("Script handled request with {} actions", response.actions.len());
+                debug!(
+                    "Script handled request with {} actions",
+                    response.actions.len()
+                );
                 Ok(Some(response))
             }
             Err(e) => {
@@ -104,7 +107,10 @@ impl ScriptManager {
                     "javascript" | "js" | "node" => super::types::ScriptLanguage::JavaScript,
                     "go" | "golang" => super::types::ScriptLanguage::Go,
                     "perl" => super::types::ScriptLanguage::Perl,
-                    _ => anyhow::bail!("Invalid script_runtime: '{}'. Valid options: python, javascript, go, perl", runtime),
+                    _ => anyhow::bail!(
+                        "Invalid script_runtime: '{}'. Valid options: python, javascript, go, perl",
+                        runtime
+                    ),
                 }
             }
             crate::state::app_state::ScriptingMode::Off => return Ok(None),
@@ -205,11 +211,7 @@ impl ScriptManager {
         }
 
         // Default
-        warn!(
-            "Could not extract context type from: {}",
-            event_description
-        );
+        warn!("Could not extract context type from: {}", event_description);
         "unknown".to_string()
     }
 }
-

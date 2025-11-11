@@ -15,7 +15,7 @@ use std::sync::LazyLock;
 pub static NFS_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "nfs_connected",
-        "NFS client successfully mounted NFS export"
+        "NFS client successfully mounted NFS export",
     )
     .with_parameters(vec![
         Parameter {
@@ -35,11 +35,7 @@ pub static NFS_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// NFS client file operation result event
 pub static NFS_CLIENT_OPERATION_RESULT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "nfs_operation_result",
-        "Result of an NFS file operation"
-    )
-    .with_parameters(vec![
+    EventType::new("nfs_operation_result", "Result of an NFS file operation").with_parameters(vec![
         Parameter {
             name: "operation".to_string(),
             type_hint: "string".to_string(),
@@ -70,14 +66,12 @@ impl Protocol for NfsClientProtocol {
             ActionDefinition {
                 name: "nfs_lookup".to_string(),
                 description: "Look up a file or directory by path".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "path".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Path to file or directory (relative to root)".to_string(),
-                        required: true,
-                    },
-                ],
+                parameters: vec![Parameter {
+                    name: "path".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Path to file or directory (relative to root)".to_string(),
+                    required: true,
+                }],
                 example: json!({
                     "type": "nfs_lookup",
                     "path": "/documents/readme.txt"
@@ -146,14 +140,12 @@ impl Protocol for NfsClientProtocol {
             ActionDefinition {
                 name: "nfs_list_dir".to_string(),
                 description: "List contents of a directory".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "path".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Path to directory to list (default: /)".to_string(),
-                        required: false,
-                    },
-                ],
+                parameters: vec![Parameter {
+                    name: "path".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Path to directory to list (default: /)".to_string(),
+                    required: false,
+                }],
                 example: json!({
                     "type": "nfs_list_dir",
                     "path": "/documents"
@@ -162,14 +154,12 @@ impl Protocol for NfsClientProtocol {
             ActionDefinition {
                 name: "nfs_get_attr".to_string(),
                 description: "Get file or directory attributes".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "path".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Path to file or directory".to_string(),
-                        required: true,
-                    },
-                ],
+                parameters: vec![Parameter {
+                    name: "path".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Path to file or directory".to_string(),
+                    required: true,
+                }],
                 example: json!({
                     "type": "nfs_get_attr",
                     "path": "/readme.txt"
@@ -224,14 +214,12 @@ impl Protocol for NfsClientProtocol {
             ActionDefinition {
                 name: "nfs_remove".to_string(),
                 description: "Remove a file".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "path".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Path to file to remove".to_string(),
-                        required: true,
-                    },
-                ],
+                parameters: vec![Parameter {
+                    name: "path".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Path to file to remove".to_string(),
+                    required: true,
+                }],
                 example: json!({
                     "type": "nfs_remove",
                     "path": "/oldfile.txt"
@@ -240,14 +228,12 @@ impl Protocol for NfsClientProtocol {
             ActionDefinition {
                 name: "nfs_rmdir".to_string(),
                 description: "Remove a directory".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "path".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Path to directory to remove".to_string(),
-                        required: true,
-                    },
-                ],
+                parameters: vec![Parameter {
+                    name: "path".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Path to directory to remove".to_string(),
+                    required: true,
+                }],
                 example: json!({
                     "type": "nfs_rmdir",
                     "path": "/olddir"
@@ -265,16 +251,14 @@ impl Protocol for NfsClientProtocol {
     }
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            ActionDefinition {
-                name: "wait_for_more".to_string(),
-                description: "Wait for more operations before responding".to_string(),
-                parameters: vec![],
-                example: json!({
-                    "type": "wait_for_more"
-                }),
-            },
-        ]
+        vec![ActionDefinition {
+            name: "wait_for_more".to_string(),
+            description: "Wait for more operations before responding".to_string(),
+            parameters: vec![],
+            example: json!({
+                "type": "wait_for_more"
+            }),
+        }]
     }
 
     fn protocol_name(&self) -> &'static str {
@@ -357,8 +341,8 @@ impl Client for NfsClientProtocol {
             .context("Missing 'type' field in action")?;
 
         match action_type {
-            "nfs_lookup" | "nfs_read_file" | "nfs_write_file" | "nfs_list_dir" |
-            "nfs_get_attr" | "nfs_create_file" | "nfs_mkdir" | "nfs_remove" | "nfs_rmdir" => {
+            "nfs_lookup" | "nfs_read_file" | "nfs_write_file" | "nfs_list_dir" | "nfs_get_attr"
+            | "nfs_create_file" | "nfs_mkdir" | "nfs_remove" | "nfs_rmdir" => {
                 // These operations are handled asynchronously in the main loop
                 Ok(ClientActionResult::Custom {
                     name: action_type.to_string(),
@@ -367,7 +351,10 @@ impl Client for NfsClientProtocol {
             }
             "disconnect" => Ok(ClientActionResult::Disconnect),
             "wait_for_more" => Ok(ClientActionResult::WaitForMore),
-            _ => Err(anyhow::anyhow!("Unknown NFS client action: {}", action_type)),
+            _ => Err(anyhow::anyhow!(
+                "Unknown NFS client action: {}",
+                action_type
+            )),
         }
     }
 }

@@ -4,10 +4,10 @@
 // and validate the responses using a manual SOCKS5 client implementation.
 
 use crate::server::helpers::*;
+use std::net::Ipv4Addr;
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use std::time::Duration;
-use std::net::Ipv4Addr;
 
 /// SOCKS5 protocol constants
 const SOCKS5_VERSION: u8 = 0x05;
@@ -33,7 +33,9 @@ impl Socks5Client {
     /// Perform SOCKS5 handshake (no authentication)
     async fn handshake_no_auth(&mut self) -> E2EResult<()> {
         // Send: [VER=5, NMETHODS=1, METHODS=[0x00]]
-        self.stream.write_all(&[SOCKS5_VERSION, 1, AUTH_METHOD_NO_AUTH]).await?;
+        self.stream
+            .write_all(&[SOCKS5_VERSION, 1, AUTH_METHOD_NO_AUTH])
+            .await?;
         self.stream.flush().await?;
 
         // Receive: [VER=5, METHOD=0x00]
@@ -53,7 +55,9 @@ impl Socks5Client {
     /// Perform SOCKS5 handshake with username/password authentication
     async fn handshake_with_auth(&mut self, username: &str, password: &str) -> E2EResult<bool> {
         // Send: [VER=5, NMETHODS=1, METHODS=[0x02]]
-        self.stream.write_all(&[SOCKS5_VERSION, 1, AUTH_METHOD_USERNAME_PASSWORD]).await?;
+        self.stream
+            .write_all(&[SOCKS5_VERSION, 1, AUTH_METHOD_USERNAME_PASSWORD])
+            .await?;
         self.stream.flush().await?;
 
         // Receive: [VER=5, METHOD]
@@ -64,7 +68,11 @@ impl Socks5Client {
             return Err(format!("Invalid SOCKS version: {}", response[0]).into());
         }
         if response[1] != AUTH_METHOD_USERNAME_PASSWORD {
-            return Err(format!("Server didn't select username/password auth: method {}", response[1]).into());
+            return Err(format!(
+                "Server didn't select username/password auth: method {}",
+                response[1]
+            )
+            .into());
         }
 
         // Send username/password: [VER=1, ULEN, UNAME, PLEN, PASSWD]
@@ -220,7 +228,9 @@ async fn test_socks5_basic_connect() -> E2EResult<()> {
     println!("✓ Handshake successful");
 
     println!("Sending CONNECT request to 127.0.0.1:{}...", http_port);
-    let connected = socks_client.connect_ipv4(Ipv4Addr::new(127, 0, 0, 1), http_port).await?;
+    let connected = socks_client
+        .connect_ipv4(Ipv4Addr::new(127, 0, 0, 1), http_port)
+        .await?;
 
     if !connected {
         println!("✗ CONNECT request was denied");
@@ -232,7 +242,9 @@ async fn test_socks5_basic_connect() -> E2EResult<()> {
     // Send HTTP request through the proxy
     println!("Sending HTTP request through SOCKS5 proxy...");
     let mut stream = socks_client.into_stream();
-    stream.write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n").await?;
+    stream
+        .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        .await?;
     stream.flush().await?;
 
     // Read HTTP response
@@ -284,7 +296,9 @@ async fn test_socks5_with_authentication() -> E2EResult<()> {
     println!("✓ Connected to SOCKS5 proxy");
 
     println!("Performing SOCKS5 handshake with username/password...");
-    let auth_success = socks_client.handshake_with_auth("testuser", "testpass").await?;
+    let auth_success = socks_client
+        .handshake_with_auth("testuser", "testpass")
+        .await?;
 
     if !auth_success {
         println!("✗ Authentication failed");
@@ -294,7 +308,9 @@ async fn test_socks5_with_authentication() -> E2EResult<()> {
     println!("✓ Authentication successful");
 
     println!("Sending CONNECT request...");
-    let connected = socks_client.connect_ipv4(Ipv4Addr::new(127, 0, 0, 1), http_port).await?;
+    let connected = socks_client
+        .connect_ipv4(Ipv4Addr::new(127, 0, 0, 1), http_port)
+        .await?;
 
     if !connected {
         println!("✗ CONNECT request was denied");
@@ -333,7 +349,9 @@ async fn test_socks5_connection_rejection() -> E2EResult<()> {
     println!("✓ Handshake successful");
 
     println!("Sending CONNECT request to blocked port 9999...");
-    let connected = socks_client.connect_ipv4(Ipv4Addr::new(127, 0, 0, 1), 9999).await?;
+    let connected = socks_client
+        .connect_ipv4(Ipv4Addr::new(127, 0, 0, 1), 9999)
+        .await?;
 
     if connected {
         println!("✗ Connection was allowed (should have been denied)");
@@ -422,7 +440,9 @@ async fn test_socks5_mitm_inspection() -> E2EResult<()> {
     println!("✓ Handshake successful");
 
     println!("Sending CONNECT request to 127.0.0.1:{}...", http_port);
-    let connected = socks_client.connect_ipv4(Ipv4Addr::new(127, 0, 0, 1), http_port).await?;
+    let connected = socks_client
+        .connect_ipv4(Ipv4Addr::new(127, 0, 0, 1), http_port)
+        .await?;
 
     if !connected {
         println!("✗ CONNECT request was denied");
@@ -438,7 +458,10 @@ async fn test_socks5_mitm_inspection() -> E2EResult<()> {
         "GET /test HTTP/1.1\r\nHost: localhost:{}\r\nConnection: close\r\n\r\n",
         http_port
     );
-    socks_client.stream.write_all(http_request.as_bytes()).await?;
+    socks_client
+        .stream
+        .write_all(http_request.as_bytes())
+        .await?;
     socks_client.stream.flush().await?;
     println!("✓ HTTP request sent");
 
@@ -459,7 +482,9 @@ async fn test_socks5_mitm_inspection() -> E2EResult<()> {
                 }
             }
         }
-    }).await.ok(); // Timeout is expected
+    })
+    .await
+    .ok(); // Timeout is expected
 
     let response_text = String::from_utf8_lossy(&response_buf);
     println!("Received response ({} bytes)", response_buf.len());

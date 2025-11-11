@@ -2,7 +2,8 @@
 
 ## Overview
 
-NFSv3 (Network File System version 3) client implementing RFC 1813. Provides RPC-based distributed filesystem access where the LLM controls all file operations.
+NFSv3 (Network File System version 3) client implementing RFC 1813. Provides RPC-based distributed filesystem access
+where the LLM controls all file operations.
 
 **Protocol**: NFSv3 (RFC 1813)
 **Transport**: TCP (RPC over TCP)
@@ -12,13 +13,14 @@ NFSv3 (Network File System version 3) client implementing RFC 1813. Provides RPC
 ## Library Choices
 
 - **nfs3_client** v0.7 - Pure Rust NFSv3 client library
-  - Complete NFSv3 protocol implementation (RPC, XDR, NFS, MOUNT)
-  - Async/await support with tokio
-  - Handles RPC/XDR encoding/decoding transparently
-  - Abstracts MOUNT protocol for export mounting
-  - Focus LLM on filesystem operations, not protocol details
+    - Complete NFSv3 protocol implementation (RPC, XDR, NFS, MOUNT)
+    - Async/await support with tokio
+    - Handles RPC/XDR encoding/decoding transparently
+    - Abstracts MOUNT protocol for export mounting
+    - Focus LLM on filesystem operations, not protocol details
 
 **Why nfs3_client?**
+
 - Pure Rust implementation (no C dependencies like libnfs)
 - Simple async API for file operations
 - Handles complex RPC/XDR marshaling automatically
@@ -38,6 +40,7 @@ NFSv3 (Network File System version 3) client implementing RFC 1813. Provides RPC
 ### LLM-Controlled Operations
 
 The LLM can perform all standard NFS operations:
+
 - **lookup** - Find files/directories by path
 - **read** - Read file contents
 - **write** - Write data to files
@@ -51,16 +54,19 @@ The LLM can perform all standard NFS operations:
 ### State Management
 
 **Client State**:
+
 - Connection status (Idle/Processing/Accumulating)
 - LLM memory for context across operations
 - NFS client instance with mounted file handle
 
 **File Handles**:
+
 - Root file handle obtained from MOUNT protocol
 - Per-file handles obtained via lookup operations
 - Handles cached by nfs3_client library
 
 **Path Resolution**:
+
 - Paths are relative to mounted export root
 - Library handles file handle lookup/caching
 - LLM works with human-readable paths
@@ -70,6 +76,7 @@ The LLM can perform all standard NFS operations:
 ### Event-Based Processing
 
 **nfs_connected** - Initial mount event:
+
 ```json
 {
   "export_path": "/data",
@@ -78,6 +85,7 @@ The LLM can perform all standard NFS operations:
 ```
 
 **nfs_operation_result** - Operation completion event:
+
 ```json
 {
   "operation": "nfs_read_file",
@@ -93,6 +101,7 @@ The LLM can perform all standard NFS operations:
 ### Action Examples
 
 **nfs_read_file** - Read file:
+
 ```json
 {
   "type": "nfs_read_file",
@@ -103,6 +112,7 @@ The LLM can perform all standard NFS operations:
 ```
 
 **nfs_write_file** - Write file:
+
 ```json
 {
   "type": "nfs_write_file",
@@ -113,6 +123,7 @@ The LLM can perform all standard NFS operations:
 ```
 
 **nfs_list_dir** - List directory:
+
 ```json
 {
   "type": "nfs_list_dir",
@@ -121,6 +132,7 @@ The LLM can perform all standard NFS operations:
 ```
 
 **nfs_create_file** - Create file:
+
 ```json
 {
   "type": "nfs_create_file",
@@ -130,6 +142,7 @@ The LLM can perform all standard NFS operations:
 ```
 
 **nfs_mkdir** - Create directory:
+
 ```json
 {
   "type": "nfs_mkdir",
@@ -141,6 +154,7 @@ The LLM can perform all standard NFS operations:
 ### Error Handling
 
 Operations return structured errors via result event:
+
 - File not found → error in lookup
 - Permission denied → NFS3ERR_ACCES
 - Not a directory → NFS3ERR_NOTDIR
@@ -174,11 +188,13 @@ Operations return structured errors via result event:
 ### Example 1: Read File
 
 **Prompt:**
+
 ```
 Connect to NFS server at 192.168.1.100:/export/data and read /readme.txt
 ```
 
 **LLM Response (on connect):**
+
 ```json
 {
   "actions": [
@@ -193,6 +209,7 @@ Connect to NFS server at 192.168.1.100:/export/data and read /readme.txt
 ```
 
 **Result Event:**
+
 ```json
 {
   "operation": "nfs_read_file",
@@ -208,11 +225,13 @@ Connect to NFS server at 192.168.1.100:/export/data and read /readme.txt
 ### Example 2: Directory Listing
 
 **Prompt:**
+
 ```
 Connect to NFS at fileserver.local:/home and list all directories
 ```
 
 **LLM Response (on connect):**
+
 ```json
 {
   "actions": [
@@ -225,6 +244,7 @@ Connect to NFS at fileserver.local:/home and list all directories
 ```
 
 **Result Event:**
+
 ```json
 {
   "operation": "nfs_list_dir",
@@ -242,11 +262,13 @@ Connect to NFS at fileserver.local:/home and list all directories
 ### Example 3: Write File
 
 **Prompt:**
+
 ```
 Connect to NFS at backup:/data and write "Backup completed" to /status.txt
 ```
 
 **LLM Response (on connect):**
+
 ```json
 {
   "actions": [
@@ -261,6 +283,7 @@ Connect to NFS at backup:/data and write "Backup completed" to /status.txt
 ```
 
 **Result Event:**
+
 ```json
 {
   "operation": "nfs_write_file",
@@ -274,11 +297,13 @@ Connect to NFS at backup:/data and write "Backup completed" to /status.txt
 ### Example 4: Create Directory Structure
 
 **Prompt:**
+
 ```
 Connect to NFS at storage:/projects and create directory structure: reports/2024/
 ```
 
 **LLM Response (on connect):**
+
 ```json
 {
   "actions": [
@@ -292,6 +317,7 @@ Connect to NFS at storage:/projects and create directory structure: reports/2024
 ```
 
 **LLM Response (after first mkdir):**
+
 ```json
 {
   "actions": [
@@ -314,6 +340,7 @@ NFS client addresses use a special format to specify both server and export path
 - **Hostname**: `fileserver.local:/home/shared`
 
 **Examples:**
+
 - `192.168.1.100:/export/data` - Connect to 192.168.1.100 port 2049, mount /export/data
 - `nfs.example.com:2050:/backups` - Connect to nfs.example.com port 2050, mount /backups
 - `localhost:/home` - Connect to localhost port 2049, mount /home
@@ -332,24 +359,29 @@ NFS client addresses use a special format to specify both server and export path
 ### Structured Logging Levels
 
 **TRACE** - Detailed operation info:
+
 - RPC call parameters
 - File handle lookups
 - Raw data transfers
 
 **DEBUG** - Operation summaries:
+
 - "NFS read 1024 bytes from /file.txt"
 - "NFS created directory: /newdir"
 
 **INFO** - High-level events:
+
 - Connection establishment
 - Mount success
 - LLM responses
 
 **WARN** - Non-fatal issues:
+
 - File not found
 - Permission denied
 
 **ERROR** - Critical failures:
+
 - Mount failure
 - Network errors
 - Invalid responses
@@ -361,6 +393,7 @@ All logs use dual logging pattern (tracing macros + status_tx).
 ### Test Server
 
 Use NetGet NFS server as test target:
+
 ```bash
 # Terminal 1: Start NetGet NFS server
 netget --ollama-lock
@@ -379,6 +412,7 @@ netget --ollama-lock
 ### LLM Call Budget
 
 Target: < 10 LLM calls per test suite
+
 - Mount: 1 call
 - File operations: 2-3 calls per scenario (action + result processing)
 - Use scripting mode where possible
@@ -388,40 +422,40 @@ Target: < 10 LLM calls per test suite
 **COMPLETE** - The NFS client is fully implemented with all 10 file operations:
 
 1. **nfs3_client Integration** - Using nfs3_client v0.7 with tokio feature:
-   - `Nfs3ConnectionBuilder::new(TokioConnector, server, export_path).mount().await`
-   - Connection kept alive in Arc<Mutex<>> for concurrent operation handling
-   - Root file handle obtained via `connection.root_nfs_fh3()`
-   - File handle cache (HashMap) for efficient path resolution
+    - `Nfs3ConnectionBuilder::new(TokioConnector, server, export_path).mount().await`
+    - Connection kept alive in Arc<Mutex<>> for concurrent operation handling
+    - Root file handle obtained via `connection.root_nfs_fh3()`
+    - File handle cache (HashMap) for efficient path resolution
 
 2. **Implemented Operations** (All 10):
-   - ✅ **nfs_lookup** - Resolve path to file handle with caching
-   - ✅ **nfs_read_file** - Read file contents with offset/count support
-   - ✅ **nfs_write_file** - Write data to file with FILE_SYNC stability
-   - ✅ **nfs_list_dir** - Read directory entries via READDIR protocol
-   - ✅ **nfs_get_attr** - Get file/directory attributes (type, size, mode)
-   - ✅ **nfs_create_file** - Create new file with Unix permissions
-   - ✅ **nfs_mkdir** - Create new directory with Unix permissions
-   - ✅ **nfs_remove** - Delete file from directory
-   - ✅ **nfs_rmdir** - Delete empty directory
-   - ✅ **disconnect** - Clean disconnection and status update
+    - ✅ **nfs_lookup** - Resolve path to file handle with caching
+    - ✅ **nfs_read_file** - Read file contents with offset/count support
+    - ✅ **nfs_write_file** - Write data to file with FILE_SYNC stability
+    - ✅ **nfs_list_dir** - Read directory entries via READDIR protocol
+    - ✅ **nfs_get_attr** - Get file/directory attributes (type, size, mode)
+    - ✅ **nfs_create_file** - Create new file with Unix permissions
+    - ✅ **nfs_mkdir** - Create new directory with Unix permissions
+    - ✅ **nfs_remove** - Delete file from directory
+    - ✅ **nfs_rmdir** - Delete empty directory
+    - ✅ **disconnect** - Clean disconnection and status update
 
 3. **Architecture**:
-   - Connection stored in Arc<Mutex<>> for thread-safe access
-   - File handle cache prevents redundant LOOKUP operations
-   - Recursive LLM action handling (operation → result event → follow-up actions)
-   - All operations use proper nfs3_types:
-     - Nfs3Option<T> for optional values
-     - filename3 for file names
-     - Opaque for binary data
-     - List<T> wrapper around Vec<T>
-     - set_atime/set_mtime enums
+    - Connection stored in Arc<Mutex<>> for thread-safe access
+    - File handle cache prevents redundant LOOKUP operations
+    - Recursive LLM action handling (operation → result event → follow-up actions)
+    - All operations use proper nfs3_types:
+        - Nfs3Option<T> for optional values
+        - filename3 for file names
+        - Opaque for binary data
+        - List<T> wrapper around Vec<T>
+        - set_atime/set_mtime enums
 
 4. **Current Status**:
-   - ✅ Compiles cleanly (zero errors, zero warnings)
-   - ✅ All operations properly integrated with LLM event system
-   - ✅ Sends operation_result events after each operation
-   - ✅ Recursive action execution for multi-step workflows
-   - ⏳ Ready for E2E testing with actual NFS server
+    - ✅ Compiles cleanly (zero errors, zero warnings)
+    - ✅ All operations properly integrated with LLM event system
+    - ✅ Sends operation_result events after each operation
+    - ✅ Recursive action execution for multi-step workflows
+    - ⏳ Ready for E2E testing with actual NFS server
 
 ### Current Limitations
 

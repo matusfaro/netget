@@ -1,7 +1,9 @@
 # SVN E2E Test Documentation
 
 ## Test Strategy
-Black-box testing of SVN protocol implementation using real TCP clients. Tests verify the LLM's ability to understand SVN protocol commands and generate appropriate responses.
+
+Black-box testing of SVN protocol implementation using real TCP clients. Tests verify the LLM's ability to understand
+SVN protocol commands and generate appropriate responses.
 
 **Status**: Experimental Protocol Testing
 **Client**: Manual TCP connection with SVN protocol parsing
@@ -10,8 +12,10 @@ Black-box testing of SVN protocol implementation using real TCP clients. Tests v
 ## Test Coverage
 
 ### 1. Protocol Greeting (`test_svn_greeting`)
+
 **Validates**: Server sends proper SVN protocol greeting on connection
 **Flow**:
+
 1. Start SVN server with greeting instructions
 2. Connect via TCP
 3. Read greeting message
@@ -22,8 +26,10 @@ Black-box testing of SVN protocol implementation using real TCP clients. Tests v
 **LLM Calls**: 1 (server startup with greeting instruction)
 
 ### 2. Get Latest Revision (`test_svn_get_latest_rev`)
+
 **Validates**: LLM responds to `get-latest-rev` command with revision number
 **Flow**:
+
 1. Start SVN server with revision instruction
 2. Connect and read greeting
 3. Send `( get-latest-rev )` command
@@ -34,8 +40,10 @@ Black-box testing of SVN protocol implementation using real TCP clients. Tests v
 **LLM Calls**: 2 (startup + 1 command)
 
 ### 3. Directory Listing (`test_svn_get_dir`)
+
 **Validates**: LLM responds to `get-dir` command with directory listing
 **Flow**:
+
 1. Start SVN server with directory listing instruction
 2. Connect and read greeting
 3. Send `( get-dir )` command
@@ -46,8 +54,10 @@ Black-box testing of SVN protocol implementation using real TCP clients. Tests v
 **LLM Calls**: 2 (startup + 1 command)
 
 ### 4. Error Response (`test_svn_error_response`)
+
 **Validates**: LLM can generate SVN error responses
 **Flow**:
+
 1. Start SVN server with error response instruction
 2. Connect and read greeting
 3. Send command
@@ -58,8 +68,10 @@ Black-box testing of SVN protocol implementation using real TCP clients. Tests v
 **LLM Calls**: 2 (startup + 1 command)
 
 ### 5. Connection Statistics (`test_svn_connection_stats`)
+
 **Validates**: Server properly tracks connection metrics
 **Flow**:
+
 1. Start SVN server
 2. Send command
 3. Wait for stats update
@@ -70,6 +82,7 @@ Black-box testing of SVN protocol implementation using real TCP clients. Tests v
 ## LLM Call Budget
 
 **Total LLM Calls**: 9 calls across 5 tests
+
 - 5 server startups (1 per test)
 - 4 command responses (tests 2-5)
 
@@ -79,13 +92,15 @@ Black-box testing of SVN protocol implementation using real TCP clients. Tests v
 ## Performance Characteristics
 
 ### Runtime
+
 - **Per Test**: 12-15 seconds
-  - Server startup: 2-4 seconds (LLM generates greeting script)
-  - Command processing: 2-5 seconds per command (LLM call)
-  - Teardown: < 1 second
+    - Server startup: 2-4 seconds (LLM generates greeting script)
+    - Command processing: 2-5 seconds per command (LLM call)
+    - Teardown: < 1 second
 - **Full Suite**: ~60-75 seconds (5 tests)
 
 ### LLM Performance
+
 - **Model**: qwen2.5-coder:0.5b (fast, good for protocol work)
 - **Temperature**: 0.7 (balanced)
 - **Token Usage**: Low (protocol commands are short)
@@ -94,22 +109,26 @@ Black-box testing of SVN protocol implementation using real TCP clients. Tests v
 ## Known Test Limitations
 
 ### 1. Simplified Protocol Testing
+
 - Tests only verify basic command-response patterns
 - No full SVN client library (manual TCP/protocol)
 - No binary protocol features (svndiff, delta encoding)
 - No authentication beyond ANONYMOUS
 
 ### 2. Response Validation
+
 - Tests check for keywords ("success", "failure", "42")
 - Full S-expression parsing would be more robust
 - Lenient validation accounts for LLM variations
 
 ### 3. No Repository Operations
+
 - No actual checkout/commit/update workflows
 - No multi-command sequences (would increase LLM calls)
 - Focus on protocol mechanics, not repository logic
 
 ### 4. Single Connection Model
+
 - Tests use one connection per operation
 - No connection pooling or reuse testing
 - No concurrent connection testing
@@ -117,6 +136,7 @@ Black-box testing of SVN protocol implementation using real TCP clients. Tests v
 ## Test Infrastructure
 
 ### Setup
+
 ```bash
 # Build with SVN feature
 ./cargo-isolated.sh build --release --no-default-features --features svn
@@ -126,13 +146,16 @@ Black-box testing of SVN protocol implementation using real TCP clients. Tests v
 ```
 
 ### Requirements
+
 - Ollama running on localhost:11434
 - Model qwen2.5-coder:0.5b downloaded
 - OLLAMA_LOCK_PATH set for concurrent test safety
 - Port 3690+ available for binding
 
 ### Debugging
+
 Enable trace logging to see full SVN protocol messages:
+
 ```bash
 RUST_LOG=netget=trace ./cargo-isolated.sh test --no-default-features --features svn --test server::svn::e2e_test -- --ignored --nocapture
 ```
@@ -140,6 +163,7 @@ RUST_LOG=netget=trace ./cargo-isolated.sh test --no-default-features --features 
 ## Future Improvements
 
 ### Test Coverage Expansion
+
 - Multi-command sessions (get-dir → get-file)
 - Authentication mechanism testing
 - Binary protocol features (if implemented)
@@ -147,18 +171,21 @@ RUST_LOG=netget=trace ./cargo-isolated.sh test --no-default-features --features 
 - Repository structure validation
 
 ### Performance Optimization
+
 - Scripting mode for instant responses (0 LLM calls per command)
 - Batch command testing
 - Connection reuse patterns
 - Stress testing with concurrent connections
 
 ### Client Improvements
+
 - Full S-expression parser
 - Binary protocol support
 - Proper SVN client library (if available)
 - More comprehensive response validation
 
 ## References
+
 - [SVN Protocol Specification](https://svn.apache.org/repos/asf/subversion/trunk/subversion/libsvn_ra_svn/protocol)
 - [NetGet Test Infrastructure](../../TEST_INFRASTRUCTURE_FIXES.md)
 - [NetGet Test Status](../../TEST_STATUS_REPORT.md)

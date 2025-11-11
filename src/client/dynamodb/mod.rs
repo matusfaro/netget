@@ -10,13 +10,13 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
+use crate::client::dynamodb::actions::DYNAMODB_CLIENT_RESPONSE_RECEIVED_EVENT;
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::{Event, StartupParams};
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::dynamodb::actions::DYNAMODB_CLIENT_RESPONSE_RECEIVED_EVENT;
 
 /// DynamoDB client that interacts with AWS DynamoDB or local instances
 pub struct DynamoDbClient;
@@ -49,41 +49,46 @@ impl DynamoDbClient {
             .as_ref()
             .map(|p| p.get_string("secret_access_key"));
 
-        info!("DynamoDB client {} initializing for region {}", client_id, region);
+        info!(
+            "DynamoDB client {} initializing for region {}",
+            client_id, region
+        );
 
         // Store configuration in protocol_data
-        app_state.with_client_mut(client_id, |client| {
-            client.set_protocol_field(
-                "region".to_string(),
-                serde_json::json!(region.clone()),
-            );
-            if let Some(endpoint) = &endpoint_url {
-                client.set_protocol_field(
-                    "endpoint_url".to_string(),
-                    serde_json::json!(endpoint),
-                );
-            }
-            if let Some(key_id) = &access_key_id {
-                client.set_protocol_field(
-                    "access_key_id".to_string(),
-                    serde_json::json!(key_id),
-                );
-            }
-            if let Some(secret_key) = &secret_access_key {
-                client.set_protocol_field(
-                    "secret_access_key".to_string(),
-                    serde_json::json!(secret_key),
-                );
-            }
-        }).await;
+        app_state
+            .with_client_mut(client_id, |client| {
+                client.set_protocol_field("region".to_string(), serde_json::json!(region.clone()));
+                if let Some(endpoint) = &endpoint_url {
+                    client.set_protocol_field(
+                        "endpoint_url".to_string(),
+                        serde_json::json!(endpoint),
+                    );
+                }
+                if let Some(key_id) = &access_key_id {
+                    client
+                        .set_protocol_field("access_key_id".to_string(), serde_json::json!(key_id));
+                }
+                if let Some(secret_key) = &secret_access_key {
+                    client.set_protocol_field(
+                        "secret_access_key".to_string(),
+                        serde_json::json!(secret_key),
+                    );
+                }
+            })
+            .await;
 
         // Update status
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
         let _ = status_tx.send(format!(
             "[CLIENT] DynamoDB client {} ready for region {}{}",
             client_id,
             region,
-            endpoint_url.as_ref().map(|e| format!(" (endpoint: {})", e)).unwrap_or_default()
+            endpoint_url
+                .as_ref()
+                .map(|e| format!(" (endpoint: {})", e))
+                .unwrap_or_default()
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
@@ -113,7 +118,10 @@ impl DynamoDbClient {
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
-        info!("DynamoDB client {} PutItem to table {}", client_id, table_name);
+        info!(
+            "DynamoDB client {} PutItem to table {}",
+            client_id, table_name
+        );
 
         // Get DynamoDB configuration
         let (region, endpoint_url, access_key_id, secret_access_key) =
@@ -125,7 +133,8 @@ impl DynamoDbClient {
             endpoint_url.as_deref(),
             access_key_id.as_deref(),
             secret_access_key.as_deref(),
-        ).await?;
+        )
+        .await?;
 
         // Create DynamoDB client
         let dynamodb_client = aws_sdk_dynamodb::Client::new(&config);
@@ -159,7 +168,8 @@ impl DynamoDbClient {
                     &app_state,
                     &llm_client,
                     &status_tx,
-                ).await?;
+                )
+                .await?;
 
                 Ok(())
             }
@@ -176,7 +186,8 @@ impl DynamoDbClient {
                     &app_state,
                     &llm_client,
                     &status_tx,
-                ).await?;
+                )
+                .await?;
 
                 Err(e.into())
             }
@@ -192,7 +203,10 @@ impl DynamoDbClient {
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
-        info!("DynamoDB client {} GetItem from table {}", client_id, table_name);
+        info!(
+            "DynamoDB client {} GetItem from table {}",
+            client_id, table_name
+        );
 
         // Get DynamoDB configuration
         let (region, endpoint_url, access_key_id, secret_access_key) =
@@ -204,7 +218,8 @@ impl DynamoDbClient {
             endpoint_url.as_deref(),
             access_key_id.as_deref(),
             secret_access_key.as_deref(),
-        ).await?;
+        )
+        .await?;
 
         // Create DynamoDB client
         let dynamodb_client = aws_sdk_dynamodb::Client::new(&config);
@@ -244,7 +259,8 @@ impl DynamoDbClient {
                     &app_state,
                     &llm_client,
                     &status_tx,
-                ).await?;
+                )
+                .await?;
 
                 Ok(())
             }
@@ -261,7 +277,8 @@ impl DynamoDbClient {
                     &app_state,
                     &llm_client,
                     &status_tx,
-                ).await?;
+                )
+                .await?;
 
                 Err(e.into())
             }
@@ -273,29 +290,46 @@ impl DynamoDbClient {
         app_state: &AppState,
         client_id: ClientId,
     ) -> Result<(String, Option<String>, Option<String>, Option<String>)> {
-        let region = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("region")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }).await.flatten().context("No region found")?;
+        let region = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("region")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .await
+            .flatten()
+            .context("No region found")?;
 
-        let endpoint_url = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("endpoint_url")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }).await.flatten();
+        let endpoint_url = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("endpoint_url")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .await
+            .flatten();
 
-        let access_key_id = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("access_key_id")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }).await.flatten();
+        let access_key_id = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("access_key_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .await
+            .flatten();
 
-        let secret_access_key = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("secret_access_key")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }).await.flatten();
+        let secret_access_key = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("secret_access_key")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .await
+            .flatten();
 
         Ok((region, endpoint_url, access_key_id, secret_access_key))
     }
@@ -342,7 +376,9 @@ impl DynamoDbClient {
     }
 
     /// Convert JSON value to DynamoDB AttributeValue
-    fn json_to_attribute_value(json: &serde_json::Value) -> Option<aws_sdk_dynamodb::types::AttributeValue> {
+    fn json_to_attribute_value(
+        json: &serde_json::Value,
+    ) -> Option<aws_sdk_dynamodb::types::AttributeValue> {
         use aws_sdk_dynamodb::types::AttributeValue;
 
         match json {
@@ -414,7 +450,8 @@ impl DynamoDbClient {
         status_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-            let protocol = Arc::new(crate::client::dynamodb::actions::DynamoDbClientProtocol::new());
+            let protocol =
+                Arc::new(crate::client::dynamodb::actions::DynamoDbClientProtocol::new());
 
             let mut event_data = serde_json::json!({
                 "operation": operation,
@@ -430,7 +467,10 @@ impl DynamoDbClient {
 
             let event = Event::new(&DYNAMODB_CLIENT_RESPONSE_RECEIVED_EVENT, event_data);
 
-            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+            let memory = app_state
+                .get_memory_for_client(client_id)
+                .await
+                .unwrap_or_default();
 
             match call_llm_for_client(
                 llm_client,
@@ -441,8 +481,13 @@ impl DynamoDbClient {
                 Some(&event),
                 protocol.as_ref(),
                 status_tx,
-            ).await {
-                Ok(ClientLlmResult { actions: _, memory_updates }) => {
+            )
+            .await
+            {
+                Ok(ClientLlmResult {
+                    actions: _,
+                    memory_updates,
+                }) => {
                     // Update memory
                     if let Some(mem) = memory_updates {
                         app_state.set_memory_for_client(client_id, mem).await;

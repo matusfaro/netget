@@ -14,16 +14,16 @@ use crate::llm::ollama_client::OllamaClient;
 #[cfg(feature = "smtp")]
 use crate::llm::ActionResult;
 #[cfg(feature = "smtp")]
-use actions::SMTP_COMMAND_EVENT;
+use crate::protocol::Event;
 #[cfg(feature = "smtp")]
 use crate::server::SmtpProtocol;
 #[cfg(feature = "smtp")]
-use crate::protocol::Event;
-#[cfg(feature = "smtp")]
 use crate::state::app_state::AppState;
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+#[cfg(feature = "smtp")]
+use actions::SMTP_COMMAND_EVENT;
 #[cfg(feature = "smtp")]
 use tokio_rustls::TlsAcceptor;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// SMTP server that forwards mail to LLM
 pub struct SmtpServer;
@@ -42,13 +42,20 @@ impl SmtpServer {
         server_id: crate::state::ServerId,
         tls_config: Option<Arc<rustls::ServerConfig>>,
     ) -> Result<SocketAddr> {
-        let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let listener =
+            crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
 
         if tls_config.is_some() {
-            info!("SMTPS server (TLS, action-based) listening on {}", local_addr);
+            info!(
+                "SMTPS server (TLS, action-based) listening on {}",
+                local_addr
+            );
         } else {
-            info!("SMTP server (plain, action-based) listening on {}", local_addr);
+            info!(
+                "SMTP server (plain, action-based) listening on {}",
+                local_addr
+            );
         }
 
         let protocol = Arc::new(SmtpProtocol::new());
@@ -59,9 +66,14 @@ impl SmtpServer {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
                         let connection_id = crate::server::connection::ConnectionId::new(
-                            app_state.get_next_unified_id().await
+                            app_state.get_next_unified_id().await,
                         );
-                        console_debug!(status_tx, "SMTP connection {} from {}", connection_id, remote_addr);
+                        console_debug!(
+                            status_tx,
+                            "SMTP connection {} from {}",
+                            connection_id,
+                            remote_addr
+                        );
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -74,8 +86,14 @@ impl SmtpServer {
                             if let Some(ref acceptor) = tls_acceptor_clone {
                                 match acceptor.accept(stream).await {
                                     Ok(tls_stream) => {
-                                        debug!("TLS handshake completed for connection {}", connection_id);
-                                        let _ = status_clone.send(format!("[DEBUG] TLS handshake completed for connection {}", connection_id));
+                                        debug!(
+                                            "TLS handshake completed for connection {}",
+                                            connection_id
+                                        );
+                                        let _ = status_clone.send(format!(
+                                            "[DEBUG] TLS handshake completed for connection {}",
+                                            connection_id
+                                        ));
                                         if let Err(e) = SmtpSession::handle_tls_session(
                                             tls_stream,
                                             connection_id,
@@ -84,14 +102,21 @@ impl SmtpServer {
                                             state_clone,
                                             status_clone.clone(),
                                             protocol_clone,
-                                        ).await {
+                                        )
+                                        .await
+                                        {
                                             error!("SMTP session error: {}", e);
-                                            let _ = status_clone.send(format!("[ERROR] SMTP session error: {}", e));
+                                            let _ = status_clone
+                                                .send(format!("[ERROR] SMTP session error: {}", e));
                                         }
                                     }
                                     Err(e) => {
-                                        error!("TLS handshake failed for connection {}: {}", connection_id, e);
-                                        let _ = status_clone.send(format!("[ERROR] TLS handshake failed: {}", e));
+                                        error!(
+                                            "TLS handshake failed for connection {}: {}",
+                                            connection_id, e
+                                        );
+                                        let _ = status_clone
+                                            .send(format!("[ERROR] TLS handshake failed: {}", e));
                                     }
                                 }
                             } else {
@@ -103,9 +128,12 @@ impl SmtpServer {
                                     state_clone,
                                     status_clone.clone(),
                                     protocol_clone,
-                                ).await {
+                                )
+                                .await
+                                {
                                     error!("SMTP session error: {}", e);
-                                    let _ = status_clone.send(format!("[ERROR] SMTP session error: {}", e));
+                                    let _ = status_clone
+                                        .send(format!("[ERROR] SMTP session error: {}", e));
                                 }
                             };
                         });
@@ -137,8 +165,6 @@ impl SmtpSession {
         status_tx: mpsc::UnboundedSender<String>,
         protocol: Arc<SmtpProtocol>,
     ) -> Result<()> {
-        
-
         // Send initial greeting
         Self::send_greeting(
             &mut stream,
@@ -148,7 +174,8 @@ impl SmtpSession {
             &app_state,
             &status_tx,
             &protocol,
-        ).await?;
+        )
+        .await?;
 
         // Handle session
         Self::handle_session_commands(
@@ -159,7 +186,8 @@ impl SmtpSession {
             app_state,
             status_tx,
             protocol,
-        ).await
+        )
+        .await
     }
 
     /// Handle a TLS SMTP session (SMTPS)
@@ -172,8 +200,6 @@ impl SmtpSession {
         status_tx: mpsc::UnboundedSender<String>,
         protocol: Arc<SmtpProtocol>,
     ) -> Result<()> {
-        
-
         // Send initial greeting
         Self::send_greeting_tls(
             &mut stream,
@@ -183,7 +209,8 @@ impl SmtpSession {
             &app_state,
             &status_tx,
             &protocol,
-        ).await?;
+        )
+        .await?;
 
         // Handle session
         Self::handle_session_commands_tls(
@@ -194,7 +221,8 @@ impl SmtpSession {
             app_state,
             status_tx,
             protocol,
-        ).await
+        )
+        .await
     }
 
     /// Send greeting for plain connection
@@ -212,9 +240,12 @@ impl SmtpSession {
     {
         use tokio::io::AsyncWriteExt;
 
-        let greeting_event = Event::new(&SMTP_COMMAND_EVENT, serde_json::json!({
-            "command": "CONNECTION_ESTABLISHED"
-        }));
+        let greeting_event = Event::new(
+            &SMTP_COMMAND_EVENT,
+            serde_json::json!({
+                "command": "CONNECTION_ESTABLISHED"
+            }),
+        );
 
         if let Ok(execution_result) = call_llm(
             llm_client,
@@ -223,7 +254,9 @@ impl SmtpSession {
             Some(connection_id),
             &greeting_event,
             protocol.as_ref(),
-        ).await {
+        )
+        .await
+        {
             for protocol_result in execution_result.protocol_results {
                 if let ActionResult::Output(data) = protocol_result {
                     stream.write_all(&data).await?;
@@ -245,7 +278,16 @@ impl SmtpSession {
         status_tx: &mpsc::UnboundedSender<String>,
         protocol: &Arc<SmtpProtocol>,
     ) -> Result<()> {
-        Self::send_greeting(stream, connection_id, server_id, llm_client, app_state, status_tx, protocol).await
+        Self::send_greeting(
+            stream,
+            connection_id,
+            server_id,
+            llm_client,
+            app_state,
+            status_tx,
+            protocol,
+        )
+        .await
     }
 
     /// Handle session commands for plain connection
@@ -275,9 +317,12 @@ impl SmtpSession {
             console_debug!(status_tx, "SMTP received: {}", command);
 
             // Create SMTP command event
-            let event = Event::new(&SMTP_COMMAND_EVENT, serde_json::json!({
-                "command": command
-            }));
+            let event = Event::new(
+                &SMTP_COMMAND_EVENT,
+                serde_json::json!({
+                    "command": command
+                }),
+            );
 
             // Get LLM response
             if let Ok(execution_result) = call_llm(
@@ -287,7 +332,9 @@ impl SmtpSession {
                 Some(connection_id),
                 &event,
                 protocol.as_ref(),
-            ).await {
+            )
+            .await
+            {
                 for protocol_result in execution_result.protocol_results {
                     match protocol_result {
                         ActionResult::Output(data) => {
@@ -336,9 +383,12 @@ impl SmtpSession {
             console_debug!(status_tx, "SMTP received: {}", command);
 
             // Create SMTP command event
-            let event = Event::new(&SMTP_COMMAND_EVENT, serde_json::json!({
-                "command": command
-            }));
+            let event = Event::new(
+                &SMTP_COMMAND_EVENT,
+                serde_json::json!({
+                    "command": command
+                }),
+            );
 
             // Get LLM response
             if let Ok(execution_result) = call_llm(
@@ -348,7 +398,9 @@ impl SmtpSession {
                 Some(connection_id),
                 &event,
                 protocol.as_ref(),
-            ).await {
+            )
+            .await
+            {
                 for protocol_result in execution_result.protocol_results {
                     match protocol_result {
                         ActionResult::Output(data) => {

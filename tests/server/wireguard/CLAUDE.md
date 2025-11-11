@@ -2,15 +2,18 @@
 
 ## Test Overview
 
-Tests WireGuard honeypot functionality by sending crafted WireGuard handshake packets to NetGet. **Note**: These tests currently treat WireGuard as a honeypot (packet detection only), not a full VPN server.
+Tests WireGuard honeypot functionality by sending crafted WireGuard handshake packets to NetGet. **Note**: These tests
+currently treat WireGuard as a honeypot (packet detection only), not a full VPN server.
 
-**Important**: The actual WireGuard implementation in `src/server/wireguard/mod.rs` is a **full VPN server** with tunnel support. These tests, however, focus on packet detection without requiring elevated privileges.
+**Important**: The actual WireGuard implementation in `src/server/wireguard/mod.rs` is a **full VPN server** with tunnel
+support. These tests, however, focus on packet detection without requiring elevated privileges.
 
 ## Test Strategy
 
 ### Honeypot Testing Approach
 
 Tests send raw WireGuard packets and verify server logs them:
+
 - **No actual VPN tunnel**: Tests don't establish connections through defguard_wireguard_rs
 - **Packet detection only**: Verify server receives and logs WireGuard packets
 - **No privilege requirement**: Honeypot mode doesn't require root/admin
@@ -18,6 +21,7 @@ Tests send raw WireGuard packets and verify server logs them:
 ### Why Not Full VPN Testing?
 
 Full VPN server testing would require:
+
 - Root/admin privileges for TUN interface creation
 - Real WireGuard client (wg, wg-quick, or wireguard-go)
 - Network configuration (routing, IP forwarding)
@@ -30,24 +34,26 @@ Full VPN server testing would require:
 ### Per-Test Breakdown
 
 1. **test_wireguard_handshake_detection**: 1 LLM call
-   - Server startup (prompt interpretation)
-   - No LLM calls for packet handling (honeypot mode)
+    - Server startup (prompt interpretation)
+    - No LLM calls for packet handling (honeypot mode)
 
 2. **test_wireguard_multiple_packet_types**: 1 LLM call
-   - Server startup only
+    - Server startup only
 
 3. **test_wireguard_concurrent_connections**: 1 LLM call
-   - Server startup only
+    - Server startup only
 
 **Total: 3 LLM calls** (well under 10 limit)
 
 ### Why So Few Calls?
 
-Honeypot mode doesn't invoke LLM for each packet - just logs them. Full VPN mode would require LLM calls for peer authorization decisions.
+Honeypot mode doesn't invoke LLM for each packet - just logs them. Full VPN mode would require LLM calls for peer
+authorization decisions.
 
 ## Scripting Usage
 
-**Scripting: Not applicable** - Honeypot mode doesn't use scripting. Packets are logged directly without LLM interpretation.
+**Scripting: Not applicable** - Honeypot mode doesn't use scripting. Packets are logged directly without LLM
+interpretation.
 
 ## Client Library
 
@@ -71,6 +77,7 @@ fn build_wireguard_handshake_init() -> Vec<u8> {
 ```
 
 **Packet types**:
+
 - **Handshake Initiation** (Type 1): 148 bytes
 - **Handshake Response** (Type 2): 92 bytes
 - **Data** (Type 4): Variable length (minimum 32 bytes)
@@ -80,6 +87,7 @@ fn build_wireguard_handshake_init() -> Vec<u8> {
 From [WireGuard Protocol](https://www.wireguard.com/protocol/):
 
 **Handshake Initiation**:
+
 ```
 | Type (1) | Reserved (3) | Sender Index (4) |
 | Unencrypted Ephemeral (32) |
@@ -89,6 +97,7 @@ From [WireGuard Protocol](https://www.wireguard.com/protocol/):
 ```
 
 **Handshake Response**:
+
 ```
 | Type (2) | Reserved (3) | Sender Index (4) | Receiver Index (4) |
 | Unencrypted Ephemeral (32) |
@@ -97,6 +106,7 @@ From [WireGuard Protocol](https://www.wireguard.com/protocol/):
 ```
 
 **Data**:
+
 ```
 | Type (4) | Reserved (3) | Receiver Index (4) |
 | Counter (8) |
@@ -108,6 +118,7 @@ From [WireGuard Protocol](https://www.wireguard.com/protocol/):
 **Model**: qwen3-coder:30b (or configured model)
 **Runtime**: ~10-15 seconds for full test suite
 **Breakdown**:
+
 - Server startup: 2-5 seconds per test
 - Packet sending: <1 second per test
 - LLM calls: 2-3 seconds each (startup only)
@@ -125,17 +136,20 @@ From [WireGuard Protocol](https://www.wireguard.com/protocol/):
 ### 1. test_wireguard_handshake_detection
 
 **What it tests**:
+
 - Server starts with WireGuard stack
 - Sends Handshake Initiation packet
 - Verifies packet detected in logs
 
 **Assertions**:
+
 ```rust
 assert!(output_contains_wg, "Server should be running WireGuard stack");
 assert!(has_wireguard, "Server output should contain WireGuard handshake detection");
 ```
 
 **Expected output**:
+
 ```
 [INFO] Starting WireGuard VPN server on 0.0.0.0:XXXXX
 [TRACE] WireGuard: Handshake Initiation packet from 127.0.0.1:XXXXX
@@ -144,10 +158,12 @@ assert!(has_wireguard, "Server output should contain WireGuard handshake detecti
 ### 2. test_wireguard_multiple_packet_types
 
 **What it tests**:
+
 - Sends three packet types: Handshake Init, Handshake Response, Data
 - Verifies all packets logged
 
 **Packet sequence**:
+
 1. Handshake Initiation (Type 1)
 2. Handshake Response (Type 2)
 3. Data (Type 4)
@@ -157,6 +173,7 @@ assert!(has_wireguard, "Server output should contain WireGuard handshake detecti
 ### 3. test_wireguard_concurrent_connections
 
 **What it tests**:
+
 - Three concurrent clients send handshakes
 - Verifies server handles concurrent UDP packets
 
@@ -171,11 +188,13 @@ assert!(has_wireguard, "Server output should contain WireGuard handshake detecti
 **Issue**: Tests treat WireGuard as honeypot, but implementation is full server.
 
 **Why**: Full server testing requires:
+
 - Root/admin privileges (TUN interface)
 - Platform-specific setup (different per OS)
 - Complex network configuration
 
 **Solution**: Tests focus on packet detection. Manual testing for full VPN:
+
 ```bash
 # Manual testing workflow (requires root):
 sudo ./cargo-isolated.sh run --release --all-features -- "start wireguard vpn on port 51820"
@@ -191,6 +210,7 @@ sudo wg-quick up /path/to/client.conf
 **Why**: Authorization requires full VPN mode with TUN interface.
 
 **Future work**: Add privileged E2E tests that:
+
 1. Start server with root
 2. Connect real WireGuard client
 3. Verify LLM authorizes peer
@@ -242,6 +262,7 @@ test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 ### Privileged Tests
 
 Create separate test suite for full VPN testing:
+
 ```rust
 #[cfg(all(feature = "wireguard", feature = "privileged-tests"))]
 mod privileged {
@@ -257,6 +278,7 @@ mod privileged {
 ### Real Client Integration
 
 Use wireguard-go or kernel WireGuard as client:
+
 ```rust
 // Spawn wg-quick or wireguard-go
 let client = Command::new("wg-quick")
@@ -268,6 +290,7 @@ let client = Command::new("wg-quick")
 ### Peer Authorization Tests
 
 Test LLM authorization decisions:
+
 ```rust
 async fn test_peer_authorization() {
     let server = start_server("authorize peers with allowed_ips 10.20.30.0/24").await;

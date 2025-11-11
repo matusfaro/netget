@@ -43,9 +43,7 @@ pub enum UserCommand {
     /// Show current log level (slash command: /log)
     ShowLogLevel,
     /// Change log level (slash command: /log <level>)
-    ChangeLogLevel {
-        level: String,
-    },
+    ChangeLogLevel { level: String },
     /// Show current web search status (slash command: /web)
     ShowWebSearch,
     /// Set web search mode (slash command: /web on|off|ask)
@@ -55,19 +53,13 @@ pub enum UserCommand {
     /// Set event handler mode (slash command: /handler any|script|static|llm)
     SetEventHandler { mode: EventHandlerMode },
     /// Generate test output lines (slash command: /test <count>)
-    TestOutput {
-        count: usize,
-    },
+    TestOutput { count: usize },
     /// Test web search approval prompt (slash command: /test_ask)
     TestAsk,
     /// Set custom footer status message (slash command: /footer_status <message>)
-    SetFooterStatus {
-        message: Option<String>,
-    },
+    SetFooterStatus { message: Option<String> },
     /// Show protocol documentation (slash command: /docs [protocol])
-    ShowDocs {
-        protocol: Option<String>,
-    },
+    ShowDocs { protocol: Option<String> },
     /// Show environment information (slash command: /env or /environment)
     ShowEnvironment,
     /// Stop everything - all servers, connections, and clients (slash command: /stop)
@@ -134,7 +126,6 @@ impl UserCommand {
                 level: rest.to_string(),
             };
         }
-
 
         // /web command
         if input_lower.starts_with("/web") {

@@ -64,15 +64,16 @@ impl ProtocolDependency {
                 "Raw socket access (requires root or CAP_NET_RAW capability)".to_string()
             }
             Self::PrivilegedPort(port) => {
-                format!("Privileged port {} (requires root or CAP_NET_BIND_SERVICE)", port)
+                format!(
+                    "Privileged port {} (requires root or CAP_NET_BIND_SERVICE)",
+                    port
+                )
             }
             Self::RootAccess => "Root/Administrator access required".to_string(),
             Self::TunDeviceAccess => {
                 "TUN/TAP device creation (requires root or CAP_NET_ADMIN)".to_string()
             }
-            Self::PromiscuousMode => {
-                "Promiscuous mode (requires root or CAP_NET_RAW)".to_string()
-            }
+            Self::PromiscuousMode => "Promiscuous mode (requires root or CAP_NET_RAW)".to_string(),
         }
     }
 
@@ -175,9 +176,7 @@ fn check_system_library(name: &str) -> bool {
     // Try to use ldconfig to check if library is available
     #[cfg(target_os = "linux")]
     {
-        let output = Command::new("ldconfig")
-            .arg("-p")
-            .output();
+        let output = Command::new("ldconfig").arg("-p").output();
 
         if let Ok(output) = output {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -199,7 +198,10 @@ fn check_system_library(name: &str) -> bool {
             return found;
         }
 
-        debug!("Could not check for lib{} (ldconfig and pkg-config unavailable)", name);
+        debug!(
+            "Could not check for lib{} (ldconfig and pkg-config unavailable)",
+            name
+        );
         false
     }
 
@@ -237,7 +239,10 @@ fn check_system_library(name: &str) -> bool {
     {
         // On other platforms, assume library is available (conservative)
         // We can't easily check without platform-specific tools
-        warn!("Cannot check for lib{} on this platform, assuming available", name);
+        warn!(
+            "Cannot check for lib{} on this platform, assuming available",
+            name
+        );
         true
     }
 }
@@ -249,16 +254,17 @@ fn check_tool_in_path(tool: &str) -> bool {
     #[cfg(windows)]
     let which_cmd = "where";
 
-    let output = Command::new(which_cmd)
-        .arg(tool)
-        .output();
+    let output = Command::new(which_cmd).arg(tool).output();
 
     if let Ok(output) = output {
         let found = output.status.success();
         debug!("Checking for tool '{}' in PATH: found={}", tool, found);
         found
     } else {
-        debug!("Could not check for tool '{}' (which/where command failed)", tool);
+        debug!(
+            "Could not check for tool '{}' (which/where command failed)",
+            tool
+        );
         false
     }
 }
@@ -288,4 +294,3 @@ fn check_cap_net_admin() -> bool {
     debug!("Could not detect CAP_NET_ADMIN capability");
     false
 }
-

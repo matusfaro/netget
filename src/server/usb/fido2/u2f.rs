@@ -50,9 +50,9 @@ impl U2fCommand {
 
 /// U2F authentication control byte (P1)
 #[cfg(feature = "usb-fido2")]
-pub const U2F_AUTH_ENFORCE: u8 = 0x03;  // Enforce user presence
+pub const U2F_AUTH_ENFORCE: u8 = 0x03; // Enforce user presence
 #[cfg(feature = "usb-fido2")]
-pub const U2F_AUTH_CHECK_ONLY: u8 = 0x07;  // Check only (don't sign)
+pub const U2F_AUTH_CHECK_ONLY: u8 = 0x07; // Check only (don't sign)
 
 /// U2F status words
 #[cfg(feature = "usb-fido2")]
@@ -185,7 +185,8 @@ impl U2fCredentialStore {
     /// Generate a new ECDSA P-256 key pair
     fn generate_keypair(&self) -> Result<(Vec<u8>, Vec<u8>)> {
         let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &self.rng)?;
-        let key_pair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref(), &self.rng)?;
+        let key_pair =
+            EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref(), &self.rng)?;
 
         let public_key = key_pair.public_key().as_ref().to_vec();
 
@@ -227,8 +228,9 @@ impl U2fCredentialStore {
 
         // Dummy X.509 certificate (self-signed)
         let dummy_cert = vec![
-            0x30, 0x82, 0x01, 0x00,  // SEQUENCE (256 bytes - placeholder)
-            // ... (simplified for demo)
+            0x30, 0x82, 0x01,
+            0x00, // SEQUENCE (256 bytes - placeholder)
+                 // ... (simplified for demo)
         ];
 
         // Dummy signature (71-73 bytes typical for ECDSA P-256)
@@ -251,7 +253,13 @@ impl U2fCredentialStore {
     }
 
     /// Authenticate with an existing credential
-    pub fn authenticate(&mut self, app_param: &[u8], challenge_param: &[u8], key_handle: &[u8], control: u8) -> Result<Vec<u8>> {
+    pub fn authenticate(
+        &mut self,
+        app_param: &[u8],
+        challenge_param: &[u8],
+        key_handle: &[u8],
+        control: u8,
+    ) -> Result<Vec<u8>> {
         debug!(
             "U2F AUTHENTICATE: app_param={} bytes, key_handle={} bytes, control={:#04x}",
             app_param.len(),
@@ -260,7 +268,9 @@ impl U2fCredentialStore {
         );
 
         // Find credential
-        let credential = self.credentials.get_mut(app_param)
+        let credential = self
+            .credentials
+            .get_mut(app_param)
             .context("Credential not found")?;
 
         // Verify key handle matches
@@ -296,7 +306,7 @@ impl U2fCredentialStore {
         let key_pair = EcdsaKeyPair::from_pkcs8(
             &ECDSA_P256_SHA256_FIXED_SIGNING,
             &credential.private_key,
-            &self.rng
+            &self.rng,
         )?;
 
         let signature = key_pair.sign(&self.rng, &sig_data)?;
@@ -393,7 +403,10 @@ impl U2fHandler {
 
         let key_handle = &req.data[65..65 + kh_len];
 
-        match self.store.authenticate(app_param, challenge_param, key_handle, req.p1) {
+        match self
+            .store
+            .authenticate(app_param, challenge_param, key_handle, req.p1)
+        {
             Ok(response_data) => U2fResponse::success(response_data),
             Err(e) => {
                 warn!("AUTHENTICATE failed: {}", e);

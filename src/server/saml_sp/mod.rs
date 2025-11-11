@@ -20,10 +20,10 @@ use hyper_util::rt::TokioIo;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace, warn};
 
-use crate::server::connection::ConnectionId;
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
+use crate::server::connection::ConnectionId;
 use crate::server::SamlSpProtocol;
 use crate::state::app_state::AppState;
 use actions::SAML_SP_REQUEST_EVENT;
@@ -40,7 +40,8 @@ impl SamlSpServer {
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
     ) -> anyhow::Result<SocketAddr> {
-        let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let listener =
+            crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
 
         // Dual logging: tracing macro + status_tx
@@ -54,17 +55,27 @@ impl SamlSpServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
 
                         // Dual logging
-                        info!("Accepted SAML SP connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!("SAML SP connection {} from {}", connection_id, remote_addr));
+                        info!(
+                            "Accepted SAML SP connection {} from {}",
+                            connection_id, remote_addr
+                        );
+                        let _ = status_tx.send(format!(
+                            "SAML SP connection {} from {}",
+                            connection_id, remote_addr
+                        ));
 
                         let status_tx_for_task = status_tx.clone();
 
                         // Add connection to ServerInstance
-                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -79,7 +90,9 @@ impl SamlSpServer {
                             status_changed_at: now,
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
-                        app_state.add_connection_to_server(server_id, conn_state).await;
+                        app_state
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let llm_client_clone = llm_client.clone();
@@ -116,19 +129,24 @@ impl SamlSpServer {
                             });
 
                             // Serve the connection
-                            if let Err(e) = http1::Builder::new().serve_connection(io, service).await {
+                            if let Err(e) =
+                                http1::Builder::new().serve_connection(io, service).await
+                            {
                                 error!("Error serving SAML SP connection {}: {}", connection_id, e);
                             }
 
                             // Remove connection when done
                             debug!("SAML SP connection {} closed", connection_id);
-                            app_state_clone.remove_connection_from_server(server_id, connection_id).await;
+                            app_state_clone
+                                .remove_connection_from_server(server_id, connection_id)
+                                .await;
                             let _ = status_tx.send("__UPDATE_UI__".to_string());
                         });
                     }
                     Err(e) => {
                         error!("Failed to accept SAML SP connection: {}", e);
-                        let _ = status_tx.send(format!("Failed to accept SAML SP connection: {}", e));
+                        let _ =
+                            status_tx.send(format!("Failed to accept SAML SP connection: {}", e));
                     }
                 }
             }
@@ -185,14 +203,16 @@ async fn handle_saml_sp_request(
     }
 
     // Update connection stats
-    app_state.update_connection_stats(
-        server_id,
-        connection_id,
-        Some(body_bytes.len() as u64),
-        None,
-        None,
-        None,
-    ).await;
+    app_state
+        .update_connection_stats(
+            server_id,
+            connection_id,
+            Some(body_bytes.len() as u64),
+            None,
+            None,
+            None,
+        )
+        .await;
 
     // Build event for LLM
     let event = Event::new(
@@ -211,7 +231,7 @@ async fn handle_saml_sp_request(
                 serde_json::Value::String(base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &body_bytes))
             },
             "client_ip": remote_addr.ip().to_string(),
-        })
+        }),
     );
 
     // Call LLM for decision
@@ -223,7 +243,8 @@ async fn handle_saml_sp_request(
         Some(connection_id),
         &event,
         protocol.as_ref(),
-    ).await;
+    )
+    .await;
 
     // Execute actions and build response
     let response = match action_result {
@@ -245,11 +266,16 @@ async fn handle_saml_sp_request(
                 for protocol_result in result.protocol_results {
                     if let ActionResult::Output(output_data) = protocol_result {
                         // Parse JSON response data
-                        if let Ok(json_value) = serde_json::from_slice::<serde_json::Value>(&output_data) {
-                            if let Some(status) = json_value.get("status").and_then(|v| v.as_u64()) {
+                        if let Ok(json_value) =
+                            serde_json::from_slice::<serde_json::Value>(&output_data)
+                        {
+                            if let Some(status) = json_value.get("status").and_then(|v| v.as_u64())
+                            {
                                 status_code = status as u16;
                             }
-                            if let Some(headers_obj) = json_value.get("headers").and_then(|v| v.as_object()) {
+                            if let Some(headers_obj) =
+                                json_value.get("headers").and_then(|v| v.as_object())
+                            {
                                 for (k, v) in headers_obj {
                                     if let Some(v_str) = v.as_str() {
                                         response_headers.insert(k.clone(), v_str.to_string());
@@ -267,7 +293,9 @@ async fn handle_saml_sp_request(
                 for (name, value) in response_headers {
                     response = response.header(name, value);
                 }
-                response.body(Full::new(Bytes::from(response_body))).unwrap()
+                response
+                    .body(Full::new(Bytes::from(response_body)))
+                    .unwrap()
             }
         }
         Err(e) => {
@@ -281,16 +309,22 @@ async fn handle_saml_sp_request(
 
     // Update bytes sent
     let response_size = response.body().size_hint().exact().unwrap_or(0);
-    app_state.update_connection_stats(
-        server_id,
-        connection_id,
-        None,
-        Some(response_size),
-        None,
-        None,
-    ).await;
+    app_state
+        .update_connection_stats(
+            server_id,
+            connection_id,
+            None,
+            Some(response_size),
+            None,
+            None,
+        )
+        .await;
 
-    debug!("SAML SP response: {} ({} bytes)", response.status(), response_size);
+    debug!(
+        "SAML SP response: {} ({} bytes)",
+        response.status(),
+        response_size
+    );
 
     Ok(response)
 }

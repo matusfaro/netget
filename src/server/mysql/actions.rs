@@ -4,8 +4,8 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
-use crate::server::connection::ConnectionId;
 use crate::protocol::EventType;
+use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
@@ -41,8 +41,8 @@ impl MysqlProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for MysqlProtocol {
-        fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
-            vec![
+    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        vec![
                 crate::llm::actions::ParameterDefinition {
                     name: "send_first".to_string(),
                     type_hint: "boolean".to_string(),
@@ -51,94 +51,95 @@ impl Protocol for MysqlProtocol {
                     example: serde_json::json!(false),
                 },
             ]
-        }
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            vec![list_mysql_connections_action()]
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                mysql_query_response_action(),
-                mysql_error_response_action(),
-                mysql_ok_response_action(),
-                close_this_connection_action(),
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "MySQL"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            get_mysql_event_types()
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>TCP>MySQL"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["mysql"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Experimental)
-                .implementation("opensrv-mysql v0.8 protocol library")
-                .llm_control("Query responses (result sets, OK packets, errors)")
-                .e2e_testing("mysql_async client crate")
-                .notes("No authentication, errors sent as OK (library limitation)")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "MySQL database server"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Start a MySQL server on port 3306"
-        }
-        fn group_name(&self) -> &'static str {
-            "Database"
-        }
+    }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        vec![list_mysql_connections_action()]
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            mysql_query_response_action(),
+            mysql_error_response_action(),
+            mysql_ok_response_action(),
+            close_this_connection_action(),
+        ]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "MySQL"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_mysql_event_types()
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>MySQL"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["mysql"]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("opensrv-mysql v0.8 protocol library")
+            .llm_control("Query responses (result sets, OK packets, errors)")
+            .e2e_testing("mysql_async client crate")
+            .notes("No authentication, errors sent as OK (library limitation)")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "MySQL database server"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Start a MySQL server on port 3306"
+    }
+    fn group_name(&self) -> &'static str {
+        "Database"
+    }
 }
 
 // Implement Server trait (server-specific functionality)
 impl Server for MysqlProtocol {
-        fn spawn(
-            &self,
-            ctx: crate::protocol::SpawnContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::server::mysql::MysqlServer;
-                let send_first = ctx.startup_params
-                    .as_ref()
-                    .and_then(|p| p.get_optional_bool("send_first"))
-                    .unwrap_or(false);
-    
-                MysqlServer::spawn_with_llm_actions(
-                    ctx.listen_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    send_first,
-                    ctx.server_id,
-                ).await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "mysql_query_response" => self.execute_mysql_query_response(action),
-                "mysql_error_response" => self.execute_mysql_error_response(action),
-                "mysql_ok_response" => self.execute_mysql_ok_response(action),
-                "close_this_connection" => Ok(ActionResult::CloseConnection),
-                "list_mysql_connections" => self.execute_list_mysql_connections(action),
-                _ => Err(anyhow::anyhow!("Unknown MySQL action: {}", action_type)),
-            }
-        }
-}
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::mysql::MysqlServer;
+            let send_first = ctx
+                .startup_params
+                .as_ref()
+                .and_then(|p| p.get_optional_bool("send_first"))
+                .unwrap_or(false);
 
+            MysqlServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                send_first,
+                ctx.server_id,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
+
+        match action_type {
+            "mysql_query_response" => self.execute_mysql_query_response(action),
+            "mysql_error_response" => self.execute_mysql_error_response(action),
+            "mysql_ok_response" => self.execute_mysql_ok_response(action),
+            "close_this_connection" => Ok(ActionResult::CloseConnection),
+            "list_mysql_connections" => self.execute_list_mysql_connections(action),
+            _ => Err(anyhow::anyhow!("Unknown MySQL action: {}", action_type)),
+        }
+    }
+}
 
 impl MysqlProtocol {
     fn execute_mysql_query_response(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -396,15 +397,17 @@ pub static MYSQL_QUERY_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::n
 });
 
 /// MySQL error response action constant
-pub static MYSQL_ERROR_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
-    ActionDefinition {
+pub static MYSQL_ERROR_RESPONSE_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| ActionDefinition {
         name: "mysql_error_response".to_string(),
         description: "Send an error response to the client".to_string(),
         parameters: vec![
             Parameter {
                 name: "error_code".to_string(),
                 type_hint: "number".to_string(),
-                description: "MySQL error code (e.g. 1064 for syntax error, 1146 for table not found)".to_string(),
+                description:
+                    "MySQL error code (e.g. 1064 for syntax error, 1146 for table not found)"
+                        .to_string(),
                 required: true,
             },
             Parameter {
@@ -419,14 +422,14 @@ pub static MYSQL_ERROR_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::n
             "error_code": 1146,
             "message": "Table 'database.table_name' doesn't exist"
         }),
-    }
-});
+    });
 
 /// MySQL OK response action constant
-pub static MYSQL_OK_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
-    ActionDefinition {
+pub static MYSQL_OK_RESPONSE_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| ActionDefinition {
         name: "mysql_ok_response".to_string(),
-        description: "Send an OK response for INSERT, UPDATE, DELETE, or other non-SELECT queries".to_string(),
+        description: "Send an OK response for INSERT, UPDATE, DELETE, or other non-SELECT queries"
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "affected_rows".to_string(),
@@ -446,18 +449,16 @@ pub static MYSQL_OK_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(
             "affected_rows": 1,
             "last_insert_id": 42
         }),
-    }
-});
+    });
 
 /// MySQL close connection action constant
-pub static MYSQL_CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
-    ActionDefinition {
+pub static MYSQL_CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| ActionDefinition {
         name: "close_this_connection".to_string(),
         description: "Close the current MySQL connection".to_string(),
         parameters: vec![],
         example: json!({"type": "close_this_connection"}),
-    }
-});
+    });
 
 // ============================================================================
 // MySQL Event Type Constants
@@ -465,29 +466,22 @@ pub static MYSQL_CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> = LazyLock:
 
 /// MySQL query event - triggered when client sends a query
 pub static MYSQL_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "mysql_query",
-        "MySQL query received from client"
-    )
-    .with_parameters(vec![
-        Parameter {
+    EventType::new("mysql_query", "MySQL query received from client")
+        .with_parameters(vec![Parameter {
             name: "query".to_string(),
             type_hint: "string".to_string(),
             description: "The SQL query string sent by the client".to_string(),
             required: true,
-        },
-    ])
-    .with_actions(vec![
-        MYSQL_QUERY_RESPONSE_ACTION.clone(),
-        MYSQL_ERROR_RESPONSE_ACTION.clone(),
-        MYSQL_OK_RESPONSE_ACTION.clone(),
-        MYSQL_CLOSE_CONNECTION_ACTION.clone(),
-    ])
+        }])
+        .with_actions(vec![
+            MYSQL_QUERY_RESPONSE_ACTION.clone(),
+            MYSQL_ERROR_RESPONSE_ACTION.clone(),
+            MYSQL_OK_RESPONSE_ACTION.clone(),
+            MYSQL_CLOSE_CONNECTION_ACTION.clone(),
+        ])
 });
 
 /// Get MySQL event types
 pub fn get_mysql_event_types() -> Vec<EventType> {
-    vec![
-        MYSQL_QUERY_EVENT.clone(),
-    ]
+    vec![MYSQL_QUERY_EVENT.clone()]
 }

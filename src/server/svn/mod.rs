@@ -6,6 +6,7 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 use actions::{SVN_COMMAND_EVENT, SVN_GREETING_EVENT};
 use anyhow::Result;
 use std::net::SocketAddr;
@@ -14,7 +15,6 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 pub struct SvnServer;
 
@@ -43,7 +43,8 @@ impl SvnServer {
             loop {
                 match listener.accept().await {
                     Ok((socket, peer_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
 
                         // Add connection to ServerInstance
                         use crate::state::server::{
@@ -67,7 +68,7 @@ impl SvnServer {
                                     "authenticated": false,
                                     "repository_url": null,
                                     "commands_processed": 0
-                                })
+                                }),
                             ),
                         };
                         app_state
@@ -149,7 +150,9 @@ async fn handle_svn_connection(
 
             // Send greeting responses
             for protocol_result in execution_result.protocol_results {
-                if let crate::llm::actions::protocol_trait::ActionResult::Output(output_data) = protocol_result {
+                if let crate::llm::actions::protocol_trait::ActionResult::Output(output_data) =
+                    protocol_result
+                {
                     if let Err(e) = writer.write_all(&output_data).await {
                         console_error!(status_tx, "SVN write error: {}", e);
                         return;
@@ -167,8 +170,14 @@ async fn handle_svn_connection(
                         )
                         .await;
 
-                    trace!("SVN sent greeting: {}", String::from_utf8_lossy(&output_data));
-                    let _ = status_tx.send(format!("[TRACE] SVN sent greeting: {}", String::from_utf8_lossy(&output_data).trim()));
+                    trace!(
+                        "SVN sent greeting: {}",
+                        String::from_utf8_lossy(&output_data)
+                    );
+                    let _ = status_tx.send(format!(
+                        "[TRACE] SVN sent greeting: {}",
+                        String::from_utf8_lossy(&output_data).trim()
+                    ));
                 }
             }
         }
@@ -188,8 +197,7 @@ async fn handle_svn_connection(
             Ok(0) => {
                 // DEBUG: Connection closed
                 debug!("SVN client {} disconnected", peer_addr);
-                let _ = status_tx
-                    .send(format!("[DEBUG] SVN client {} disconnected", peer_addr));
+                let _ = status_tx.send(format!("[DEBUG] SVN client {} disconnected", peer_addr));
 
                 // Update connection status
                 use crate::state::server::ConnectionStatus;
@@ -372,7 +380,7 @@ fn parse_svn_command(line: &str) -> ParsedSvnCommand {
 
     // Simple parser for SVN protocol format
     if line.starts_with('(') && line.ends_with(')') {
-        let inner = &line[1..line.len()-1];
+        let inner = &line[1..line.len() - 1];
         let parts: Vec<String> = inner.split_whitespace().map(String::from).collect();
 
         if parts.is_empty() {

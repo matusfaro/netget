@@ -20,88 +20,89 @@ impl WhoisProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for WhoisProtocol {
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            Vec::new() // WHOIS has no async actions
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                send_whois_response_action(),
-                send_whois_record_action(),
-                send_error_action(),
-                close_connection_action(),
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "WHOIS"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            get_whois_event_types()
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>TCP>WHOIS"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["whois"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Beta)
-                .privilege_requirement(PrivilegeRequirement::PrivilegedPort(43))
-                .implementation("Manual TCP connection handling")
-                .llm_control("WHOIS query responses (domain, registrant, contact info)")
-                .e2e_testing("whois command-line client")
-                .notes("Simple line-based protocol")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "WHOIS domain lookup server"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "WHOIS server on port 43 - respond with fake registrar information for any domain"
-        }
-        fn group_name(&self) -> &'static str {
-            "Core"
-        }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        Vec::new() // WHOIS has no async actions
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            send_whois_response_action(),
+            send_whois_record_action(),
+            send_error_action(),
+            close_connection_action(),
+        ]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "WHOIS"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_whois_event_types()
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>WHOIS"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["whois"]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{
+            DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2,
+        };
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Beta)
+            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(43))
+            .implementation("Manual TCP connection handling")
+            .llm_control("WHOIS query responses (domain, registrant, contact info)")
+            .e2e_testing("whois command-line client")
+            .notes("Simple line-based protocol")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "WHOIS domain lookup server"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "WHOIS server on port 43 - respond with fake registrar information for any domain"
+    }
+    fn group_name(&self) -> &'static str {
+        "Core"
+    }
 }
 
 // Implement Server trait (server-specific functionality)
 impl Server for WhoisProtocol {
-        fn spawn(
-            &self,
-            ctx: crate::protocol::SpawnContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::server::whois::WhoisServer;
-                WhoisServer::spawn_with_llm_actions(
-                    ctx.listen_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.server_id,
-                )
-                .await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "send_whois_response" => self.execute_send_whois_response(action),
-                "send_whois_record" => self.execute_send_whois_record(action),
-                "send_error" => self.execute_send_error(action),
-                "close_connection" => Ok(ActionResult::CloseConnection),
-                _ => Err(anyhow::anyhow!("Unknown WHOIS action: {}", action_type)),
-            }
-        }
-}
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::whois::WhoisServer;
+            WhoisServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
 
+        match action_type {
+            "send_whois_response" => self.execute_send_whois_response(action),
+            "send_whois_record" => self.execute_send_whois_record(action),
+            "send_error" => self.execute_send_error(action),
+            "close_connection" => Ok(ActionResult::CloseConnection),
+            _ => Err(anyhow::anyhow!("Unknown WHOIS action: {}", action_type)),
+        }
+    }
+}
 
 impl WhoisProtocol {
     fn execute_send_whois_response(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -143,11 +144,7 @@ impl WhoisProtocol {
         let name_servers = action
             .get("name_servers")
             .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str())
-                    .collect::<Vec<_>>()
-            })
+            .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
             .unwrap_or_default();
 
         let mut response = String::new();

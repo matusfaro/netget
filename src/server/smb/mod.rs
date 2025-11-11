@@ -20,11 +20,13 @@ use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::server::SmbProtocol;
 use crate::state::app_state::AppState;
-use crate::state::server::{ConnectionState as ServerConnectionState, ConnectionStatus, ProtocolConnectionInfo};
+use crate::state::server::{
+    ConnectionState as ServerConnectionState, ConnectionStatus, ProtocolConnectionInfo,
+};
 use crate::state::ServerId;
 
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 use actions::SMB_OPERATION_EVENT;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// SMB server that provides LLM-controlled file system
 pub struct SmbServer;
@@ -83,7 +85,10 @@ impl SmbServer {
         status_tx: mpsc::UnboundedSender<String>,
         server_id: ServerId,
     ) -> Result<SocketAddr> {
-        info!("SMB server (LLM-controlled, guest-only) starting on {}", listen_addr);
+        info!(
+            "SMB server (LLM-controlled, guest-only) starting on {}",
+            listen_addr
+        );
         let _ = status_tx.send(format!("[INFO] SMB server starting on {}", listen_addr));
 
         let protocol = Arc::new(SmbProtocol::new());
@@ -105,7 +110,8 @@ impl SmbServer {
                 match listener.accept().await {
                     Ok((stream, peer_addr)) => {
                         debug!("SMB connection accepted from {}", peer_addr);
-                        let _ = status_tx.send(format!("[DEBUG] SMB connection from {}", peer_addr));
+                        let _ =
+                            status_tx.send(format!("[DEBUG] SMB connection from {}", peer_addr));
 
                         // Spawn per-connection handler
                         let llm_client = llm_client.clone();
@@ -170,10 +176,17 @@ impl SmbServer {
         // Generate connection ID
         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
 
-        console_info!(status_tx, "SMB connection {} from {}", connection_id, peer_addr);
+        console_info!(
+            status_tx,
+            "SMB connection {} from {}",
+            connection_id,
+            peer_addr
+        );
 
         // Get local address for tracking
-        let local_addr = stream.local_addr().unwrap_or_else(|_| "0.0.0.0:0".parse().unwrap());
+        let local_addr = stream
+            .local_addr()
+            .unwrap_or_else(|_| "0.0.0.0:0".parse().unwrap());
 
         // Track connection in app state
         let now = std::time::Instant::now();
@@ -191,7 +204,9 @@ impl SmbServer {
             protocol_info: ProtocolConnectionInfo::empty(),
         };
 
-        app_state.add_connection_to_server(server_id, conn_state).await;
+        app_state
+            .add_connection_to_server(server_id, conn_state)
+            .await;
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         let state = Arc::new(Mutex::new(SmbConnectionState::new()));
@@ -207,15 +222,22 @@ impl SmbServer {
                     trace!("SMB2 message received from {}", peer_addr);
 
                     // Update connection stats for received data
-                    app_state.update_connection_stats(server_id, connection_id, Some(header_buf.len() as u64), None, Some(1), None).await;
+                    app_state
+                        .update_connection_stats(
+                            server_id,
+                            connection_id,
+                            Some(header_buf.len() as u64),
+                            None,
+                            Some(1),
+                            None,
+                        )
+                        .await;
 
                     // Parse SMB2 header
                     if &header_buf[0..4] != b"\xFESMB" {
                         warn!("Invalid SMB2 signature from {}", peer_addr);
-                        let _ = status_tx.send(format!(
-                            "[WARN] Invalid SMB2 signature from {}",
-                            peer_addr
-                        ));
+                        let _ = status_tx
+                            .send(format!("[WARN] Invalid SMB2 signature from {}", peer_addr));
                         break;
                     }
 
@@ -241,10 +263,23 @@ impl SmbServer {
                     // Send response
                     if let Some(response_data) = response {
                         stream.write_all(&response_data).await?;
-                        trace!("SMB2 response sent to {}, {} bytes", peer_addr, response_data.len());
+                        trace!(
+                            "SMB2 response sent to {}, {} bytes",
+                            peer_addr,
+                            response_data.len()
+                        );
 
                         // Update connection stats for sent data
-                        app_state.update_connection_stats(server_id, connection_id, None, Some(response_data.len() as u64), None, Some(1)).await;
+                        app_state
+                            .update_connection_stats(
+                                server_id,
+                                connection_id,
+                                None,
+                                Some(response_data.len() as u64),
+                                None,
+                                Some(1),
+                            )
+                            .await;
                     }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
@@ -260,7 +295,9 @@ impl SmbServer {
         }
 
         // Mark connection as closed
-        app_state.update_connection_status(server_id, connection_id, ConnectionStatus::Closed).await;
+        app_state
+            .update_connection_status(server_id, connection_id, ConnectionStatus::Closed)
+            .await;
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         console_info!(status_tx, "SMB connection {} closed", connection_id);
@@ -337,12 +374,10 @@ impl SmbServer {
                 .await?;
 
                 // Check if LLM allowed the authentication
-                let auth_allowed = actions
-                    .iter()
-                    .any(|a| {
-                        a.get("type").and_then(|t| t.as_str()) == Some("smb_auth_success")
-                            || a.get("type").and_then(|t| t.as_str()) == Some("allow_auth")
-                    });
+                let auth_allowed = actions.iter().any(|a| {
+                    a.get("type").and_then(|t| t.as_str()) == Some("smb_auth_success")
+                        || a.get("type").and_then(|t| t.as_str()) == Some("allow_auth")
+                });
 
                 if !auth_allowed {
                     warn!("SMB authentication denied for user: {}", username);
@@ -357,7 +392,11 @@ impl SmbServer {
                 let _ = status_tx.send(format!("→ SMB auth success: {}", username));
 
                 // Build successful session setup response
-                let response = Self::build_session_setup_response_with_user(_header, _state, username.clone())?;
+                let response = Self::build_session_setup_response_with_user(
+                    _header,
+                    _state,
+                    username.clone(),
+                )?;
 
                 // Get the session info from state to update connection tracking
                 let (session_id, _auth_username) = {
@@ -376,7 +415,10 @@ impl SmbServer {
                     // For now, connection is tracked with initial protocol info
                     let _ = status_tx.send("__UPDATE_UI__".to_string());
 
-                    info!("SMB session {} established for connection {}", sid, _connection_id);
+                    info!(
+                        "SMB session {} established for connection {}",
+                        sid, _connection_id
+                    );
                 }
 
                 Ok(Some(response))
@@ -386,7 +428,8 @@ impl SmbServer {
                 let _ = status_tx.send("[DEBUG] SMB2 TREE_CONNECT - accepting share".to_string());
 
                 // For simplicity, accept any tree connect with share name "share"
-                let response = Self::build_tree_connect_response(_header, _state, "share".to_string())?;
+                let response =
+                    Self::build_tree_connect_response(_header, _state, "share".to_string())?;
                 Ok(Some(response))
             }
             SMB2_CREATE => {
@@ -426,11 +469,14 @@ impl SmbServer {
                 // Store file handle in state
                 {
                     let mut s = _state.lock().await;
-                    s.files.insert(file_id.clone(), SmbFileHandle {
-                        _file_id: file_id.clone(),
-                        path: path.clone(),
-                        _is_directory: false, // TODO: Parse from LLM response
-                    });
+                    s.files.insert(
+                        file_id.clone(),
+                        SmbFileHandle {
+                            _file_id: file_id.clone(),
+                            path: path.clone(),
+                            _is_directory: false, // TODO: Parse from LLM response
+                        },
+                    );
                 }
 
                 debug!("SMB2 CREATE: allocated file handle for {}", path);
@@ -486,7 +532,10 @@ impl SmbServer {
 
                 let path = path.unwrap_or_else(|| "/unknown".to_string());
                 info!("SMB2 READ: {} (offset={}, length={})", path, offset, length);
-                let _ = status_tx.send(format!("[INFO] SMB READ: {} offset={} len={}", path, offset, length));
+                let _ = status_tx.send(format!(
+                    "[INFO] SMB READ: {} offset={} len={}",
+                    path, offset, length
+                ));
 
                 // Consult LLM for file content
                 let actions = Self::consult_llm(
@@ -543,8 +592,14 @@ impl SmbServer {
                 };
 
                 let path = path.unwrap_or_else(|| "/unknown".to_string());
-                info!("SMB2 WRITE: {} (offset={}, length={})", path, offset, length);
-                let _ = status_tx.send(format!("[INFO] SMB WRITE: {} offset={} len={}", path, offset, length));
+                info!(
+                    "SMB2 WRITE: {} (offset={}, length={})",
+                    path, offset, length
+                );
+                let _ = status_tx.send(format!(
+                    "[INFO] SMB WRITE: {} offset={} len={}",
+                    path, offset, length
+                ));
 
                 // Convert data to string for LLM (assuming text files)
                 let content = String::from_utf8_lossy(&data).to_string();
@@ -607,7 +662,9 @@ impl SmbServer {
                     // Extract file info from LLM response (or use defaults)
                     let size = actions
                         .iter()
-                        .find(|a| a.get("type").and_then(|t| t.as_str()) == Some("smb_get_file_info"))
+                        .find(|a| {
+                            a.get("type").and_then(|t| t.as_str()) == Some("smb_get_file_info")
+                        })
                         .and_then(|a| a.get("size"))
                         .and_then(|s| s.as_u64())
                         .unwrap_or(4096);
@@ -657,7 +714,9 @@ impl SmbServer {
                     // Extract file list from LLM response
                     let files = actions
                         .iter()
-                        .find(|a| a.get("type").and_then(|t| t.as_str()) == Some("smb_list_directory"))
+                        .find(|a| {
+                            a.get("type").and_then(|t| t.as_str()) == Some("smb_list_directory")
+                        })
                         .and_then(|a| a.get("files"))
                         .and_then(|f| f.as_array())
                         .cloned()
@@ -737,30 +796,32 @@ impl SmbServer {
         let mut response = Vec::new();
 
         // SMB2 Header (64 bytes)
-        response.extend_from_slice(b"\xFESMB");  // Protocol ID
-        response.extend_from_slice(&[64, 0]);    // Structure size (64 bytes)
-        response.extend_from_slice(&[0, 0]);     // Credit charge
+        response.extend_from_slice(b"\xFESMB"); // Protocol ID
+        response.extend_from_slice(&[64, 0]); // Structure size (64 bytes)
+        response.extend_from_slice(&[0, 0]); // Credit charge
         response.extend_from_slice(&[0, 0, 0, 0]); // Status (STATUS_SUCCESS)
         response.extend_from_slice(&[0x00, 0x00]); // Command (NEGOTIATE)
-        response.extend_from_slice(&[1, 0]);     // Credit (grant 1 credit)
+        response.extend_from_slice(&[1, 0]); // Credit (grant 1 credit)
         response.extend_from_slice(&[0, 0, 0, 0]); // Flags
 
         // Copy message ID from request (offset 24-31)
         response.extend_from_slice(&request_header[24..32]);
 
-        response.extend_from_slice(&[0; 8]);     // Reserved (process ID)
-        response.extend_from_slice(&[0; 8]);     // Tree ID
-        response.extend_from_slice(&[0; 16]);    // Session ID + Signature
+        response.extend_from_slice(&[0; 8]); // Reserved (process ID)
+        response.extend_from_slice(&[0; 8]); // Tree ID
+        response.extend_from_slice(&[0; 16]); // Session ID + Signature
 
         // SMB2 Negotiate Response body
-        response.extend_from_slice(&[65, 0]);    // Structure size (65 bytes)
-        response.extend_from_slice(&[0, 0]);     // Security mode
+        response.extend_from_slice(&[65, 0]); // Structure size (65 bytes)
+        response.extend_from_slice(&[0, 0]); // Security mode
         response.extend_from_slice(&[0x10, 0x02]); // Dialect revision (SMB 2.1 = 0x0210)
-        response.extend_from_slice(&[0, 0]);     // Negotiate context count
+        response.extend_from_slice(&[0, 0]); // Negotiate context count
 
         // Server GUID (16 bytes) - fixed for simplicity
-        response.extend_from_slice(&[0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF,
-                                     0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF]);
+        response.extend_from_slice(&[
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB,
+            0xCD, 0xEF,
+        ]);
 
         response.extend_from_slice(&[0x07, 0x00, 0x00, 0x00]); // Capabilities (DFS)
         response.extend_from_slice(&[0x00, 0x00, 0x10, 0x00]); // Max transaction size
@@ -776,10 +837,10 @@ impl SmbServer {
         response.extend_from_slice(&filetime.to_le_bytes());
 
         response.extend_from_slice(&filetime.to_le_bytes()); // Server start time (same)
-        response.extend_from_slice(&[0; 2]);     // Security buffer offset (0 = no security)
-        response.extend_from_slice(&[0; 2]);     // Security buffer length
+        response.extend_from_slice(&[0; 2]); // Security buffer offset (0 = no security)
+        response.extend_from_slice(&[0; 2]); // Security buffer length
 
-        response.extend_from_slice(&[0; 4]);     // Negotiate context offset
+        response.extend_from_slice(&[0; 4]); // Negotiate context offset
 
         Ok(response)
     }
@@ -800,11 +861,14 @@ impl SmbServer {
             s.next_session_id += 1;
 
             // Create guest session
-            s.sessions.insert(sid, SmbSession {
-                session_id: sid,
-                username: "guest".to_string(),
-                _authenticated: true,
-            });
+            s.sessions.insert(
+                sid,
+                SmbSession {
+                    session_id: sid,
+                    username: "guest".to_string(),
+                    _authenticated: true,
+                },
+            );
             sid
         };
 
@@ -824,13 +888,13 @@ impl SmbServer {
         response.extend_from_slice(&[0; 8]);
         response.extend_from_slice(&[0; 4]);
         response.extend_from_slice(&session_id.to_le_bytes()); // Session ID
-        response.extend_from_slice(&[0; 16]);    // Signature
+        response.extend_from_slice(&[0; 16]); // Signature
 
         // Session Setup Response body
-        response.extend_from_slice(&[9, 0]);     // Structure size
-        response.extend_from_slice(&[0, 0]);     // Session flags (guest)
-        response.extend_from_slice(&[0, 0]);     // Security buffer offset
-        response.extend_from_slice(&[0, 0]);     // Security buffer length
+        response.extend_from_slice(&[9, 0]); // Structure size
+        response.extend_from_slice(&[0, 0]); // Session flags (guest)
+        response.extend_from_slice(&[0, 0]); // Security buffer offset
+        response.extend_from_slice(&[0, 0]); // Security buffer length
 
         Ok(response)
     }
@@ -851,10 +915,13 @@ impl SmbServer {
             let tid = s.next_tree_id;
             s.next_tree_id += 1;
 
-            s.trees.insert(tid, SmbTreeConnect {
-                _tree_id: tid,
-                _share_name: share_name,
-            });
+            s.trees.insert(
+                tid,
+                SmbTreeConnect {
+                    _tree_id: tid,
+                    _share_name: share_name,
+                },
+            );
             tid
         };
 
@@ -872,15 +939,15 @@ impl SmbServer {
 
         response.extend_from_slice(&[0; 8]);
         response.extend_from_slice(&tree_id.to_le_bytes()); // Tree ID
-        response.extend_from_slice(&[0; 8]);     // Session ID (should copy from request)
-        response.extend_from_slice(&[0; 16]);    // Signature
+        response.extend_from_slice(&[0; 8]); // Session ID (should copy from request)
+        response.extend_from_slice(&[0; 16]); // Signature
 
         // Tree Connect Response body
-        response.extend_from_slice(&[16, 0]);    // Structure size
-        response.extend_from_slice(&[1]);        // Share type (disk)
-        response.extend_from_slice(&[0]);        // Reserved
-        response.extend_from_slice(&[0; 4]);     // Share flags
-        response.extend_from_slice(&[0; 4]);     // Capabilities
+        response.extend_from_slice(&[16, 0]); // Structure size
+        response.extend_from_slice(&[1]); // Share type (disk)
+        response.extend_from_slice(&[0]); // Reserved
+        response.extend_from_slice(&[0; 4]); // Share flags
+        response.extend_from_slice(&[0; 4]); // Capabilities
         response.extend_from_slice(&[0x01, 0xF0, 0x1F, 0x00]); // Max access rights
 
         Ok(response)
@@ -953,34 +1020,34 @@ impl SmbServer {
         response.extend_from_slice(&request_header[24..32]);
 
         // Copy tree ID and session ID from request (should parse properly)
-        response.extend_from_slice(&[0; 8]);     // Reserved
+        response.extend_from_slice(&[0; 8]); // Reserved
         response.extend_from_slice(&[1, 0, 0, 0]); // Tree ID
         response.extend_from_slice(&[1, 0, 0, 0, 0, 0, 0, 0]); // Session ID
-        response.extend_from_slice(&[0; 16]);    // Signature
+        response.extend_from_slice(&[0; 16]); // Signature
 
         // CREATE Response body (89 bytes)
-        response.extend_from_slice(&[89, 0]);    // Structure size
-        response.extend_from_slice(&[0]);        // Oplock level (none)
-        response.extend_from_slice(&[0]);        // Flags
+        response.extend_from_slice(&[89, 0]); // Structure size
+        response.extend_from_slice(&[0]); // Oplock level (none)
+        response.extend_from_slice(&[0]); // Flags
         response.extend_from_slice(&[0, 0, 0, 0]); // Create action (file opened)
 
         // Timestamps (all zeros for simplicity)
-        response.extend_from_slice(&[0; 8]);     // Creation time
-        response.extend_from_slice(&[0; 8]);     // Last access time
-        response.extend_from_slice(&[0; 8]);     // Last write time
-        response.extend_from_slice(&[0; 8]);     // Change time
+        response.extend_from_slice(&[0; 8]); // Creation time
+        response.extend_from_slice(&[0; 8]); // Last access time
+        response.extend_from_slice(&[0; 8]); // Last write time
+        response.extend_from_slice(&[0; 8]); // Change time
 
-        response.extend_from_slice(&[0; 8]);     // Allocation size
+        response.extend_from_slice(&[0; 8]); // Allocation size
         response.extend_from_slice(&[0, 0x10, 0, 0, 0, 0, 0, 0]); // End of file (4096 bytes)
         response.extend_from_slice(&[0x80, 0, 0, 0]); // File attributes (normal)
 
-        response.extend_from_slice(&[0; 4]);     // Reserved
+        response.extend_from_slice(&[0; 4]); // Reserved
 
         // File ID (16 bytes - our handle)
         response.extend_from_slice(file_id);
 
-        response.extend_from_slice(&[0; 4]);     // Create contexts offset
-        response.extend_from_slice(&[0; 4]);     // Create contexts length
+        response.extend_from_slice(&[0; 4]); // Create contexts offset
+        response.extend_from_slice(&[0; 4]); // Create contexts length
 
         Ok(response)
     }
@@ -1008,19 +1075,19 @@ impl SmbServer {
         response.extend_from_slice(&[0; 16]);
 
         // CLOSE Response body (60 bytes)
-        response.extend_from_slice(&[60, 0]);    // Structure size
-        response.extend_from_slice(&[0, 0]);     // Flags
-        response.extend_from_slice(&[0; 4]);     // Reserved
+        response.extend_from_slice(&[60, 0]); // Structure size
+        response.extend_from_slice(&[0, 0]); // Flags
+        response.extend_from_slice(&[0; 4]); // Reserved
 
         // Timestamps (all zeros)
-        response.extend_from_slice(&[0; 8]);     // Creation time
-        response.extend_from_slice(&[0; 8]);     // Last access
-        response.extend_from_slice(&[0; 8]);     // Last write
-        response.extend_from_slice(&[0; 8]);     // Change time
+        response.extend_from_slice(&[0; 8]); // Creation time
+        response.extend_from_slice(&[0; 8]); // Last access
+        response.extend_from_slice(&[0; 8]); // Last write
+        response.extend_from_slice(&[0; 8]); // Change time
 
-        response.extend_from_slice(&[0; 8]);     // Allocation size
-        response.extend_from_slice(&[0; 8]);     // End of file
-        response.extend_from_slice(&[0; 4]);     // File attributes
+        response.extend_from_slice(&[0; 8]); // Allocation size
+        response.extend_from_slice(&[0; 8]); // End of file
+        response.extend_from_slice(&[0; 4]); // File attributes
 
         Ok(response)
     }
@@ -1048,13 +1115,13 @@ impl SmbServer {
         response.extend_from_slice(&[0; 16]);
 
         // READ Response body (17 bytes + data)
-        response.extend_from_slice(&[17, 0]);    // Structure size
-        response.extend_from_slice(&[0x50, 0]);  // Data offset (80 bytes from start)
-        response.extend_from_slice(&[0; 4]);     // Reserved
+        response.extend_from_slice(&[17, 0]); // Structure size
+        response.extend_from_slice(&[0x50, 0]); // Data offset (80 bytes from start)
+        response.extend_from_slice(&[0; 4]); // Reserved
         let data_len = data.len() as u32;
         response.extend_from_slice(&data_len.to_le_bytes()); // Data length
-        response.extend_from_slice(&[0; 4]);     // Data remaining
-        response.extend_from_slice(&[0; 4]);     // Reserved
+        response.extend_from_slice(&[0; 4]); // Data remaining
+        response.extend_from_slice(&[0; 4]); // Reserved
 
         // Data (variable length)
         response.extend_from_slice(data);
@@ -1085,12 +1152,12 @@ impl SmbServer {
         response.extend_from_slice(&[0; 16]);
 
         // WRITE Response body (17 bytes)
-        response.extend_from_slice(&[17, 0]);    // Structure size
-        response.extend_from_slice(&[0, 0]);     // Reserved
+        response.extend_from_slice(&[17, 0]); // Structure size
+        response.extend_from_slice(&[0, 0]); // Reserved
         response.extend_from_slice(&bytes_written.to_le_bytes()); // Count (bytes written)
-        response.extend_from_slice(&[0; 4]);     // Remaining
-        response.extend_from_slice(&[0, 0]);     // Write channel info offset
-        response.extend_from_slice(&[0, 0]);     // Write channel info length
+        response.extend_from_slice(&[0; 4]); // Remaining
+        response.extend_from_slice(&[0, 0]); // Write channel info offset
+        response.extend_from_slice(&[0, 0]); // Write channel info length
 
         Ok(response)
     }
@@ -1118,8 +1185,8 @@ impl SmbServer {
         response.extend_from_slice(&[0; 16]);
 
         // QUERY_INFO Response body (9 bytes + data)
-        response.extend_from_slice(&[9, 0]);     // Structure size
-        response.extend_from_slice(&[0x48, 0]);  // Output buffer offset (72 bytes from start)
+        response.extend_from_slice(&[9, 0]); // Structure size
+        response.extend_from_slice(&[0x48, 0]); // Output buffer offset (72 bytes from start)
         let info_size = 96u32; // FILE_ALL_INFORMATION size
         response.extend_from_slice(&info_size.to_le_bytes()); // Output buffer length
 
@@ -1150,7 +1217,10 @@ impl SmbServer {
 
     /// Build SMB2 QUERY_DIRECTORY Response
     #[cfg(feature = "smb")]
-    fn build_query_directory_response(request_header: &[u8], files: &[serde_json::Value]) -> Result<Vec<u8>> {
+    fn build_query_directory_response(
+        request_header: &[u8],
+        files: &[serde_json::Value],
+    ) -> Result<Vec<u8>> {
         let mut response = Vec::new();
 
         // SMB2 Header
@@ -1174,13 +1244,13 @@ impl SmbServer {
         let mut entries = Vec::new();
 
         for file in files {
-            let name = file.get("name")
+            let name = file
+                .get("name")
                 .and_then(|n| n.as_str())
                 .unwrap_or("unknown.txt");
-            let size = file.get("size")
-                .and_then(|s| s.as_u64())
-                .unwrap_or(0);
-            let is_dir = file.get("is_directory")
+            let size = file.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
+            let is_dir = file
+                .get("is_directory")
                 .and_then(|d| d.as_bool())
                 .unwrap_or(false);
 
@@ -1210,8 +1280,8 @@ impl SmbServer {
         }
 
         // QUERY_DIRECTORY Response body (9 bytes + entries)
-        response.extend_from_slice(&[9, 0]);     // Structure size
-        response.extend_from_slice(&[0x48, 0]);  // Output buffer offset
+        response.extend_from_slice(&[9, 0]); // Structure size
+        response.extend_from_slice(&[0x48, 0]); // Output buffer offset
         let entries_len = entries.len() as u32;
         response.extend_from_slice(&entries_len.to_le_bytes()); // Output buffer length
 
@@ -1297,11 +1367,14 @@ impl SmbServer {
             s.next_session_id += 1;
 
             // Create session with specified username
-            s.sessions.insert(sid, SmbSession {
-                session_id: sid,
-                username: username.clone(),
-                _authenticated: true,
-            });
+            s.sessions.insert(
+                sid,
+                SmbSession {
+                    session_id: sid,
+                    username: username.clone(),
+                    _authenticated: true,
+                },
+            );
             sid
         };
 
@@ -1321,14 +1394,14 @@ impl SmbServer {
         response.extend_from_slice(&[0; 8]);
         response.extend_from_slice(&[0; 4]);
         response.extend_from_slice(&session_id.to_le_bytes()); // Session ID
-        response.extend_from_slice(&[0; 16]);    // Signature
+        response.extend_from_slice(&[0; 16]); // Signature
 
         // Session Setup Response body
-        response.extend_from_slice(&[9, 0]);     // Structure size
+        response.extend_from_slice(&[9, 0]); // Structure size
         response.extend_from_slice(&[0x01, 0x00]); // Session flags (logged in)
-        response.extend_from_slice(&[0; 2]);     // Security buffer offset
-        response.extend_from_slice(&[0; 2]);     // Security buffer length
-        response.extend_from_slice(&[0]);        // Padding
+        response.extend_from_slice(&[0; 2]); // Security buffer offset
+        response.extend_from_slice(&[0; 2]); // Security buffer length
+        response.extend_from_slice(&[0]); // Padding
 
         Ok(response)
     }

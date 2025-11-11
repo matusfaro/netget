@@ -11,6 +11,9 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info};
 
+use crate::client::sqs::actions::{
+    SQS_CLIENT_CONNECTED_EVENT, SQS_MESSAGE_RECEIVED_EVENT, SQS_MESSAGE_SENT_EVENT,
+};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::actions::client_trait::Client;
 use crate::llm::ollama_client::OllamaClient;
@@ -18,7 +21,6 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::sqs::actions::{SQS_CLIENT_CONNECTED_EVENT, SQS_MESSAGE_RECEIVED_EVENT, SQS_MESSAGE_SENT_EVENT};
 
 /// SQS client that connects to an AWS SQS queue
 pub struct SqsClient;
@@ -47,7 +49,10 @@ impl SqsClient {
             .as_ref()
             .and_then(|p| p.get_optional_string("endpoint_url"));
 
-        info!("SQS client {} connecting to queue: {}", client_id, queue_url);
+        info!(
+            "SQS client {} connecting to queue: {}",
+            client_id, queue_url
+        );
 
         // Configure AWS SDK
         let mut config_loader = aws_config::defaults(BehaviorVersion::latest());
@@ -69,8 +74,13 @@ impl SqsClient {
         let sqs = aws_sdk_sqs::Client::from_conf(sqs_config);
 
         // Update client status to connected
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] SQS client {} connected to {}", client_id, queue_url));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] SQS client {} connected to {}",
+            client_id, queue_url
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         info!("SQS client {} connected", client_id);
@@ -85,7 +95,10 @@ impl SqsClient {
         );
 
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+            let memory = app_state
+                .get_memory_for_client(client_id)
+                .await
+                .unwrap_or_default();
 
             match call_llm_for_client(
                 &llm_client,
@@ -96,8 +109,13 @@ impl SqsClient {
                 Some(&event),
                 protocol.as_ref(),
                 &status_tx,
-            ).await {
-                Ok(ClientLlmResult { actions, memory_updates }) => {
+            )
+            .await
+            {
+                Ok(ClientLlmResult {
+                    actions,
+                    memory_updates,
+                }) => {
                     // Update memory
                     if let Some(mem) = memory_updates {
                         app_state.set_memory_for_client(client_id, mem).await;
@@ -113,7 +131,8 @@ impl SqsClient {
                         &app_state,
                         &status_tx,
                         client_id,
-                    ).await?;
+                    )
+                    .await?;
                 }
                 Err(e) => {
                     error!("LLM error for SQS client {}: {}", client_id, e);
@@ -142,10 +161,12 @@ impl SqsClient {
         client_id: ClientId,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
         Box::pin(async move {
-        for action in actions {
-            match protocol.execute_action(action) {
-                Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) => {
-                    match name.as_str() {
+            for action in actions {
+                match protocol.execute_action(action) {
+                    Ok(crate::llm::actions::client_trait::ClientActionResult::Custom {
+                        name,
+                        data,
+                    }) => match name.as_str() {
                         "send_message" => {
                             Self::send_message(
                                 &sqs,
@@ -156,7 +177,8 @@ impl SqsClient {
                                 &app_state,
                                 &status_tx,
                                 client_id,
-                            ).await?;
+                            )
+                            .await?;
                         }
                         "receive_messages" => {
                             Self::receive_messages(
@@ -168,7 +190,8 @@ impl SqsClient {
                                 &app_state,
                                 &status_tx,
                                 client_id,
-                            ).await?;
+                            )
+                            .await?;
                         }
                         "delete_message" => {
                             Self::delete_message(&sqs, &queue_url, &data, client_id).await?;
@@ -182,19 +205,21 @@ impl SqsClient {
                         _ => {
                             debug!("Unknown SQS action: {}", name);
                         }
+                    },
+                    Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
+                        info!("SQS client {} disconnecting", client_id);
+                        app_state
+                            .update_client_status(client_id, ClientStatus::Disconnected)
+                            .await;
+                        let _ = status_tx
+                            .send(format!("[CLIENT] SQS client {} disconnected", client_id));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        break;
                     }
+                    _ => {}
                 }
-                Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
-                    info!("SQS client {} disconnecting", client_id);
-                    app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                    let _ = status_tx.send(format!("[CLIENT] SQS client {} disconnected", client_id));
-                    let _ = status_tx.send("__UPDATE_UI__".to_string());
-                    break;
-                }
-                _ => {}
             }
-        }
-        Ok(())
+            Ok(())
         })
     }
 
@@ -214,7 +239,8 @@ impl SqsClient {
             .and_then(|v| v.as_str())
             .context("Missing message_body")?;
 
-        let mut request = sqs.send_message()
+        let mut request = sqs
+            .send_message()
             .queue_url(queue_url)
             .message_body(message_body);
 
@@ -236,7 +262,9 @@ impl SqsClient {
             }
         }
 
-        let response = request.send().await
+        let response = request
+            .send()
+            .await
             .context("Failed to send message to SQS")?;
 
         let message_id = response.message_id().unwrap_or("unknown");
@@ -251,9 +279,15 @@ impl SqsClient {
         );
 
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+            let memory = app_state
+                .get_memory_for_client(client_id)
+                .await
+                .unwrap_or_default();
 
-            if let Ok(ClientLlmResult { actions, memory_updates }) = call_llm_for_client(
+            if let Ok(ClientLlmResult {
+                actions,
+                memory_updates,
+            }) = call_llm_for_client(
                 llm_client,
                 app_state,
                 client_id.to_string(),
@@ -262,7 +296,9 @@ impl SqsClient {
                 Some(&event),
                 protocol.as_ref(),
                 status_tx,
-            ).await {
+            )
+            .await
+            {
                 // Update memory
                 if let Some(mem) = memory_updates {
                     app_state.set_memory_for_client(client_id, mem).await;
@@ -270,15 +306,9 @@ impl SqsClient {
 
                 // Execute follow-up actions
                 Self::execute_actions(
-                    actions,
-                    sqs,
-                    queue_url,
-                    protocol,
-                    llm_client,
-                    app_state,
-                    status_tx,
-                    client_id,
-                ).await?;
+                    actions, sqs, queue_url, protocol, llm_client, app_state, status_tx, client_id,
+                )
+                .await?;
             }
         }
 
@@ -313,32 +343,55 @@ impl SqsClient {
             request = request.visibility_timeout(timeout as i32);
         }
 
-        let response = request.send().await
+        let response = request
+            .send()
+            .await
             .context("Failed to receive messages from SQS")?;
 
         let messages = response.messages();
-        info!("SQS client {} received {} messages", client_id, messages.len());
+        info!(
+            "SQS client {} received {} messages",
+            client_id,
+            messages.len()
+        );
 
         if !messages.is_empty() {
             // Build messages array for LLM
-            let messages_json: Vec<serde_json::Value> = messages.iter().map(|msg| {
-                // Convert attributes to JSON-serializable format
-                let attributes: std::collections::HashMap<String, String> = msg.attributes()
-                    .map(|attrs| attrs.iter().map(|(k, v)| (k.as_str().to_string(), v.clone())).collect())
-                    .unwrap_or_default();
+            let messages_json: Vec<serde_json::Value> = messages
+                .iter()
+                .map(|msg| {
+                    // Convert attributes to JSON-serializable format
+                    let attributes: std::collections::HashMap<String, String> = msg
+                        .attributes()
+                        .map(|attrs| {
+                            attrs
+                                .iter()
+                                .map(|(k, v)| (k.as_str().to_string(), v.clone()))
+                                .collect()
+                        })
+                        .unwrap_or_default();
 
-                let message_attributes: std::collections::HashMap<String, String> = msg.message_attributes()
-                    .map(|attrs| attrs.iter().map(|(k, v)| (k.clone(), v.string_value().unwrap_or("").to_string())).collect())
-                    .unwrap_or_default();
+                    let message_attributes: std::collections::HashMap<String, String> = msg
+                        .message_attributes()
+                        .map(|attrs| {
+                            attrs
+                                .iter()
+                                .map(|(k, v)| {
+                                    (k.clone(), v.string_value().unwrap_or("").to_string())
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
 
-                serde_json::json!({
-                    "message_id": msg.message_id().unwrap_or(""),
-                    "receipt_handle": msg.receipt_handle().unwrap_or(""),
-                    "body": msg.body().unwrap_or(""),
-                    "attributes": attributes,
-                    "message_attributes": message_attributes,
+                    serde_json::json!({
+                        "message_id": msg.message_id().unwrap_or(""),
+                        "receipt_handle": msg.receipt_handle().unwrap_or(""),
+                        "body": msg.body().unwrap_or(""),
+                        "attributes": attributes,
+                        "message_attributes": message_attributes,
+                    })
                 })
-            }).collect();
+                .collect();
 
             // Call LLM with received messages
             let event = Event::new(
@@ -349,9 +402,15 @@ impl SqsClient {
             );
 
             if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                let memory = app_state
+                    .get_memory_for_client(client_id)
+                    .await
+                    .unwrap_or_default();
 
-                if let Ok(ClientLlmResult { actions, memory_updates }) = call_llm_for_client(
+                if let Ok(ClientLlmResult {
+                    actions,
+                    memory_updates,
+                }) = call_llm_for_client(
                     llm_client,
                     app_state,
                     client_id.to_string(),
@@ -360,7 +419,9 @@ impl SqsClient {
                     Some(&event),
                     protocol.as_ref(),
                     status_tx,
-                ).await {
+                )
+                .await
+                {
                     // Update memory
                     if let Some(mem) = memory_updates {
                         app_state.set_memory_for_client(client_id, mem).await;
@@ -368,15 +429,10 @@ impl SqsClient {
 
                     // Execute actions (e.g., delete messages)
                     Self::execute_actions(
-                        actions,
-                        sqs,
-                        queue_url,
-                        protocol,
-                        llm_client,
-                        app_state,
-                        status_tx,
+                        actions, sqs, queue_url, protocol, llm_client, app_state, status_tx,
                         client_id,
-                    ).await?;
+                    )
+                    .await?;
                 }
             }
         }
@@ -439,7 +495,8 @@ impl SqsClient {
                     // Convert string to QueueAttributeName enum
                     match attr_str {
                         "ApproximateNumberOfMessages" => {
-                            request = request.attribute_names(QueueAttributeName::ApproximateNumberOfMessages);
+                            request = request
+                                .attribute_names(QueueAttributeName::ApproximateNumberOfMessages);
                         }
                         "QueueArn" => {
                             request = request.attribute_names(QueueAttributeName::QueueArn);
@@ -455,11 +512,16 @@ impl SqsClient {
             request = request.attribute_names(QueueAttributeName::All);
         }
 
-        let response = request.send().await
+        let response = request
+            .send()
+            .await
             .context("Failed to get queue attributes from SQS")?;
 
         let attributes = response.attributes();
-        info!("SQS client {} got queue attributes: {:?}", client_id, attributes);
+        info!(
+            "SQS client {} got queue attributes: {:?}",
+            client_id, attributes
+        );
         Ok(())
     }
 }

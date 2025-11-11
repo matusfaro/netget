@@ -19,7 +19,7 @@ use crate::state::{ClientId, ClientStatus};
 use serde_json::json;
 
 #[cfg(feature = "nfs")]
-use nfs3_client::{Nfs3ConnectionBuilder, tokio::TokioConnector};
+use nfs3_client::{tokio::TokioConnector, Nfs3ConnectionBuilder};
 #[cfg(feature = "nfs")]
 use nfs3_types::nfs3::*;
 
@@ -42,8 +42,14 @@ impl NfsClient {
         // Format: server:port:/export/path or server:/export/path (default port 2049)
         let (server_addr, export_path) = Self::parse_nfs_address(&remote_addr)?;
 
-        info!("NFS client {} attempting to connect to {} for export {}", client_id, server_addr, export_path);
-        let _ = status_tx.send(format!("[CLIENT] NFS client {} connecting to {}", client_id, server_addr));
+        info!(
+            "NFS client {} attempting to connect to {} for export {}",
+            client_id, server_addr, export_path
+        );
+        let _ = status_tx.send(format!(
+            "[CLIENT] NFS client {} connecting to {}",
+            client_id, server_addr
+        ));
 
         // Extract just the server part (remove port if present)
         let server = server_addr.split(':').next().unwrap_or(&server_addr);
@@ -54,20 +60,31 @@ impl NfsClient {
             .await
             .context("Failed to mount NFS export")?;
 
-        info!("NFS client {} successfully mounted {}", client_id, export_path);
-        let _ = status_tx.send(format!("[CLIENT] NFS client {} mounted export {}", client_id, export_path));
+        info!(
+            "NFS client {} successfully mounted {}",
+            client_id, export_path
+        );
+        let _ = status_tx.send(format!(
+            "[CLIENT] NFS client {} mounted export {}",
+            client_id, export_path
+        ));
 
         // Get root file handle
         let root_fh = connection.root_nfs_fh3();
         let root_fh_hex = hex::encode(&root_fh.data.0);
 
         // Update client status to connected
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Create file handle cache
         let fh_cache = Arc::new(Mutex::new(HashMap::new()));
-        fh_cache.lock().await.insert("/".to_string(), root_fh.clone());
+        fh_cache
+            .lock()
+            .await
+            .insert("/".to_string(), root_fh.clone());
 
         // Spawn NFS operation handler
         let connection_arc = Arc::new(Mutex::new(connection));
@@ -100,7 +117,9 @@ impl NfsClient {
     /// Handle NFS operations with LLM integration
     #[cfg(feature = "nfs")]
     async fn handle_nfs_operations(
-        connection: Arc<Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>>,
+        connection: Arc<
+            Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>,
+        >,
         fh_cache: Arc<Mutex<HashMap<String, nfs_fh3>>>,
         client_id: ClientId,
         export_path: String,
@@ -126,7 +145,10 @@ impl NfsClient {
             }),
         );
 
-        let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+        let memory = app_state
+            .get_memory_for_client(client_id)
+            .await
+            .unwrap_or_default();
 
         let result = call_llm_for_client(
             &llm_client,
@@ -180,7 +202,9 @@ impl NfsClient {
     /// Execute a single NFS action
     #[cfg(feature = "nfs")]
     async fn execute_action(
-        connection: &Arc<Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>>,
+        connection: &Arc<
+            Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>,
+        >,
         fh_cache: &Arc<Mutex<HashMap<String, nfs_fh3>>>,
         action: serde_json::Value,
         client_id: ClientId,
@@ -194,7 +218,9 @@ impl NfsClient {
         match action_result {
             ClientActionResult::Disconnect => {
                 info!("NFS client {} disconnecting", client_id);
-                app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
                 return Ok(());
             }
             ClientActionResult::WaitForMore => {
@@ -231,7 +257,10 @@ impl NfsClient {
                     .get_instruction_for_client(client_id)
                     .await
                     .unwrap_or_default();
-                let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                let memory = app_state
+                    .get_memory_for_client(client_id)
+                    .await
+                    .unwrap_or_default();
 
                 let llm_result = call_llm_for_client(
                     llm_client,
@@ -274,7 +303,9 @@ impl NfsClient {
     /// Resolve path to file handle
     #[cfg(feature = "nfs")]
     async fn resolve_path(
-        connection: &Arc<Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>>,
+        connection: &Arc<
+            Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>,
+        >,
         fh_cache: &Arc<Mutex<HashMap<String, nfs_fh3>>>,
         path: &str,
     ) -> Result<nfs_fh3> {
@@ -323,10 +354,17 @@ impl NfsClient {
                     } else {
                         format!("{}/{}", current_path, component)
                     };
-                    fh_cache.lock().await.insert(current_path.clone(), current_fh.clone());
+                    fh_cache
+                        .lock()
+                        .await
+                        .insert(current_path.clone(), current_fh.clone());
                 }
                 LOOKUP3res::Err((stat, _)) => {
-                    return Err(anyhow::anyhow!("Lookup failed for {}: {:?}", component, stat));
+                    return Err(anyhow::anyhow!(
+                        "Lookup failed for {}: {:?}",
+                        component,
+                        stat
+                    ));
                 }
             }
         }
@@ -337,7 +375,9 @@ impl NfsClient {
     /// NFS lookup operation
     #[cfg(feature = "nfs")]
     async fn op_lookup(
-        connection: &Arc<Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>>,
+        connection: &Arc<
+            Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>,
+        >,
         fh_cache: &Arc<Mutex<HashMap<String, nfs_fh3>>>,
         data: serde_json::Value,
     ) -> Result<serde_json::Value> {
@@ -354,7 +394,9 @@ impl NfsClient {
     /// NFS read file operation
     #[cfg(feature = "nfs")]
     async fn op_read_file(
-        connection: &Arc<Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>>,
+        connection: &Arc<
+            Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>,
+        >,
         fh_cache: &Arc<Mutex<HashMap<String, nfs_fh3>>>,
         data: serde_json::Value,
     ) -> Result<serde_json::Value> {
@@ -390,7 +432,9 @@ impl NfsClient {
     /// NFS write file operation
     #[cfg(feature = "nfs")]
     async fn op_write_file(
-        connection: &Arc<Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>>,
+        connection: &Arc<
+            Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>,
+        >,
         fh_cache: &Arc<Mutex<HashMap<String, nfs_fh3>>>,
         data: serde_json::Value,
     ) -> Result<serde_json::Value> {
@@ -423,7 +467,9 @@ impl NfsClient {
     /// NFS list directory operation
     #[cfg(feature = "nfs")]
     async fn op_list_dir(
-        connection: &Arc<Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>>,
+        connection: &Arc<
+            Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>,
+        >,
         fh_cache: &Arc<Mutex<HashMap<String, nfs_fh3>>>,
         data: serde_json::Value,
     ) -> Result<serde_json::Value> {
@@ -464,7 +510,9 @@ impl NfsClient {
     /// NFS get attributes operation
     #[cfg(feature = "nfs")]
     async fn op_get_attr(
-        connection: &Arc<Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>>,
+        connection: &Arc<
+            Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>,
+        >,
         fh_cache: &Arc<Mutex<HashMap<String, nfs_fh3>>>,
         data: serde_json::Value,
     ) -> Result<serde_json::Value> {
@@ -490,7 +538,9 @@ impl NfsClient {
     /// NFS create file operation
     #[cfg(feature = "nfs")]
     async fn op_create_file(
-        connection: &Arc<Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>>,
+        connection: &Arc<
+            Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>,
+        >,
         fh_cache: &Arc<Mutex<HashMap<String, nfs_fh3>>>,
         data: serde_json::Value,
     ) -> Result<serde_json::Value> {
@@ -535,7 +585,9 @@ impl NfsClient {
     /// NFS mkdir operation
     #[cfg(feature = "nfs")]
     async fn op_mkdir(
-        connection: &Arc<Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>>,
+        connection: &Arc<
+            Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>,
+        >,
         fh_cache: &Arc<Mutex<HashMap<String, nfs_fh3>>>,
         data: serde_json::Value,
     ) -> Result<serde_json::Value> {
@@ -580,7 +632,9 @@ impl NfsClient {
     /// NFS remove file operation
     #[cfg(feature = "nfs")]
     async fn op_remove(
-        connection: &Arc<Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>>,
+        connection: &Arc<
+            Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>,
+        >,
         fh_cache: &Arc<Mutex<HashMap<String, nfs_fh3>>>,
         data: serde_json::Value,
     ) -> Result<serde_json::Value> {
@@ -614,7 +668,9 @@ impl NfsClient {
     /// NFS rmdir operation
     #[cfg(feature = "nfs")]
     async fn op_rmdir(
-        connection: &Arc<Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>>,
+        connection: &Arc<
+            Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>,
+        >,
         fh_cache: &Arc<Mutex<HashMap<String, nfs_fh3>>>,
         data: serde_json::Value,
     ) -> Result<serde_json::Value> {

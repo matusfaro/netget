@@ -61,38 +61,51 @@ pub async fn run_rolling_tui(
     let configured_model = args.model.clone().or(settings.lock().await.model.clone());
 
     // Select or validate model from Ollama - print to console before entering raw mode
-    let selected_model = match crate::llm::select_or_validate_model(configured_model.clone(), true).await {
-        Ok(Some(model)) => {
-            info!("✓  Using model: {}", model);
-            // Print to console before raw mode is enabled
-            if let Some(ref config_model) = configured_model {
-                if config_model == &model {
-                    println!("✓  Using configured model: {}", model);
+    let selected_model =
+        match crate::llm::select_or_validate_model(configured_model.clone(), true).await {
+            Ok(Some(model)) => {
+                info!("✓  Using model: {}", model);
+                // Print to console before raw mode is enabled
+                if let Some(ref config_model) = configured_model {
+                    if config_model == &model {
+                        println!("✓  Using configured model: {}", model);
+                    } else {
+                        println!(
+                            "⚠  Configured model '{}' not found, auto-selected: {}",
+                            config_model, model
+                        );
+                    }
                 } else {
-                    println!("⚠  Configured model '{}' not found, auto-selected: {}", config_model, model);
+                    println!(
+                        "⚠  No model configured, auto-selected: {} (largest/most recent)",
+                        model
+                    );
+                    println!("   To set a different model, use: /model or edit ~/.netget settings");
                 }
-            } else {
-                println!("⚠  No model configured, auto-selected: {} (largest/most recent)", model);
-                println!("   To set a different model, use: /model or edit ~/.netget settings");
+                model
             }
-            model
-        }
-        Ok(None) => {
-            // No model available, but interactive mode can continue
-            warn!("⚠  No model selected. Use /model command to select one.");
-            println!("✗  Ollama is not available or no models found.");
-            println!("   Please ensure Ollama is running: https://ollama.ai");
-            println!("   Use `/model` to list and select a model once Ollama is running.");
-            "".to_string() // Empty string as placeholder
-        }
-        Err(e) => {
-            error!("Failed to initialize model: {}", e);
-            println!("✗  Failed to initialize model: {}", e);
-            return Err(e);
-        }
-    };
+            Ok(None) => {
+                // No model available, but interactive mode can continue
+                warn!("⚠  No model selected. Use /model command to select one.");
+                println!("✗  Ollama is not available or no models found.");
+                println!("   Please ensure Ollama is running: https://ollama.ai");
+                println!("   Use `/model` to list and select a model once Ollama is running.");
+                "".to_string() // Empty string as placeholder
+            }
+            Err(e) => {
+                error!("Failed to initialize model: {}", e);
+                println!("✗  Failed to initialize model: {}", e);
+                return Err(e);
+            }
+        };
 
-    state.set_ollama_model(if selected_model.is_empty() { None } else { Some(selected_model.clone()) }).await;
+    state
+        .set_ollama_model(if selected_model.is_empty() {
+            None
+        } else {
+            Some(selected_model.clone())
+        })
+        .await;
     app.connection_info.model = selected_model;
 
     // Load web search setting from settings file
@@ -140,7 +153,10 @@ pub async fn run_rolling_tui(
     debug!("Rolling TUI: Sticky footer created");
     let scroll_height = footer.scroll_region_height();
     let footer_height = height.saturating_sub(scroll_height);
-    debug!("Rolling TUI: Scroll height: {}, Footer height: {}", scroll_height, footer_height);
+    debug!(
+        "Rolling TUI: Scroll height: {}, Footer height: {}",
+        scroll_height, footer_height
+    );
 
     // Create web approval channel for ASK mode
     let (web_approval_tx, mut web_approval_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -221,7 +237,7 @@ pub async fn run_rolling_tui(
     // Set to a very long duration so it doesn't fire during tests
     let mut test_interval = tokio::time::interval_at(
         Instant::now() + Duration::from_secs(3600), // Start in 1 hour
-        Duration::from_secs(3600) // Tick every hour
+        Duration::from_secs(3600),                  // Tick every hour
     );
     test_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -367,9 +383,7 @@ pub async fn run_rolling_tui(
 
 /// Print welcome messages to the scrolling region
 fn print_welcome_messages(footer: &mut StickyFooter, palette: &ColorPalette) -> Result<()> {
-    let messages = vec![
-        "NetGet - LLM-Controlled Server",
-    ];
+    let messages = vec!["NetGet - LLM-Controlled Server"];
 
     for msg in messages {
         print_output_line(msg, footer, palette)?;
@@ -479,7 +493,6 @@ fn print_output_line(line: &str, footer: &mut StickyFooter, palette: &ColorPalet
                 ResetColor,
             )?;
         }
-
     } else if line.starts_with("[USER]") {
         execute!(
             stdout,
@@ -574,7 +587,9 @@ async fn execute_single_task(
     let protocol_actions = match &task.scope {
         TaskScope::Server(server_id) | TaskScope::Connection(server_id, _) => {
             if let Some(protocol_name) = state.get_protocol_name(*server_id).await {
-                if let Some(protocol) = crate::protocol::server_registry::registry().get(&protocol_name) {
+                if let Some(protocol) =
+                    crate::protocol::server_registry::registry().get(&protocol_name)
+                {
                     protocol.get_sync_actions()
                 } else {
                     Vec::new()
@@ -585,7 +600,9 @@ async fn execute_single_task(
         }
         TaskScope::Client(client_id) => {
             if let Some(protocol_name) = state.get_protocol_name_for_client(*client_id).await {
-                if let Some(protocol) = crate::protocol::client_registry::CLIENT_REGISTRY.get(&protocol_name) {
+                if let Some(protocol) =
+                    crate::protocol::client_registry::CLIENT_REGISTRY.get(&protocol_name)
+                {
                     protocol.as_ref().get_sync_actions()
                 } else {
                     Vec::new()
@@ -605,9 +622,17 @@ async fn execute_single_task(
         Ok(m) => m,
         Err(e) => {
             let error_msg = format!("Model selection failed: {}", e);
-            let _ = status_tx.send(format!("[ERROR] Failed to ensure model is selected for task execution: {}", e));
+            let _ = status_tx.send(format!(
+                "[ERROR] Failed to ensure model is selected for task execution: {}",
+                e
+            ));
             // Update task status to failed
-            state.update_task_status(task.id, crate::state::task::TaskStatus::Failed(error_msg.clone())).await;
+            state
+                .update_task_status(
+                    task.id,
+                    crate::state::task::TaskStatus::Failed(error_msg.clone()),
+                )
+                .await;
             let result = TaskExecutionResult {
                 success: false,
                 actions: Vec::new(),
@@ -620,10 +645,20 @@ async fn execute_single_task(
 
     // Register task as conversation
     let conversation_source = match &task.scope {
-        TaskScope::Global => crate::state::app_state::ConversationSource::Task { task_name: task.name.clone() },
-        TaskScope::Server(server_id) => crate::state::app_state::ConversationSource::Task { task_name: format!("{}#{}",task.name, server_id.as_u32()) },
-        TaskScope::Connection(server_id, conn_id) => crate::state::app_state::ConversationSource::Task { task_name: format!("{}#{}/{}", task.name, server_id.as_u32(), conn_id) },
-        TaskScope::Client(client_id) => crate::state::app_state::ConversationSource::Task { task_name: format!("{}@{}", task.name, client_id.as_u32()) },
+        TaskScope::Global => crate::state::app_state::ConversationSource::Task {
+            task_name: task.name.clone(),
+        },
+        TaskScope::Server(server_id) => crate::state::app_state::ConversationSource::Task {
+            task_name: format!("{}#{}", task.name, server_id.as_u32()),
+        },
+        TaskScope::Connection(server_id, conn_id) => {
+            crate::state::app_state::ConversationSource::Task {
+                task_name: format!("{}#{}/{}", task.name, server_id.as_u32(), conn_id),
+            }
+        }
+        TaskScope::Client(client_id) => crate::state::app_state::ConversationSource::Task {
+            task_name: format!("{}@{}", task.name, client_id.as_u32()),
+        },
     };
 
     let truncated_instruction = if task.instruction.len() > 30 {
@@ -639,11 +674,7 @@ async fn execute_single_task(
         model.clone(),
     )
     .with_status_tx(status_tx.clone())
-    .with_tracking(
-        state.clone(),
-        conversation_source,
-        truncated_instruction,
-    );
+    .with_tracking(state.clone(), conversation_source, truncated_instruction);
 
     // Add empty user message to trigger generation
     conversation.add_user_message("Execute the task.".to_string());
@@ -677,12 +708,10 @@ async fn execute_single_task(
 
     // Get protocol for execution (if server, connection, or client-scoped)
     let protocol = match &task.scope {
-        TaskScope::Server(server_id) | TaskScope::Connection(server_id, _) => {
-            state
-                .get_protocol_name(*server_id)
-                .await
-                .and_then(|name| crate::protocol::server_registry::registry().get(&name))
-        }
+        TaskScope::Server(server_id) | TaskScope::Connection(server_id, _) => state
+            .get_protocol_name(*server_id)
+            .await
+            .and_then(|name| crate::protocol::server_registry::registry().get(&name)),
         TaskScope::Client(_client_id) => {
             // Client protocols are handled differently - they don't use the server protocol registry
             // For now, return None as task execution for clients needs client-specific implementation
@@ -692,9 +721,7 @@ async fn execute_single_task(
     };
 
     // Execute actions
-    match crate::llm::execute_actions(actions.clone(), &state, protocol.as_deref())
-        .await
-    {
+    match crate::llm::execute_actions(actions.clone(), &state, protocol.as_deref()).await {
         Ok(_exec_result) => {
             // Success
             let _ = status_tx.send(format!(
@@ -742,7 +769,9 @@ async fn handle_task_success(
     match &task.task_type {
         TaskType::OneShot { .. } => {
             // One-shot task completed
-            state.update_task_status(task.id, TaskStatus::Completed).await;
+            state
+                .update_task_status(task.id, TaskStatus::Completed)
+                .await;
             state.remove_task(task.id).await;
             let _ = status_tx.send(format!(
                 "[TASK] One-shot task '{}' completed and removed",
@@ -757,7 +786,9 @@ async fn handle_task_success(
             // Check if max executions reached
             if let Some(max) = max_executions {
                 if *executions_count >= *max {
-                    state.update_task_status(task.id, TaskStatus::Completed).await;
+                    state
+                        .update_task_status(task.id, TaskStatus::Completed)
+                        .await;
                     state.remove_task(task.id).await;
                     let _ = status_tx.send(format!(
                         "[TASK] Recurring task '{}' reached max executions ({}) and removed",
@@ -770,7 +801,9 @@ async fn handle_task_success(
             // Schedule next execution
             let next = Instant::now() + Duration::from_secs(*interval_secs);
             state.update_task_next_execution(task.id, next).await;
-            state.update_task_status(task.id, TaskStatus::Scheduled).await;
+            state
+                .update_task_status(task.id, TaskStatus::Scheduled)
+                .await;
         }
     }
 }
@@ -812,7 +845,9 @@ async fn handle_task_failure(
         let next = Instant::now() + Duration::from_secs(backoff_secs);
 
         state.update_task_next_execution(task.id, next).await;
-        state.update_task_status(task.id, TaskStatus::Scheduled).await;
+        state
+            .update_task_status(task.id, TaskStatus::Scheduled)
+            .await;
 
         let _ = status_tx.send(format!(
             "[WARN] Task '{}' failed (attempt {}/{}), retrying in {} seconds",
@@ -855,7 +890,18 @@ async fn handle_event(
 ) -> Result<bool> {
     match event {
         Event::Key(key) => {
-            handle_key_event(key.code, key.modifiers, app, state, event_handler, status_tx, footer, settings, palette).await
+            handle_key_event(
+                key.code,
+                key.modifiers,
+                app,
+                state,
+                event_handler,
+                status_tx,
+                footer,
+                settings,
+                palette,
+            )
+            .await
         }
         _ => Ok(false),
     }
@@ -976,7 +1022,11 @@ async fn handle_key_event(
             let new_level = app.log_level.cycle();
             app.set_log_level(new_level);
             footer.set_log_level(new_level);
-            print_output_line(&format!("Log level set to: {}", new_level.as_str()), footer, &palette)?;
+            print_output_line(
+                &format!("Log level set to: {}", new_level.as_str()),
+                footer,
+                &palette,
+            )?;
             footer.render(&mut stdout())?;
             return Ok(false);
         }
@@ -985,9 +1035,15 @@ async fn handle_key_event(
         KeyCode::Char('w') | KeyCode::Char('W') if modifiers.contains(KeyModifiers::CONTROL) => {
             let new_mode = state.cycle_web_search_mode().await;
             let message = match new_mode {
-                crate::state::app_state::WebSearchMode::On => "Web search: ON - LLM may perform web searches",
-                crate::state::app_state::WebSearchMode::Ask => "Web search: ASK - LLM will request approval before searching",
-                crate::state::app_state::WebSearchMode::Off => "Web search: OFF - LLM cannot perform web searches",
+                crate::state::app_state::WebSearchMode::On => {
+                    "Web search: ON - LLM may perform web searches"
+                }
+                crate::state::app_state::WebSearchMode::Ask => {
+                    "Web search: ASK - LLM will request approval before searching"
+                }
+                crate::state::app_state::WebSearchMode::Off => {
+                    "Web search: OFF - LLM cannot perform web searches"
+                }
             };
             print_output_line(message, footer, &palette)?;
 
@@ -1026,21 +1082,31 @@ async fn handle_key_event(
         }
 
         // Ctrl+N or Alt+N to insert newline
-        KeyCode::Char('n') | KeyCode::Char('N') if modifiers.contains(KeyModifiers::CONTROL) || modifiers.contains(KeyModifiers::ALT) => {
+        KeyCode::Char('n') | KeyCode::Char('N')
+            if modifiers.contains(KeyModifiers::CONTROL)
+                || modifiers.contains(KeyModifiers::ALT) =>
+        {
             footer.input_mut().insert_newline();
             update_slash_suggestions_and_render(app, footer, &mut stdout())?;
             return Ok(false);
         }
 
         // Alt+Enter or Ctrl+Enter to insert newline (alternative to Shift+Enter)
-        KeyCode::Enter if modifiers.contains(KeyModifiers::ALT) || modifiers.contains(KeyModifiers::CONTROL) => {
+        KeyCode::Enter
+            if modifiers.contains(KeyModifiers::ALT)
+                || modifiers.contains(KeyModifiers::CONTROL) =>
+        {
             footer.input_mut().insert_newline();
             update_slash_suggestions_and_render(app, footer, &mut stdout())?;
             return Ok(false);
         }
 
         // Enter to submit (plain enter only, not with modifiers)
-        KeyCode::Enter if !modifiers.contains(KeyModifiers::SHIFT) && !modifiers.contains(KeyModifiers::CONTROL) && !modifiers.contains(KeyModifiers::ALT) => {
+        KeyCode::Enter
+            if !modifiers.contains(KeyModifiers::SHIFT)
+                && !modifiers.contains(KeyModifiers::CONTROL)
+                && !modifiers.contains(KeyModifiers::ALT) =>
+        {
             let text = footer.input().text();
             if !text.is_empty() {
                 // Add to history
@@ -1082,14 +1148,31 @@ async fn handle_key_event(
 
                 // Handle command
                 match command {
-                    UserCommand::Status | UserCommand::ShowModel | UserCommand::ShowLogLevel | UserCommand::ShowWebSearch | UserCommand::ShowEventHandler | UserCommand::ShowEnvironment => {
+                    UserCommand::Status
+                    | UserCommand::ShowModel
+                    | UserCommand::ShowLogLevel
+                    | UserCommand::ShowWebSearch
+                    | UserCommand::ShowEventHandler
+                    | UserCommand::ShowEnvironment => {
                         // Handle status/info commands
-                        handle_status_command(&command, app, state, event_handler, footer, &palette).await?;
+                        handle_status_command(
+                            &command,
+                            app,
+                            state,
+                            event_handler,
+                            footer,
+                            &palette,
+                        )
+                        .await?;
                     }
                     UserCommand::ChangeModel { model } => {
                         state.set_ollama_model(Some(model.clone())).await;
                         app.connection_info.model = model.clone();
-                        print_output_line(&format!("Model changed to: {}", model), footer, &palette)?;
+                        print_output_line(
+                            &format!("Model changed to: {}", model),
+                            footer,
+                            &palette,
+                        )?;
 
                         // Save the new model to settings
                         if let Err(e) = settings.lock().await.set_model(Some(model.clone())) {
@@ -1103,17 +1186,29 @@ async fn handle_key_event(
                         if let Some(log_level) = crate::ui::app::LogLevel::parse(&level) {
                             app.set_log_level(log_level);
                             footer.set_log_level(log_level);
-                            print_output_line(&format!("Log level set to: {}", log_level.as_str()), footer, &palette)?;
+                            print_output_line(
+                                &format!("Log level set to: {}", log_level.as_str()),
+                                footer,
+                                &palette,
+                            )?;
                             footer.render(&mut stdout())?;
                         } else {
-                            print_output_line(&format!("Unknown log level: {}", level), footer, &palette)?;
+                            print_output_line(
+                                &format!("Unknown log level: {}", level),
+                                footer,
+                                &palette,
+                            )?;
                         }
                     }
                     UserCommand::TestOutput { count } => {
                         // Generate test output lines using print_output_line (scrolling mechanism)
                         // This ensures content is properly preserved during footer expansion/shrinking
                         for i in 1..=count {
-                            print_output_line(&format!("Test line {} of {}", i, count), footer, &palette)?;
+                            print_output_line(
+                                &format!("Test line {} of {}", i, count),
+                                footer,
+                                &palette,
+                            )?;
                         }
 
                         // Re-render footer
@@ -1123,7 +1218,11 @@ async fn handle_key_event(
                         // Test web search approval by triggering a search
                         use crate::llm::actions::tools::{execute_tool, ToolAction};
 
-                        print_output_line("[INFO] Testing web search approval with DuckDuckGo...", footer, &palette)?;
+                        print_output_line(
+                            "[INFO] Testing web search approval with DuckDuckGo...",
+                            footer,
+                            &palette,
+                        )?;
 
                         // Get web search mode and approval channel
                         let web_search_mode = state.get_web_search_mode().await;
@@ -1138,20 +1237,29 @@ async fn handle_key_event(
                         let status_tx_clone = status_tx.clone();
                         let state_clone = state.clone();
                         tokio::spawn(async move {
-                            let result = execute_tool(&action, approval_tx.as_ref(), web_search_mode, Some(&state_clone)).await;
+                            let result = execute_tool(
+                                &action,
+                                approval_tx.as_ref(),
+                                web_search_mode,
+                                Some(&state_clone),
+                            )
+                            .await;
 
                             // Send result to status channel
                             if result.success {
-                                let _ = status_tx_clone.send("[INFO] Web search completed successfully".to_string());
+                                let _ = status_tx_clone
+                                    .send("[INFO] Web search completed successfully".to_string());
                                 // Truncate result if too long
                                 let result_preview = if result.result.len() > 500 {
                                     format!("{}... (truncated)", &result.result[..500])
                                 } else {
                                     result.result.clone()
                                 };
-                                let _ = status_tx_clone.send(format!("[DEBUG] Result preview: {}", result_preview));
+                                let _ = status_tx_clone
+                                    .send(format!("[DEBUG] Result preview: {}", result_preview));
                             } else {
-                                let _ = status_tx_clone.send(format!("[ERROR] Web search failed: {}", result.result));
+                                let _ = status_tx_clone
+                                    .send(format!("[ERROR] Web search failed: {}", result.result));
                             }
                         });
                     }
@@ -1160,8 +1268,16 @@ async fn handle_key_event(
                         use std::io::Write as IoWrite;
 
                         // Write debug info to file
-                        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open("./netget_debug.log") {
-                            let _ = writeln!(file, "[DEBUG] SetFooterStatus handler called with message: {:?}", message);
+                        if let Ok(mut file) = OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open("./netget_debug.log")
+                        {
+                            let _ = writeln!(
+                                file,
+                                "[DEBUG] SetFooterStatus handler called with message: {:?}",
+                                message
+                            );
                         }
 
                         // Get current terminal dimensions from footer (terminal::size() returns 0 in PTY)
@@ -1180,9 +1296,16 @@ async fn handle_key_event(
                         let new_footer_height = term_height.saturating_sub(new_scroll_height);
 
                         // Write footer height info to file
-                        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open("./netget_debug.log") {
-                            let _ = writeln!(file, "[DEBUG] Footer heights: old={}, new={}, term_height={}",
-                                old_footer_height, new_footer_height, term_height);
+                        if let Ok(mut file) = OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open("./netget_debug.log")
+                        {
+                            let _ = writeln!(
+                                file,
+                                "[DEBUG] Footer heights: old={}, new={}, term_height={}",
+                                old_footer_height, new_footer_height, term_height
+                            );
                         }
 
                         // Handle footer size changes
@@ -1195,7 +1318,11 @@ async fn handle_key_event(
                             let lines_to_push = lines_to_add - consumed;
 
                             // Write debug info to file
-                            if let Ok(mut file) = OpenOptions::new().create(true).append(true).open("./netget_debug.log") {
+                            if let Ok(mut file) = OpenOptions::new()
+                                .create(true)
+                                .append(true)
+                                .open("./netget_debug.log")
+                            {
                                 let _ = writeln!(file, "[DEBUG-EXPAND] Footer expanding: old_height={}, new_height={}, lines_to_add={}, consumed={}, lines_to_push={}",
                                     old_footer_height, new_footer_height, lines_to_add, consumed, lines_to_push);
                             }
@@ -1227,7 +1354,11 @@ async fn handle_key_event(
                             footer.add_to_blank_lines_buffer(lines_to_remove);
 
                             // Write debug info to file
-                            if let Ok(mut file) = OpenOptions::new().create(true).append(true).open("./netget_debug.log") {
+                            if let Ok(mut file) = OpenOptions::new()
+                                .create(true)
+                                .append(true)
+                                .open("./netget_debug.log")
+                            {
                                 let _ = writeln!(file, "[DEBUG-SHRINK] Footer shrinking: lines_to_remove={}, buffer now={}",
                                     lines_to_remove, footer.blank_lines_buffer());
                             }
@@ -1249,17 +1380,31 @@ async fn handle_key_event(
                         } else {
                             // Footer size UNCHANGED - no buffer manipulation needed
                             // Just log for debugging
-                            if let Ok(mut file) = OpenOptions::new().create(true).append(true).open("./netget_debug.log") {
-                                let _ = writeln!(file, "[DEBUG-UNCHANGED] Footer size unchanged: height={}, buffer={}",
-                                    new_footer_height, footer.blank_lines_buffer());
+                            if let Ok(mut file) = OpenOptions::new()
+                                .create(true)
+                                .append(true)
+                                .open("./netget_debug.log")
+                            {
+                                let _ = writeln!(
+                                    file,
+                                    "[DEBUG-UNCHANGED] Footer size unchanged: height={}, buffer={}",
+                                    new_footer_height,
+                                    footer.blank_lines_buffer()
+                                );
                             }
                         }
 
                         // Step 4 (all cases): Redraw the footer at the new position
-                        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open("./netget_debug.log") {
+                        if let Ok(mut file) = OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open("./netget_debug.log")
+                        {
                             let final_scroll_height = footer.scroll_region_height();
-                            let final_footer_height = footer.terminal_height().saturating_sub(final_scroll_height);
-                            let final_footer_start = footer.terminal_height().saturating_sub(final_footer_height);
+                            let final_footer_height =
+                                footer.terminal_height().saturating_sub(final_scroll_height);
+                            let final_footer_start =
+                                footer.terminal_height().saturating_sub(final_footer_height);
                             let _ = writeln!(file, "[DEBUG] Before footer.render(): scroll_height={}, footer_height={}, footer_start={}",
                                 final_scroll_height, final_footer_height, final_footer_start);
                         }
@@ -1320,14 +1465,20 @@ async fn handle_key_event(
                         return Ok(true);
                     }
                     UserCommand::UnknownSlashCommand { command } => {
-                        print_output_line(&format!("Unknown command: {}", command), footer, &palette)?;
+                        print_output_line(
+                            &format!("Unknown command: {}", command),
+                            footer,
+                            &palette,
+                        )?;
                     }
                     UserCommand::Interpret { input: llm_input } => {
                         // Spawn async task to process with LLM
                         let mut handler_clone = event_handler.clone();
                         let status_tx_clone = status_tx.clone();
                         tokio::spawn(async move {
-                            let _ = handler_clone.handle_interpret_with_actions(llm_input, status_tx_clone, None).await;
+                            let _ = handler_clone
+                                .handle_interpret_with_actions(llm_input, status_tx_clone, None)
+                                .await;
                         });
                     }
                     UserCommand::SetEventHandler { mode } => {
@@ -1358,7 +1509,9 @@ async fn handle_key_event(
                         state.set_web_search_mode(mode).await;
                         let message = match mode {
                             crate::state::app_state::WebSearchMode::On => "Web search: ON",
-                            crate::state::app_state::WebSearchMode::Ask => "Web search: ASK - will request approval",
+                            crate::state::app_state::WebSearchMode::Ask => {
+                                "Web search: ASK - will request approval"
+                            }
                             crate::state::app_state::WebSearchMode::Off => "Web search: OFF",
                         };
                         print_output_line(message, footer, &palette)?;
@@ -1478,7 +1631,9 @@ async fn handle_key_event(
         }
 
         // E key - toggle expand all (if not typing)
-        KeyCode::Char('e') | KeyCode::Char('E') if !modifiers.contains(KeyModifiers::CONTROL) && footer.input().text().is_empty() => {
+        KeyCode::Char('e') | KeyCode::Char('E')
+            if !modifiers.contains(KeyModifiers::CONTROL) && footer.input().text().is_empty() =>
+        {
             app.toggle_expand_all();
             update_ui_from_state(app, state, footer).await;
             footer.render(&mut stdout())?;
@@ -1618,7 +1773,10 @@ async fn update_ui_from_state(app: &mut App, state: &AppState, footer: &mut Stic
     let old_footer_height = term_height.saturating_sub(old_scroll_height);
 
     app.connection_info.mode = state.get_mode().await.to_string();
-    app.connection_info.model = state.get_ollama_model().await.unwrap_or_else(|| "None".to_string());
+    app.connection_info.model = state
+        .get_ollama_model()
+        .await
+        .unwrap_or_else(|| "None".to_string());
 
     // Update server list
     let servers = state.get_all_servers().await;
@@ -1737,7 +1895,6 @@ async fn update_ui_from_state(app: &mut App, state: &AppState, footer: &mut Stic
             stdout().flush().ok();
 
             // Footer.render() will clear and draw the footer area
-
         } else if new_footer_height < old_footer_height {
             // Footer is SHRINKING (e.g., connection removed, causing footer to shrink)
             let lines_to_remove = old_footer_height - new_footer_height;
@@ -1752,7 +1909,8 @@ async fn update_ui_from_state(app: &mut App, state: &AppState, footer: &mut Stic
                     stdout(),
                     cursor::MoveTo(0, old_footer_start + line_offset),
                     Print(&blank_line),
-                ).ok();
+                )
+                .ok();
             }
             stdout().flush().ok();
 
@@ -1794,8 +1952,15 @@ async fn handle_status_command(
             }
         }
         UserCommand::ShowModel => {
-            let current_model = state.get_ollama_model().await.unwrap_or_else(|| "None".to_string());
-            print_output_line(&format!("Current model: {}", current_model), footer, palette)?;
+            let current_model = state
+                .get_ollama_model()
+                .await
+                .unwrap_or_else(|| "None".to_string());
+            print_output_line(
+                &format!("Current model: {}", current_model),
+                footer,
+                palette,
+            )?;
             print_output_line("", footer, palette)?;
             print_output_line("Fetching available models...", footer, palette)?;
 
@@ -1803,13 +1968,25 @@ async fn handle_status_command(
             match event_handler.list_models().await {
                 Ok(models) => {
                     if models.is_empty() {
-                        print_output_line("No models found. Please pull a model first.", footer, palette)?;
+                        print_output_line(
+                            "No models found. Please pull a model first.",
+                            footer,
+                            palette,
+                        )?;
                         print_output_line("Example: ollama pull llama3.2", footer, palette)?;
                     } else {
-                        print_output_line(&format!("Available models ({}):", models.len()), footer, palette)?;
+                        print_output_line(
+                            &format!("Available models ({}):", models.len()),
+                            footer,
+                            palette,
+                        )?;
                         for model in &models {
                             if model == &current_model {
-                                print_output_line(&format!("  * {} (current)", model), footer, palette)?;
+                                print_output_line(
+                                    &format!("  * {} (current)", model),
+                                    footer,
+                                    palette,
+                                )?;
                             } else {
                                 print_output_line(&format!("    {}", model), footer, palette)?;
                             }
@@ -1840,24 +2017,58 @@ async fn handle_status_command(
             };
             print_output_line(&format!("Web search mode: {}", status), footer, palette)?;
             print_output_line("", footer, palette)?;
-            print_output_line("To change, use: /web on, /web ask, or /web off", footer, palette)?;
+            print_output_line(
+                "To change, use: /web on, /web ask, or /web off",
+                footer,
+                palette,
+            )?;
             print_output_line("Or press Ctrl+W to cycle through modes", footer, palette)?;
         }
         UserCommand::ShowEventHandler => {
             let mode = state.get_event_handler_mode().await;
-            print_output_line(&format!("Current event handler mode: {}", mode), footer, palette)?;
+            print_output_line(
+                &format!("Current event handler mode: {}", mode),
+                footer,
+                palette,
+            )?;
             print_output_line("", footer, palette)?;
-            print_output_line("To change, use: /handler any, /handler script, /handler static, or /handler llm", footer, palette)?;
+            print_output_line(
+                "To change, use: /handler any, /handler script, /handler static, or /handler llm",
+                footer,
+                palette,
+            )?;
             print_output_line("Or press Ctrl+H to cycle through modes", footer, palette)?;
         }
         UserCommand::ShowEnvironment => {
             print_output_line("=== Environment Information ===", footer, palette)?;
-            print_output_line(&format!("Platform: {}", std::env::consts::OS), footer, palette)?;
-            print_output_line(&format!("Architecture: {}", std::env::consts::ARCH), footer, palette)?;
+            print_output_line(
+                &format!("Platform: {}", std::env::consts::OS),
+                footer,
+                palette,
+            )?;
+            print_output_line(
+                &format!("Architecture: {}", std::env::consts::ARCH),
+                footer,
+                palette,
+            )?;
             if let Ok(cwd) = std::env::current_dir() {
-                print_output_line(&format!("Working directory: {}", cwd.display()), footer, palette)?;
+                print_output_line(
+                    &format!("Working directory: {}", cwd.display()),
+                    footer,
+                    palette,
+                )?;
             }
-            print_output_line(&format!("Model: {}", state.get_ollama_model().await.unwrap_or_else(|| "None".to_string())), footer, palette)?;
+            print_output_line(
+                &format!(
+                    "Model: {}",
+                    state
+                        .get_ollama_model()
+                        .await
+                        .unwrap_or_else(|| "None".to_string())
+                ),
+                footer,
+                palette,
+            )?;
         }
         _ => {}
     }
@@ -1869,25 +2080,41 @@ async fn handle_stop_all(
     footer: &mut StickyFooter,
     palette: &ColorPalette,
 ) -> Result<()> {
-    use crate::state::server::ServerStatus;
     use crate::state::client::ClientStatus;
+    use crate::state::server::ServerStatus;
 
-    print_output_line("Stopping all servers, connections, and clients...", footer, palette)?;
+    print_output_line(
+        "Stopping all servers, connections, and clients...",
+        footer,
+        palette,
+    )?;
 
     // Stop all servers
     let server_ids: Vec<_> = state.get_all_server_ids().await;
     for server_id in server_ids {
-        state.update_server_status(server_id, ServerStatus::Stopped).await;
+        state
+            .update_server_status(server_id, ServerStatus::Stopped)
+            .await;
         state.cleanup_server_tasks(server_id).await;
-        print_output_line(&format!("[SERVER] Stopped server #{}", server_id.as_u32()), footer, palette)?;
+        print_output_line(
+            &format!("[SERVER] Stopped server #{}", server_id.as_u32()),
+            footer,
+            palette,
+        )?;
     }
 
     // Stop all clients
     let client_ids: Vec<_> = state.get_all_client_ids().await;
     for client_id in client_ids {
-        state.update_client_status(client_id, ClientStatus::Disconnected).await;
+        state
+            .update_client_status(client_id, ClientStatus::Disconnected)
+            .await;
         state.cleanup_client_tasks(client_id).await;
-        print_output_line(&format!("[CLIENT] Stopped client #{}", client_id.as_u32()), footer, palette)?;
+        print_output_line(
+            &format!("[CLIENT] Stopped client #{}", client_id.as_u32()),
+            footer,
+            palette,
+        )?;
     }
 
     print_output_line("All servers and clients stopped.", footer, palette)?;
@@ -1900,9 +2127,9 @@ async fn handle_stop_by_id(
     footer: &mut StickyFooter,
     palette: &ColorPalette,
 ) -> Result<()> {
-    use crate::state::server::{ServerId, ServerStatus};
-    use crate::state::client::{ClientId, ClientStatus};
     use crate::server::connection::ConnectionId;
+    use crate::state::client::{ClientId, ClientStatus};
+    use crate::state::server::{ServerId, ServerStatus};
 
     // Try to find what type of entity this ID corresponds to
     let mut found = false;
@@ -1910,7 +2137,9 @@ async fn handle_stop_by_id(
     // Check if it's a server
     let server_id = ServerId::new(id);
     if state.get_server(server_id).await.is_some() {
-        state.update_server_status(server_id, ServerStatus::Stopped).await;
+        state
+            .update_server_status(server_id, ServerStatus::Stopped)
+            .await;
         state.cleanup_server_tasks(server_id).await;
         print_output_line(&format!("[SERVER] Stopped server #{}", id), footer, palette)?;
         found = true;
@@ -1919,7 +2148,9 @@ async fn handle_stop_by_id(
     // Check if it's a client
     let client_id = ClientId::new(id);
     if state.get_client(client_id).await.is_some() {
-        state.update_client_status(client_id, ClientStatus::Disconnected).await;
+        state
+            .update_client_status(client_id, ClientStatus::Disconnected)
+            .await;
         state.cleanup_client_tasks(client_id).await;
         print_output_line(&format!("[CLIENT] Stopped client #{}", id), footer, palette)?;
         found = true;
@@ -1930,15 +2161,29 @@ async fn handle_stop_by_id(
     let all_servers = state.get_all_servers().await;
     for server in all_servers {
         if server.connections.contains_key(&connection_id) {
-            state.close_connection_on_server(server.id, connection_id).await;
-            print_output_line(&format!("[CONNECTION] Closed connection #{} on server #{}", id, server.id.as_u32()), footer, palette)?;
+            state
+                .close_connection_on_server(server.id, connection_id)
+                .await;
+            print_output_line(
+                &format!(
+                    "[CONNECTION] Closed connection #{} on server #{}",
+                    id,
+                    server.id.as_u32()
+                ),
+                footer,
+                palette,
+            )?;
             found = true;
             break;
         }
     }
 
     if !found {
-        print_output_line(&format!("No server, client, or connection found with ID #{}", id), footer, palette)?;
+        print_output_line(
+            &format!("No server, client, or connection found with ID #{}", id),
+            footer,
+            palette,
+        )?;
     }
 
     Ok(())
@@ -1951,9 +2196,9 @@ async fn handle_save(
     footer: &mut StickyFooter,
     palette: &ColorPalette,
 ) -> Result<()> {
-    use crate::utils::save_load;
-    use crate::state::server::ServerId;
     use crate::state::client::ClientId;
+    use crate::state::server::ServerId;
+    use crate::utils::save_load;
 
     let path = if let Some(id_val) = id {
         // Save specific server or client by ID
@@ -1962,11 +2207,19 @@ async fn handle_save(
         if state.get_server(server_id).await.is_some() {
             match save_load::save_server(state, server_id, &name).await {
                 Ok(path) => {
-                    print_output_line(&format!("[SAVE] Saved server #{} to: {}", id_val, path.display()), footer, palette)?;
+                    print_output_line(
+                        &format!("[SAVE] Saved server #{} to: {}", id_val, path.display()),
+                        footer,
+                        palette,
+                    )?;
                     path
                 }
                 Err(e) => {
-                    print_output_line(&format!("[ERROR] Failed to save server #{}: {}", id_val, e), footer, palette)?;
+                    print_output_line(
+                        &format!("[ERROR] Failed to save server #{}: {}", id_val, e),
+                        footer,
+                        palette,
+                    )?;
                     return Ok(());
                 }
             }
@@ -1976,16 +2229,28 @@ async fn handle_save(
             if state.get_client(client_id).await.is_some() {
                 match save_load::save_client(state, client_id, &name).await {
                     Ok(path) => {
-                        print_output_line(&format!("[SAVE] Saved client #{} to: {}", id_val, path.display()), footer, palette)?;
+                        print_output_line(
+                            &format!("[SAVE] Saved client #{} to: {}", id_val, path.display()),
+                            footer,
+                            palette,
+                        )?;
                         path
                     }
                     Err(e) => {
-                        print_output_line(&format!("[ERROR] Failed to save client #{}: {}", id_val, e), footer, palette)?;
+                        print_output_line(
+                            &format!("[ERROR] Failed to save client #{}: {}", id_val, e),
+                            footer,
+                            palette,
+                        )?;
                         return Ok(());
                     }
                 }
             } else {
-                print_output_line(&format!("[ERROR] No server or client found with ID #{}", id_val), footer, palette)?;
+                print_output_line(
+                    &format!("[ERROR] No server or client found with ID #{}", id_val),
+                    footer,
+                    palette,
+                )?;
                 return Ok(());
             }
         }
@@ -1995,22 +2260,37 @@ async fn handle_save(
             Ok(path) => {
                 let servers = state.get_all_servers().await;
                 let clients = state.get_all_clients().await;
-                print_output_line(&format!(
-                    "[SAVE] Saved {} server(s) and {} client(s) to: {}",
-                    servers.len(),
-                    clients.len(),
-                    path.display()
-                ), footer, palette)?;
+                print_output_line(
+                    &format!(
+                        "[SAVE] Saved {} server(s) and {} client(s) to: {}",
+                        servers.len(),
+                        clients.len(),
+                        path.display()
+                    ),
+                    footer,
+                    palette,
+                )?;
                 path
             }
             Err(e) => {
-                print_output_line(&format!("[ERROR] Failed to save configuration: {}", e), footer, palette)?;
+                print_output_line(
+                    &format!("[ERROR] Failed to save configuration: {}", e),
+                    footer,
+                    palette,
+                )?;
                 return Ok(());
             }
         }
     };
 
-    print_output_line(&format!("[INFO] Use '/load {}' to restore this configuration", path.display()), footer, palette)?;
+    print_output_line(
+        &format!(
+            "[INFO] Use '/load {}' to restore this configuration",
+            path.display()
+        ),
+        footer,
+        palette,
+    )?;
     Ok(())
 }
 
@@ -2021,24 +2301,40 @@ async fn handle_load(
     palette: &ColorPalette,
     llm: &crate::llm::OllamaClient,
 ) -> Result<()> {
+    use crate::cli::{client_startup, server_startup};
     use crate::utils::save_load;
-    use crate::cli::{server_startup, client_startup};
 
     // Load actions from file
     let actions = match save_load::load_actions(&name).await {
         Ok(actions) => actions,
         Err(e) => {
-            print_output_line(&format!("[ERROR] Failed to load file '{}': {}", name, e), footer, palette)?;
+            print_output_line(
+                &format!("[ERROR] Failed to load file '{}': {}", name, e),
+                footer,
+                palette,
+            )?;
             return Ok(());
         }
     };
 
     if actions.is_empty() {
-        print_output_line(&format!("[WARN] File '{}' contains no actions", name), footer, palette)?;
+        print_output_line(
+            &format!("[WARN] File '{}' contains no actions", name),
+            footer,
+            palette,
+        )?;
         return Ok(());
     }
 
-    print_output_line(&format!("[LOAD] Loading {} action(s) from: {}", actions.len(), save_load::normalize_filename(&name)), footer, palette)?;
+    print_output_line(
+        &format!(
+            "[LOAD] Loading {} action(s) from: {}",
+            actions.len(),
+            save_load::normalize_filename(&name)
+        ),
+        footer,
+        palette,
+    )?;
 
     // Execute each action
     for (i, action) in actions.iter().enumerate() {
@@ -2047,7 +2343,16 @@ async fn handle_load(
             use crate::llm::actions::common::CommonAction;
 
             match common_action {
-                CommonAction::OpenServer { port, base_stack, send_first, initial_memory, instruction, startup_params, event_handlers, scheduled_tasks } => {
+                CommonAction::OpenServer {
+                    port,
+                    base_stack,
+                    send_first,
+                    initial_memory,
+                    instruction,
+                    startup_params,
+                    event_handlers,
+                    scheduled_tasks,
+                } => {
                     // Execute open_server action via server startup
                     match server_startup::start_server_from_action(
                         state,
@@ -2059,25 +2364,39 @@ async fn handle_load(
                         startup_params,
                         event_handlers,
                         scheduled_tasks,
-                    ).await {
+                    )
+                    .await
+                    {
                         Ok(server_id) => {
-                            print_output_line(&format!(
-                                "[LOAD] Opened server #{} on port {} ({})",
-                                server_id.as_u32(),
-                                port,
-                                base_stack
-                            ), footer, palette)?;
+                            print_output_line(
+                                &format!(
+                                    "[LOAD] Opened server #{} on port {} ({})",
+                                    server_id.as_u32(),
+                                    port,
+                                    base_stack
+                                ),
+                                footer,
+                                palette,
+                            )?;
                         }
                         Err(e) => {
-                            print_output_line(&format!(
-                                "[ERROR] Failed to open server (action {}): {}",
-                                i + 1,
-                                e
-                            ), footer, palette)?;
+                            print_output_line(
+                                &format!("[ERROR] Failed to open server (action {}): {}", i + 1, e),
+                                footer,
+                                palette,
+                            )?;
                         }
                     }
                 }
-                CommonAction::OpenClient { protocol, remote_addr, instruction, startup_params, initial_memory, event_handlers, scheduled_tasks } => {
+                CommonAction::OpenClient {
+                    protocol,
+                    remote_addr,
+                    instruction,
+                    startup_params,
+                    initial_memory,
+                    event_handlers,
+                    scheduled_tasks,
+                } => {
                     // Execute open_client action via client startup
                     match client_startup::start_client_from_action(
                         state,
@@ -2089,21 +2408,27 @@ async fn handle_load(
                         event_handlers,
                         scheduled_tasks,
                         llm.clone(),
-                    ).await {
+                    )
+                    .await
+                    {
                         Ok(client_id) => {
-                            print_output_line(&format!(
-                                "[LOAD] Opened client #{} to {} ({})",
-                                client_id.as_u32(),
-                                remote_addr,
-                                protocol
-                            ), footer, palette)?;
+                            print_output_line(
+                                &format!(
+                                    "[LOAD] Opened client #{} to {} ({})",
+                                    client_id.as_u32(),
+                                    remote_addr,
+                                    protocol
+                                ),
+                                footer,
+                                palette,
+                            )?;
                         }
                         Err(e) => {
-                            print_output_line(&format!(
-                                "[ERROR] Failed to open client (action {}): {}",
-                                i + 1,
-                                e
-                            ), footer, palette)?;
+                            print_output_line(
+                                &format!("[ERROR] Failed to open client (action {}): {}", i + 1, e),
+                                footer,
+                                palette,
+                            )?;
                         }
                     }
                 }
@@ -2111,17 +2436,19 @@ async fn handle_load(
                     print_output_line(&format!("[{}] {}", i + 1, message), footer, palette)?;
                 }
                 _ => {
-                    print_output_line(&format!(
-                        "[WARN] Skipping unsupported action type (action {})",
-                        i + 1
-                    ), footer, palette)?;
+                    print_output_line(
+                        &format!("[WARN] Skipping unsupported action type (action {})", i + 1),
+                        footer,
+                        palette,
+                    )?;
                 }
             }
         } else {
-            print_output_line(&format!(
-                "[WARN] Skipping invalid action (action {})",
-                i + 1
-            ), footer, palette)?;
+            print_output_line(
+                &format!("[WARN] Skipping invalid action (action {})", i + 1),
+                footer,
+                palette,
+            )?;
         }
     }
 

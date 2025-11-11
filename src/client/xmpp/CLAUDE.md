@@ -2,7 +2,9 @@
 
 ## Overview
 
-XMPP (Extensible Messaging and Presence Protocol), formerly known as Jabber, is an open-standard instant messaging protocol. This client implementation allows NetGet to connect to XMPP servers, send/receive messages, manage presence, and interact with other XMPP clients.
+XMPP (Extensible Messaging and Presence Protocol), formerly known as Jabber, is an open-standard instant messaging
+protocol. This client implementation allows NetGet to connect to XMPP servers, send/receive messages, manage presence,
+and interact with other XMPP clients.
 
 **Complexity:** Hard (🟠)
 **Status:** Experimental - Full implementation complete
@@ -12,6 +14,7 @@ XMPP (Extensible Messaging and Presence Protocol), formerly known as Jabber, is 
 **This implementation is complete and compiles successfully** with tokio-xmpp 5.0 and xmpp-parsers 0.22.
 
 ### What's Complete:
+
 - ✅ Full tokio-xmpp 5.0 API integration
 - ✅ Protocol structure and Client trait implementation
 - ✅ Event type definitions (connected, message_received, presence_received)
@@ -30,6 +33,7 @@ XMPP (Extensible Messaging and Presence Protocol), formerly known as Jabber, is 
 **Primary:** `tokio-xmpp` v5.0 + `xmpp-parsers`
 
 ### Why tokio-xmpp?
+
 - **Async/Await Support:** Full tokio integration for non-blocking I/O
 - **Modern Design:** Built for async Rust with proper error handling
 - **Active Development:** Well-maintained with recent updates
@@ -37,6 +41,7 @@ XMPP (Extensible Messaging and Presence Protocol), formerly known as Jabber, is 
 - **Parser Integration:** Works with `xmpp-parsers` for stanza construction
 
 ### Alternatives Considered
+
 - `xmpp-rs`: Less mature, fewer features
 - Raw XML parsing: Too complex, reinventing the wheel
 
@@ -63,31 +68,37 @@ XMPP (Extensible Messaging and Presence Protocol), formerly known as Jabber, is 
 ### State Management
 
 **Connection State:**
+
 - **Idle:** Ready to process events
 - **Processing:** LLM is currently processing an event
 - **Accumulating:** Queuing events while LLM is busy
 
 **Per-Client Data:**
+
 - `state`: Current connection state
 - `queued_events`: Events queued during Processing state
 - `memory`: LLM conversation memory
 
 **Stored in AppState:**
+
 - `jid`: Connected Jabber ID
 - XMPP client writer (for sending stanzas)
 
 ### XMPP Features Implemented
 
 **✅ Implemented:**
+
 1. **Authentication:** SASL authentication via tokio-xmpp
 2. **Messages:** Send and receive chat messages
 3. **Presence:** Send presence updates (away, chat, dnd, xa), receive presence from contacts
 4. **Auto-reconnect:** Handled by tokio-xmpp
 
 **⚠️ Partially Implemented:**
+
 5. **IQ Stanzas:** Received but not yet processed (TODO)
 
 **❌ Not Implemented:**
+
 6. **Roster Management:** Add/remove contacts (future enhancement)
 7. **Multi-User Chat (MUC):** Join/leave chatrooms (future enhancement)
 8. **File Transfer:** XEP-0096/XEP-0234 (complex, low priority)
@@ -99,28 +110,30 @@ XMPP (Extensible Messaging and Presence Protocol), formerly known as Jabber, is 
 ### Events Sent to LLM
 
 1. **xmpp_connected**
-   - Triggered: After successful authentication
-   - Parameters: `jid` (connected Jabber ID)
-   - LLM Action: Send initial presence, greet contacts, etc.
+    - Triggered: After successful authentication
+    - Parameters: `jid` (connected Jabber ID)
+    - LLM Action: Send initial presence, greet contacts, etc.
 
 2. **xmpp_message_received**
-   - Triggered: When receiving a message from another user
-   - Parameters: `from`, `to`, `body`, `message_type`
-   - LLM Action: Respond to message, log, ignore, etc.
+    - Triggered: When receiving a message from another user
+    - Parameters: `from`, `to`, `body`, `message_type`
+    - LLM Action: Respond to message, log, ignore, etc.
 
 3. **xmpp_presence_received**
-   - Triggered: When receiving presence updates from contacts
-   - Parameters: `from`, `presence_type`, `show`, `status`
-   - LLM Action: Acknowledge, send message, update roster, etc.
+    - Triggered: When receiving presence updates from contacts
+    - Parameters: `from`, `presence_type`, `show`, `status`
+    - LLM Action: Acknowledge, send message, update roster, etc.
 
 ### Actions Available to LLM
 
 **Async Actions (user-triggered):**
+
 - `send_message(to, body)` - Send message to a JID
 - `send_presence(show?, status?)` - Update presence
 - `disconnect()` - Disconnect from server
 
 **Sync Actions (event-triggered):**
+
 - `send_message(to, body)` - Reply to received message
 - `wait_for_more()` - Accumulate more events before responding
 
@@ -147,6 +160,7 @@ The client handler parses the custom action and executes the corresponding XMPP 
 **Instruction:** "Auto-reply to all messages with 'I'm busy'"
 
 **Flow:**
+
 1. User sends message → `xmpp_message_received` event
 2. LLM receives: `{"from": "alice@example.com", "body": "Hi there!"}`
 3. LLM action: `send_message(to: "alice@example.com", body: "I'm busy")`
@@ -157,6 +171,7 @@ The client handler parses the custom action and executes the corresponding XMPP 
 **Instruction:** "Log when contacts come online or go offline"
 
 **Flow:**
+
 1. Contact changes presence → `xmpp_presence_received` event
 2. LLM receives: `{"from": "bob@example.com", "presence_type": "Available", "show": "chat"}`
 3. LLM action: Log to memory (no stanza sent)
@@ -164,26 +179,31 @@ The client handler parses the custom action and executes the corresponding XMPP 
 ## Known Limitations
 
 ### 1. No Roster Management
+
 **Issue:** Cannot add/remove contacts programmatically
 **Workaround:** Manually add contacts using XMPP client before connecting NetGet
 **Future:** Implement roster management actions
 
 ### 2. IQ Stanzas Not Handled
+
 **Issue:** IQ (Info/Query) stanzas are received but ignored
 **Impact:** Cannot respond to service discovery, version queries, etc.
 **Future:** Parse and respond to common IQ queries
 
 ### 3. No MUC (Multi-User Chat)
+
 **Issue:** Cannot join group chats
 **Workaround:** Use direct messages only
 **Future:** Implement XEP-0045 for MUC support
 
 ### 4. No TLS Configuration
+
 **Issue:** TLS settings are library defaults, no customization
 **Impact:** Cannot connect to servers with self-signed certs
 **Future:** Expose TLS configuration in startup params
 
 ### 5. Password in URL
+
 **Issue:** Password must be in connection string or startup params
 **Security:** Not ideal for production use
 **Workaround:** Use startup params instead of URL
@@ -191,16 +211,19 @@ The client handler parses the custom action and executes the corresponding XMPP 
 ## Connection String Format
 
 **Option 1: URL Format**
+
 ```
 user@domain@password
 ```
 
 Example:
+
 ```
 alice@example.com@secretpass
 ```
 
 **Option 2: Startup Parameters (Recommended)**
+
 ```bash
 open_client xmpp example.com --param jid=alice@example.com --param password=secretpass "Reply to all messages"
 ```
@@ -218,6 +241,7 @@ open_client xmpp example.com --param jid=alice@example.com --param password=secr
 ### Local XMPP Server
 
 **Option 1: Prosody (Recommended)**
+
 ```bash
 # Install prosody
 sudo apt install prosody
@@ -231,6 +255,7 @@ sudo systemctl start prosody
 ```
 
 **Option 2: ejabberd**
+
 ```bash
 # Install ejabberd
 sudo apt install ejabberd
@@ -252,6 +277,7 @@ XMPP has public test servers (e.g., `jabber.org`, `404.city`), but use with caut
 5. **Cleanup:** Disconnect
 
 **LLM Call Budget:** < 10 calls
+
 - 1 call for connect
 - 3 calls for message send/receive
 - 2 calls for presence updates
@@ -264,6 +290,7 @@ xmpp-parsers = "0.20"
 ```
 
 **Transitive Dependencies:**
+
 - `tokio-tls` (TLS support)
 - `minidom` (XML DOM)
 - `trust-dns-resolver` (SRV record lookups)
@@ -273,6 +300,7 @@ xmpp-parsers = "0.20"
 The following changes are needed to make this implementation compile with tokio-xmpp 5.0:
 
 ### 1. JID Type Mismatch
+
 **Issue:** `xmpp_parsers::Jid` != `tokio_xmpp::Jid`
 **Fix:** Use `tokio_xmpp::Jid` throughout, as tokio-xmpp 5.0 re-exports xmpp_parsers types
 
@@ -285,20 +313,25 @@ use tokio_xmpp::Jid;
 ```
 
 ### 2. Client Clone Not Supported
+
 **Issue:** `XmppClient` no longer implements `Clone`
 **Fix:** Restructure to use channels or split reading/writing differently
 
 ### 3. Missing Methods
+
 **Issues:**
+
 - `set_reconnect()` no longer exists
 - `wait_for_event()` replaced with different API
 - Stanza doesn't implement `Clone`
 
 **Fix:** Review tokio-xmpp 5.0 API and use:
+
 - Event stream API (likely `futures::Stream`)
 - Remove clone calls on stanzas
 
 ### 4. Stanza Conversion
+
 **Issue:** `message.into()` fails for type conversion
 **Fix:** Use tokio-xmpp's re-exported types:
 
@@ -313,6 +346,7 @@ let stanza = tokio_xmpp::Stanza::from(message);  // OK
 ```
 
 ### 5. Event Loop Pattern
+
 The event loop needs to be rewritten to match tokio-xmpp 5.0's async stream pattern instead of `wait_for_event()`.
 
 ## Future Enhancements

@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use socket2::{Domain, Socket, Type};
-use std::net::{SocketAddr, Ipv4Addr};
+use std::net::{Ipv4Addr, SocketAddr};
 use std::os::unix::io::FromRawFd;
 use tokio::net::{TcpListener, UdpSocket};
 

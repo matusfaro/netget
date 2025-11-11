@@ -5,7 +5,7 @@ use tokio::process::Child;
 use tokio::time::sleep;
 
 use super::common::*;
-use super::netget::{NetGetClient as ParsedNetGetClient, NetGetConfig};
+use super::netget::NetGetConfig;
 
 /// A running NetGet client process
 pub struct NetGetClient {
@@ -183,11 +183,7 @@ pub async fn wait_for_client_startup(
         eprintln!("    {}", line);
     }
 
-    Err(format!(
-        "Client did not become ready within {:?}",
-        timeout_duration
-    )
-    .into())
+    Err(format!("Client did not become ready within {:?}", timeout_duration).into())
 }
 
 /// Assert that the client is using the expected protocol

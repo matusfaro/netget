@@ -9,6 +9,7 @@ End-to-end tests for RIP client that verify routing table queries and response p
 ### Unit Tests (No Ollama)
 
 **test_rip_packet_encoding**
+
 - Verifies RIP request packet construction
 - Tests RIPv1 and RIPv2 encoding
 - Validates packet structure (header + route entries)
@@ -16,6 +17,7 @@ End-to-end tests for RIP client that verify routing table queries and response p
 - **Runtime**: <100ms
 
 **test_rip_packet_decoding**
+
 - Verifies RIP response parsing
 - Tests route entry extraction
 - Validates IP, mask, next hop, metric parsing
@@ -25,6 +27,7 @@ End-to-end tests for RIP client that verify routing table queries and response p
 ### E2E Tests (Ollama Required)
 
 **test_rip_client_query** (marked #[ignore])
+
 - Mock RIP router on port 15520 (non-privileged)
 - Client queries for routing table
 - Router responds with 3 routes
@@ -35,14 +38,16 @@ End-to-end tests for RIP client that verify routing table queries and response p
 ## Mock RIP Router
 
 Simple UDP server that:
+
 1. Listens on 127.0.0.1:15520
 2. Receives RIP Request (command=1, version=1 or 2)
 3. Sends RIP Response with 3 hardcoded routes:
-   - 10.0.0.0/8 via 192.168.1.254 metric 2
-   - 172.16.0.0/16 via 192.168.1.253 metric 5
-   - 192.168.2.0/24 via 192.168.1.1 metric 1
+    - 10.0.0.0/8 via 192.168.1.254 metric 2
+    - 172.16.0.0/16 via 192.168.1.253 metric 5
+    - 192.168.2.0/24 via 192.168.1.1 metric 1
 
 **Why not use real router?**
+
 - Requires network access
 - May not have RIP enabled
 - Mock is faster and more reliable
@@ -53,6 +58,7 @@ Simple UDP server that:
 **Target**: < 5 LLM calls per test suite
 
 **Actual**:
+
 - Unit tests: 0 calls (packet encoding/decoding)
 - E2E test: 2-3 calls (connect, response, optional cleanup)
 
@@ -80,16 +86,22 @@ Simple UDP server that:
 ## Known Issues
 
 ### Ollama Dependency
-E2E test requires Ollama running on localhost:11434 with `qwen3-coder:30b` model. Test is marked `#[ignore]` to skip by default.
+
+E2E test requires Ollama running on localhost:11434 with `qwen3-coder:30b` model. Test is marked `#[ignore]` to skip by
+default.
 
 ### Port Conflicts
+
 Mock router uses port 15520. If port is in use, test will fail. Can be changed by modifying `rip_port` variable.
 
 ### UDP Reliability
+
 UDP packets can be dropped. Test includes retries and timeouts to handle occasional packet loss.
 
 ### LLM Variability
-LLM may choose different actions based on model/temperature. Test verifies general behavior (response received) rather than exact actions.
+
+LLM may choose different actions based on model/temperature. Test verifies general behavior (response received) rather
+than exact actions.
 
 ## Future Improvements
 
@@ -111,6 +123,7 @@ LLM may choose different actions based on model/temperature. Test verifies gener
 ## Test Coverage
 
 **Protocol Features**:
+
 - [x] RIPv1 packet encoding
 - [x] RIPv2 packet encoding
 - [x] RIP response decoding
@@ -119,6 +132,7 @@ LLM may choose different actions based on model/temperature. Test verifies gener
 - [ ] Specific route queries - not supported by protocol
 
 **Client Features**:
+
 - [x] UDP socket binding
 - [x] Send RIP request
 - [x] Receive RIP response
@@ -127,6 +141,7 @@ LLM may choose different actions based on model/temperature. Test verifies gener
 - [x] State machine (Idle/Processing/Accumulating)
 
 **Edge Cases**:
+
 - [ ] Router timeout (no response)
 - [ ] Malformed RIP packets
 - [ ] Empty routing table

@@ -10,6 +10,7 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use crate::state::server::{ConnectionState, ConnectionStatus, ProtocolConnectionInfo};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 use anyhow::{anyhow, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -17,7 +18,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace, warn};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// VNC server that uses LLM to control display and authentication
 pub struct VncServer;
@@ -74,7 +74,8 @@ impl VncServer {
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
     ) -> Result<SocketAddr> {
-        let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let listener =
+            crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
 
         console_info!(status_tx, "VNC server listening on {}", local_addr);
@@ -83,13 +84,15 @@ impl VncServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
                         let state_clone = app_state.clone();
                         let status_clone = status_tx.clone();
 
                         info!("VNC client connected from {}", remote_addr);
-                        let _ = status_clone.send(format!("[INFO] VNC client connected from {}", remote_addr));
+                        let _ = status_clone
+                            .send(format!("[INFO] VNC client connected from {}", remote_addr));
 
                         tokio::spawn(async move {
                             if let Err(e) = Self::handle_connection(
@@ -145,20 +148,20 @@ impl VncServer {
             status_changed_at: now,
             protocol_info: ProtocolConnectionInfo::empty(),
         };
-        app_state.add_connection_to_server(server_id, conn_state).await;
+        app_state
+            .add_connection_to_server(server_id, conn_state)
+            .await;
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Perform RFB handshake (authentication always succeeds for now)
         let mut read_half = read_half;
-        Self::perform_handshake(
-            &mut read_half,
-            &write_half_arc,
-            connection_id,
-            &status_tx,
-        )
-        .await?;
+        Self::perform_handshake(&mut read_half, &write_half_arc, connection_id, &status_tx).await?;
 
-        console_debug!(status_tx, "VNC authentication successful for {}", remote_addr);
+        console_debug!(
+            status_tx,
+            "VNC authentication successful for {}",
+            remote_addr
+        );
 
         // Update connection state
         app_state
@@ -166,13 +169,8 @@ impl VncServer {
             .await;
 
         // Handle client initialization
-        Self::handle_client_init(
-            &mut read_half,
-            &write_half_arc,
-            connection_id,
-            &status_tx,
-        )
-        .await?;
+        Self::handle_client_init(&mut read_half, &write_half_arc, connection_id, &status_tx)
+            .await?;
 
         // Main message loop
         Self::message_loop(
@@ -199,12 +197,18 @@ impl VncServer {
             writer.write_all(RFB_VERSION).await?;
             writer.flush().await?;
         }
-        trace!("Sent RFB version: {}", String::from_utf8_lossy(RFB_VERSION).trim());
+        trace!(
+            "Sent RFB version: {}",
+            String::from_utf8_lossy(RFB_VERSION).trim()
+        );
 
         // 2. Receive client protocol version
         let mut client_version = vec![0u8; 12];
         read_half.read_exact(&mut client_version).await?;
-        trace!("Received client version: {}", String::from_utf8_lossy(&client_version).trim());
+        trace!(
+            "Received client version: {}",
+            String::from_utf8_lossy(&client_version).trim()
+        );
 
         // 3. Send security types
         // We offer: None (1) - no authentication required
@@ -263,8 +267,12 @@ impl VncServer {
         // Pixel format (16 bytes)
         writer.write_u8(pixel_format.bits_per_pixel).await?;
         writer.write_u8(pixel_format.depth).await?;
-        writer.write_u8(if pixel_format.big_endian { 1 } else { 0 }).await?;
-        writer.write_u8(if pixel_format.true_color { 1 } else { 0 }).await?;
+        writer
+            .write_u8(if pixel_format.big_endian { 1 } else { 0 })
+            .await?;
+        writer
+            .write_u8(if pixel_format.true_color { 1 } else { 0 })
+            .await?;
         writer.write_u16(pixel_format.red_max).await?;
         writer.write_u16(pixel_format.green_max).await?;
         writer.write_u16(pixel_format.blue_max).await?;
@@ -278,8 +286,16 @@ impl VncServer {
         writer.write_all(name).await?;
         writer.flush().await?;
 
-        debug!("Sent ServerInit: {}x{}, {}", framebuffer_width, framebuffer_height, String::from_utf8_lossy(name));
-        let _ = status_tx.send(format!("[DEBUG] VNC initialized: {}x{} framebuffer", framebuffer_width, framebuffer_height));
+        debug!(
+            "Sent ServerInit: {}x{}, {}",
+            framebuffer_width,
+            framebuffer_height,
+            String::from_utf8_lossy(name)
+        );
+        let _ = status_tx.send(format!(
+            "[DEBUG] VNC initialized: {}x{} framebuffer",
+            framebuffer_width, framebuffer_height
+        ));
 
         Ok(())
     }
@@ -329,8 +345,14 @@ impl VncServer {
                     let width = read_half.read_u16().await?;
                     let height = read_half.read_u16().await?;
 
-                    trace!("FramebufferUpdateRequest: incremental={}, x={}, y={}, w={}, h={}",
-                           incremental, x, y, width, height);
+                    trace!(
+                        "FramebufferUpdateRequest: incremental={}, x={}, y={}, w={}, h={}",
+                        incremental,
+                        x,
+                        y,
+                        width,
+                        height
+                    );
 
                     // Send framebuffer update (test pattern for now)
                     Self::send_test_framebuffer(&write_half, width, height).await?;
@@ -342,7 +364,8 @@ impl VncServer {
                     let key = read_half.read_u32().await?;
 
                     debug!("KeyEvent: down={}, key={}", down, key);
-                    let _ = status_tx.send(format!("[DEBUG] VNC KeyEvent: down={}, key={}", down, key));
+                    let _ =
+                        status_tx.send(format!("[DEBUG] VNC KeyEvent: down={}, key={}", down, key));
                 }
                 5 => {
                     // PointerEvent
@@ -368,12 +391,13 @@ impl VncServer {
         }
 
         // Remove connection from state
-        app_state.remove_connection_from_server(server_id, connection_id).await;
+        app_state
+            .remove_connection_from_server(server_id, connection_id)
+            .await;
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         Ok(())
     }
-
 
     /// Send a test framebuffer pattern (fallback when LLM doesn't respond)
     async fn send_test_framebuffer(
@@ -430,7 +454,10 @@ impl VncServer {
         let image_buffer = canvas.render();
 
         debug!("Rendered framebuffer: {}x{}", width, height);
-        let _ = status_tx.send(format!("[DEBUG] Rendered VNC framebuffer: {}x{}", width, height));
+        let _ = status_tx.send(format!(
+            "[DEBUG] Rendered VNC framebuffer: {}x{}",
+            width, height
+        ));
 
         // Send framebuffer update
         let mut writer = write_half.lock().await;

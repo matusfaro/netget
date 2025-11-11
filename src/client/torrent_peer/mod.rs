@@ -11,13 +11,13 @@ use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, trace};
 
+use crate::client::torrent_peer::actions::{PEER_HANDSHAKE_EVENT, PEER_MESSAGE_EVENT};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::torrent_peer::actions::{PEER_HANDSHAKE_EVENT, PEER_MESSAGE_EVENT};
 
 /// Peer wire message types
 #[repr(u8)]
@@ -55,12 +55,19 @@ impl TorrentPeerClient {
         let local_addr = stream.local_addr()?;
         let remote_sock_addr = stream.peer_addr()?;
 
-        info!("BitTorrent Peer client {} connected to {} (local: {})",
-              client_id, remote_sock_addr, local_addr);
+        info!(
+            "BitTorrent Peer client {} connected to {} (local: {})",
+            client_id, remote_sock_addr, local_addr
+        );
 
         // Update client state
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] BitTorrent Peer client {} connected", client_id));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] BitTorrent Peer client {} connected",
+            client_id
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Split stream
@@ -86,11 +93,16 @@ impl TorrentPeerClient {
                         let info_hash = &handshake_buf[28..48];
                         let peer_id = &handshake_buf[48..68];
 
-                        trace!("Handshake: info_hash={:?}, peer_id={:?}",
-                               hex::encode(info_hash), hex::encode(peer_id));
+                        trace!(
+                            "Handshake: info_hash={:?}, peer_id={:?}",
+                            hex::encode(info_hash),
+                            hex::encode(peer_id)
+                        );
 
                         // Call LLM with handshake event
-                        if let Some(instruction) = app_state_clone.get_instruction_for_client(client_id).await {
+                        if let Some(instruction) =
+                            app_state_clone.get_instruction_for_client(client_id).await
+                        {
                             let protocol = Arc::new(crate::client::torrent_peer::actions::TorrentPeerClientProtocol::new());
                             let event = Event::new(
                                 &PEER_HANDSHAKE_EVENT,
@@ -101,7 +113,10 @@ impl TorrentPeerClient {
                                 }),
                             );
 
-                            let memory = app_state_clone.get_memory_for_client(client_id).await.unwrap_or_default();
+                            let memory = app_state_clone
+                                .get_memory_for_client(client_id)
+                                .await
+                                .unwrap_or_default();
 
                             match call_llm_for_client(
                                 &llm_client_clone,
@@ -112,8 +127,13 @@ impl TorrentPeerClient {
                                 Some(&event),
                                 protocol.as_ref(),
                                 &status_tx_clone,
-                            ).await {
-                                Ok(ClientLlmResult { actions, memory_updates }) => {
+                            )
+                            .await
+                            {
+                                Ok(ClientLlmResult {
+                                    actions,
+                                    memory_updates,
+                                }) => {
                                     if let Some(mem) = memory_updates {
                                         app_state_clone.set_memory_for_client(client_id, mem).await;
                                     }
@@ -124,7 +144,9 @@ impl TorrentPeerClient {
                                             action,
                                             &write_half_clone,
                                             protocol.as_ref(),
-                                        ).await {
+                                        )
+                                        .await
+                                        {
                                             error!("Failed to execute peer action: {}", e);
                                         }
                                     }
@@ -157,11 +179,18 @@ impl TorrentPeerClient {
                                         let msg_type = msg_buf[0];
                                         let payload = &msg_buf[1..];
 
-                                        trace!("Peer client {} received message type {}, len {}",
-                                               client_id, msg_type, payload.len());
+                                        trace!(
+                                            "Peer client {} received message type {}, len {}",
+                                            client_id,
+                                            msg_type,
+                                            payload.len()
+                                        );
 
                                         // Call LLM with message event
-                                        if let Some(instruction) = app_state_clone.get_instruction_for_client(client_id).await {
+                                        if let Some(instruction) = app_state_clone
+                                            .get_instruction_for_client(client_id)
+                                            .await
+                                        {
                                             let protocol = Arc::new(crate::client::torrent_peer::actions::TorrentPeerClientProtocol::new());
                                             let event = Event::new(
                                                 &PEER_MESSAGE_EVENT,
@@ -172,7 +201,10 @@ impl TorrentPeerClient {
                                                 }),
                                             );
 
-                                            let memory = app_state_clone.get_memory_for_client(client_id).await.unwrap_or_default();
+                                            let memory = app_state_clone
+                                                .get_memory_for_client(client_id)
+                                                .await
+                                                .unwrap_or_default();
 
                                             match call_llm_for_client(
                                                 &llm_client_clone,
@@ -183,10 +215,17 @@ impl TorrentPeerClient {
                                                 Some(&event),
                                                 protocol.as_ref(),
                                                 &status_tx_clone,
-                                            ).await {
-                                                Ok(ClientLlmResult { actions, memory_updates }) => {
+                                            )
+                                            .await
+                                            {
+                                                Ok(ClientLlmResult {
+                                                    actions,
+                                                    memory_updates,
+                                                }) => {
                                                     if let Some(mem) = memory_updates {
-                                                        app_state_clone.set_memory_for_client(client_id, mem).await;
+                                                        app_state_clone
+                                                            .set_memory_for_client(client_id, mem)
+                                                            .await;
                                                     }
 
                                                     for action in actions {
@@ -195,8 +234,13 @@ impl TorrentPeerClient {
                                                             action,
                                                             &write_half_clone,
                                                             protocol.as_ref(),
-                                                        ).await {
-                                                            error!("Failed to execute peer action: {}", e);
+                                                        )
+                                                        .await
+                                                        {
+                                                            error!(
+                                                                "Failed to execute peer action: {}",
+                                                                e
+                                                            );
                                                         }
                                                     }
                                                 }
@@ -207,7 +251,10 @@ impl TorrentPeerClient {
                                         }
                                     }
                                     Err(e) => {
-                                        error!("Peer client {} message read error: {}", client_id, e);
+                                        error!(
+                                            "Peer client {} message read error: {}",
+                                            client_id, e
+                                        );
                                         break;
                                     }
                                 }
@@ -224,14 +271,20 @@ impl TorrentPeerClient {
                 }
             }
 
-            app_state_clone.update_client_status(client_id, ClientStatus::Disconnected).await;
-            let _ = status_tx_clone.send(format!("[CLIENT] BitTorrent Peer client {} disconnected", client_id));
+            app_state_clone
+                .update_client_status(client_id, ClientStatus::Disconnected)
+                .await;
+            let _ = status_tx_clone.send(format!(
+                "[CLIENT] BitTorrent Peer client {} disconnected",
+                client_id
+            ));
             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
         });
 
         // Call LLM with connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-            let protocol = Arc::new(crate::client::torrent_peer::actions::TorrentPeerClientProtocol::new());
+            let protocol =
+                Arc::new(crate::client::torrent_peer::actions::TorrentPeerClientProtocol::new());
             let event = Event::new(
                 &PEER_HANDSHAKE_EVENT,
                 serde_json::json!({
@@ -240,7 +293,10 @@ impl TorrentPeerClient {
                 }),
             );
 
-            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+            let memory = app_state
+                .get_memory_for_client(client_id)
+                .await
+                .unwrap_or_default();
             let write_half_clone = write_half_arc.clone();
 
             tokio::spawn(async move {
@@ -253,8 +309,13 @@ impl TorrentPeerClient {
                     Some(&event),
                     protocol.as_ref(),
                     &status_tx,
-                ).await {
-                    Ok(ClientLlmResult { actions, memory_updates }) => {
+                )
+                .await
+                {
+                    Ok(ClientLlmResult {
+                        actions,
+                        memory_updates,
+                    }) => {
                         if let Some(mem) = memory_updates {
                             app_state.set_memory_for_client(client_id, mem).await;
                         }
@@ -265,7 +326,9 @@ impl TorrentPeerClient {
                                 action,
                                 &write_half_clone,
                                 protocol.as_ref(),
-                            ).await {
+                            )
+                            .await
+                            {
                                 error!("Failed to execute peer action: {}", e);
                             }
                         }
@@ -291,8 +354,14 @@ impl TorrentPeerClient {
 
         match protocol.execute_action(action)? {
             ClientActionResult::Custom { name, data } if name == "peer_handshake" => {
-                let info_hash_hex = data.get("info_hash").and_then(|v| v.as_str()).context("Missing info_hash")?;
-                let peer_id_hex = data.get("peer_id").and_then(|v| v.as_str()).context("Missing peer_id")?;
+                let info_hash_hex = data
+                    .get("info_hash")
+                    .and_then(|v| v.as_str())
+                    .context("Missing info_hash")?;
+                let peer_id_hex = data
+                    .get("peer_id")
+                    .and_then(|v| v.as_str())
+                    .context("Missing peer_id")?;
 
                 let info_hash = hex::decode(info_hash_hex)?;
                 let peer_id = hex::decode(peer_id_hex)?;
@@ -309,7 +378,10 @@ impl TorrentPeerClient {
                 trace!("Peer client {} sent handshake", client_id);
             }
             ClientActionResult::Custom { name, data } if name == "peer_message" => {
-                let msg_type = data.get("message_type").and_then(|v| v.as_u64()).context("Missing message_type")? as u8;
+                let msg_type = data
+                    .get("message_type")
+                    .and_then(|v| v.as_u64())
+                    .context("Missing message_type")? as u8;
                 let payload_hex = data.get("payload").and_then(|v| v.as_str()).unwrap_or("");
                 let payload = if !payload_hex.is_empty() {
                     hex::decode(payload_hex)?

@@ -9,12 +9,14 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info};
 
+use crate::client::etcd::actions::{
+    ETCD_CLIENT_CONNECTED_EVENT, ETCD_CLIENT_RESPONSE_RECEIVED_EVENT,
+};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::etcd::actions::{ETCD_CLIENT_CONNECTED_EVENT, ETCD_CLIENT_RESPONSE_RECEIVED_EVENT};
 
 /// etcd client that connects to remote etcd servers
 pub struct EtcdClient;
@@ -38,23 +40,27 @@ impl EtcdClient {
             .await
             .context("Failed to connect to etcd server")?;
 
-        info!("etcd client {} connected successfully to {}", client_id, remote_addr);
+        info!(
+            "etcd client {} connected successfully to {}",
+            client_id, remote_addr
+        );
 
         // Store client state
-        app_state.with_client_mut(client_id, |client| {
-            client.set_protocol_field(
-                "etcd_connected".to_string(),
-                serde_json::json!(true),
-            );
-            client.set_protocol_field(
-                "endpoints".to_string(),
-                serde_json::json!(endpoints),
-            );
-        }).await;
+        app_state
+            .with_client_mut(client_id, |client| {
+                client.set_protocol_field("etcd_connected".to_string(), serde_json::json!(true));
+                client.set_protocol_field("endpoints".to_string(), serde_json::json!(endpoints));
+            })
+            .await;
 
         // Update status
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] etcd client {} connected to {}", client_id, remote_addr));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] etcd client {} connected to {}",
+            client_id, remote_addr
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Send connected event to LLM
@@ -67,14 +73,20 @@ impl EtcdClient {
 
         // Call LLM with connected event
         let protocol = Arc::new(EtcdClientProtocol::new());
-        let instruction = app_state.with_client_mut(client_id, |client| {
-            client.instruction.clone()
-        }).await.unwrap_or_default();
-        let memory = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("memory")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }).await.flatten().unwrap_or_default();
+        let instruction = app_state
+            .with_client_mut(client_id, |client| client.instruction.clone())
+            .await
+            .unwrap_or_default();
+        let memory = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("memory")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .await
+            .flatten()
+            .unwrap_or_default();
 
         match call_llm_for_client(
             &llm_client,
@@ -90,14 +102,23 @@ impl EtcdClient {
         {
             Ok(result) => {
                 if let Some(mem) = result.memory_updates {
-                    app_state.with_client_mut(client_id, |client| {
-                        client.set_protocol_field("memory".to_string(), serde_json::json!(mem));
-                    }).await;
+                    app_state
+                        .with_client_mut(client_id, |client| {
+                            client.set_protocol_field("memory".to_string(), serde_json::json!(mem));
+                        })
+                        .await;
                 }
-                debug!("etcd client {} LLM generated {} actions on connect", client_id, result.actions.len());
+                debug!(
+                    "etcd client {} LLM generated {} actions on connect",
+                    client_id,
+                    result.actions.len()
+                );
             }
             Err(e) => {
-                error!("etcd client {} LLM call failed on connect: {}", client_id, e);
+                error!(
+                    "etcd client {} LLM call failed on connect: {}",
+                    client_id, e
+                );
             }
         }
 
@@ -128,10 +149,15 @@ impl EtcdClient {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         // Get endpoint from client state
-        let endpoints: Vec<String> = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("endpoints")
-                .and_then(|v| serde_json::from_value(v.clone()).ok())
-        }).await.flatten().context("No endpoints found")?;
+        let endpoints: Vec<String> = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("endpoints")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+            })
+            .await
+            .flatten()
+            .context("No endpoints found")?;
 
         info!("etcd client {} getting key: {}", client_id, key);
 
@@ -140,23 +166,32 @@ impl EtcdClient {
             .await
             .context("Failed to reconnect to etcd server")?;
 
-        let resp = etcd_client.get(key.clone(), None)
+        let resp = etcd_client
+            .get(key.clone(), None)
             .await
             .context("Failed to get key from etcd")?;
 
         // Build response data
-        let kvs: Vec<serde_json::Value> = resp.kvs().iter().map(|kv| {
-            serde_json::json!({
-                "key": String::from_utf8_lossy(kv.key()).to_string(),
-                "value": String::from_utf8_lossy(kv.value()).to_string(),
-                "create_revision": kv.create_revision(),
-                "mod_revision": kv.mod_revision(),
-                "version": kv.version(),
-                "lease": kv.lease(),
+        let kvs: Vec<serde_json::Value> = resp
+            .kvs()
+            .iter()
+            .map(|kv| {
+                serde_json::json!({
+                    "key": String::from_utf8_lossy(kv.key()).to_string(),
+                    "value": String::from_utf8_lossy(kv.value()).to_string(),
+                    "create_revision": kv.create_revision(),
+                    "mod_revision": kv.mod_revision(),
+                    "version": kv.version(),
+                    "lease": kv.lease(),
+                })
             })
-        }).collect();
+            .collect();
 
-        debug!("etcd client {} received {} key-value pairs", client_id, kvs.len());
+        debug!(
+            "etcd client {} received {} key-value pairs",
+            client_id,
+            kvs.len()
+        );
 
         // Send response event to LLM
         let response_event = Event::new(
@@ -172,14 +207,20 @@ impl EtcdClient {
 
         // Call LLM with response event
         let protocol = Arc::new(EtcdClientProtocol::new());
-        let instruction = app_state.with_client_mut(client_id, |client| {
-            client.instruction.clone()
-        }).await.unwrap_or_default();
-        let memory = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("memory")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }).await.flatten().unwrap_or_default();
+        let instruction = app_state
+            .with_client_mut(client_id, |client| client.instruction.clone())
+            .await
+            .unwrap_or_default();
+        let memory = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("memory")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .await
+            .flatten()
+            .unwrap_or_default();
 
         match call_llm_for_client(
             &llm_client,
@@ -195,11 +236,17 @@ impl EtcdClient {
         {
             Ok(result) => {
                 if let Some(mem) = result.memory_updates {
-                    app_state.with_client_mut(client_id, |client| {
-                        client.set_protocol_field("memory".to_string(), serde_json::json!(mem));
-                    }).await;
+                    app_state
+                        .with_client_mut(client_id, |client| {
+                            client.set_protocol_field("memory".to_string(), serde_json::json!(mem));
+                        })
+                        .await;
                 }
-                debug!("etcd client {} LLM generated {} actions after get", client_id, result.actions.len());
+                debug!(
+                    "etcd client {} LLM generated {} actions after get",
+                    client_id,
+                    result.actions.len()
+                );
             }
             Err(e) => {
                 error!("etcd client {} LLM call failed after get: {}", client_id, e);
@@ -219,10 +266,15 @@ impl EtcdClient {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         // Get endpoint from client state
-        let endpoints: Vec<String> = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("endpoints")
-                .and_then(|v| serde_json::from_value(v.clone()).ok())
-        }).await.flatten().context("No endpoints found")?;
+        let endpoints: Vec<String> = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("endpoints")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+            })
+            .await
+            .flatten()
+            .context("No endpoints found")?;
 
         info!("etcd client {} putting key: {} = {}", client_id, key, value);
 
@@ -231,11 +283,16 @@ impl EtcdClient {
             .await
             .context("Failed to reconnect to etcd server")?;
 
-        let resp = etcd_client.put(key.clone(), value.clone(), None)
+        let resp = etcd_client
+            .put(key.clone(), value.clone(), None)
             .await
             .context("Failed to put key to etcd")?;
 
-        debug!("etcd client {} put completed, header revision: {}", client_id, resp.header().unwrap().revision());
+        debug!(
+            "etcd client {} put completed, header revision: {}",
+            client_id,
+            resp.header().unwrap().revision()
+        );
 
         // Send response event to LLM
         let response_event = Event::new(
@@ -250,14 +307,20 @@ impl EtcdClient {
 
         // Call LLM with response event
         let protocol = Arc::new(EtcdClientProtocol::new());
-        let instruction = app_state.with_client_mut(client_id, |client| {
-            client.instruction.clone()
-        }).await.unwrap_or_default();
-        let memory = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("memory")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }).await.flatten().unwrap_or_default();
+        let instruction = app_state
+            .with_client_mut(client_id, |client| client.instruction.clone())
+            .await
+            .unwrap_or_default();
+        let memory = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("memory")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .await
+            .flatten()
+            .unwrap_or_default();
 
         match call_llm_for_client(
             &llm_client,
@@ -273,11 +336,17 @@ impl EtcdClient {
         {
             Ok(result) => {
                 if let Some(mem) = result.memory_updates {
-                    app_state.with_client_mut(client_id, |client| {
-                        client.set_protocol_field("memory".to_string(), serde_json::json!(mem));
-                    }).await;
+                    app_state
+                        .with_client_mut(client_id, |client| {
+                            client.set_protocol_field("memory".to_string(), serde_json::json!(mem));
+                        })
+                        .await;
                 }
-                debug!("etcd client {} LLM generated {} actions after put", client_id, result.actions.len());
+                debug!(
+                    "etcd client {} LLM generated {} actions after put",
+                    client_id,
+                    result.actions.len()
+                );
             }
             Err(e) => {
                 error!("etcd client {} LLM call failed after put: {}", client_id, e);
@@ -296,10 +365,15 @@ impl EtcdClient {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         // Get endpoint from client state
-        let endpoints: Vec<String> = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("endpoints")
-                .and_then(|v| serde_json::from_value(v.clone()).ok())
-        }).await.flatten().context("No endpoints found")?;
+        let endpoints: Vec<String> = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("endpoints")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+            })
+            .await
+            .flatten()
+            .context("No endpoints found")?;
 
         info!("etcd client {} deleting key: {}", client_id, key);
 
@@ -308,11 +382,16 @@ impl EtcdClient {
             .await
             .context("Failed to reconnect to etcd server")?;
 
-        let resp = etcd_client.delete(key.clone(), None)
+        let resp = etcd_client
+            .delete(key.clone(), None)
             .await
             .context("Failed to delete key from etcd")?;
 
-        debug!("etcd client {} delete completed, deleted {} keys", client_id, resp.deleted());
+        debug!(
+            "etcd client {} delete completed, deleted {} keys",
+            client_id,
+            resp.deleted()
+        );
 
         // Send response event to LLM
         let response_event = Event::new(
@@ -326,14 +405,20 @@ impl EtcdClient {
 
         // Call LLM with response event
         let protocol = Arc::new(EtcdClientProtocol::new());
-        let instruction = app_state.with_client_mut(client_id, |client| {
-            client.instruction.clone()
-        }).await.unwrap_or_default();
-        let memory = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("memory")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }).await.flatten().unwrap_or_default();
+        let instruction = app_state
+            .with_client_mut(client_id, |client| client.instruction.clone())
+            .await
+            .unwrap_or_default();
+        let memory = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("memory")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .await
+            .flatten()
+            .unwrap_or_default();
 
         match call_llm_for_client(
             &llm_client,
@@ -349,14 +434,23 @@ impl EtcdClient {
         {
             Ok(result) => {
                 if let Some(mem) = result.memory_updates {
-                    app_state.with_client_mut(client_id, |client| {
-                        client.set_protocol_field("memory".to_string(), serde_json::json!(mem));
-                    }).await;
+                    app_state
+                        .with_client_mut(client_id, |client| {
+                            client.set_protocol_field("memory".to_string(), serde_json::json!(mem));
+                        })
+                        .await;
                 }
-                debug!("etcd client {} LLM generated {} actions after delete", client_id, result.actions.len());
+                debug!(
+                    "etcd client {} LLM generated {} actions after delete",
+                    client_id,
+                    result.actions.len()
+                );
             }
             Err(e) => {
-                error!("etcd client {} LLM call failed after delete: {}", client_id, e);
+                error!(
+                    "etcd client {} LLM call failed after delete: {}",
+                    client_id, e
+                );
             }
         }
 

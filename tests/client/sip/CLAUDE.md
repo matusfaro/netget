@@ -2,9 +2,11 @@
 
 ## Test Strategy
 
-**Approach**: Black-box testing using the NetGet binary. Tests verify SIP client functionality by spawning both SIP server and client processes, then asserting on behavior and output.
+**Approach**: Black-box testing using the NetGet binary. Tests verify SIP client functionality by spawning both SIP
+server and client processes, then asserting on behavior and output.
 
 **Test Philosophy**:
+
 - Minimal LLM calls (< 10 per suite)
 - Use scripting mode where possible for deterministic server responses
 - Focus on core SIP methods: REGISTER, OPTIONS, INVITE
@@ -13,19 +15,23 @@
 ## Test Suite
 
 ### 1. test_sip_client_register
+
 **Purpose**: Verify SIP client can REGISTER with a SIP server
 
 **LLM Call Budget**: 4 calls
+
 - Server startup (1 call for script generation)
 - Client connection + REGISTER (1 call for initial connection, 1 call for processing response)
 - Final state update (1 call)
 
 **Expected Runtime**: ~2-3 seconds
+
 - 500ms server startup
 - 1500ms client REGISTER + response processing
 - Cleanup
 
 **Test Flow**:
+
 1. Start SIP server accepting REGISTER on ephemeral port
 2. Start SIP client with REGISTER instruction
 3. Client sends REGISTER to server
@@ -34,6 +40,7 @@
 6. Cleanup both processes
 
 **Assertions**:
+
 - Client output contains connection confirmation
 - Process exits cleanly
 
@@ -42,19 +49,23 @@
 ---
 
 ### 2. test_sip_client_options
+
 **Purpose**: Verify SIP client can query server capabilities via OPTIONS
 
 **LLM Call Budget**: 4 calls
+
 - Server startup (1 call for script generation)
 - Client connection + OPTIONS (1 call for initial connection, 1 call for processing response)
 - Final state update (1 call)
 
 **Expected Runtime**: ~2-3 seconds
+
 - 500ms server startup
 - 1500ms client OPTIONS + response processing
 - Cleanup
 
 **Test Flow**:
+
 1. Start SIP server responding to OPTIONS with Allow header
 2. Start SIP client with OPTIONS instruction
 3. Client sends OPTIONS request
@@ -63,6 +74,7 @@
 6. Cleanup both processes
 
 **Assertions**:
+
 - Client protocol matches "SIP"
 - Process exits cleanly
 
@@ -71,20 +83,24 @@
 ---
 
 ### 3. test_sip_client_invite
+
 **Purpose**: Verify SIP client can initiate calls with INVITE
 
 **LLM Call Budget**: 4-5 calls
+
 - Server startup (1 call for script generation)
 - Client connection + INVITE (1 call for initial connection, 1 call for processing response)
 - Possible ACK (1 call if implemented, currently not implemented)
 - Final state update (1 call)
 
 **Expected Runtime**: ~3-4 seconds
+
 - 500ms server startup
 - 2000ms client INVITE + response processing (longer timeout for SDP handling)
 - Cleanup
 
 **Test Flow**:
+
 1. Start SIP server accepting INVITE with SDP answer
 2. Start SIP client with INVITE instruction including SDP offer
 3. Client sends INVITE with SDP body
@@ -93,10 +109,12 @@
 6. Cleanup both processes
 
 **Assertions**:
+
 - Client output contains SIP/INVITE/200 indication
 - Process exits cleanly
 
 **Known Issues**:
+
 - ACK after 200 OK not implemented (would complete 3-way handshake)
 - Test passes without ACK since we're only verifying INVITE/response exchange
 
@@ -143,12 +161,14 @@
 **Actual Usage**: ~12-13 calls (4-5 per test)
 
 **Breakdown**:
+
 - Script generation (server startup): 1 call per test
 - Client connection event: 1 call per test
 - Response processing: 1 call per test
 - State updates/memory: 1 call per test
 
 **Optimization Opportunities**:
+
 - Use scripting mode for server (already implemented)
 - Could reduce client LLM calls by batching actions
 - Could use scripting mode for client (not yet implemented)
@@ -156,11 +176,13 @@
 ### Runtime
 
 **Total Runtime**: ~7-10 seconds for all 3 tests
+
 - test_sip_client_register: ~2-3s
 - test_sip_client_options: ~2-3s
 - test_sip_client_invite: ~3-4s
 
 **Bottlenecks**:
+
 - LLM response time: 500ms-2s per call
 - SIP message parsing/generation: < 1ms
 - Network localhost UDP: < 1ms
@@ -201,11 +223,13 @@
 
 **Symptom**: Test hangs, eventually times out
 **Possible Causes**:
+
 1. Ollama not running
 2. LLM infinite loop or stuck processing
 3. Network port conflict
 
 **Debug Steps**:
+
 ```bash
 # Check Ollama
 curl http://localhost:11434/api/version
@@ -221,11 +245,13 @@ RUST_LOG=debug ./cargo-isolated.sh test --features sip --test client::sip::e2e_t
 
 **Symptom**: Test fails assertion (e.g., output doesn't contain "connected")
 **Possible Causes**:
+
 1. LLM generated unexpected response
 2. Protocol parsing error
 3. Timing issue (client output not captured in time)
 
 **Debug Steps**:
+
 ```bash
 # Check client output
 # The test prints output on failure: "Output: ..."
@@ -241,11 +267,13 @@ for i in {1..10}; do ./cargo-isolated.sh test --features sip --test client::sip:
 
 **Symptom**: Process exits unexpectedly
 **Possible Causes**:
+
 1. Panic in SIP parsing code
 2. Network error
 3. Missing dependency (unlikely with manual implementation)
 
 **Debug Steps**:
+
 ```bash
 # Run with backtrace
 RUST_BACKTRACE=1 ./cargo-isolated.sh test --features sip --test client::sip::e2e_test -- test_sip_client_register --exact --nocapture
@@ -257,16 +285,19 @@ cat netget.log
 ## Future Test Enhancements
 
 ### Priority 1 (Complete Basic Coverage)
+
 1. **Test ACK Handling**: Once ACK is implemented, add test for full INVITE→200→ACK flow
 2. **Test BYE Request**: Verify client can terminate active sessions
 3. **Test CANCEL**: Verify client can cancel pending INVITE
 
 ### Priority 2 (Edge Cases)
+
 1. **Test Error Responses**: Verify client handles 403 Forbidden, 486 Busy Here, etc.
 2. **Test 180 Ringing**: Verify client waits for final response after provisional
 3. **Test Multiple Dialogs**: Verify client can handle multiple calls simultaneously
 
 ### Priority 3 (Advanced Features)
+
 1. **Test Authentication**: Once digest auth implemented, test 401 challenges
 2. **Test TCP Transport**: Once TCP implemented, test large message handling
 3. **Test TLS (SIPS)**: Once TLS implemented, test encrypted signaling

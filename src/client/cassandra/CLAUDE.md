@@ -2,7 +2,8 @@
 
 ## Overview
 
-The Cassandra client implementation provides LLM-controlled access to Cassandra and ScyllaDB servers using the ScyllaDB Rust driver. The LLM can execute CQL queries and interpret results.
+The Cassandra client implementation provides LLM-controlled access to Cassandra and ScyllaDB servers using the ScyllaDB
+Rust driver. The LLM can execute CQL queries and interpret results.
 
 **Client Library**: `scylla` v0.15+ (ScyllaDB Rust driver)
 **Protocol**: CQL Binary Protocol v4
@@ -13,6 +14,7 @@ The Cassandra client implementation provides LLM-controlled access to Cassandra 
 ### Library Choice
 
 **ScyllaDB Rust Driver (`scylla` crate)**:
+
 - Production-ready (v1.0 released 2025)
 - Fully async with Tokio integration
 - Shard-aware routing (optimized for ScyllaDB)
@@ -23,6 +25,7 @@ The Cassandra client implementation provides LLM-controlled access to Cassandra 
 - Compression support (LZ4, Snappy)
 
 **Why ScyllaDB driver over cdrs-tokio**:
+
 - More actively maintained
 - Better performance benchmarks
 - Native Tokio integration
@@ -55,30 +58,35 @@ The Cassandra client implementation provides LLM-controlled access to Cassandra 
 ### LLM Control
 
 **Async Actions** (user-triggered):
+
 - `execute_cql_query` - Execute CQL query
-  - Parameters: query (string), consistency (optional)
-  - Examples: "SELECT * FROM system.local", "INSERT INTO users VALUES (1, 'Alice')"
+    - Parameters: query (string), consistency (optional)
+    - Examples: "SELECT * FROM system.local", "INSERT INTO users VALUES (1, 'Alice')"
 - `disconnect` - Close connection
 - `wait_for_more` - Wait for next action
 
 **Sync Actions** (in response to results):
+
 - `execute_cql_query` - Execute follow-up query based on results
 - `wait_for_more` - Do nothing
 
 **Events:**
+
 - `cassandra_connected` - Fired when connection established
-  - Data includes: remote_addr
+    - Data includes: remote_addr
 - `cassandra_result_received` - Fired when query results received
-  - Data includes: rows (array), row_count (number)
+    - Data includes: rows (array), row_count (number)
 
 ### Connection Management
 
 **Startup Parameters** (optional):
+
 - `keyspace`: Default keyspace to use
 - `username`: Username for authentication
 - `password`: Password for authentication
 
 **Session Building**:
+
 ```rust
 SessionBuilder::new()
     .known_node(&remote_addr)
@@ -89,6 +97,7 @@ SessionBuilder::new()
 ```
 
 **Connection Lifecycle**:
+
 1. Parse startup parameters (keyspace, auth)
 2. Build SessionBuilder with configuration
 3. Connect to Cassandra cluster
@@ -100,11 +109,13 @@ SessionBuilder::new()
 ### State Machine
 
 **Connection States** (prevents concurrent LLM calls):
+
 - **Idle**: Ready to execute queries
 - **Processing**: Query executing, LLM call in progress
 - **Accumulating**: Not used (Cassandra is request-response)
 
 **State Transitions**:
+
 - Idle → Processing: When query action received
 - Processing → Idle: After LLM processes result
 - Skip action if already Processing
@@ -125,11 +136,13 @@ SessionBuilder::new()
 ### Result Parsing
 
 **Query Results**:
+
 - `query_result.rows`: Optional vector of rows
 - Each row converted to JSON (simplified)
 - Full row parsing would require column type information
 
 **Current Implementation** (simplified):
+
 ```rust
 let rows_data: Vec<serde_json::Value> = rows.iter()
     .map(|row| json!({ "columns": format!("{:?}", row) }))
@@ -137,6 +150,7 @@ let rows_data: Vec<serde_json::Value> = rows.iter()
 ```
 
 **Future Enhancement** (typed parsing):
+
 ```rust
 // Parse columns by type
 for row in rows {
@@ -178,6 +192,7 @@ status_tx.send("[CLIENT] Cassandra client connected");    // → TUI
 ## Consistency Levels
 
 Supported consistency levels (via `consistency` parameter):
+
 - `ONE`: One replica must respond
 - `TWO`: Two replicas must respond
 - `THREE`: Three replicas must respond
@@ -207,6 +222,7 @@ Default: `ONE` (fastest, least consistency)
 **User**: "Connect to Cassandra and query system.local table"
 
 **LLM Action**:
+
 ```json
 {
   "type": "execute_cql_query",
@@ -219,6 +235,7 @@ Default: `ONE` (fastest, least consistency)
 **User**: "Select all users with quorum consistency"
 
 **LLM Action**:
+
 ```json
 {
   "type": "execute_cql_query",
@@ -232,6 +249,7 @@ Default: `ONE` (fastest, least consistency)
 **User**: "Insert a new user"
 
 **LLM Action**:
+
 ```json
 {
   "type": "execute_cql_query",
@@ -244,6 +262,7 @@ Default: `ONE` (fastest, least consistency)
 **User**: "Get user count, then select all users"
 
 **LLM Actions** (sequence):
+
 ```json
 // First action
 {
@@ -261,6 +280,7 @@ Default: `ONE` (fastest, least consistency)
 ## Authentication
 
 **Plain Text Authentication** (SASL PLAIN):
+
 ```json
 {
   "username": "cassandra",
@@ -273,11 +293,13 @@ Passed as startup parameters when opening client.
 ## Compression
 
 **Supported**:
+
 - LZ4 (enabled by default in implementation)
 - Snappy (available via driver)
 - None
 
 **Configuration**:
+
 ```rust
 SessionBuilder::new()
     .compression(Some(Compression::Lz4))

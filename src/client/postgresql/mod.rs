@@ -46,7 +46,11 @@ impl PostgresqlClient {
                 .unwrap_or_else(|| "".to_string());
             (database, user, password)
         } else {
-            ("postgres".to_string(), "postgres".to_string(), "".to_string())
+            (
+                "postgres".to_string(),
+                "postgres".to_string(),
+                "".to_string(),
+            )
         };
 
         // Build connection string
@@ -67,15 +71,22 @@ impl PostgresqlClient {
         // Connect to PostgreSQL server
         let (client, connection) = tokio_postgres::connect(&conn_str, tokio_postgres::NoTls)
             .await
-            .context(format!("Failed to connect to PostgreSQL at {}", remote_addr))?;
+            .context(format!(
+                "Failed to connect to PostgreSQL at {}",
+                remote_addr
+            ))?;
 
         // Get the local address from the connection's underlying socket
         // Note: tokio-postgres doesn't expose local_addr directly, so we parse from remote_addr
-        let local_addr: SocketAddr = format!("{}:0", remote_addr.split(':').next().unwrap_or("127.0.0.1"))
-            .parse()
-            .unwrap_or_else(|_| "127.0.0.1:0".parse().unwrap());
+        let local_addr: SocketAddr =
+            format!("{}:0", remote_addr.split(':').next().unwrap_or("127.0.0.1"))
+                .parse()
+                .unwrap_or_else(|_| "127.0.0.1:0".parse().unwrap());
 
-        info!("PostgreSQL client {} connected to {}", client_id, remote_addr);
+        info!(
+            "PostgreSQL client {} connected to {}",
+            client_id, remote_addr
+        );
 
         // Update client state
         app_state
@@ -103,7 +114,8 @@ impl PostgresqlClient {
         let client_arc = Arc::new(tokio::sync::Mutex::new(client));
 
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-            let protocol = Arc::new(crate::client::postgresql::actions::PostgresqlClientProtocol::new());
+            let protocol =
+                Arc::new(crate::client::postgresql::actions::PostgresqlClientProtocol::new());
             let event = Event::new(
                 &POSTGRESQL_CLIENT_CONNECTED_EVENT,
                 serde_json::json!({

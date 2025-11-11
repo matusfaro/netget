@@ -15,23 +15,21 @@ use std::sync::LazyLock;
 pub static SAML_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "saml_connected",
-        "SAML client initialized and ready to authenticate"
+        "SAML client initialized and ready to authenticate",
     )
-    .with_parameters(vec![
-        Parameter {
-            name: "idp_url".to_string(),
-            type_hint: "string".to_string(),
-            description: "Identity Provider URL".to_string(),
-            required: true,
-        },
-    ])
+    .with_parameters(vec![Parameter {
+        name: "idp_url".to_string(),
+        type_hint: "string".to_string(),
+        description: "Identity Provider URL".to_string(),
+        required: true,
+    }])
 });
 
 /// SAML authentication response received event
 pub static SAML_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "saml_response_received",
-        "SAML authentication response received from IdP"
+        "SAML authentication response received from IdP",
     )
     .with_parameters(vec![
         Parameter {
@@ -72,225 +70,229 @@ impl SamlClientProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for SamlClientProtocol {
-        fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-            vec![
-                ParameterDefinition {
-                    name: "entity_id".to_string(),
-                    description: "Service Provider entity ID".to_string(),
+    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
+        vec![
+            ParameterDefinition {
+                name: "entity_id".to_string(),
+                description: "Service Provider entity ID".to_string(),
+                type_hint: "string".to_string(),
+                required: false,
+                example: json!("https://example.com/saml/sp"),
+            },
+            ParameterDefinition {
+                name: "acs_url".to_string(),
+                description: "Assertion Consumer Service URL".to_string(),
+                type_hint: "string".to_string(),
+                required: false,
+                example: json!("https://example.com/saml/acs"),
+            },
+            ParameterDefinition {
+                name: "binding".to_string(),
+                description: "SAML binding type (redirect or post)".to_string(),
+                type_hint: "string".to_string(),
+                required: false,
+                example: json!("redirect"),
+            },
+        ]
+    }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        vec![
+            ActionDefinition {
+                name: "initiate_sso".to_string(),
+                description: "Initiate SAML Single Sign-On with IdP".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "relay_state".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Optional relay state to preserve across authentication"
+                            .to_string(),
+                        required: false,
+                    },
+                    Parameter {
+                        name: "force_authn".to_string(),
+                        type_hint: "boolean".to_string(),
+                        description: "Force re-authentication at IdP".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({
+                    "type": "initiate_sso",
+                    "relay_state": "/protected/resource",
+                    "force_authn": false
+                }),
+            },
+            ActionDefinition {
+                name: "validate_assertion".to_string(),
+                description: "Validate a SAML assertion received from IdP".to_string(),
+                parameters: vec![Parameter {
+                    name: "saml_response".to_string(),
                     type_hint: "string".to_string(),
-                    required: false,
-                    example: json!("https://example.com/saml/sp"),
-                },
-                ParameterDefinition {
-                    name: "acs_url".to_string(),
-                    description: "Assertion Consumer Service URL".to_string(),
-                    type_hint: "string".to_string(),
-                    required: false,
-                    example: json!("https://example.com/saml/acs"),
-                },
-                ParameterDefinition {
-                    name: "binding".to_string(),
-                    description: "SAML binding type (redirect or post)".to_string(),
-                    type_hint: "string".to_string(),
-                    required: false,
-                    example: json!("redirect"),
-                },
-            ]
-        }
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            vec![
-                ActionDefinition {
-                    name: "initiate_sso".to_string(),
-                    description: "Initiate SAML Single Sign-On with IdP".to_string(),
-                    parameters: vec![
-                        Parameter {
-                            name: "relay_state".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "Optional relay state to preserve across authentication".to_string(),
-                            required: false,
-                        },
-                        Parameter {
-                            name: "force_authn".to_string(),
-                            type_hint: "boolean".to_string(),
-                            description: "Force re-authentication at IdP".to_string(),
-                            required: false,
-                        },
-                    ],
-                    example: json!({
-                        "type": "initiate_sso",
-                        "relay_state": "/protected/resource",
-                        "force_authn": false
-                    }),
-                },
-                ActionDefinition {
-                    name: "validate_assertion".to_string(),
-                    description: "Validate a SAML assertion received from IdP".to_string(),
-                    parameters: vec![
-                        Parameter {
-                            name: "saml_response".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "Base64-encoded SAML response".to_string(),
-                            required: true,
-                        },
-                    ],
-                    example: json!({
-                        "type": "validate_assertion",
-                        "saml_response": "PHNhbWxwOlJlc3BvbnNlLi4uPg=="
-                    }),
-                },
-                ActionDefinition {
-                    name: "disconnect".to_string(),
-                    description: "Disconnect from SAML IdP".to_string(),
-                    parameters: vec![],
-                    example: json!({
-                        "type": "disconnect"
-                    }),
-                },
-            ]
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                ActionDefinition {
-                    name: "parse_assertion".to_string(),
-                    description: "Parse SAML assertion from response".to_string(),
-                    parameters: vec![
-                        Parameter {
-                            name: "response_xml".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "SAML response XML".to_string(),
-                            required: true,
-                        },
-                    ],
-                    example: json!({
-                        "type": "parse_assertion",
-                        "response_xml": "<samlp:Response...>"
-                    }),
-                },
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "SAML"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            vec![
-                EventType {
-                    id: "saml_connected".to_string(),
-                    description: "Triggered when SAML client is initialized".to_string(),
-                    actions: vec![],
-                    parameters: vec![],
-                },
-                EventType {
-                    id: "saml_response_received".to_string(),
-                    description: "Triggered when SAML client receives an authentication response".to_string(),
-                    actions: vec![],
-                    parameters: vec![],
-                },
-            ]
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>TCP>HTTP>SAML"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["saml", "saml client", "connect to saml", "sso", "single sign-on"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Experimental)
-                .implementation("Custom SAML SP client with XML parsing")
-                .llm_control("SSO initiation, assertion validation, attribute extraction")
-                .e2e_testing("SAML test IdP or simplesamlphp")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "SAML Service Provider client for federated authentication"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Connect to SAML IdP at https://idp.example.com/saml and authenticate user"
-        }
-        fn group_name(&self) -> &'static str {
-            "Authentication"
-        }
+                    description: "Base64-encoded SAML response".to_string(),
+                    required: true,
+                }],
+                example: json!({
+                    "type": "validate_assertion",
+                    "saml_response": "PHNhbWxwOlJlc3BvbnNlLi4uPg=="
+                }),
+            },
+            ActionDefinition {
+                name: "disconnect".to_string(),
+                description: "Disconnect from SAML IdP".to_string(),
+                parameters: vec![],
+                example: json!({
+                    "type": "disconnect"
+                }),
+            },
+        ]
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![ActionDefinition {
+            name: "parse_assertion".to_string(),
+            description: "Parse SAML assertion from response".to_string(),
+            parameters: vec![Parameter {
+                name: "response_xml".to_string(),
+                type_hint: "string".to_string(),
+                description: "SAML response XML".to_string(),
+                required: true,
+            }],
+            example: json!({
+                "type": "parse_assertion",
+                "response_xml": "<samlp:Response...>"
+            }),
+        }]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "SAML"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        vec![
+            EventType {
+                id: "saml_connected".to_string(),
+                description: "Triggered when SAML client is initialized".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+            EventType {
+                id: "saml_response_received".to_string(),
+                description: "Triggered when SAML client receives an authentication response"
+                    .to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+        ]
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>HTTP>SAML"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec![
+            "saml",
+            "saml client",
+            "connect to saml",
+            "sso",
+            "single sign-on",
+        ]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("Custom SAML SP client with XML parsing")
+            .llm_control("SSO initiation, assertion validation, attribute extraction")
+            .e2e_testing("SAML test IdP or simplesamlphp")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "SAML Service Provider client for federated authentication"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Connect to SAML IdP at https://idp.example.com/saml and authenticate user"
+    }
+    fn group_name(&self) -> &'static str {
+        "Authentication"
+    }
 }
 
 // Implement Client trait (client-specific functionality)
 impl Client for SamlClientProtocol {
-        fn connect(
-            &self,
-            ctx: crate::protocol::ConnectContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::client::saml::SamlClient;
-                SamlClient::connect_with_llm_actions(
-                    ctx.remote_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.client_id,
-                )
-                .await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "initiate_sso" => {
-                    let relay_state = action
-                        .get("relay_state")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-    
-                    let force_authn = action
-                        .get("force_authn")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "saml_initiate_sso".to_string(),
-                        data: json!({
-                            "relay_state": relay_state,
-                            "force_authn": force_authn,
-                        }),
-                    })
-                }
-                "validate_assertion" => {
-                    let saml_response = action
-                        .get("saml_response")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'saml_response' field")?
-                        .to_string();
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "saml_validate_assertion".to_string(),
-                        data: json!({
-                            "saml_response": saml_response,
-                        }),
-                    })
-                }
-                "parse_assertion" => {
-                    let response_xml = action
-                        .get("response_xml")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'response_xml' field")?
-                        .to_string();
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "saml_parse_assertion".to_string(),
-                        data: json!({
-                            "response_xml": response_xml,
-                        }),
-                    })
-                }
-                "disconnect" => Ok(ClientActionResult::Disconnect),
-                _ => Err(anyhow::anyhow!("Unknown SAML client action: {}", action_type)),
-            }
-        }
-}
+    fn connect(
+        &self,
+        ctx: crate::protocol::ConnectContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::client::saml::SamlClient;
+            SamlClient::connect_with_llm_actions(
+                ctx.remote_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.client_id,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
 
+        match action_type {
+            "initiate_sso" => {
+                let relay_state = action
+                    .get("relay_state")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                let force_authn = action
+                    .get("force_authn")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
+                Ok(ClientActionResult::Custom {
+                    name: "saml_initiate_sso".to_string(),
+                    data: json!({
+                        "relay_state": relay_state,
+                        "force_authn": force_authn,
+                    }),
+                })
+            }
+            "validate_assertion" => {
+                let saml_response = action
+                    .get("saml_response")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'saml_response' field")?
+                    .to_string();
+
+                Ok(ClientActionResult::Custom {
+                    name: "saml_validate_assertion".to_string(),
+                    data: json!({
+                        "saml_response": saml_response,
+                    }),
+                })
+            }
+            "parse_assertion" => {
+                let response_xml = action
+                    .get("response_xml")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'response_xml' field")?
+                    .to_string();
+
+                Ok(ClientActionResult::Custom {
+                    name: "saml_parse_assertion".to_string(),
+                    data: json!({
+                        "response_xml": response_xml,
+                    }),
+                })
+            }
+            "disconnect" => Ok(ClientActionResult::Disconnect),
+            _ => Err(anyhow::anyhow!(
+                "Unknown SAML client action: {}",
+                action_type
+            )),
+        }
+    }
+}

@@ -16,12 +16,8 @@ use serde_json::json;
 use std::sync::LazyLock;
 
 /// IPSec/IKEv2 handshake initiation event
-pub static IPSEC_HANDSHAKE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "ipsec_handshake",
-        "IPSec/IKEv2 client initiated handshake",
-    )
-});
+pub static IPSEC_HANDSHAKE_EVENT: LazyLock<EventType> =
+    LazyLock::new(|| EventType::new("ipsec_handshake", "IPSec/IKEv2 client initiated handshake"));
 
 /// IPSec/IKEv2 data packet event
 pub static IPSEC_DATA_EVENT: LazyLock<EventType> =
@@ -29,10 +25,7 @@ pub static IPSEC_DATA_EVENT: LazyLock<EventType> =
 
 /// Get all IPSec event types
 pub fn get_ipsec_event_types() -> Vec<EventType> {
-    vec![
-        IPSEC_HANDSHAKE_EVENT.clone(),
-        IPSEC_DATA_EVENT.clone(),
-    ]
+    vec![IPSEC_HANDSHAKE_EVENT.clone(), IPSEC_DATA_EVENT.clone()]
 }
 
 /// IPSec protocol implementation
@@ -46,34 +39,36 @@ impl IpsecProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for IpsecProtocol {
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            vec![list_connections_action(), close_connection_action()]
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                accept_connection_action(),
-                reject_connection_action(),
-                log_handshake_action(),
-                send_notify_action(),
-                inspect_traffic_action(),
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "IPSec/IKEv2"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            get_ipsec_event_types()
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>UDP>IPSEC"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["ipsec", "ikev2", "ike"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState, PrivilegeRequirement};
-    
-            ProtocolMetadataV2::builder()
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        vec![list_connections_action(), close_connection_action()]
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            accept_connection_action(),
+            reject_connection_action(),
+            log_handshake_action(),
+            send_notify_action(),
+            inspect_traffic_action(),
+        ]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "IPSec/IKEv2"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_ipsec_event_types()
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>UDP>IPSEC"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["ipsec", "ikev2", "ike"]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{
+            DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2,
+        };
+
+        ProtocolMetadataV2::builder()
                 .state(DevelopmentState::Experimental)
                 .privilege_requirement(PrivilegeRequirement::PrivilegedPort(500))
                 .implementation("Enhanced IKE parsing with payload chain analysis")
@@ -81,57 +76,57 @@ impl Protocol for IpsecProtocol {
                 .e2e_testing("strongSwan client (detection only)")
                 .notes("Enhanced honeypot - extracts payloads, flags, SPIs. Full VPN planned when swanny reaches 1.0 (mid-2025)")
                 .build()
-        }
-        fn description(&self) -> &'static str {
-            "IPSec/IKEv2 enhanced honeypot with detailed protocol analysis"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Start an IPSec/IKEv2 honeypot on port 500 to analyze VPN reconnaissance attempts"
-        }
-        fn group_name(&self) -> &'static str {
-            "VPN & Routing"
-        }
+    }
+    fn description(&self) -> &'static str {
+        "IPSec/IKEv2 enhanced honeypot with detailed protocol analysis"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Start an IPSec/IKEv2 honeypot on port 500 to analyze VPN reconnaissance attempts"
+    }
+    fn group_name(&self) -> &'static str {
+        "VPN & Routing"
+    }
 }
 
 // Implement Server trait (server-specific functionality)
 impl Server for IpsecProtocol {
-        fn spawn(
-            &self,
-            ctx: crate::protocol::SpawnContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::server::ipsec::IpsecServer;
-                use std::sync::Arc;
-                IpsecServer::spawn_with_llm_actions(
-                    ctx.listen_addr,
-                    Arc::new(ctx.llm_client),
-                    ctx.state,
-                    ctx.server_id,
-                    ctx.status_tx,
-                ).await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "accept_connection" => self.execute_accept_connection(action),
-                "reject_connection" => self.execute_reject_connection(action),
-                "log_handshake" => self.execute_log_handshake(action),
-                "send_notify" => self.execute_send_notify(action),
-                "inspect_traffic" => self.execute_inspect_traffic(action),
-                "list_connections" => Ok(ActionResult::NoAction), // Async action
-                "close_connection" => Ok(ActionResult::NoAction),  // Async action
-                _ => Err(anyhow::anyhow!("Unknown IPSec action: {}", action_type)),
-            }
-        }
-}
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::ipsec::IpsecServer;
+            use std::sync::Arc;
+            IpsecServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                Arc::new(ctx.llm_client),
+                ctx.state,
+                ctx.server_id,
+                ctx.status_tx,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
 
+        match action_type {
+            "accept_connection" => self.execute_accept_connection(action),
+            "reject_connection" => self.execute_reject_connection(action),
+            "log_handshake" => self.execute_log_handshake(action),
+            "send_notify" => self.execute_send_notify(action),
+            "inspect_traffic" => self.execute_inspect_traffic(action),
+            "list_connections" => Ok(ActionResult::NoAction), // Async action
+            "close_connection" => Ok(ActionResult::NoAction), // Async action
+            _ => Err(anyhow::anyhow!("Unknown IPSec action: {}", action_type)),
+        }
+    }
+}
 
 impl IpsecProtocol {
     /// Execute accept_connection action - allow IKE handshake to proceed
@@ -254,7 +249,9 @@ fn send_notify_action() -> ActionDefinition {
         parameters: vec![Parameter {
             name: "notify_type".to_string(),
             type_hint: "string".to_string(),
-            description: "IKE notify message type (e.g., NO_PROPOSAL_CHOSEN, AUTHENTICATION_FAILED)".to_string(),
+            description:
+                "IKE notify message type (e.g., NO_PROPOSAL_CHOSEN, AUTHENTICATION_FAILED)"
+                    .to_string(),
             required: false,
         }],
         example: json!({
@@ -311,4 +308,3 @@ fn close_connection_action() -> ActionDefinition {
         }),
     }
 }
-

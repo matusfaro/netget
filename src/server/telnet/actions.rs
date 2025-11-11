@@ -61,8 +61,8 @@ impl TelnetProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for TelnetProtocol {
-        fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
-            vec![
+    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        vec![
                 crate::llm::actions::ParameterDefinition {
                     name: "send_first".to_string(),
                     type_hint: "boolean".to_string(),
@@ -71,96 +71,99 @@ impl Protocol for TelnetProtocol {
                     example: serde_json::json!(false),
                 },
             ]
-        }
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            // Telnet doesn't need async actions for now
-            Vec::new()
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                send_telnet_message_action(),
-                send_telnet_line_action(),
-                send_telnet_prompt_action(),
-                wait_for_more_action(),
-                close_connection_action(),
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "Telnet"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            get_telnet_event_types()
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>TCP>Telnet"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["telnet"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState, PrivilegeRequirement};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Experimental)
-                .privilege_requirement(PrivilegeRequirement::PrivilegedPort(23))
-                .implementation("Simplified line-based (no IAC negotiation)")
-                .llm_control("Terminal responses")
-                .e2e_testing("telnet CLI / raw TCP")
-                .notes("Telnet-lite, no option negotiation")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "Telnet terminal server"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Start a telnet server on port 23 that echoes commands"
-        }
-        fn group_name(&self) -> &'static str {
-            "Application"
-        }
+    }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        // Telnet doesn't need async actions for now
+        Vec::new()
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            send_telnet_message_action(),
+            send_telnet_line_action(),
+            send_telnet_prompt_action(),
+            wait_for_more_action(),
+            close_connection_action(),
+        ]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "Telnet"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_telnet_event_types()
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>Telnet"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["telnet"]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{
+            DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2,
+        };
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(23))
+            .implementation("Simplified line-based (no IAC negotiation)")
+            .llm_control("Terminal responses")
+            .e2e_testing("telnet CLI / raw TCP")
+            .notes("Telnet-lite, no option negotiation")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "Telnet terminal server"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Start a telnet server on port 23 that echoes commands"
+    }
+    fn group_name(&self) -> &'static str {
+        "Application"
+    }
 }
 
 // Implement Server trait (server-specific functionality)
 impl Server for TelnetProtocol {
-        fn spawn(
-            &self,
-            ctx: crate::protocol::SpawnContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::server::telnet::TelnetServer;
-                let _send_first = ctx.startup_params
-                    .as_ref()
-                    .and_then(|p| p.get_optional_bool("send_first"))
-                    .unwrap_or(false);
-    
-                TelnetServer::spawn_with_llm_actions(
-                    ctx.listen_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                                    ctx.server_id,
-                ).await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "send_telnet_message" => self.execute_send_telnet_message(action),
-                "send_telnet_line" => self.execute_send_telnet_line(action),
-                "send_telnet_prompt" => self.execute_send_telnet_prompt(action),
-                "wait_for_more" => Ok(ActionResult::WaitForMore),
-                "close_connection" => Ok(ActionResult::CloseConnection),
-                _ => Err(anyhow::anyhow!("Unknown Telnet action: {}", action_type)),
-            }
-        }
-}
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::telnet::TelnetServer;
+            let _send_first = ctx
+                .startup_params
+                .as_ref()
+                .and_then(|p| p.get_optional_bool("send_first"))
+                .unwrap_or(false);
 
+            TelnetServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
+
+        match action_type {
+            "send_telnet_message" => self.execute_send_telnet_message(action),
+            "send_telnet_line" => self.execute_send_telnet_line(action),
+            "send_telnet_prompt" => self.execute_send_telnet_prompt(action),
+            "wait_for_more" => Ok(ActionResult::WaitForMore),
+            "close_connection" => Ok(ActionResult::CloseConnection),
+            _ => Err(anyhow::anyhow!("Unknown Telnet action: {}", action_type)),
+        }
+    }
+}
 
 // Action definitions
 
@@ -244,16 +247,14 @@ fn close_connection_action() -> ActionDefinition {
 pub static TELNET_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "telnet_message_received",
-        "Telnet message received from a client"
+        "Telnet message received from a client",
     )
-    .with_parameters(vec![
-        Parameter {
-            name: "message".to_string(),
-            type_hint: "string".to_string(),
-            description: "The Telnet message line received".to_string(),
-            required: true,
-        },
-    ])
+    .with_parameters(vec![Parameter {
+        name: "message".to_string(),
+        type_hint: "string".to_string(),
+        description: "The Telnet message line received".to_string(),
+        required: true,
+    }])
     .with_actions(vec![
         send_telnet_message_action(),
         send_telnet_line_action(),
@@ -264,7 +265,5 @@ pub static TELNET_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(||
 });
 
 pub fn get_telnet_event_types() -> Vec<EventType> {
-    vec![
-        TELNET_MESSAGE_RECEIVED_EVENT.clone(),
-    ]
+    vec![TELNET_MESSAGE_RECEIVED_EVENT.clone()]
 }

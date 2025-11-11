@@ -22,13 +22,13 @@ use serde_json::json;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
 
+use crate::llm::action_helper::call_llm;
+use crate::llm::ollama_client::OllamaClient;
+use crate::protocol::EventType;
 use crate::server::connection::ConnectionId;
 use crate::server::npm::actions::NpmProtocol;
-use crate::llm::ollama_client::OllamaClient;
-use crate::llm::action_helper::call_llm;
 use crate::state::app_state::AppState;
-use crate::protocol::EventType;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 
 /// NPM registry server that delegates to LLM
 pub struct NpmServer;
@@ -42,7 +42,8 @@ impl NpmServer {
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
     ) -> anyhow::Result<SocketAddr> {
-        let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let listener =
+            crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         console_info!(status_tx, "NPM registry server listening on {}", local_addr);
 
@@ -53,13 +54,18 @@ impl NpmServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
                         info!("NPM connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!("[INFO] NPM connection from {}", remote_addr));
+                        let _ =
+                            status_tx.send(format!("[INFO] NPM connection from {}", remote_addr));
 
                         // Add connection to ServerInstance
-                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -74,7 +80,9 @@ impl NpmServer {
                             status_changed_at: now,
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
-                        app_state.add_connection_to_server(server_id, conn_state).await;
+                        app_state
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let llm_client_clone = llm_client.clone();
@@ -108,13 +116,18 @@ impl NpmServer {
                             });
 
                             // Serve HTTP/1 on this connection
-                            if let Err(err) = http1::Builder::new().serve_connection(io, service).await {
+                            if let Err(err) =
+                                http1::Builder::new().serve_connection(io, service).await
+                            {
                                 error!("Error serving NPM connection: {:?}", err);
                             }
 
                             // Mark connection as closed
-                            app_state_clone.close_connection_on_server(server_id, connection_id).await;
-                            let _ = status_tx_clone.send(format!("[INFO] NPM connection {} closed", connection_id));
+                            app_state_clone
+                                .close_connection_on_server(server_id, connection_id)
+                                .await;
+                            let _ = status_tx_clone
+                                .send(format!("[INFO] NPM connection {} closed", connection_id));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
@@ -164,17 +177,29 @@ async fn handle_npm_request(
     let (event_type, description) = if path == "/-/all" {
         ("NPM_LIST_REQUEST", "NPM package list request".to_string())
     } else if path.starts_with("/-/v1/search") {
-        ("NPM_SEARCH_REQUEST", format!("NPM package search: {}", query))
+        (
+            "NPM_SEARCH_REQUEST",
+            format!("NPM package search: {}", query),
+        )
     } else if path.contains("/-/") {
         // Tarball request: /{package}/-/{tarball}.tgz
         let parts: Vec<&str> = path.split("/-/").collect();
         let package_name = parts.get(0).unwrap_or(&"").trim_start_matches('/');
         let tarball_name = parts.get(1).unwrap_or(&"");
-        ("NPM_TARBALL_REQUEST", format!("NPM tarball request: package={}, tarball={}", package_name, tarball_name))
+        (
+            "NPM_TARBALL_REQUEST",
+            format!(
+                "NPM tarball request: package={}, tarball={}",
+                package_name, tarball_name
+            ),
+        )
     } else {
         // Package metadata request: /{package}
         let package_name = path.trim_start_matches('/');
-        ("NPM_PACKAGE_REQUEST", format!("NPM package metadata request: {}", package_name))
+        (
+            "NPM_PACKAGE_REQUEST",
+            format!("NPM package metadata request: {}", package_name),
+        )
     };
 
     trace!("NPM event: {}: {}", event_type, &description);
@@ -211,7 +236,12 @@ async fn handle_npm_request(
         }),
     );
 
-    console_debug!(status_tx, "Calling LLM for NPM request: {} {}", method, path);
+    console_debug!(
+        status_tx,
+        "Calling LLM for NPM request: {} {}",
+        method,
+        path
+    );
 
     // Call LLM
     let llm_result = call_llm(
@@ -221,7 +251,8 @@ async fn handle_npm_request(
         None,
         &event,
         protocol.as_ref(),
-    ).await;
+    )
+    .await;
 
     // Process LLM result
     match llm_result {
@@ -243,7 +274,7 @@ async fn handle_npm_request(
                 .header("Content-Type", "application/json")
                 .body(Full::new(Bytes::from(error_response.to_string())))
                 .unwrap())
-        },
+        }
         Err(e) => {
             console_error!(status_tx, "LLM call failed: {}", e);
             let error_response = json!({
@@ -269,7 +300,8 @@ async fn process_npm_action_result(
         ActionResult::Custom { name, data } => {
             match name.as_str() {
                 "npm_package_metadata" => {
-                    let metadata = data.get("metadata")
+                    let metadata = data
+                        .get("metadata")
                         .context("Missing metadata in npm_package_metadata")
                         .unwrap();
 
@@ -280,9 +312,10 @@ async fn process_npm_action_result(
                         .header("Content-Type", "application/json")
                         .body(Full::new(Bytes::from(metadata.to_string())))
                         .unwrap())
-                },
+                }
                 "npm_package_tarball" => {
-                    let tarball_data = data.get("tarball_data")
+                    let tarball_data = data
+                        .get("tarball_data")
                         .and_then(|v| v.as_str())
                         .context("Missing tarball_data in npm_package_tarball")
                         .unwrap();
@@ -293,15 +326,19 @@ async fn process_npm_action_result(
                         .unwrap_or_default();
 
                     debug!("NPM package tarball response: {} bytes", decoded.len());
-                    let _ = status_tx.send(format!("[DEBUG] Sending NPM tarball: {} bytes", decoded.len()));
+                    let _ = status_tx.send(format!(
+                        "[DEBUG] Sending NPM tarball: {} bytes",
+                        decoded.len()
+                    ));
                     Ok(Response::builder()
                         .status(StatusCode::OK)
                         .header("Content-Type", "application/octet-stream")
                         .body(Full::new(Bytes::from(decoded)))
                         .unwrap())
-                },
+                }
                 "npm_package_list" => {
-                    let packages = data.get("packages")
+                    let packages = data
+                        .get("packages")
                         .context("Missing packages in npm_package_list")
                         .unwrap();
 
@@ -312,9 +349,10 @@ async fn process_npm_action_result(
                         .header("Content-Type", "application/json")
                         .body(Full::new(Bytes::from(packages.to_string())))
                         .unwrap())
-                },
+                }
                 "npm_package_search" => {
-                    let results = data.get("results")
+                    let results = data
+                        .get("results")
                         .context("Missing results in npm_package_search")
                         .unwrap();
 
@@ -325,12 +363,14 @@ async fn process_npm_action_result(
                         .header("Content-Type", "application/json")
                         .body(Full::new(Bytes::from(results.to_string())))
                         .unwrap())
-                },
+                }
                 "npm_error" => {
-                    let error_message = data.get("error")
+                    let error_message = data
+                        .get("error")
                         .and_then(|v| v.as_str())
                         .unwrap_or("Unknown error");
-                    let status_code = data.get("status_code")
+                    let status_code = data
+                        .get("status_code")
                         .and_then(|v| v.as_u64())
                         .unwrap_or(500) as u16;
 
@@ -340,11 +380,14 @@ async fn process_npm_action_result(
                         "error": error_message
                     });
                     Ok(Response::builder()
-                        .status(StatusCode::from_u16(status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR))
+                        .status(
+                            StatusCode::from_u16(status_code)
+                                .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                        )
                         .header("Content-Type", "application/json")
                         .body(Full::new(Bytes::from(error_response.to_string())))
                         .unwrap())
-                },
+                }
                 _ => {
                     error!("Unknown NPM action: {}", name);
                     let error_response = json!({
@@ -357,7 +400,7 @@ async fn process_npm_action_result(
                         .unwrap())
                 }
             }
-        },
+        }
         _ => {
             error!("Unexpected action result type for NPM request");
             let error_response = json!({

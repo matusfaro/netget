@@ -2,7 +2,8 @@
 
 ## Overview
 
-RSS (Really Simple Syndication) feed server implementing RSS 2.0 XML generation served over HTTP. The LLM **dynamically generates feed content** on every request - no in-memory storage.
+RSS (Really Simple Syndication) feed server implementing RSS 2.0 XML generation served over HTTP. The LLM **dynamically
+generates feed content** on every request - no in-memory storage.
 
 **Status**: Experimental
 **RFC**: RSS 2.0 Specification
@@ -13,13 +14,15 @@ RSS (Really Simple Syndication) feed server implementing RSS 2.0 XML generation 
 - **hyper v1.0** - HTTP server (same as HTTP protocol)
 - **http-body-util** - Body handling utilities
 
-**Rationale**: The `rss` crate provides excellent RSS 2.0 support with builder patterns for channels and items. Hyper handles the HTTP layer, while the RSS library focuses purely on XML generation.
+**Rationale**: The `rss` crate provides excellent RSS 2.0 support with builder patterns for channels and items. Hyper
+handles the HTTP layer, while the RSS library focuses purely on XML generation.
 
 ## Architecture Decisions
 
 ### 1. LLM-Driven Feed Generation (No Storage)
 
 RSS server operates **stateless** - feeds are generated fresh on every request:
+
 - Client makes HTTP GET request (e.g., `/tech-news.xml`)
 - Server fires `rss_feed_requested` event to LLM
 - LLM responds with `generate_rss_feed` action containing structured feed data
@@ -43,11 +46,13 @@ RSS server operates **stateless** - feeds are generated fresh on every request:
 Items can have categories in two formats:
 
 **Simple string**:
+
 ```json
 "categories": ["AI", "Technology", "Science"]
 ```
 
 Renders as:
+
 ```xml
 <category>AI</category>
 <category>Technology</category>
@@ -55,6 +60,7 @@ Renders as:
 ```
 
 **Object with domain**:
+
 ```json
 "categories": [
   "AI",
@@ -63,6 +69,7 @@ Renders as:
 ```
 
 Renders as:
+
 ```xml
 <category>AI</category>
 <category domain="tech.example.com">Machine Learning</category>
@@ -71,6 +78,7 @@ Renders as:
 ### 4. Sync Action Model
 
 RSS uses **sync actions** (not async):
+
 - `generate_rss_feed` - LLM action to generate feed XML
 - Returns structured JSON with feed metadata and items
 - Server parses JSON and builds RSS XML using `rss` crate
@@ -78,6 +86,7 @@ RSS uses **sync actions** (not async):
 ### 5. Dual Logging
 
 All RSS operations use dual logging:
+
 - **INFO**: Feed requests, feed generation
 - **DEBUG**: LLM interactions, request details
 - Both go to `netget.log` (via tracing) and TUI (via status_tx)
@@ -94,9 +103,10 @@ All RSS operations use dual logging:
 ### Events
 
 **rss_feed_requested** - Fired when client requests a feed
+
 - Parameters:
-  - `path` - Feed path (e.g., `/news.xml`)
-  - `headers` - HTTP request headers (object)
+    - `path` - Feed path (e.g., `/news.xml`)
+    - `headers` - HTTP request headers (object)
 
 ### Actions
 
@@ -132,6 +142,7 @@ All RSS operations use dual logging:
 ### Feed Data Structure
 
 **Channel fields** (all strings):
+
 - `title` - Feed title (required)
 - `link` - Feed link/website URL (required)
 - `description` - Feed description (required)
@@ -140,6 +151,7 @@ All RSS operations use dual logging:
 - `last_build_date` - Last build date in RFC 2822 format (optional)
 
 **Item fields**:
+
 - `title` - Item title (string)
 - `link` - Item link/URL (string, optional)
 - `description` - Item description/content (string, optional)
@@ -193,6 +205,7 @@ All RSS operations use dual logging:
 ## Example Prompts
 
 ### Basic Feed Server
+
 ```
 listen on port 8080 via rss
 For /news.xml, serve a feed titled "Daily News" with 3 tech news items
@@ -200,6 +213,7 @@ Include categories like AI, Cloud, and Quantum for each item
 ```
 
 ### Multiple Feeds
+
 ```
 start rss server on port 8080
 For /tech.xml: "Tech News" feed with 5 items about AI and programming
@@ -208,6 +222,7 @@ Use relevant categories for each item
 ```
 
 ### Blog Feed with Metadata
+
 ```
 rss server on 8080
 For /blog.xml: "My Dev Blog"
@@ -222,67 +237,82 @@ For /blog.xml: "My Dev Blog"
 ## Performance Characteristics
 
 ### Latency
+
 - One LLM call per HTTP request
 - Typical latency: 2-5 seconds per request with qwen3-coder:30b
 - XML generation: <1ms after LLM response
 - Total: ~2-5 seconds per feed request
 
 ### Throughput
+
 - Limited by LLM response time (2-5s per request)
 - Concurrent requests processed in parallel (each on separate tokio task)
 - No shared state means no lock contention
 
 ### Memory Usage
+
 - No persistent storage - very low memory footprint
 - Each request allocates temporarily for XML generation
 - Memory freed immediately after response sent
 
 ## Comparison with HTTP Server
 
-| Feature | HTTP | RSS |
-|---------|------|-----|
-| Request Handling | LLM per request | LLM per request |
-| Response Format | LLM chooses (HTML, JSON, etc.) | Always RSS 2.0 XML |
-| Structured Actions | send_http_response | generate_rss_feed |
-| State | Stateless | Stateless |
-| Categories | N/A | Built-in support |
+| Feature            | HTTP                           | RSS                |
+|--------------------|--------------------------------|--------------------|
+| Request Handling   | LLM per request                | LLM per request    |
+| Response Format    | LLM chooses (HTML, JSON, etc.) | Always RSS 2.0 XML |
+| Structured Actions | send_http_response             | generate_rss_feed  |
+| State              | Stateless                      | Stateless          |
+| Categories         | N/A                            | Built-in support   |
 
 Both protocols follow the same pattern: receive request → call LLM → generate response.
 
 ## Future Enhancements
 
 ### 1. Conditional Requests
+
 Support If-Modified-Since:
+
 - Store last-modified timestamps
 - Return 304 Not Modified when appropriate
 - Reduce bandwidth for unchanged feeds
 
 ### 2. ETag Support
+
 Generate ETags for feeds:
+
 - Hash of feed content
 - Enable client caching
 - Return 304 when ETag matches
 
 ### 3. Atom Support
+
 Support Atom 1.0 format:
+
 - Use `atom_syndication` crate
 - Serve both RSS and Atom
 - Content negotiation via Accept header
 
 ### 4. Feed Index
+
 Add `/` endpoint:
+
 - List all available feeds
 - Generate HTML or JSON directory
 - Auto-discovery links
 
 ### 5. Pagination
+
 Support large feeds:
+
 - Limit items per page
 - Add next/prev links
 - Query parameters for pagination
 
 ### 6. Media Enclosures
+
 Support podcast/media RSS:
+
 - `<enclosure>` tags
 - File size and type metadata
 - iTunes/Spotify RSS extensions

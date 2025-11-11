@@ -17,7 +17,7 @@ mod sip_client_tests {
         let server_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via SIP. \
              Accept all REGISTER requests with 200 OK, expires 3600. \
-             Use scripting mode for fast responses."
+             Use scripting mode for fast responses.",
         );
 
         let mut server = start_netget_server(server_config).await?;

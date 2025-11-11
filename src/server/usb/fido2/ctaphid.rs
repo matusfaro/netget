@@ -48,11 +48,11 @@ pub const BROADCAST_CHANNEL: u32 = 0xffffffff;
 #[repr(u8)]
 pub enum CtapHidCommand {
     Ping = 0x01,
-    Msg = 0x03,       // U2F/CTAP1 message
+    Msg = 0x03, // U2F/CTAP1 message
     Lock = 0x04,
     Init = 0x06,
     Wink = 0x08,
-    Cbor = 0x10,      // CTAP2 CBOR message
+    Cbor = 0x10, // CTAP2 CBOR message
     Cancel = 0x11,
     Error = 0x3f,
     Keepalive = 0x3b,
@@ -61,7 +61,8 @@ pub enum CtapHidCommand {
 #[cfg(feature = "usb-fido2")]
 impl CtapHidCommand {
     pub fn from_u8(value: u8) -> Option<Self> {
-        match value & !0x80 {  // Strip the initialization bit
+        match value & !0x80 {
+            // Strip the initialization bit
             0x01 => Some(Self::Ping),
             0x03 => Some(Self::Msg),
             0x04 => Some(Self::Lock),
@@ -109,7 +110,11 @@ impl CtapHidPacket {
     /// Parse a CTAPHID packet from 64-byte HID report
     pub fn parse(data: &[u8]) -> Result<Self> {
         if data.len() != HID_PACKET_SIZE {
-            bail!("Invalid packet size: {} (expected {})", data.len(), HID_PACKET_SIZE);
+            bail!(
+                "Invalid packet size: {} (expected {})",
+                data.len(),
+                HID_PACKET_SIZE
+            );
         }
 
         let cid = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
@@ -197,7 +202,7 @@ impl CtapHidPacket {
         packet[0..4].copy_from_slice(&cid.to_be_bytes());
 
         // SEQ (1 byte)
-        packet[4] = seq & 0x7f;  // Ensure init bit is not set
+        packet[4] = seq & 0x7f; // Ensure init bit is not set
 
         // DATA (up to 59 bytes)
         let copy_len = data.len().min(59);
@@ -283,7 +288,7 @@ pub struct CtapHidHandler {
 impl CtapHidHandler {
     pub fn new() -> Self {
         Self {
-            next_cid: 1,  // Start at 1 (0xffffffff is broadcast)
+            next_cid: 1, // Start at 1 (0xffffffff is broadcast)
             active_messages: HashMap::new(),
         }
     }
@@ -302,12 +307,18 @@ impl CtapHidHandler {
     pub fn process_packet(&mut self, raw_data: &[u8]) -> Result<Option<CtapHidMessage>> {
         let packet = CtapHidPacket::parse(raw_data)?;
 
-        trace!("CTAPHID packet: cid={:#010x}, cmd_or_seq={:#04x}", packet.cid, packet.cmd_or_seq);
+        trace!(
+            "CTAPHID packet: cid={:#010x}, cmd_or_seq={:#04x}",
+            packet.cid,
+            packet.cmd_or_seq
+        );
 
         if packet.is_init() {
             // Initialization packet - start new message
             let cmd = packet.command().context("Invalid command")?;
-            let bcnt = packet.get_byte_count(raw_data).context("Missing byte count")?;
+            let bcnt = packet
+                .get_byte_count(raw_data)
+                .context("Missing byte count")?;
 
             debug!(
                 "CTAPHID init: cid={:#010x}, cmd={:?}, bcnt={}",
@@ -339,7 +350,10 @@ impl CtapHidHandler {
                     Ok(None)
                 }
             } else {
-                warn!("Continuation packet for unknown channel: {:#010x}", packet.cid);
+                warn!(
+                    "Continuation packet for unknown channel: {:#010x}",
+                    packet.cid
+                );
                 bail!("Unknown channel");
             }
         }

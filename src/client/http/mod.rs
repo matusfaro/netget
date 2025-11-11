@@ -9,13 +9,13 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
+use crate::client::http::actions::HTTP_CLIENT_RESPONSE_RECEIVED_EVENT;
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::http::actions::HTTP_CLIENT_RESPONSE_RECEIVED_EVENT;
 
 /// HTTP client that makes requests to remote HTTP servers
 pub struct HttpClient;
@@ -38,25 +38,29 @@ impl HttpClient {
         // Protocol versions are automatically negotiated via ALPN during TLS handshake
         let _http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
-            .use_rustls_tls()  // Use rustls for HTTPS (HTTP/1.1 and HTTP/2)
+            .use_rustls_tls() // Use rustls for HTTPS (HTTP/1.1 and HTTP/2)
             .build()
             .context("Failed to build HTTP client")?;
 
         // Store client in protocol_data
-        app_state.with_client_mut(client_id, |client| {
-            client.set_protocol_field(
-                "http_client".to_string(),
-                serde_json::json!("initialized"),
-            );
-            client.set_protocol_field(
-                "base_url".to_string(),
-                serde_json::json!(remote_addr),
-            );
-        }).await;
+        app_state
+            .with_client_mut(client_id, |client| {
+                client.set_protocol_field(
+                    "http_client".to_string(),
+                    serde_json::json!("initialized"),
+                );
+                client.set_protocol_field("base_url".to_string(), serde_json::json!(remote_addr));
+            })
+            .await;
 
         // Update status
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] HTTP client {} ready for {}", client_id, remote_addr));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] HTTP client {} ready for {}",
+            client_id, remote_addr
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // For HTTP client, we'll spawn a background task that processes LLM-requested actions
@@ -91,11 +95,16 @@ impl HttpClient {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         // Get base URL from client
-        let base_url = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("base_url")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }).await.flatten().context("No base URL found")?;
+        let base_url = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("base_url")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .await
+            .flatten()
+            .context("No base URL found")?;
 
         let url = if path.starts_with("http://") || path.starts_with("https://") {
             path.clone()
@@ -103,12 +112,15 @@ impl HttpClient {
             format!("{}{}", base_url, path)
         };
 
-        info!("HTTP client {} making request: {} {}", client_id, method, url);
+        info!(
+            "HTTP client {} making request: {} {}",
+            client_id, method, url
+        );
 
         // Build request with HTTPS and HTTP/2 support
         let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
-            .use_rustls_tls()  // Use rustls for HTTPS (HTTP/1.1 and HTTP/2)
+            .use_rustls_tls() // Use rustls for HTTPS (HTTP/1.1 and HTTP/2)
             .build()?;
 
         let mut request = match method.to_uppercase().as_str() {
@@ -152,11 +164,15 @@ impl HttpClient {
                 // Get body
                 let body_text = response.text().await.unwrap_or_default();
 
-                info!("HTTP client {} received response: {} ({})", client_id, status_code, status);
+                info!(
+                    "HTTP client {} received response: {} ({})",
+                    client_id, status_code, status
+                );
 
                 // Call LLM with response
                 if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                    let protocol = Arc::new(crate::client::http::actions::HttpClientProtocol::new());
+                    let protocol =
+                        Arc::new(crate::client::http::actions::HttpClientProtocol::new());
                     let event = Event::new(
                         &HTTP_CLIENT_RESPONSE_RECEIVED_EVENT,
                         serde_json::json!({
@@ -167,7 +183,10 @@ impl HttpClient {
                         }),
                     );
 
-                    let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                    let memory = app_state
+                        .get_memory_for_client(client_id)
+                        .await
+                        .unwrap_or_default();
 
                     match call_llm_for_client(
                         &llm_client,
@@ -178,8 +197,13 @@ impl HttpClient {
                         Some(&event),
                         protocol.as_ref(),
                         &status_tx,
-                    ).await {
-                        Ok(ClientLlmResult { actions: _, memory_updates }) => {
+                    )
+                    .await
+                    {
+                        Ok(ClientLlmResult {
+                            actions: _,
+                            memory_updates,
+                        }) => {
                             // Update memory
                             if let Some(mem) = memory_updates {
                                 app_state.set_memory_for_client(client_id, mem).await;

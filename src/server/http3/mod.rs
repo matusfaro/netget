@@ -14,10 +14,13 @@ use super::connection::ConnectionId;
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
-use actions::{Http3Protocol, HTTP3_CONNECTION_OPENED_EVENT, HTTP3_DATA_RECEIVED_EVENT, HTTP3_STREAM_OPENED_EVENT};
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use actions::{
+    Http3Protocol, HTTP3_CONNECTION_OPENED_EVENT, HTTP3_DATA_RECEIVED_EVENT,
+    HTTP3_STREAM_OPENED_EVENT,
+};
 
 /// Stream state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -65,7 +68,7 @@ impl Http3Server {
         // Create HTTP3 server configuration
         let mut server_config = ServerConfig::with_crypto(Arc::new(
             quinn::crypto::rustls::QuicServerConfig::try_from(server_crypto)
-                .context("Failed to create HTTP3 crypto config")?
+                .context("Failed to create HTTP3 crypto config")?,
         ));
 
         // Configure transport parameters
@@ -77,7 +80,8 @@ impl Http3Server {
         // Bind endpoint
         let endpoint = Endpoint::server(server_config, listen_addr)
             .context("Failed to create HTTP3 endpoint")?;
-        let local_addr = endpoint.local_addr()
+        let local_addr = endpoint
+            .local_addr()
             .context("Failed to get local address")?;
 
         info!("HTTP3 server (action-based) listening on {}", local_addr);
@@ -98,11 +102,20 @@ impl Http3Server {
                     match connecting.await {
                         Ok(connection) => {
                             let remote_addr = connection.remote_address();
-                            info!("Accepted HTTP3 connection {} from {}", connection_id, remote_addr);
-                            let _ = status_tx_clone.send(format!("✓ HTTP3 connection {} from {}", connection_id, remote_addr));
+                            info!(
+                                "Accepted HTTP3 connection {} from {}",
+                                connection_id, remote_addr
+                            );
+                            let _ = status_tx_clone.send(format!(
+                                "✓ HTTP3 connection {} from {}",
+                                connection_id, remote_addr
+                            ));
 
                             // Add connection to ServerInstance
-                            use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                            use crate::state::server::{
+                                ConnectionState as ServerConnectionState, ConnectionStatus,
+                                ProtocolConnectionInfo,
+                            };
                             let now = std::time::Instant::now();
                             let conn_state = ServerConnectionState {
                                 id: connection_id,
@@ -119,11 +132,14 @@ impl Http3Server {
                                     "stream_count": 0
                                 })),
                             };
-                            app_state_clone.add_connection_to_server(server_id, conn_state).await;
+                            app_state_clone
+                                .add_connection_to_server(server_id, conn_state)
+                                .await;
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
 
                             // Notify LLM of new connection
-                            let event = Event::new(&HTTP3_CONNECTION_OPENED_EVENT, serde_json::json!({}));
+                            let event =
+                                Event::new(&HTTP3_CONNECTION_OPENED_EVENT, serde_json::json!({}));
                             match call_llm(
                                 &llm_client_clone,
                                 &app_state_clone,
@@ -131,7 +147,9 @@ impl Http3Server {
                                 Some(connection_id),
                                 &event,
                                 protocol_clone.as_ref(),
-                            ).await {
+                            )
+                            .await
+                            {
                                 Ok(execution_result) => {
                                     for msg in execution_result.messages {
                                         let _ = status_tx_clone.send(msg);
@@ -149,10 +167,16 @@ impl Http3Server {
                                 match connection.accept_bi().await {
                                     Ok((send_stream, recv_stream)) => {
                                         let stream_id = ConnectionId::new(
-                                            app_state_clone.get_next_unified_id().await
+                                            app_state_clone.get_next_unified_id().await,
                                         );
-                                        info!("Accepted HTTP3 stream {} on connection {}", stream_id, connection_id);
-                                        let _ = status_tx_clone.send(format!("→ Stream {} opened on connection {}", stream_id, connection_id));
+                                        info!(
+                                            "Accepted HTTP3 stream {} on connection {}",
+                                            stream_id, connection_id
+                                        );
+                                        let _ = status_tx_clone.send(format!(
+                                            "→ Stream {} opened on connection {}",
+                                            stream_id, connection_id
+                                        ));
 
                                         let llm_clone = llm_client_clone.clone();
                                         let state_clone = app_state_clone.clone();
@@ -172,32 +196,45 @@ impl Http3Server {
                                                 status_clone,
                                                 streams_clone,
                                                 protocol_clone,
-                                            ).await;
+                                            )
+                                            .await;
                                         });
                                     }
                                     Err(quinn::ConnectionError::ApplicationClosed(_)) => {
                                         info!("HTTP3 connection {} closed by peer", connection_id);
-                                        let _ = status_tx_clone.send(format!("✗ HTTP3 connection {} closed", connection_id));
+                                        let _ = status_tx_clone.send(format!(
+                                            "✗ HTTP3 connection {} closed",
+                                            connection_id
+                                        ));
                                         break;
                                     }
                                     Err(e) => {
-                                        error!("Error accepting stream on {}: {}", connection_id, e);
-                                        let _ = status_tx_clone.send(format!("✗ Stream accept error on {}: {}", connection_id, e));
+                                        error!(
+                                            "Error accepting stream on {}: {}",
+                                            connection_id, e
+                                        );
+                                        let _ = status_tx_clone.send(format!(
+                                            "✗ Stream accept error on {}: {}",
+                                            connection_id, e
+                                        ));
                                         break;
                                     }
                                 }
                             }
 
                             // Connection closed
-                            app_state_clone.close_connection_on_server(server_id, connection_id).await;
+                            app_state_clone
+                                .close_connection_on_server(server_id, connection_id)
+                                .await;
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         }
                         Err(e) => {
                             error!("Connection error on {}: {}", connection_id, e);
-                            let _ = status_tx_clone.send(format!("✗ Connection error on {}: {}", connection_id, e));
+                            let _ = status_tx_clone
+                                .send(format!("✗ Connection error on {}: {}", connection_id, e));
                         }
                     }
-                        });
+                });
             }
         });
 
@@ -221,17 +258,23 @@ impl Http3Server {
         let send_stream_arc = Arc::new(Mutex::new(send_stream));
 
         // Add stream to tracking
-        streams.lock().await.insert(stream_id, StreamData {
-            state: StreamState::Idle,
-            queued_data: Vec::new(),
-            memory: String::new(),
-            send_stream: send_stream_arc.clone(),
-        });
+        streams.lock().await.insert(
+            stream_id,
+            StreamData {
+                state: StreamState::Idle,
+                queued_data: Vec::new(),
+                memory: String::new(),
+                send_stream: send_stream_arc.clone(),
+            },
+        );
 
         // Notify LLM of new stream
-        let event = Event::new(&HTTP3_STREAM_OPENED_EVENT, serde_json::json!({
-            "stream_id": stream_id.to_string()
-        }));
+        let event = Event::new(
+            &HTTP3_STREAM_OPENED_EVENT,
+            serde_json::json!({
+                "stream_id": stream_id.to_string()
+            }),
+        );
 
         match call_llm(
             &llm_client,
@@ -240,7 +283,9 @@ impl Http3Server {
             Some(stream_id),
             &event,
             protocol.as_ref(),
-        ).await {
+        )
+        .await
+        {
             Ok(execution_result) => {
                 for msg in execution_result.messages {
                     let _ = status_tx.send(msg);
@@ -253,7 +298,12 @@ impl Http3Server {
                         if let Err(e) = send.write_all(&output_data).await {
                             error!("Failed to send initial data on stream {}: {}", stream_id, e);
                         } else {
-                            console_debug!(status_tx, "HTTP3 sent {} bytes on stream {}", output_data.len(), stream_id);
+                            console_debug!(
+                                status_tx,
+                                "HTTP3 sent {} bytes on stream {}",
+                                output_data.len(),
+                                stream_id
+                            );
                         }
                     }
                 }
@@ -272,19 +322,33 @@ impl Http3Server {
                     let data = Bytes::copy_from_slice(&buffer[..n]);
 
                     // DEBUG: Log summary with data preview
-                    if data.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
+                    if data
+                        .iter()
+                        .all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace())
+                    {
                         let data_str = String::from_utf8_lossy(&data);
                         let preview = if data_str.len() > 100 {
                             format!("{}...", &data_str[..100])
                         } else {
                             data_str.to_string()
                         };
-                        console_debug!(status_tx, "HTTP3 received {} bytes on stream {}: {}", n, stream_id, preview);
+                        console_debug!(
+                            status_tx,
+                            "HTTP3 received {} bytes on stream {}: {}",
+                            n,
+                            stream_id,
+                            preview
+                        );
 
                         // TRACE: Log full text payload
                         console_trace!(status_tx, "HTTP3 data (text): {:?}", data_str);
                     } else {
-                        console_debug!(status_tx, "HTTP3 received {} bytes on stream {} (binary data)", n, stream_id);
+                        console_debug!(
+                            status_tx,
+                            "HTTP3 received {} bytes on stream {} (binary data)",
+                            n,
+                            stream_id
+                        );
 
                         // TRACE: Log full hex payload
                         let hex_str = hex::encode(&data);
@@ -307,7 +371,8 @@ impl Http3Server {
                             status_clone,
                             streams_clone,
                             protocol_clone,
-                        ).await;
+                        )
+                        .await;
                     });
                 }
                 Ok(None) => {
@@ -351,12 +416,14 @@ impl Http3Server {
 
         // If processing, queue the data
         if current_state == StreamState::Processing {
-            streams.lock().await
-                .entry(stream_id)
-                .and_modify(|s| {
-                    s.queued_data.extend_from_slice(&data);
-                });
-            let _ = status_tx.send(format!("⏸ Queued {} bytes for stream {}", data.len(), stream_id));
+            streams.lock().await.entry(stream_id).and_modify(|s| {
+                s.queued_data.extend_from_slice(&data);
+            });
+            let _ = status_tx.send(format!(
+                "⏸ Queued {} bytes for stream {}",
+                data.len(),
+                stream_id
+            ));
             return;
         }
 
@@ -375,7 +442,10 @@ impl Http3Server {
             // Get memory
             let memory = {
                 let streams_lock = streams.lock().await;
-                streams_lock.get(&stream_id).map(|s| s.memory.clone()).unwrap_or_default()
+                streams_lock
+                    .get(&stream_id)
+                    .map(|s| s.memory.clone())
+                    .unwrap_or_default()
             };
 
             // Get send_stream for context
@@ -389,17 +459,23 @@ impl Http3Server {
             };
 
             // Format data for event parameter
-            let data_str = if all_data.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
+            let data_str = if all_data
+                .iter()
+                .all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace())
+            {
                 String::from_utf8_lossy(&all_data).to_string()
             } else {
                 hex::encode(&all_data)
             };
 
             // Create data received event
-            let event = Event::new(&HTTP3_DATA_RECEIVED_EVENT, serde_json::json!({
-                "stream_id": stream_id.to_string(),
-                "data": data_str
-            }));
+            let event = Event::new(
+                &HTTP3_DATA_RECEIVED_EVENT,
+                serde_json::json!({
+                    "stream_id": stream_id.to_string(),
+                    "data": data_str
+                }),
+            );
 
             // Call LLM
             match call_llm(
@@ -409,12 +485,16 @@ impl Http3Server {
                 Some(stream_id),
                 &event,
                 protocol.as_ref(),
-            ).await {
+            )
+            .await
+            {
                 Ok(execution_result) => {
                     debug!("LLM HTTP3 response received");
 
                     // Update memory
-                    streams.lock().await
+                    streams
+                        .lock()
+                        .await
                         .entry(stream_id)
                         .and_modify(|s| s.memory = memory.clone());
 
@@ -432,28 +512,53 @@ impl Http3Server {
                             ActionResult::Output(output_data) => {
                                 let mut send = send_stream.lock().await;
                                 if let Err(e) = send.write_all(&output_data).await {
-                                    error!("Failed to send response on stream {}: {}", stream_id, e);
+                                    error!(
+                                        "Failed to send response on stream {}: {}",
+                                        stream_id, e
+                                    );
                                 } else {
                                     // DEBUG: Log summary with data preview
-                                    if output_data.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
+                                    if output_data
+                                        .iter()
+                                        .all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace())
+                                    {
                                         let data_str = String::from_utf8_lossy(&output_data);
                                         let preview = if data_str.len() > 100 {
                                             format!("{}...", &data_str[..100])
                                         } else {
                                             data_str.to_string()
                                         };
-                                        console_debug!(status_tx, "HTTP3 sent {} bytes on stream {}: {}", output_data.len(), stream_id, preview);
+                                        console_debug!(
+                                            status_tx,
+                                            "HTTP3 sent {} bytes on stream {}: {}",
+                                            output_data.len(),
+                                            stream_id,
+                                            preview
+                                        );
 
                                         // TRACE: Log full text payload
-                                        console_trace!(status_tx, "HTTP3 sent (text): {:?}", data_str);
+                                        console_trace!(
+                                            status_tx,
+                                            "HTTP3 sent (text): {:?}",
+                                            data_str
+                                        );
                                     } else {
-                                        console_debug!(status_tx, "HTTP3 sent {} bytes on stream {} (binary data)", output_data.len(), stream_id);
+                                        console_debug!(
+                                            status_tx,
+                                            "HTTP3 sent {} bytes on stream {} (binary data)",
+                                            output_data.len(),
+                                            stream_id
+                                        );
 
                                         // TRACE: Log full hex payload
                                         let hex_str = hex::encode(&output_data);
                                         console_trace!(status_tx, "HTTP3 sent (hex): {}", hex_str);
                                     }
-                                    let _ = status_tx.send(format!("→ Sent {} bytes on stream {}", output_data.len(), stream_id));
+                                    let _ = status_tx.send(format!(
+                                        "→ Sent {} bytes on stream {}",
+                                        output_data.len(),
+                                        stream_id
+                                    ));
                                 }
                             }
                             ActionResult::CloseConnection => {
@@ -468,10 +573,13 @@ impl Http3Server {
 
                     // Handle wait_for_more
                     if should_wait {
-                        streams.lock().await
+                        streams
+                            .lock()
+                            .await
                             .entry(stream_id)
                             .and_modify(|s| s.state = StreamState::Accumulating);
-                        let _ = status_tx.send(format!("⏳ Waiting for more data on stream {}", stream_id));
+                        let _ = status_tx
+                            .send(format!("⏳ Waiting for more data on stream {}", stream_id));
                         return;
                     }
 
@@ -485,17 +593,21 @@ impl Http3Server {
                     // Check for queued data
                     let has_queued = {
                         let streams_lock = streams.lock().await;
-                        streams_lock.get(&stream_id)
+                        streams_lock
+                            .get(&stream_id)
                             .map(|s| !s.queued_data.is_empty())
                             .unwrap_or(false)
                     };
 
                     if has_queued {
-                        let _ = status_tx.send(format!("▶ Processing queued data for stream {}", stream_id));
+                        let _ = status_tx
+                            .send(format!("▶ Processing queued data for stream {}", stream_id));
                         // Loop continues to process queued data
                     } else {
                         // Go to Idle state
-                        streams.lock().await
+                        streams
+                            .lock()
+                            .await
                             .entry(stream_id)
                             .and_modify(|s| s.state = StreamState::Idle);
                         return;
@@ -504,7 +616,9 @@ impl Http3Server {
                 Err(e) => {
                     error!("LLM error for HTTP3 data: {}", e);
                     let _ = status_tx.send(format!("✗ LLM error: {e}"));
-                    streams.lock().await
+                    streams
+                        .lock()
+                        .await
                         .entry(stream_id)
                         .and_modify(|s| s.state = StreamState::Idle);
                     return;

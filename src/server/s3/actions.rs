@@ -25,43 +25,40 @@ impl S3Protocol {
 
 /// S3 request event - triggered when an S3 API request is received
 pub static S3_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "s3_request",
-        "S3 API request received"
-    )
-    .with_parameters(vec![
-        Parameter {
-            name: "operation".to_string(),
-            type_hint: "string".to_string(),
-            description: "S3 operation (GetObject, PutObject, ListBuckets, etc.)".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "bucket".to_string(),
-            type_hint: "string".to_string(),
-            description: "Bucket name (if applicable)".to_string(),
-            required: false,
-        },
-        Parameter {
-            name: "key".to_string(),
-            type_hint: "string".to_string(),
-            description: "Object key/path (if applicable)".to_string(),
-            required: false,
-        },
-        Parameter {
-            name: "request_details".to_string(),
-            type_hint: "object".to_string(),
-            description: "Additional request details (headers, query params, etc.)".to_string(),
-            required: false,
-        },
-    ])
-    .with_actions(vec![
-        send_s3_object_action(),
-        send_s3_object_list_action(),
-        send_s3_bucket_list_action(),
-        send_s3_error_action(),
-        show_message_action(),
-    ])
+    EventType::new("s3_request", "S3 API request received")
+        .with_parameters(vec![
+            Parameter {
+                name: "operation".to_string(),
+                type_hint: "string".to_string(),
+                description: "S3 operation (GetObject, PutObject, ListBuckets, etc.)".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "bucket".to_string(),
+                type_hint: "string".to_string(),
+                description: "Bucket name (if applicable)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "key".to_string(),
+                type_hint: "string".to_string(),
+                description: "Object key/path (if applicable)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "request_details".to_string(),
+                type_hint: "object".to_string(),
+                description: "Additional request details (headers, query params, etc.)".to_string(),
+                required: false,
+            },
+        ])
+        .with_actions(vec![
+            send_s3_object_action(),
+            send_s3_object_list_action(),
+            send_s3_bucket_list_action(),
+            send_s3_error_action(),
+            show_message_action(),
+        ])
 });
 
 fn send_s3_object_action() -> ActionDefinition {
@@ -78,7 +75,8 @@ fn send_s3_object_action() -> ActionDefinition {
             Parameter {
                 name: "content_type".to_string(),
                 type_hint: "string".to_string(),
-                description: "Content-Type header (e.g., 'text/plain', 'application/json')".to_string(),
+                description: "Content-Type header (e.g., 'text/plain', 'application/json')"
+                    .to_string(),
                 required: false,
             },
             Parameter {
@@ -105,7 +103,8 @@ fn send_s3_object_list_action() -> ActionDefinition {
             Parameter {
                 name: "objects".to_string(),
                 type_hint: "array".to_string(),
-                description: "Array of objects with 'key', 'size', 'last_modified' fields".to_string(),
+                description: "Array of objects with 'key', 'size', 'last_modified' fields"
+                    .to_string(),
                 required: true,
             },
             Parameter {
@@ -130,14 +129,12 @@ fn send_s3_bucket_list_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_s3_bucket_list".to_string(),
         description: "Send list of buckets (ListBuckets response)".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "buckets".to_string(),
-                type_hint: "array".to_string(),
-                description: "Array of buckets with 'name', 'creation_date' fields".to_string(),
-                required: true,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "buckets".to_string(),
+            type_hint: "array".to_string(),
+            description: "Array of buckets with 'name', 'creation_date' fields".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "send_s3_bucket_list",
             "buckets": [
@@ -156,7 +153,8 @@ fn send_s3_error_action() -> ActionDefinition {
             Parameter {
                 name: "error_code".to_string(),
                 type_hint: "string".to_string(),
-                description: "S3 error code (NoSuchBucket, NoSuchKey, AccessDenied, etc.)".to_string(),
+                description: "S3 error code (NoSuchBucket, NoSuchKey, AccessDenied, etc.)"
+                    .to_string(),
                 required: true,
             },
             Parameter {
@@ -185,14 +183,12 @@ fn show_message_action() -> ActionDefinition {
     ActionDefinition {
         name: "show_message".to_string(),
         description: "Display a message in the TUI output panel".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "message".to_string(),
-                type_hint: "string".to_string(),
-                description: "Message to display".to_string(),
-                required: true,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "message".to_string(),
+            type_hint: "string".to_string(),
+            description: "Message to display".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "show_message",
             "message": "Stored object in bucket"
@@ -201,9 +197,7 @@ fn show_message_action() -> ActionDefinition {
 }
 
 pub fn get_s3_event_types() -> Vec<EventType> {
-    vec![
-        S3_REQUEST_EVENT.clone(),
-    ]
+    vec![S3_REQUEST_EVENT.clone()]
 }
 
 impl crate::llm::actions::protocol_trait::Protocol for S3Protocol {
@@ -278,7 +272,7 @@ impl crate::llm::actions::protocol_trait::Protocol for S3Protocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
@@ -317,27 +311,32 @@ impl Server for S3Protocol {
                 ctx.state,
                 ctx.status_tx,
                 ctx.server_id,
-            ).await
+            )
+            .await
         })
     }
 
     fn execute_action(&self, action: Value) -> Result<ActionResult> {
-        let action_type = action.get("type")
+        let action_type = action
+            .get("type")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing action type"))?;
 
         match action_type {
             "send_s3_object" => {
-                let content = action.get("content")
+                let content = action
+                    .get("content")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("Missing content"))?
                     .to_string();
 
-                let content_type = action.get("content_type")
+                let content_type = action
+                    .get("content_type")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
 
-                let etag = action.get("etag")
+                let etag = action
+                    .get("etag")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
 
@@ -351,11 +350,13 @@ impl Server for S3Protocol {
                 })
             }
             "send_s3_object_list" => {
-                let objects = action.get("objects")
+                let objects = action
+                    .get("objects")
                     .ok_or_else(|| anyhow::anyhow!("Missing objects"))?
                     .clone();
 
-                let is_truncated = action.get("is_truncated")
+                let is_truncated = action
+                    .get("is_truncated")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
 
@@ -368,7 +369,8 @@ impl Server for S3Protocol {
                 })
             }
             "send_s3_bucket_list" => {
-                let buckets = action.get("buckets")
+                let buckets = action
+                    .get("buckets")
                     .ok_or_else(|| anyhow::anyhow!("Missing buckets"))?
                     .clone();
 
@@ -380,19 +382,23 @@ impl Server for S3Protocol {
                 })
             }
             "send_s3_error" => {
-                let error_code = action.get("error_code")
+                let error_code = action
+                    .get("error_code")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("Missing error_code"))?
                     .to_string();
 
-                let message = action.get("message")
+                let message = action
+                    .get("message")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("Missing message"))?
                     .to_string();
 
-                let status_code = action.get("status_code")
+                let status_code = action
+                    .get("status_code")
                     .and_then(|v| v.as_u64())
-                    .ok_or_else(|| anyhow::anyhow!("Missing or invalid status_code"))? as u16;
+                    .ok_or_else(|| anyhow::anyhow!("Missing or invalid status_code"))?
+                    as u16;
 
                 Ok(ActionResult::Custom {
                     name: "s3_error".to_string(),
@@ -403,7 +409,7 @@ impl Server for S3Protocol {
                     }),
                 })
             }
-            _ => Err(anyhow::anyhow!("Unknown action type: {}", action_type))
+            _ => Err(anyhow::anyhow!("Unknown action type: {}", action_type)),
         }
     }
 }

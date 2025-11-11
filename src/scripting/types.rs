@@ -205,8 +205,12 @@ pub struct ScriptResponse {
 ///
 /// Scripts should return a JSON object with actions array: `{"actions": [{"type": "...", ...}, ...]}`
 pub fn parse_script_response(s: &str) -> anyhow::Result<ScriptResponse> {
-    serde_json::from_str(s)
-        .map_err(|e| anyhow::anyhow!("Failed to parse script response: {}. Expected format: {{\"actions\": [...]}}", e))
+    serde_json::from_str(s).map_err(|e| {
+        anyhow::anyhow!(
+            "Failed to parse script response: {}. Expected format: {{\"actions\": [...]}}",
+            e
+        )
+    })
 }
 
 /// Operations for updating script configuration

@@ -41,7 +41,9 @@ pub async fn run_non_interactive(
     // Determine scripting mode with priority: CLI arg > saved setting > auto-detected
     let mode_to_set = if let Some(mode) = args.parse_scripting_mode()? {
         Some(mode)
-    } else { settings.parse_scripting_mode() };
+    } else {
+        settings.parse_scripting_mode()
+    };
 
     if let Some(mode) = mode_to_set {
         // Validate that the requested environment is available
@@ -50,7 +52,9 @@ pub async fn run_non_interactive(
             crate::state::app_state::ScriptingMode::On => true, // LLM chooses runtime
             crate::state::app_state::ScriptingMode::Off => true, // Always available
             crate::state::app_state::ScriptingMode::Python => scripting_env.python.is_some(),
-            crate::state::app_state::ScriptingMode::JavaScript => scripting_env.javascript.is_some(),
+            crate::state::app_state::ScriptingMode::JavaScript => {
+                scripting_env.javascript.is_some()
+            }
             crate::state::app_state::ScriptingMode::Go => scripting_env.go.is_some(),
             crate::state::app_state::ScriptingMode::Perl => scripting_env.perl.is_some(),
         };
@@ -198,7 +202,9 @@ pub async fn run_with_actions(
     // Determine scripting mode
     let mode_to_set = if let Some(mode) = args.parse_scripting_mode()? {
         Some(mode)
-    } else { settings.parse_scripting_mode() };
+    } else {
+        settings.parse_scripting_mode()
+    };
 
     if let Some(mode) = mode_to_set {
         state.set_selected_scripting_mode(mode).await;
@@ -229,11 +235,20 @@ pub async fn run_with_actions(
     for (i, action) in actions.iter().enumerate() {
         // Try to parse as common action
         if let Ok(common_action) = crate::llm::actions::common::CommonAction::from_json(action) {
+            use crate::cli::{client_startup, server_startup};
             use crate::llm::actions::common::CommonAction;
-            use crate::cli::{server_startup, client_startup};
 
             match common_action {
-                CommonAction::OpenServer { port, base_stack, send_first, initial_memory, instruction, startup_params, event_handlers, scheduled_tasks } => {
+                CommonAction::OpenServer {
+                    port,
+                    base_stack,
+                    send_first,
+                    initial_memory,
+                    instruction,
+                    startup_params,
+                    event_handlers,
+                    scheduled_tasks,
+                } => {
                     // Execute open_server action
                     match server_startup::start_server_from_action(
                         &state,
@@ -245,7 +260,9 @@ pub async fn run_with_actions(
                         startup_params,
                         event_handlers,
                         scheduled_tasks,
-                    ).await {
+                    )
+                    .await
+                    {
                         Ok(server_id) => {
                             println!(
                                 "[{}] Opened server #{} on port {} ({})",
@@ -256,15 +273,19 @@ pub async fn run_with_actions(
                             );
                         }
                         Err(e) => {
-                            eprintln!(
-                                "[{}] Failed to open server: {}",
-                                i + 1,
-                                e
-                            );
+                            eprintln!("[{}] Failed to open server: {}", i + 1, e);
                         }
                     }
                 }
-                CommonAction::OpenClient { protocol, remote_addr, instruction, startup_params, initial_memory, event_handlers, scheduled_tasks } => {
+                CommonAction::OpenClient {
+                    protocol,
+                    remote_addr,
+                    instruction,
+                    startup_params,
+                    initial_memory,
+                    event_handlers,
+                    scheduled_tasks,
+                } => {
                     // Execute open_client action
                     match client_startup::start_client_from_action(
                         &state,
@@ -276,7 +297,9 @@ pub async fn run_with_actions(
                         event_handlers,
                         scheduled_tasks,
                         llm.clone(),
-                    ).await {
+                    )
+                    .await
+                    {
                         Ok(client_id) => {
                             println!(
                                 "[{}] Opened client #{} to {} ({})",
@@ -287,11 +310,7 @@ pub async fn run_with_actions(
                             );
                         }
                         Err(e) => {
-                            eprintln!(
-                                "[{}] Failed to open client: {}",
-                                i + 1,
-                                e
-                            );
+                            eprintln!("[{}] Failed to open client: {}", i + 1, e);
                         }
                     }
                 }
@@ -299,17 +318,11 @@ pub async fn run_with_actions(
                     println!("[{}] {}", i + 1, message);
                 }
                 _ => {
-                    println!(
-                        "[{}] Skipping unsupported action type",
-                        i + 1
-                    );
+                    println!("[{}] Skipping unsupported action type", i + 1);
                 }
             }
         } else {
-            eprintln!(
-                "[{}] Skipping invalid action",
-                i + 1
-            );
+            eprintln!("[{}] Skipping invalid action", i + 1);
         }
     }
 

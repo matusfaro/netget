@@ -2,7 +2,8 @@
 
 ## Test Overview
 
-Tests BGP server functionality by establishing BGP peering sessions using raw TCP clients. Tests verify session establishment, message exchange, and error handling.
+Tests BGP server functionality by establishing BGP peering sessions using raw TCP clients. Tests verify session
+establishment, message exchange, and error handling.
 
 **Protocol Status**: Alpha (fully implemented, needs extensive testing)
 **Test Focus**: BGP FSM state transitions and message exchange
@@ -12,6 +13,7 @@ Tests BGP server functionality by establishing BGP peering sessions using raw TC
 ### Comprehensive Peering Tests
 
 Tests cover full BGP session lifecycle:
+
 - **4 test functions** covering peering establishment, error handling, keepalives, graceful shutdown
 - Each test uses real BGP message construction (manual, no library)
 - Tests verify FSM state transitions (Connect → OpenSent → OpenConfirm → Established)
@@ -19,6 +21,7 @@ Tests cover full BGP session lifecycle:
 ### TCP-Based Testing
 
 BGP runs on TCP port 179, tests use tokio TcpStream:
+
 - Connect to server
 - Send/receive BGP messages
 - Verify responses match protocol spec
@@ -26,6 +29,7 @@ BGP runs on TCP port 179, tests use tokio TcpStream:
 ### No Routing Table Testing
 
 Tests focus on **protocol operations**, not routing:
+
 - Peering establishment ✅
 - Message exchange ✅
 - Route advertisements ❌ (no RIB)
@@ -36,29 +40,30 @@ Tests focus on **protocol operations**, not routing:
 ### Per-Test Breakdown
 
 1. **test_bgp_peering_establishment**: 3 LLM calls
-   - Server startup: 1 call
-   - OPEN message received: 1 call (LLM decides response)
-   - KEEPALIVE received: 1 call (LLM sends KEEPALIVE back)
+    - Server startup: 1 call
+    - OPEN message received: 1 call (LLM decides response)
+    - KEEPALIVE received: 1 call (LLM sends KEEPALIVE back)
 
 2. **test_bgp_notification_on_error**: 2 LLM calls
-   - Server startup: 1 call
-   - Invalid OPEN received: 1 call (LLM may send NOTIFICATION)
+    - Server startup: 1 call
+    - Invalid OPEN received: 1 call (LLM may send NOTIFICATION)
 
 3. **test_bgp_keepalive_exchange**: 3 LLM calls
-   - Server startup: 1 call
-   - First OPEN: 1 call
-   - Additional KEEPALIVE: 1 call (optional)
+    - Server startup: 1 call
+    - First OPEN: 1 call
+    - Additional KEEPALIVE: 1 call (optional)
 
 4. **test_bgp_graceful_shutdown**: 3 LLM calls
-   - Server startup: 1 call
-   - OPEN: 1 call
-   - NOTIFICATION (Cease): 1 call (LLM logs graceful shutdown)
+    - Server startup: 1 call
+    - OPEN: 1 call
+    - NOTIFICATION (Cease): 1 call (LLM logs graceful shutdown)
 
 **Total: 11 LLM calls** (slightly over 10, but acceptable for complex protocol)
 
 ### Why More Calls?
 
 BGP is connection-oriented with state machine:
+
 - Each protocol message may trigger LLM consultation
 - LLM controls routing decisions
 - Tests verify LLM correctly handles protocol flow
@@ -66,6 +71,7 @@ BGP is connection-oriented with state machine:
 ### Optimization Opportunity
 
 Future optimization: Use scripting mode for deterministic responses:
+
 ```rust
 let config = ServerConfig::new(prompt)
     .with_no_scripts(false);  // Enable scripting
@@ -78,6 +84,7 @@ Could reduce to ~4 LLM calls (1 per test startup).
 **Scripting: Not currently used** - Tests use action-based responses.
 
 **Future**: Enable scripting for faster, deterministic tests:
+
 - Server startup generates script handling OPEN/KEEPALIVE exchange
 - Reduces LLM calls from 11 to 4
 
@@ -88,6 +95,7 @@ Could reduce to ~4 LLM calls (1 per test startup).
 **Why manual**: No Rust BGP client library suitable for testing.
 
 **What we implement**:
+
 - BGP message construction (OPEN, KEEPALIVE, NOTIFICATION)
 - BGP message parsing (read and validate responses)
 - Message type detection
@@ -95,12 +103,14 @@ Could reduce to ~4 LLM calls (1 per test startup).
 ### BGP Message Format
 
 **Header (19 bytes)**:
+
 ```
 | Marker (16 bytes, all 0xFF) |
 | Length (2 bytes) | Type (1 byte) |
 ```
 
 **OPEN Message**:
+
 ```
 | Header (19) | Version (1) | My AS (2) | Hold Time (2) |
 | BGP Identifier (4) | Opt Params Len (1) | Opt Params (variable) |
@@ -109,6 +119,7 @@ Could reduce to ~4 LLM calls (1 per test startup).
 **KEEPALIVE Message**: Just header (19 bytes)
 
 **NOTIFICATION Message**:
+
 ```
 | Header (19) | Error Code (1) | Error Subcode (1) | Data (variable) |
 ```
@@ -162,6 +173,7 @@ async fn read_bgp_message(stream: &mut TcpStream) -> E2EResult<(u8, Vec<u8>)> {
 **Model**: qwen3-coder:30b (or configured model)
 **Runtime**: ~45-60 seconds for full test suite (with 120s timeouts)
 **Breakdown**:
+
 - Server startup: 2-5 seconds per test (4 tests)
 - TCP connection: <1 second per test
 - LLM calls: 2-5 seconds each (~11 calls total)
@@ -174,6 +186,7 @@ async fn read_bgp_message(stream: &mut TcpStream) -> E2EResult<(u8, Vec<u8>)> {
 **Medium** (10-15%) - LLM may choose unexpected responses.
 
 **Known variability**:
+
 - LLM may send OPEN instead of NOTIFICATION on error
 - LLM may not respond to additional KEEPALIVEs
 - Timing-sensitive (120s timeout to accommodate slow LLM)
@@ -185,18 +198,21 @@ async fn read_bgp_message(stream: &mut TcpStream) -> E2EResult<(u8, Vec<u8>)> {
 ### 1. test_bgp_peering_establishment
 
 **What it tests**:
+
 - Full BGP peering establishment (Connect → Established)
 - OPEN exchange
 - KEEPALIVE exchange
 - FSM state transitions
 
 **Message flow**:
+
 1. Client → Server: OPEN (AS 65000, router ID 192.168.1.100)
 2. Server → Client: OPEN (AS 65001, router ID 192.168.1.1)
 3. Client → Server: KEEPALIVE (acknowledge OPEN)
 4. Server → Client: KEEPALIVE (establish peering)
 
 **Assertions**:
+
 ```rust
 assert_eq!(msg_type, BGP_MSG_OPEN);
 assert_eq!(version, 4);
@@ -205,6 +221,7 @@ assert!(hold_time > 0);
 ```
 
 **Expected output**:
+
 ```
 [INFO] BGP server listening on 0.0.0.0:XXXXX
 → BGP connection conn_12345 from 127.0.0.1:XXXXX
@@ -219,23 +236,27 @@ assert!(hold_time > 0);
 ### 2. test_bgp_notification_on_error
 
 **What it tests**:
+
 - Error handling with NOTIFICATION
 - Invalid OPEN version detection (version 3 instead of 4)
 - Graceful connection closure
 
 **Message flow**:
+
 1. Client → Server: OPEN (invalid version 3)
 2. Server → Client: NOTIFICATION (error code 2, subcode 1) **or** OPEN (LLM chooses to accept)
 
 **Assertions**: Flexible - accepts NOTIFICATION or OPEN or connection close.
 
 **Expected output** (if NOTIFICATION sent):
+
 ```
 [ERROR] BGP invalid message: Unsupported BGP version: 3
 [ERROR] BGP NOTIFICATION sent: code=2, subcode=1
 ```
 
 **Expected output** (if LLM accepts):
+
 ```
 [INFO] BGP OPEN received: version=3, AS=65000 (accepted despite invalid version)
 ```
@@ -243,10 +264,12 @@ assert!(hold_time > 0);
 ### 3. test_bgp_keepalive_exchange
 
 **What it tests**:
+
 - Peering establishment
 - Additional KEEPALIVE exchange (session maintenance)
 
 **Message flow**:
+
 1. Establish peering (OPEN + KEEPALIVE)
 2. Client → Server: Additional KEEPALIVE
 3. Server → Client: KEEPALIVE response (or no response, both acceptable)
@@ -254,6 +277,7 @@ assert!(hold_time > 0);
 **Expected behavior**: Server handles additional KEEPALIVEs gracefully.
 
 **Expected output**:
+
 ```
 ✓ Peering established
 [DEBUG] BGP KEEPALIVE received
@@ -263,10 +287,12 @@ assert!(hold_time > 0);
 ### 4. test_bgp_graceful_shutdown
 
 **What it tests**:
+
 - Graceful shutdown with NOTIFICATION (Cease)
 - Proper connection cleanup
 
 **Message flow**:
+
 1. Establish peering (OPEN + KEEPALIVE)
 2. Client → Server: NOTIFICATION (error code 6, subcode 0, Cease)
 3. Server: Closes connection or sends NOTIFICATION back
@@ -274,6 +300,7 @@ assert!(hold_time > 0);
 **Expected behavior**: Server acknowledges shutdown and closes connection.
 
 **Expected output**:
+
 ```
 ✓ Peering established
 [ERROR] BGP NOTIFICATION received: code=6, subcode=0
@@ -289,6 +316,7 @@ assert!(hold_time > 0);
 **Why**: BGP server doesn't implement routing table.
 
 **Future**: If RIB implemented, add route tests:
+
 ```rust
 #[tokio::test]
 async fn test_bgp_route_advertisement() {
@@ -321,6 +349,7 @@ async fn test_bgp_route_advertisement() {
 **Why**: Not implemented yet.
 
 **Future**: Add hold timer expiration tests:
+
 ```rust
 #[tokio::test]
 async fn test_bgp_hold_timer_expiration() {
@@ -367,6 +396,7 @@ test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 ### Handling Timeouts
 
 Tests use 120-second timeouts to accommodate slow LLM:
+
 ```rust
 let (msg_type, body) = timeout(
     Duration::from_secs(120),
@@ -381,6 +411,7 @@ If tests timeout, increase timeout or check Ollama performance.
 ### Protocol Learning
 
 Tests demonstrate:
+
 - BGP session establishment
 - FSM state transitions
 - Message exchange patterns
@@ -388,6 +419,7 @@ Tests demonstrate:
 ### BGP Client Testing
 
 Use NetGet BGP server to test BGP client implementations:
+
 - Verify OPEN handling
 - Test NOTIFICATION error cases
 - Validate KEEPALIVE behavior
@@ -395,6 +427,7 @@ Use NetGet BGP server to test BGP client implementations:
 ### NOT for Production Routing
 
 BGP server should **not** be used for production routing:
+
 - No routing table
 - No best path selection
 - No route filtering
@@ -405,6 +438,7 @@ BGP server should **not** be used for production routing:
 ### Routing Table Implementation
 
 Add RIB (Routing Information Base):
+
 ```rust
 #[tokio::test]
 async fn test_bgp_route_storage() {
@@ -418,6 +452,7 @@ async fn test_bgp_route_storage() {
 ### Path Attributes Parsing
 
 Parse UPDATE message path attributes:
+
 ```rust
 #[tokio::test]
 async fn test_bgp_update_parsing() {
@@ -430,6 +465,7 @@ async fn test_bgp_update_parsing() {
 ### Multi-Peer Tests
 
 Test route propagation between peers:
+
 ```rust
 #[tokio::test]
 async fn test_bgp_multi_peer() {
@@ -442,6 +478,7 @@ async fn test_bgp_multi_peer() {
 ### Scripting Mode
 
 Enable scripting for faster tests:
+
 ```rust
 let config = ServerConfig::new(prompt).with_no_scripts(false);
 ```
@@ -451,6 +488,7 @@ Generate script for deterministic OPEN/KEEPALIVE responses.
 ### 32-bit AS Numbers
 
 Add 32-bit AS support (RFC 6793):
+
 ```rust
 #[tokio::test]
 async fn test_bgp_32bit_as() {

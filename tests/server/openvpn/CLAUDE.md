@@ -2,7 +2,8 @@
 
 ## Test Overview
 
-Tests full OpenVPN VPN server functionality by connecting with the native `openvpn` command-line client. This validates the complete protocol implementation including handshake, encryption, and tunnel establishment.
+Tests full OpenVPN VPN server functionality by connecting with the native `openvpn` command-line client. This validates
+the complete protocol implementation including handshake, encryption, and tunnel establishment.
 
 **Protocol Status**: Full VPN implementation (MVP)
 **Test Focus**: Real-world VPN connectivity with actual OpenVPN client
@@ -12,11 +13,13 @@ Tests full OpenVPN VPN server functionality by connecting with the native `openv
 ### Native Client Integration
 
 **Why native client**: No viable Rust OpenVPN client library exists. Using the system's `openvpn` command provides:
+
 - Full protocol compliance testing
 - Real-world validation
 - Complete handshake and encryption verification
 
 **Requirements**:
+
 - `openvpn` command must be installed on the system
 - Tests require elevated privileges (root/sudo) for TUN interface creation
 - Tests automatically skip if requirements not met
@@ -24,6 +27,7 @@ Tests full OpenVPN VPN server functionality by connecting with the native `openv
 ### Test Structure
 
 **5 test functions** covering:
+
 1. **Client availability check** - Fails if `openvpn` not installed
 2. **Server startup** - Verifies TUN interface and VPN subnet configuration
 3. **Handshake with client** - Full OpenVPN client connection (requires sudo)
@@ -45,6 +49,7 @@ Tests full OpenVPN VPN server functionality by connecting with the native `openv
 ### Hard Failure Requirements
 
 Tests will **fail** (not skip) if:
+
 - `openvpn` command not available
 - Not running with sufficient privileges for tests requiring root (Unix)
 - TUN interface creation fails
@@ -58,6 +63,7 @@ Tests will **fail** (not skip) if:
 **Command**: `openvpn`
 **Configuration**: Generated `.ovpn` config file
 **Features used**:
+
 - UDP transport
 - TUN device
 - AES-256-GCM cipher
@@ -83,16 +89,19 @@ auth none  # Simplified for MVP testing
 ### Installation
 
 **Ubuntu/Debian**:
+
 ```bash
 sudo apt-get install openvpn
 ```
 
 **macOS**:
+
 ```bash
 brew install openvpn
 ```
 
 **Fedora/RHEL**:
+
 ```bash
 sudo dnf install openvpn
 ```
@@ -103,6 +112,7 @@ sudo dnf install openvpn
 **Runtime**: ~30-60 seconds for full test suite
 
 **Breakdown**:
+
 - Client availability: <1 second (no LLM)
 - Server startup: 3-5 seconds
 - Client handshake test: 10-30 seconds (external client + handshake)
@@ -110,6 +120,7 @@ sudo dnf install openvpn
 - Manual packet test: 1-2 seconds
 
 **Note**: Handshake test takes longer due to:
+
 - TUN interface creation (requires sudo)
 - OpenVPN client startup and initialization
 - Protocol negotiation (our simplified implementation)
@@ -117,32 +128,38 @@ sudo dnf install openvpn
 ## Failure Rate
 
 **Low to Medium** (10-20%):
+
 - **Low** for non-sudo tests (availability, startup, manual packet)
 - **Medium** for handshake test (requires sudo, external process coordination)
 
 **Common failures**:
+
 - `openvpn` not installed (test fails with assertion error)
 - Not running with sudo for handshake test (test fails with assertion error)
 - Client connection timeout (our simplified protocol may not complete full handshake)
 
-**Stability**: Tests are designed to be lenient on handshake completion - they pass if handshake is detected on server side, even if full connection doesn't complete.
+**Stability**: Tests are designed to be lenient on handshake completion - they pass if handshake is detected on server
+side, even if full connection doesn't complete.
 
 ## Test Cases
 
 ### 1. test_openvpn_client_availability
 
 **What it tests**:
+
 - Checks if `openvpn` command is available
 - Fails test suite if not found (with installation instructions)
 
 **No LLM calls** - Pure system check
 
 **Expected output**:
+
 ```
 ✓ OpenVPN client is available
 ```
 
 Or:
+
 ```
 ⚠️  OpenVPN client not found. Install with:
    Ubuntu/Debian: sudo apt-get install openvpn
@@ -152,17 +169,20 @@ Or:
 ### 2. test_openvpn_server_startup
 
 **What it tests**:
+
 - Server starts with OpenVPN stack
 - TUN interface is created
 - VPN subnet is configured
 
 **Assertions**:
+
 ```rust
 assert!(output.contains("OpenVPN") && output.contains("VPN server"));
 assert!(output.contains("TUN interface created") || output.contains("netget_ovpn"));
 ```
 
 **Expected server output**:
+
 ```
 [INFO] Starting OpenVPN VPN server on 0.0.0.0:XXXXX (full VPN tunnel support)
 [INFO] TLS configuration created
@@ -175,12 +195,14 @@ assert!(output.contains("TUN interface created") || output.contains("netget_ovpn
 ### 3. test_openvpn_handshake_with_client
 
 **What it tests** (⚠️ Requires sudo):
+
 - Generates OpenVPN client config
 - Starts `openvpn` client as subprocess
 - Monitors client output for connection success
 - Verifies server logs handshake
 
 **Privilege check**:
+
 ```rust
 #[cfg(unix)]
 {
@@ -193,11 +215,13 @@ assert!(output.contains("TUN interface created") || output.contains("netget_ovpn
 ```
 
 **Client output monitoring**:
+
 - Looks for `"Initialization Sequence Completed"`
 - Or `"Peer Connection Initiated"`
 - 30 second timeout
 
 **Lenient assertion**:
+
 ```rust
 // Pass if server received handshake (even if client didn't fully connect)
 assert!(output.contains("OpenVPN")
@@ -205,6 +229,7 @@ assert!(output.contains("OpenVPN")
 ```
 
 **Expected server output**:
+
 ```
 [INFO] OpenVPN handshake from 127.0.0.1:XXXXX
 [INFO] Allocated VPN IP 10.8.0.2 to 127.0.0.1:XXXXX
@@ -213,6 +238,7 @@ assert!(output.contains("OpenVPN")
 ```
 
 **Expected client output**:
+
 ```
 OpenVPN 2.x.x ...
 TCP/UDP: Preserving recently used remote address: [AF_INET]127.0.0.1:51820
@@ -221,15 +247,18 @@ UDP link remote: [AF_INET]127.0.0.1:51820
 Peer Connection Initiated with [AF_INET]127.0.0.1:51820
 ```
 
-**Note**: Our simplified MVP implementation may not complete full OpenVPN handshake. Test passes if server receives and logs handshake attempt.
+**Note**: Our simplified MVP implementation may not complete full OpenVPN handshake. Test passes if server receives and
+logs handshake attempt.
 
 ### 4. test_openvpn_protocol_compatibility
 
 **What it tests**:
+
 - Server configures VPN subnet correctly
 - Server initializes encryption ciphers
 
 **Assertions**:
+
 ```rust
 assert!(output.contains("VPN subnet") || output.contains("10.8.0"));
 assert!(output.contains("AES") || output.contains("cipher"));
@@ -238,11 +267,13 @@ assert!(output.contains("AES") || output.contains("cipher"));
 ### 5. test_openvpn_manual_handshake_v2 (Legacy)
 
 **What it tests**:
+
 - Manual packet construction and sending
 - Server responds with HARD_RESET_SERVER_V2
 - Quick protocol validation without external client
 
 **Packet structure**:
+
 ```
 | Opcode/KeyID (1) | Session ID (8) | Array Len (1) | Packet ID (4)
 | Remote Session ID (8) | TLS Payload (5) |
@@ -257,6 +288,7 @@ assert!(output.contains("AES") || output.contains("cipher"));
 **Issue**: Our OpenVPN server is an MVP with simplified TLS handshake.
 
 **Impact**:
+
 - Native OpenVPN client may not complete full connection
 - Tests are lenient - pass if server receives handshake
 - Full tunnel functionality may not work until TLS is fully implemented
@@ -274,6 +306,7 @@ assert!(output.contains("AES") || output.contains("cipher"));
 ### Platform-Specific TUN Names
 
 **Issue**: TUN interface names vary by platform:
+
 - Linux: `netget_ovpn0`
 - macOS: `utun11`
 - Windows: `netget_ovpn0`
@@ -285,6 +318,7 @@ assert!(output.contains("AES") || output.contains("cipher"));
 **Issue**: Managing `openvpn` subprocess adds complexity.
 
 **Mitigation**:
+
 - Use `kill_on_drop` for automatic cleanup
 - Set reasonable timeouts (30 seconds)
 - Monitor stdout for connection status
@@ -296,6 +330,7 @@ assert!(output.contains("AES") || output.contains("cipher"));
 **Why**: MVP focused on protocol implementation, not full VPN functionality.
 
 **Future**: Add ping test through tunnel once full protocol is implemented:
+
 ```rust
 // Future test
 #[tokio::test]
@@ -401,6 +436,7 @@ test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 ### Skip Handshake Test in CI
 
 If sudo is problematic:
+
 ```bash
 # Run only non-sudo tests
 ./cargo-isolated.sh test --features openvpn --test server::openvpn::e2e_test -- --skip handshake
@@ -411,6 +447,7 @@ If sudo is problematic:
 ### Full TLS Handshake
 
 Once TLS 1.3 control channel is fully implemented:
+
 - Client will complete full connection
 - Remove lenient assertions
 - Add tunnel connectivity tests

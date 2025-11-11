@@ -69,8 +69,12 @@ async fn test_user_input_prompt_proxy_server() {
     #[cfg(not(feature = "proxy"))]
     let protocol_actions = vec![];
 
-    let system_prompt = PromptBuilder::build_user_input_system_prompt(&state, protocol_actions, None).await;
-    let prompt = format!("{}\n\nTrigger: User input: \"{}\"", system_prompt, user_input);
+    let system_prompt =
+        PromptBuilder::build_user_input_system_prompt(&state, protocol_actions, None).await;
+    let prompt = format!(
+        "{}\n\nTrigger: User input: \"{}\"",
+        system_prompt, user_input
+    );
 
     // Assert snapshot
     snapshot_util::assert_snapshot("user_input_prompt_proxy_server", SNAPSHOT_DIR, &prompt);
@@ -83,12 +87,30 @@ async fn test_user_input_prompt_proxy_server() {
     assert!(prompt.contains(user_input));
 
     // Should NOT have script references (no scripting environment)
-    assert!(!prompt.contains("Script-Based Responses"), "Prompt should not contain scripting section");
-    assert!(!prompt.contains("Python (Python"), "Prompt should not contain scripting environment details");
-    assert!(!prompt.contains("Node.js (v"), "Prompt should not contain 'Node.js' version");
-    assert!(!prompt.contains("script_language"), "Prompt should not contain 'script_language'");
-    assert!(!prompt.contains("script_path"), "Prompt should not contain 'script_path'");
-    assert!(!prompt.contains("update_script"), "Prompt should not contain 'update_script'");
+    assert!(
+        !prompt.contains("Script-Based Responses"),
+        "Prompt should not contain scripting section"
+    );
+    assert!(
+        !prompt.contains("Python (Python"),
+        "Prompt should not contain scripting environment details"
+    );
+    assert!(
+        !prompt.contains("Node.js (v"),
+        "Prompt should not contain 'Node.js' version"
+    );
+    assert!(
+        !prompt.contains("script_language"),
+        "Prompt should not contain 'script_language'"
+    );
+    assert!(
+        !prompt.contains("script_path"),
+        "Prompt should not contain 'script_path'"
+    );
+    assert!(
+        !prompt.contains("update_script"),
+        "Prompt should not contain 'update_script'"
+    );
     // Note: script_inline and script_handles appear in scheduled_tasks param docs, which is OK
 
     #[cfg(feature = "proxy")]
@@ -115,7 +137,10 @@ async fn test_user_input_prompt() {
     let user_input = "start a DNS server on port 53";
 
     let system_prompt = PromptBuilder::build_user_input_system_prompt(&state, vec![], None).await;
-    let prompt = format!("{}\n\nTrigger: User input: \"{}\"", system_prompt, user_input);
+    let prompt = format!(
+        "{}\n\nTrigger: User input: \"{}\"",
+        system_prompt, user_input
+    );
 
     // Assert snapshot
     snapshot_util::assert_snapshot("user_input_prompt", SNAPSHOT_DIR, &prompt);
@@ -150,18 +175,39 @@ async fn test_user_input_prompt_no_scripting() {
     let user_input = "start a DNS server on port 53";
 
     let system_prompt = PromptBuilder::build_user_input_system_prompt(&state, vec![], None).await;
-    let prompt = format!("{}\n\nTrigger: User input: \"{}\"", system_prompt, user_input);
+    let prompt = format!(
+        "{}\n\nTrigger: User input: \"{}\"",
+        system_prompt, user_input
+    );
 
     // Assert snapshot
     snapshot_util::assert_snapshot("user_input_prompt_without_scripting", SNAPSHOT_DIR, &prompt);
 
     // Sanity checks - should NOT include scripting section (but scheduled_tasks param mentions scripts)
-    assert!(!prompt.contains("Script-Based Responses"), "Prompt should not contain 'Script-Based Responses'");
-    assert!(!prompt.contains("Python (Python"), "Prompt should not contain scripting environment details");
-    assert!(!prompt.contains("Node.js (v"), "Prompt should not contain 'Node.js' version");
-    assert!(!prompt.contains("script_language"), "Prompt should not contain 'script_language'");
-    assert!(!prompt.contains("script_path"), "Prompt should not contain 'script_path'");
-    assert!(!prompt.contains("update_script"), "Prompt should not contain 'update_script'");
+    assert!(
+        !prompt.contains("Script-Based Responses"),
+        "Prompt should not contain 'Script-Based Responses'"
+    );
+    assert!(
+        !prompt.contains("Python (Python"),
+        "Prompt should not contain scripting environment details"
+    );
+    assert!(
+        !prompt.contains("Node.js (v"),
+        "Prompt should not contain 'Node.js' version"
+    );
+    assert!(
+        !prompt.contains("script_language"),
+        "Prompt should not contain 'script_language'"
+    );
+    assert!(
+        !prompt.contains("script_path"),
+        "Prompt should not contain 'script_path'"
+    );
+    assert!(
+        !prompt.contains("update_script"),
+        "Prompt should not contain 'update_script'"
+    );
     // Note: script_inline and script_handles appear in scheduled_tasks param docs, which is OK
 
     // Should still have base stacks
@@ -183,22 +229,40 @@ async fn test_user_input_prompt_without_web_search() {
     state.set_scripting_env(scripting_env).await;
 
     // Disable web search
-    state.set_web_search_mode(netget::state::app_state::WebSearchMode::Off).await;
+    state
+        .set_web_search_mode(netget::state::app_state::WebSearchMode::Off)
+        .await;
 
     let user_input = "start a DNS server on port 53";
 
     let system_prompt = PromptBuilder::build_user_input_system_prompt(&state, vec![], None).await;
-    let prompt = format!("{}\n\nTrigger: User input: \"{}\"", system_prompt, user_input);
+    let prompt = format!(
+        "{}\n\nTrigger: User input: \"{}\"",
+        system_prompt, user_input
+    );
 
     // Assert snapshot
-    snapshot_util::assert_snapshot("user_input_prompt_without_web_search", SNAPSHOT_DIR, &prompt);
+    snapshot_util::assert_snapshot(
+        "user_input_prompt_without_web_search",
+        SNAPSHOT_DIR,
+        &prompt,
+    );
 
     // Sanity checks - should NOT include web_search references
-    assert!(!prompt.contains("web_search"), "Prompt should not contain 'web_search'");
-    assert!(!prompt.contains("web search"), "Prompt should not contain 'web search' in instructions");
+    assert!(
+        !prompt.contains("web_search"),
+        "Prompt should not contain 'web_search'"
+    );
+    assert!(
+        !prompt.contains("web search"),
+        "Prompt should not contain 'web search' in instructions"
+    );
 
     // Should still have read_file
-    assert!(prompt.contains("read_file"), "Prompt should still contain 'read_file'");
+    assert!(
+        prompt.contains("read_file"),
+        "Prompt should still contain 'read_file'"
+    );
 
     // Should have base stacks and scripting info
     assert!(prompt.contains("Available Base Stacks"));
@@ -230,12 +294,9 @@ async fn test_network_event_prompt_for_proxy() {
         get_network_event_common_actions()
     };
 
-    let system_prompt = PromptBuilder::build_network_event_action_prompt_for_server(
-        &state,
-        server_id,
-        all_actions,
-    )
-    .await;
+    let system_prompt =
+        PromptBuilder::build_network_event_action_prompt_for_server(&state, server_id, all_actions)
+            .await;
 
     let event_message = PromptBuilder::build_event_trigger_message(
         event_description,
@@ -270,7 +331,7 @@ async fn test_retry_mechanism_prompt() {
     let state = Arc::new(AppState::new());
 
     // Create a scheduled task with a previous error
-    use netget::state::task::{ScheduledTask, TaskScope, TaskType, TaskStatus};
+    use netget::state::task::{ScheduledTask, TaskScope, TaskStatus, TaskType};
     use std::time::Duration;
 
     let task = ScheduledTask {
@@ -300,7 +361,8 @@ async fn test_retry_mechanism_prompt() {
     };
     state.set_scripting_env(scripting_env).await;
 
-    let prompt = netget::llm::PromptBuilder::build_task_execution_prompt(&state, &task, vec![]).await;
+    let prompt =
+        netget::llm::PromptBuilder::build_task_execution_prompt(&state, &task, vec![]).await;
 
     // Assert snapshot
     snapshot_util::assert_snapshot("retry_mechanism_prompt", SNAPSHOT_DIR, &prompt);
@@ -334,7 +396,10 @@ async fn test_protocol_documentation_prompt() {
             metadata.implementation,
             metadata.llm_control,
             metadata.e2e_testing,
-            metadata.notes.map(|n| format!("\nNotes: {}", n)).unwrap_or_default()
+            metadata
+                .notes
+                .map(|n| format!("\nNotes: {}", n))
+                .unwrap_or_default()
         );
 
         // Assert snapshot
@@ -363,7 +428,10 @@ async fn test_protocol_documentation_prompt() {
             metadata.implementation,
             metadata.llm_control,
             metadata.e2e_testing,
-            metadata.notes.map(|n| format!("\nNotes: {}", n)).unwrap_or_default()
+            metadata
+                .notes
+                .map(|n| format!("\nNotes: {}", n))
+                .unwrap_or_default()
         );
 
         // Assert snapshot

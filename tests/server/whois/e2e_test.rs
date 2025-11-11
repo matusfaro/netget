@@ -24,7 +24,10 @@ mod whois_e2e_test {
         .expect("Failed to create Ollama client");
 
         // Open WHOIS server via user input
-        let user_input = format!("listen on port {{{{AVAILABLE_PORT}}}} via whois\n{}", instruction);
+        let user_input = format!(
+            "listen on port {{{{AVAILABLE_PORT}}}} via whois\n{}",
+            instruction
+        );
         state
             .handle_user_input(&user_input, &ollama_client, status_tx.clone())
             .await
@@ -128,7 +131,9 @@ For any other domain, return "Domain not found" error.
         // Test error response
         let response = send_whois_query(&addr, "nonexistent-xyz123.com").await;
         assert!(
-            response.contains("not found") || response.contains("Error") || response.contains("error"),
+            response.contains("not found")
+                || response.contains("Error")
+                || response.contains("error"),
             "Response should indicate domain not found: {}",
             response
         );
@@ -148,9 +153,7 @@ Keep connections open for multiple queries.
         let (_state, addr) = start_whois_server(instruction).await;
 
         // Connect once and send multiple queries
-        let mut stream = TcpStream::connect(&addr)
-            .await
-            .expect("Failed to connect");
+        let mut stream = TcpStream::connect(&addr).await.expect("Failed to connect");
 
         // First query
         stream.write_all(b"example.com\r\n").await.unwrap();

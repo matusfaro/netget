@@ -8,11 +8,11 @@
 #![cfg(feature = "arp")]
 
 use crate::server::helpers::*;
+use pcap::{Capture, Device};
 use pnet::packet::arp::{ArpHardwareTypes, ArpOperations, MutableArpPacket};
 use pnet::packet::ethernet::{EtherTypes, MutableEthernetPacket};
 use pnet::packet::Packet;
 use pnet::util::MacAddr;
-use pcap::{Capture, Device};
 use std::net::Ipv4Addr;
 use std::time::Duration;
 
@@ -29,11 +29,7 @@ fn find_loopback_interface() -> Result<String, Box<dyn std::error::Error>> {
 }
 
 /// Build an ARP request packet
-fn build_arp_request(
-    sender_mac: MacAddr,
-    sender_ip: Ipv4Addr,
-    target_ip: Ipv4Addr,
-) -> Vec<u8> {
+fn build_arp_request(sender_mac: MacAddr, sender_ip: Ipv4Addr, target_ip: Ipv4Addr) -> Vec<u8> {
     let mut eth_buffer = vec![0u8; 42]; // 14 eth + 28 arp
 
     // Build Ethernet frame
@@ -84,9 +80,8 @@ async fn test_arp_responder() -> E2EResult<()> {
     println!("✓ Using interface: {}", interface);
 
     // Single comprehensive server with scripting for ARP responses
-    let config = ServerConfig::new(
-        format!(
-            r#"listen on interface {} via arp
+    let config = ServerConfig::new(format!(
+        r#"listen on interface {} via arp
 
 You are an ARP responder. When you receive ARP requests:
 
@@ -96,9 +91,8 @@ You are an ARP responder. When you receive ARP requests:
 
 Use scripting mode to handle all ARP requests without LLM calls after initial setup.
 "#,
-            interface
-        ),
-    )
+        interface
+    ))
     .with_log_level("debug");
 
     let test_state = start_netget_server(config).await?;
@@ -141,8 +135,8 @@ Use scripting mode to handle all ARP requests without LLM calls after initial se
             match cap.next_packet() {
                 Ok(packet) => {
                     // Parse response
-                    use pnet::packet::ethernet::EthernetPacket;
                     use pnet::packet::arp::ArpPacket;
+                    use pnet::packet::ethernet::EthernetPacket;
 
                     if let Some(eth) = EthernetPacket::new(packet.data) {
                         if eth.get_ethertype() == EtherTypes::Arp {
@@ -158,7 +152,8 @@ Use scripting mode to handle all ARP requests without LLM calls after initial se
 
                                     // Check if this is the reply we're looking for
                                     if reply_sender_ip == target_ip {
-                                        let expected_mac = MacAddr::new(0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff);
+                                        let expected_mac =
+                                            MacAddr::new(0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff);
                                         if reply_sender_mac == expected_mac {
                                             return Ok::<(), Box<dyn std::error::Error>>(());
                                         } else {
@@ -184,7 +179,9 @@ Use scripting mode to handle all ARP requests without LLM calls after initial se
     match response_found {
         Ok(Ok(())) => println!("✓ Received correct ARP reply for 192.168.1.100"),
         Ok(Err(e)) => return Err(format!("ARP reply validation failed: {}", e).into()),
-        Err(_) => println!("⚠ Timeout waiting for ARP reply (may be expected in some environments)"),
+        Err(_) => {
+            println!("⚠ Timeout waiting for ARP reply (may be expected in some environments)")
+        }
     }
 
     // Test 2: ARP request for 192.168.1.101 (should respond with 11:22:33:44:55:66)
@@ -198,8 +195,8 @@ Use scripting mode to handle all ARP requests without LLM calls after initial se
         loop {
             match cap.next_packet() {
                 Ok(packet) => {
-                    use pnet::packet::ethernet::EthernetPacket;
                     use pnet::packet::arp::ArpPacket;
+                    use pnet::packet::ethernet::EthernetPacket;
 
                     if let Some(eth) = EthernetPacket::new(packet.data) {
                         if eth.get_ethertype() == EtherTypes::Arp {
@@ -209,7 +206,8 @@ Use scripting mode to handle all ARP requests without LLM calls after initial se
                                     let reply_sender_mac = arp.get_sender_hw_addr();
 
                                     if reply_sender_ip == target_ip_2 {
-                                        let expected_mac = MacAddr::new(0x11, 0x22, 0x33, 0x44, 0x55, 0x66);
+                                        let expected_mac =
+                                            MacAddr::new(0x11, 0x22, 0x33, 0x44, 0x55, 0x66);
                                         if reply_sender_mac == expected_mac {
                                             return Ok::<(), Box<dyn std::error::Error>>(());
                                         } else {
@@ -235,7 +233,9 @@ Use scripting mode to handle all ARP requests without LLM calls after initial se
     match response_found_2 {
         Ok(Ok(())) => println!("✓ Received correct ARP reply for 192.168.1.101"),
         Ok(Err(e)) => return Err(format!("ARP reply validation failed: {}", e).into()),
-        Err(_) => println!("⚠ Timeout waiting for ARP reply (may be expected in some environments)"),
+        Err(_) => {
+            println!("⚠ Timeout waiting for ARP reply (may be expected in some environments)")
+        }
     }
 
     // Test 3: ARP request for unknown IP (should be ignored)
@@ -250,8 +250,8 @@ Use scripting mode to handle all ARP requests without LLM calls after initial se
         loop {
             match cap.next_packet() {
                 Ok(packet) => {
-                    use pnet::packet::ethernet::EthernetPacket;
                     use pnet::packet::arp::ArpPacket;
+                    use pnet::packet::ethernet::EthernetPacket;
 
                     if let Some(eth) = EthernetPacket::new(packet.data) {
                         if eth.get_ethertype() == EtherTypes::Arp {
@@ -260,7 +260,7 @@ Use scripting mode to handle all ARP requests without LLM calls after initial se
                                     let reply_sender_ip = arp.get_sender_proto_addr();
                                     if reply_sender_ip == target_ip_3 {
                                         return Err::<(), Box<dyn std::error::Error>>(
-                                            "Unexpected ARP reply for unknown IP".into()
+                                            "Unexpected ARP reply for unknown IP".into(),
                                         );
                                     }
                                 }

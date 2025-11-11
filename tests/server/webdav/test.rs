@@ -7,7 +7,7 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, ServerConfig, E2EResult};
+use super::super::super::helpers::{self, E2EResult, ServerConfig};
 
 #[tokio::test]
 async fn test_webdav_server_start() -> E2EResult<()> {
@@ -21,7 +21,11 @@ async fn test_webdav_server_start() -> E2EResult<()> {
     println!("WebDAV server started on port {}", server.port);
 
     // Verify it's a WebDAV server
-    assert_eq!(server.stack, "WebDAV", "Expected WebDAV server but got {}", server.stack);
+    assert_eq!(
+        server.stack, "WebDAV",
+        "Expected WebDAV server but got {}",
+        server.stack
+    );
 
     println!("✓ WebDAV server initialized successfully");
 
@@ -83,17 +87,15 @@ async fn test_webdav_put_file() -> E2EResult<()> {
     let client = reqwest::Client::new();
     let url = format!("http://127.0.0.1:{}/test.txt", server.port);
 
-    let response = client
-        .put(&url)
-        .body("Hello WebDAV!")
-        .send()
-        .await?;
+    let response = client.put(&url).body("Hello WebDAV!").send().await?;
 
     println!("PUT response status: {}", response.status());
 
     // Accept 201 Created or 204 No Content as success
     assert!(
-        response.status().as_u16() == 201 || response.status().as_u16() == 204 || response.status().is_success(),
+        response.status().as_u16() == 201
+            || response.status().as_u16() == 204
+            || response.status().is_success(),
         "Expected 201/204 for file creation, got {}",
         response.status()
     );

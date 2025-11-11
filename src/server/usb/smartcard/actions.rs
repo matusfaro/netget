@@ -56,14 +56,12 @@ pub static SMARTCARD_REMOVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "smartcard_removed",
         "Smart card removed from virtual reader",
     )
-    .with_parameters(vec![
-        Parameter {
-            name: "connection_id".to_string(),
-            type_hint: "string".to_string(),
-            description: "Connection ID".to_string(),
-            required: true,
-        },
-    ])
+    .with_parameters(vec![Parameter {
+        name: "connection_id".to_string(),
+        type_hint: "string".to_string(),
+        description: "Connection ID".to_string(),
+        required: true,
+    }])
 });
 
 #[cfg(feature = "usb-smartcard")]
@@ -188,14 +186,12 @@ impl Protocol for UsbSmartCardProtocol {
             ActionDefinition {
                 name: "insert_card".to_string(),
                 description: "Insert virtual smart card into reader".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "connection_id".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Connection ID".to_string(),
-                        required: true,
-                    },
-                ],
+                parameters: vec![Parameter {
+                    name: "connection_id".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Connection ID".to_string(),
+                    required: true,
+                }],
                 example: json!({
                     "type": "insert_card",
                     "connection_id": "conn_1"
@@ -204,14 +200,12 @@ impl Protocol for UsbSmartCardProtocol {
             ActionDefinition {
                 name: "remove_card".to_string(),
                 description: "Remove virtual smart card from reader".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "connection_id".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Connection ID".to_string(),
-                        required: true,
-                    },
-                ],
+                parameters: vec![Parameter {
+                    name: "connection_id".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Connection ID".to_string(),
+                    required: true,
+                }],
                 example: json!({
                     "type": "remove_card",
                     "connection_id": "conn_1"
@@ -266,14 +260,12 @@ impl Protocol for UsbSmartCardProtocol {
             ActionDefinition {
                 name: "list_files".to_string(),
                 description: "List files on the card".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "connection_id".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Connection ID".to_string(),
-                        required: true,
-                    },
-                ],
+                parameters: vec![Parameter {
+                    name: "connection_id".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Connection ID".to_string(),
+                    required: true,
+                }],
                 example: json!({
                     "type": "list_files",
                     "connection_id": "conn_1"
@@ -300,7 +292,9 @@ impl Protocol for UsbSmartCardProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2};
+        use crate::protocol::metadata::{
+            DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2,
+        };
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Incomplete)
@@ -342,9 +336,7 @@ impl Server for UsbSmartCardProtocol {
     }
 
     fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let action_type = action["type"]
-            .as_str()
-            .context("Missing action type")?;
+        let action_type = action["type"].as_str().context("Missing action type")?;
 
         match action_type {
             "insert_card" => {
@@ -370,28 +362,30 @@ impl Server for UsbSmartCardProtocol {
                 let _conn_id = action["connection_id"]
                     .as_str()
                     .context("Missing connection_id")?;
-                let new_pin = action["new_pin"]
-                    .as_str()
-                    .context("Missing new_pin")?;
+                let new_pin = action["new_pin"].as_str().context("Missing new_pin")?;
 
                 // NOTE: PIN is managed in SmartCardHandler's PIN store
                 // Would need direct handler access to modify
                 info!("set_pin called - PIN management requires handler access");
-                debug!("Requested PIN change to '{}...'", &new_pin.chars().take(1).collect::<String>());
+                debug!(
+                    "Requested PIN change to '{}...'",
+                    &new_pin.chars().take(1).collect::<String>()
+                );
                 Ok(ActionResult::NoAction)
             }
             "verify_pin" => {
                 let _conn_id = action["connection_id"]
                     .as_str()
                     .context("Missing connection_id")?;
-                let pin = action["pin"]
-                    .as_str()
-                    .context("Missing pin")?;
+                let pin = action["pin"].as_str().context("Missing pin")?;
 
                 // NOTE: PIN verification happens via VERIFY APDU from client
                 // LLM observes via smartcard_pin_requested_event
                 info!("verify_pin called - PIN verification is client-driven via APDU");
-                debug!("PIN verification with '{}...'", &pin.chars().take(1).collect::<String>());
+                debug!(
+                    "PIN verification with '{}...'",
+                    &pin.chars().take(1).collect::<String>()
+                );
                 Ok(ActionResult::NoAction)
             }
             "list_files" => {

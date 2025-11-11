@@ -17,7 +17,7 @@ mod jsonrpc_client_tests {
             "Listen on port {AVAILABLE_PORT} via JSON-RPC. \
              Implement these methods: \
              - add(a, b): Return the sum of a and b \
-             - greet(name): Return 'Hello, {name}!'"
+             - greet(name): Return 'Hello, {name}!'",
         );
 
         let mut server = start_netget_server(server_config).await?;
@@ -60,7 +60,7 @@ mod jsonrpc_client_tests {
         // Start a JSON-RPC server
         let server_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via JSON-RPC. \
-             Implement method 'echo' that returns whatever params it receives."
+             Implement method 'echo' that returns whatever params it receives.",
         );
 
         let mut server = start_netget_server(server_config).await?;
@@ -78,7 +78,10 @@ mod jsonrpc_client_tests {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Verify the client is JSON-RPC protocol
-        assert_eq!(client.protocol, "JSON-RPC", "Client should be JSON-RPC protocol");
+        assert_eq!(
+            client.protocol, "JSON-RPC",
+            "Client should be JSON-RPC protocol"
+        );
 
         println!("✅ JSON-RPC client responded to LLM instruction");
 
@@ -98,7 +101,7 @@ mod jsonrpc_client_tests {
             "Listen on port {AVAILABLE_PORT} via JSON-RPC. \
              Implement these methods: \
              - add(a, b): Return a + b \
-             - multiply(a, b): Return a * b"
+             - multiply(a, b): Return a * b",
         );
 
         let mut server = start_netget_server(server_config).await?;

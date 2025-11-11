@@ -3,6 +3,7 @@
 ## Test Strategy
 
 The BOOTP client tests verify LLM-controlled BOOTP request/reply flows using a real BOOTP/DHCP server. Tests focus on:
+
 1. Basic BOOTP request/reply cycle
 2. Broadcast discovery
 3. Custom MAC address handling
@@ -15,11 +16,13 @@ The BOOTP client tests verify LLM-controlled BOOTP request/reply flows using a r
 Tests require a BOOTP/DHCP server. Use `dnsmasq` for simple testing:
 
 **Install dnsmasq (Ubuntu/Debian):**
+
 ```bash
 sudo apt-get install dnsmasq
 ```
 
 **Configure dnsmasq for BOOTP:**
+
 ```bash
 # /etc/dnsmasq.conf
 interface=lo
@@ -32,6 +35,7 @@ log-dhcp
 ```
 
 **Start dnsmasq:**
+
 ```bash
 sudo systemctl start dnsmasq
 # Or for testing:
@@ -39,11 +43,13 @@ sudo dnsmasq --conf-file=/path/to/test-dnsmasq.conf --no-daemon
 ```
 
 **Alternative: isc-dhcp-server**
+
 ```bash
 sudo apt-get install isc-dhcp-server
 ```
 
 Configure `/etc/dhcp/dhcpd.conf`:
+
 ```
 subnet 127.0.0.0 netmask 255.255.255.0 {
   range 127.0.0.100 127.0.0.200;
@@ -58,17 +64,20 @@ subnet 127.0.0.0 netmask 255.255.255.0 {
 BOOTP clients traditionally bind to UDP port 68, which may require elevated privileges:
 
 **Option 1: Run tests with sudo**
+
 ```bash
 sudo ./cargo-isolated.sh test --no-default-features --features bootp --test client::bootp::e2e_test
 ```
 
 **Option 2: Grant CAP_NET_BIND_SERVICE capability**
+
 ```bash
 # Allow binding to privileged ports without root
 sudo setcap 'cap_net_bind_service=+ep' /path/to/netget
 ```
 
 **Option 3: Use random port (fallback)**
+
 - Tests automatically fall back to random port if 68 unavailable
 - Works with some servers but may have compatibility issues
 
@@ -78,32 +87,34 @@ Total budget: **< 10 LLM calls** across all tests
 
 ### Per-Test Breakdown
 
-| Test | LLM Calls | Description |
-|------|-----------|-------------|
-| `test_bootp_request_reply` | 2 | Basic request/reply |
-| `test_bootp_broadcast_discovery` | 2-3 | Broadcast discovery (may receive multiple replies) |
-| `test_bootp_no_server` | 1 | Error handling (no reply) |
-| `test_bootp_custom_mac` | 2 | Custom MAC address |
-| **Total** | **7-8** | Well under budget |
+| Test                             | LLM Calls | Description                                        |
+|----------------------------------|-----------|----------------------------------------------------|
+| `test_bootp_request_reply`       | 2         | Basic request/reply                                |
+| `test_bootp_broadcast_discovery` | 2-3       | Broadcast discovery (may receive multiple replies) |
+| `test_bootp_no_server`           | 1         | Error handling (no reply)                          |
+| `test_bootp_custom_mac`          | 2         | Custom MAC address                                 |
+| **Total**                        | **7-8**   | Well under budget                                  |
 
 ### LLM Call Flow
 
 **Test: test_bootp_request_reply**
+
 1. **Call 1 (bootp_connected):**
-   - Event: Client ready
-   - LLM Action: `send_bootp_request` with MAC
+    - Event: Client ready
+    - LLM Action: `send_bootp_request` with MAC
 
 2. **Call 2 (bootp_reply_received):**
-   - Event: Reply received (IP, server, boot file)
-   - LLM Action: Analyze and disconnect
+    - Event: Reply received (IP, server, boot file)
+    - LLM Action: Analyze and disconnect
 
 **Test: test_bootp_broadcast_discovery**
+
 1. **Call 1 (bootp_connected):**
-   - LLM Action: `send_bootp_request` with broadcast=true
+    - LLM Action: `send_bootp_request` with broadcast=true
 
 2. **Call 2-3 (bootp_reply_received):**
-   - LLM may receive multiple replies from different servers
-   - LLM Action: `wait_for_more` or disconnect
+    - LLM may receive multiple replies from different servers
+    - LLM Action: `wait_for_more` or disconnect
 
 ## Test Execution
 
@@ -133,24 +144,28 @@ sudo ./cargo-isolated.sh test --no-default-features --features bootp --test clie
 **Purpose:** Verify basic BOOTP request/reply cycle
 
 **Flow:**
+
 1. Connect to BOOTP server at 127.0.0.1:67
 2. LLM sends BOOTP request for MAC 00:11:22:33:44:55
 3. Server replies with IP assignment and boot info
 4. LLM processes reply and disconnects
 
 **Expected Behavior:**
+
 - Client connects successfully
 - BOOTP request sent with specified MAC
 - Reply received with assigned IP, server IP, boot filename
 - LLM interprets reply correctly
 
 **Verification:**
+
 ```rust
 assert!(all_messages.contains("BOOTP client") && all_messages.contains("connected"));
 assert!(all_messages.contains("BOOTP request sent"));
 ```
 
 **Known Issues:**
+
 - Requires BOOTP server running on 127.0.0.1:67
 - May need sudo for port 68 binding
 
@@ -161,22 +176,26 @@ assert!(all_messages.contains("BOOTP request sent"));
 **Purpose:** Test broadcast BOOTP discovery (may find multiple servers)
 
 **Flow:**
+
 1. Connect with broadcast address (255.255.255.255:67)
 2. LLM sends broadcast BOOTP request
 3. Multiple servers may respond
 4. LLM waits for multiple replies or times out
 
 **Expected Behavior:**
+
 - Broadcast request sent
 - May receive multiple replies (if multiple BOOTP servers on network)
 - LLM handles multiple responses
 
 **Verification:**
+
 ```rust
 assert!(all_messages.contains("255.255.255.255") || all_messages.contains("broadcast"));
 ```
 
 **Known Issues:**
+
 - Broadcast may be blocked by firewall
 - Results vary by network configuration
 
@@ -187,24 +206,28 @@ assert!(all_messages.contains("255.255.255.255") || all_messages.contains("broad
 **Purpose:** Test error handling when no BOOTP server responds
 
 **Flow:**
+
 1. Connect to non-existent server (192.0.2.1:67)
 2. LLM sends request
 3. No reply received (timeout)
 4. Client remains connected (UDP is stateless)
 
 **Expected Behavior:**
+
 - Client starts successfully (UDP allows blind sending)
 - Request sent
 - No reply received (expected)
 - No crash or error
 
 **Verification:**
+
 ```rust
 assert!(result.is_ok(), "BOOTP client should start even without server");
 assert!(all_messages.contains("connected") || all_messages.contains("BOOTP"));
 ```
 
 **Notes:**
+
 - Short timeout (5s) since no reply expected
 - Verifies graceful handling of no-response scenario
 
@@ -215,17 +238,20 @@ assert!(all_messages.contains("connected") || all_messages.contains("BOOTP"));
 **Purpose:** Verify LLM correctly handles custom MAC address
 
 **Flow:**
+
 1. Instruction specifies MAC AA:BB:CC:DD:EE:FF
 2. LLM sends request with that MAC
 3. Server replies (may assign specific IP based on MAC)
 4. Verify MAC was used in request
 
 **Expected Behavior:**
+
 - LLM parses MAC from instruction
 - Request includes specified MAC
 - Server responds (if configured)
 
 **Verification:**
+
 ```rust
 assert!(all_messages.to_lowercase().contains("aa:bb:cc:dd:ee:ff"));
 ```
@@ -239,11 +265,13 @@ assert!(all_messages.to_lowercase().contains("aa:bb:cc:dd:ee:ff"));
 **Cause:** Port 68 requires elevated privileges
 
 **Solutions:**
+
 1. Run with sudo: `sudo ./cargo-isolated.sh test ...`
 2. Grant capability: `sudo setcap 'cap_net_bind_service=+ep' target/debug/netget`
 3. Accept fallback to random port (tests will still pass)
 
 **Verification:**
+
 ```bash
 # Check if test used port 68 or fallback
 grep "Failed to bind to port 68" test-output.log
@@ -256,11 +284,13 @@ grep "Failed to bind to port 68" test-output.log
 **Cause:** BOOTP server not running or misconfigured
 
 **Solutions:**
+
 1. Verify dnsmasq is running: `sudo systemctl status dnsmasq`
 2. Check server logs: `sudo journalctl -u dnsmasq -f`
 3. Test with dhcping: `sudo dhcping -s 127.0.0.1`
 
 **Verification:**
+
 ```bash
 # Test server manually
 sudo dhcping -c 127.0.0.1 -s 127.0.0.1 -h 00:11:22:33:44:55
@@ -273,11 +303,13 @@ sudo dhcping -c 127.0.0.1 -s 127.0.0.1 -h 00:11:22:33:44:55
 **Cause:** Firewall or network policy blocks broadcast
 
 **Solutions:**
+
 1. Disable firewall temporarily: `sudo ufw disable`
 2. Allow DHCP/BOOTP: `sudo ufw allow 67/udp` and `sudo ufw allow 68/udp`
 3. Use unicast to specific server
 
 **Verification:**
+
 ```bash
 # Check firewall rules
 sudo iptables -L -n | grep -i dhcp
@@ -290,11 +322,13 @@ sudo iptables -L -n | grep -i dhcp
 **Cause:** LLM taking too long or server not responding
 
 **Solutions:**
+
 1. Increase timeout in test code
 2. Use faster LLM model (e.g., qwen3-coder:30b → qwen3-coder:8b)
 3. Enable `--ollama-lock` for serialization
 
 **Verification:**
+
 ```bash
 # Monitor Ollama performance
 curl http://127.0.0.1:11434/api/ps
@@ -314,6 +348,7 @@ curl http://127.0.0.1:11434/api/ps
 ### LLM Call Budget Monitoring
 
 If tests exceed budget (> 10 calls):
+
 1. Combine related tests
 2. Use scripting mode for repetitive actions
 3. Reduce timeout to fail faster
@@ -331,6 +366,7 @@ If tests exceed budget (> 10 calls):
 ## Test Server Configuration Examples
 
 ### Minimal dnsmasq.conf for Testing
+
 ```bash
 # test-dnsmasq.conf
 port=0  # Disable DNS
@@ -343,11 +379,13 @@ log-queries
 ```
 
 **Run:**
+
 ```bash
 sudo dnsmasq --conf-file=test-dnsmasq.conf --no-daemon --log-facility=-
 ```
 
 ### ISC DHCP Server for Testing
+
 ```bash
 # test-dhcpd.conf
 default-lease-time 600;
@@ -363,6 +401,7 @@ subnet 127.0.0.0 netmask 255.255.255.0 {
 ```
 
 **Run:**
+
 ```bash
 sudo dhcpd -f -d -cf test-dhcpd.conf lo
 ```

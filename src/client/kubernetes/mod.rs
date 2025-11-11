@@ -9,13 +9,13 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
+use crate::client::kubernetes::actions::K8S_CLIENT_RESOURCE_RECEIVED_EVENT;
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::kubernetes::actions::K8S_CLIENT_RESOURCE_RECEIVED_EVENT;
 
 /// Kubernetes client that interacts with Kubernetes API server
 pub struct KubernetesClient;
@@ -32,19 +32,31 @@ impl KubernetesClient {
         // For Kubernetes, "connection" means establishing API client configuration
         // The kube client is stateless and makes requests on-demand
 
-        info!("Kubernetes client {} initializing for cluster {}", client_id, remote_addr);
+        info!(
+            "Kubernetes client {} initializing for cluster {}",
+            client_id, remote_addr
+        );
 
         // Try to create a Kubernetes client using default kubeconfig
         let _k8s_client = if remote_addr == "default" || remote_addr == "~/.kube/config" {
             // Use default kubeconfig
             match kube::Client::try_default().await {
                 Ok(client) => {
-                    info!("Kubernetes client {} connected using default kubeconfig", client_id);
+                    info!(
+                        "Kubernetes client {} connected using default kubeconfig",
+                        client_id
+                    );
                     client
                 }
                 Err(e) => {
-                    error!("Failed to connect to Kubernetes using default kubeconfig: {}", e);
-                    return Err(anyhow::anyhow!("Failed to connect to Kubernetes: {}. Make sure kubeconfig is configured.", e));
+                    error!(
+                        "Failed to connect to Kubernetes using default kubeconfig: {}",
+                        e
+                    );
+                    return Err(anyhow::anyhow!(
+                        "Failed to connect to Kubernetes: {}. Make sure kubeconfig is configured.",
+                        e
+                    ));
                 }
             }
         } else {
@@ -56,24 +68,24 @@ impl KubernetesClient {
         let namespace = "default".to_string();
 
         // Store client configuration in protocol_data
-        app_state.with_client_mut(client_id, |client| {
-            client.set_protocol_field(
-                "k8s_client".to_string(),
-                serde_json::json!("initialized"),
-            );
-            client.set_protocol_field(
-                "namespace".to_string(),
-                serde_json::json!(namespace),
-            );
-            client.set_protocol_field(
-                "cluster_url".to_string(),
-                serde_json::json!(remote_addr),
-            );
-        }).await;
+        app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .set_protocol_field("k8s_client".to_string(), serde_json::json!("initialized"));
+                client.set_protocol_field("namespace".to_string(), serde_json::json!(namespace));
+                client
+                    .set_protocol_field("cluster_url".to_string(), serde_json::json!(remote_addr));
+            })
+            .await;
 
         // Update status
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] Kubernetes client {} ready for cluster", client_id));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] Kubernetes client {} ready for cluster",
+            client_id
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Spawn a background task to monitor for client disconnection
@@ -119,21 +131,26 @@ impl KubernetesClient {
         let ns = if let Some(n) = namespace {
             n
         } else {
-            app_state.with_client_mut(client_id, |client| {
-                client.get_protocol_field("namespace")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-            }).await.flatten().unwrap_or_else(|| "default".to_string())
+            app_state
+                .with_client_mut(client_id, |client| {
+                    client
+                        .get_protocol_field("namespace")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
+                .await
+                .flatten()
+                .unwrap_or_else(|| "default".to_string())
         };
 
-        info!("Kubernetes client {} executing {} on {} in namespace {}",
-              client_id, operation, resource_type, ns);
+        info!(
+            "Kubernetes client {} executing {} on {} in namespace {}",
+            client_id, operation, resource_type, ns
+        );
 
         // Execute operation based on resource type and operation
         let result = match (operation.as_str(), resource_type.as_str()) {
-            ("list", "pods") => {
-                Self::list_pods(&k8s_client, &ns, label_selector.as_deref()).await
-            }
+            ("list", "pods") => Self::list_pods(&k8s_client, &ns, label_selector.as_deref()).await,
             ("get", "pod") => {
                 if let Some(pod_name) = name {
                     Self::get_pod(&k8s_client, &ns, &pod_name).await
@@ -152,7 +169,9 @@ impl KubernetesClient {
                 if let Some(pod_spec) = data {
                     Self::create_pod(&k8s_client, &ns, pod_spec).await
                 } else {
-                    Err(anyhow::anyhow!("Pod specification required for create operation"))
+                    Err(anyhow::anyhow!(
+                        "Pod specification required for create operation"
+                    ))
                 }
             }
             ("delete", "pod") => {
@@ -168,9 +187,11 @@ impl KubernetesClient {
             ("list", "services") => {
                 Self::list_services(&k8s_client, &ns, label_selector.as_deref()).await
             }
-            _ => {
-                Err(anyhow::anyhow!("Unsupported operation '{}' on resource type '{}'", operation, resource_type))
-            }
+            _ => Err(anyhow::anyhow!(
+                "Unsupported operation '{}' on resource type '{}'",
+                operation,
+                resource_type
+            )),
         };
 
         match result {
@@ -179,7 +200,9 @@ impl KubernetesClient {
 
                 // Call LLM with response
                 if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                    let protocol = Arc::new(crate::client::kubernetes::actions::KubernetesClientProtocol::new());
+                    let protocol = Arc::new(
+                        crate::client::kubernetes::actions::KubernetesClientProtocol::new(),
+                    );
                     let event = Event::new(
                         &K8S_CLIENT_RESOURCE_RECEIVED_EVENT,
                         serde_json::json!({
@@ -190,7 +213,10 @@ impl KubernetesClient {
                         }),
                     );
 
-                    let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                    let memory = app_state
+                        .get_memory_for_client(client_id)
+                        .await
+                        .unwrap_or_default();
 
                     match call_llm_for_client(
                         &llm_client,
@@ -201,8 +227,13 @@ impl KubernetesClient {
                         Some(&event),
                         protocol.as_ref(),
                         &status_tx,
-                    ).await {
-                        Ok(ClientLlmResult { actions: _, memory_updates }) => {
+                    )
+                    .await
+                    {
+                        Ok(ClientLlmResult {
+                            actions: _,
+                            memory_updates,
+                        }) => {
                             // Update memory
                             if let Some(mem) = memory_updates {
                                 app_state.set_memory_for_client(client_id, mem).await;
@@ -240,11 +271,15 @@ impl KubernetesClient {
             list_params = list_params.labels(selector);
         }
 
-        let pod_list = pods.list(&list_params).await
+        let pod_list = pods
+            .list(&list_params)
+            .await
             .context("Failed to list pods")?;
 
         // Convert to JSON
-        let pod_names: Vec<String> = pod_list.items.iter()
+        let pod_names: Vec<String> = pod_list
+            .items
+            .iter()
             .filter_map(|pod| pod.metadata.name.clone())
             .collect();
 
@@ -264,11 +299,15 @@ impl KubernetesClient {
         use kube::Api;
 
         let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
-        let pod = pods.get(name).await
+        let pod = pods
+            .get(name)
+            .await
             .with_context(|| format!("Failed to get pod {}", name))?;
 
         // Extract relevant info
-        let status = pod.status.as_ref()
+        let status = pod
+            .status
+            .as_ref()
             .and_then(|s| s.phase.clone())
             .unwrap_or_else(|| "Unknown".to_string());
 
@@ -295,7 +334,9 @@ impl KubernetesClient {
             ..Default::default()
         };
 
-        let logs = pods.logs(name, &log_params).await
+        let logs = pods
+            .logs(name, &log_params)
+            .await
             .with_context(|| format!("Failed to get logs for pod {}", name))?;
 
         Ok(serde_json::json!({
@@ -317,13 +358,18 @@ impl KubernetesClient {
         let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
 
         // Deserialize pod spec
-        let pod: Pod = serde_json::from_value(pod_spec)
-            .context("Failed to parse pod specification")?;
+        let pod: Pod =
+            serde_json::from_value(pod_spec).context("Failed to parse pod specification")?;
 
-        let created_pod = pods.create(&kube::api::PostParams::default(), &pod).await
+        let created_pod = pods
+            .create(&kube::api::PostParams::default(), &pod)
+            .await
             .context("Failed to create pod")?;
 
-        let pod_name = created_pod.metadata.name.unwrap_or_else(|| "unknown".to_string());
+        let pod_name = created_pod
+            .metadata
+            .name
+            .unwrap_or_else(|| "unknown".to_string());
 
         Ok(serde_json::json!({
             "created": true,
@@ -343,7 +389,8 @@ impl KubernetesClient {
 
         let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
 
-        pods.delete(name, &kube::api::DeleteParams::default()).await
+        pods.delete(name, &kube::api::DeleteParams::default())
+            .await
             .with_context(|| format!("Failed to delete pod {}", name))?;
 
         Ok(serde_json::json!({
@@ -369,10 +416,14 @@ impl KubernetesClient {
             list_params = list_params.labels(selector);
         }
 
-        let deployment_list = deployments.list(&list_params).await
+        let deployment_list = deployments
+            .list(&list_params)
+            .await
             .context("Failed to list deployments")?;
 
-        let deployment_names: Vec<String> = deployment_list.items.iter()
+        let deployment_names: Vec<String> = deployment_list
+            .items
+            .iter()
             .filter_map(|dep| dep.metadata.name.clone())
             .collect();
 
@@ -398,10 +449,14 @@ impl KubernetesClient {
             list_params = list_params.labels(selector);
         }
 
-        let service_list = services.list(&list_params).await
+        let service_list = services
+            .list(&list_params)
+            .await
             .context("Failed to list services")?;
 
-        let service_names: Vec<String> = service_list.items.iter()
+        let service_names: Vec<String> = service_list
+            .items
+            .iter()
             .filter_map(|svc| svc.metadata.name.clone())
             .collect();
 

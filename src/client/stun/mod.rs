@@ -9,13 +9,15 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
+use crate::client::stun::actions::{
+    STUN_CLIENT_BINDING_RESPONSE_EVENT, STUN_CLIENT_CONNECTED_EVENT,
+};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::stun::actions::{STUN_CLIENT_CONNECTED_EVENT, STUN_CLIENT_BINDING_RESPONSE_EVENT};
 
 /// STUN client for discovering external IP/port behind NAT
 pub struct StunClient;
@@ -38,23 +40,31 @@ impl StunClient {
             .context("Failed to bind UDP socket")?;
 
         let bound_addr = udp_socket.local_addr()?;
-        info!("STUN client {} bound to local address {}", client_id, bound_addr);
+        info!(
+            "STUN client {} bound to local address {}",
+            client_id, bound_addr
+        );
 
         // Store socket and STUN server address in protocol_data
-        app_state.with_client_mut(client_id, |client| {
-            client.set_protocol_field(
-                "stun_server".to_string(),
-                serde_json::json!(remote_addr),
-            );
-            client.set_protocol_field(
-                "local_addr".to_string(),
-                serde_json::json!(bound_addr.to_string()),
-            );
-        }).await;
+        app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .set_protocol_field("stun_server".to_string(), serde_json::json!(remote_addr));
+                client.set_protocol_field(
+                    "local_addr".to_string(),
+                    serde_json::json!(bound_addr.to_string()),
+                );
+            })
+            .await;
 
         // Update status
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] STUN client {} ready for {}", client_id, remote_addr));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] STUN client {} ready for {}",
+            client_id, remote_addr
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Call LLM with connected event
@@ -82,8 +92,13 @@ impl StunClient {
                     Some(&event),
                     protocol.as_ref(),
                     &status_tx_clone,
-                ).await {
-                    Ok(ClientLlmResult { actions, memory_updates }) => {
+                )
+                .await
+                {
+                    Ok(ClientLlmResult {
+                        actions,
+                        memory_updates,
+                    }) => {
                         // Update memory
                         if let Some(mem) = memory_updates {
                             app_state_clone.set_memory_for_client(client_id, mem).await;
@@ -97,7 +112,9 @@ impl StunClient {
                                 app_state_clone.clone(),
                                 llm_clone.clone(),
                                 status_tx_clone.clone(),
-                            ).await {
+                            )
+                            .await
+                            {
                                 error!("Failed to execute STUN action: {}", e);
                             }
                         }
@@ -144,7 +161,9 @@ impl StunClient {
             }
             crate::llm::actions::client_trait::ClientActionResult::Disconnect => {
                 info!("STUN client {} disconnecting", client_id);
-                app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
                 let _ = status_tx.send(format!("[CLIENT] STUN client {} disconnected", client_id));
                 let _ = status_tx.send("__UPDATE_UI__".to_string());
             }
@@ -162,13 +181,21 @@ impl StunClient {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         // Get STUN server address from client
-        let stun_server = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("stun_server")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }).await.flatten().context("No STUN server found")?;
+        let stun_server = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("stun_server")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .await
+            .flatten()
+            .context("No STUN server found")?;
 
-        info!("STUN client {} sending binding request to {}", client_id, stun_server);
+        info!(
+            "STUN client {} sending binding request to {}",
+            client_id, stun_server
+        );
 
         // Resolve STUN server address (may be hostname:port)
         let stun_sock_addr: SocketAddr = tokio::net::lookup_host(&stun_server)
@@ -188,7 +215,10 @@ impl StunClient {
 
         match stun_client.query_external_address_async(&udp_socket).await {
             Ok(external_addr) => {
-                info!("STUN client {} discovered external address: {}", client_id, external_addr);
+                info!(
+                    "STUN client {} discovered external address: {}",
+                    client_id, external_addr
+                );
 
                 let local_addr = udp_socket.local_addr()?;
 
@@ -206,7 +236,10 @@ impl StunClient {
                         }),
                     );
 
-                    let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                    let memory = app_state
+                        .get_memory_for_client(client_id)
+                        .await
+                        .unwrap_or_default();
 
                     match call_llm_for_client(
                         &llm_client,
@@ -217,8 +250,13 @@ impl StunClient {
                         Some(&event),
                         protocol.as_ref(),
                         &status_tx,
-                    ).await {
-                        Ok(ClientLlmResult { actions: _, memory_updates }) => {
+                    )
+                    .await
+                    {
+                        Ok(ClientLlmResult {
+                            actions: _,
+                            memory_updates,
+                        }) => {
                             // Update memory
                             if let Some(mem) = memory_updates {
                                 app_state.set_memory_for_client(client_id, mem).await;

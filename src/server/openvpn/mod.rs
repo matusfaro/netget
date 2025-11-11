@@ -23,6 +23,7 @@ use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use crate::state::server::{ConnectionState, ConnectionStatus, ProtocolConnectionInfo};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 use actions::OPENVPN_PEER_CONNECTED_EVENT;
 use anyhow::{Context, Result};
 use packet::{ControlPacket, DataPacket, Opcode, PacketHeader};
@@ -34,7 +35,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, trace, warn};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Maximum number of peers to allow
 const MAX_PEERS: usize = 100;
@@ -141,22 +141,23 @@ impl OpenvpnServer {
             .up();
 
         #[cfg(target_os = "linux")]
-        let tun_device = tun::create_as_async(&tun_config)
-            .context("Failed to create TUN device")?;
+        let tun_device =
+            tun::create_as_async(&tun_config).context("Failed to create TUN device")?;
 
         #[cfg(target_os = "macos")]
-        let tun_device = tun::create_as_async(&tun_config)
-            .context("Failed to create TUN device")?;
+        let tun_device =
+            tun::create_as_async(&tun_config).context("Failed to create TUN device")?;
 
         #[cfg(target_os = "windows")]
-        let tun_device = tun::create_as_async(&tun_config)
-            .context("Failed to create TUN device")?;
+        let tun_device =
+            tun::create_as_async(&tun_config).context("Failed to create TUN device")?;
 
         info!("TUN interface created successfully: {}", interface_name);
         let _ = status_tx.send(format!("[INFO] TUN interface created: {}", interface_name));
 
         // Bind UDP socket
-        let socket = UdpSocket::bind(bind_addr).await
+        let socket = UdpSocket::bind(bind_addr)
+            .await
             .context("Failed to bind UDP socket")?;
         let local_addr = socket.local_addr()?;
 
@@ -179,11 +180,10 @@ impl OpenvpnServer {
         let status_clone = status_tx.clone();
         let app_state_clone = app_state.clone();
         tokio::spawn(async move {
-            if let Err(e) = server_clone.handle_udp_packets(
-                app_state_clone,
-                server_id,
-                status_clone,
-            ).await {
+            if let Err(e) = server_clone
+                .handle_udp_packets(app_state_clone, server_id, status_clone)
+                .await
+            {
                 error!("UDP packet handler error: {}", e);
             }
         });
@@ -199,7 +199,10 @@ impl OpenvpnServer {
 
         info!("OpenVPN VPN server ready on {}", local_addr);
         let _ = status_tx.send(format!("→ OpenVPN VPN server ready on {}", local_addr));
-        let _ = status_tx.send(format!("[INFO] Clients can connect to {} with VPN subnet {}", local_addr, VPN_NETWORK));
+        let _ = status_tx.send(format!(
+            "[INFO] Clients can connect to {} with VPN subnet {}",
+            local_addr, VPN_NETWORK
+        ));
 
         Ok(local_addr)
     }
@@ -216,10 +219,10 @@ impl OpenvpnServer {
         params.distinguished_name = dn;
 
         // Generate key pair and self-sign
-        let key_pair = KeyPair::generate()
-            .context("Failed to generate key pair")?;
+        let key_pair = KeyPair::generate().context("Failed to generate key pair")?;
 
-        let cert = params.self_signed(&key_pair)
+        let cert = params
+            .self_signed(&key_pair)
             .context("Failed to create self-signed certificate")?;
 
         let cert_der = CertificateDer::from(cert.der().to_vec());
@@ -260,7 +263,8 @@ impl OpenvpnServer {
 
             // Route packet based on opcode
             if header.opcode.is_control() {
-                self.handle_control_packet(packet, peer_addr, &app_state, server_id, &status_tx).await;
+                self.handle_control_packet(packet, peer_addr, &app_state, server_id, &status_tx)
+                    .await;
             } else if header.opcode.is_data() {
                 self.handle_data_packet(packet, peer_addr, &status_tx).await;
             } else if header.opcode.is_ack() {
@@ -286,18 +290,32 @@ impl OpenvpnServer {
             }
         };
 
-        trace!("Control packet from {}: {:?}", peer_addr, control_packet.header.opcode);
+        trace!(
+            "Control packet from {}: {:?}",
+            peer_addr,
+            control_packet.header.opcode
+        );
 
         // Handle based on opcode
         match control_packet.header.opcode {
             Opcode::ControlHardResetClientV2 | Opcode::ControlHardResetClientV1 => {
-                self.handle_handshake_initiation(control_packet, peer_addr, app_state, server_id, status_tx).await;
+                self.handle_handshake_initiation(
+                    control_packet,
+                    peer_addr,
+                    app_state,
+                    server_id,
+                    status_tx,
+                )
+                .await;
             }
             Opcode::ControlV1 => {
                 self.handle_control_message(control_packet, peer_addr).await;
             }
             _ => {
-                trace!("Unhandled control opcode: {:?}", control_packet.header.opcode);
+                trace!(
+                    "Unhandled control opcode: {:?}",
+                    control_packet.header.opcode
+                );
             }
         }
     }
@@ -346,7 +364,8 @@ impl OpenvpnServer {
         self.peer_manager.add_peer(peer.clone()).await;
 
         // Send handshake response
-        self.send_handshake_response(&peer, &control_packet, status_tx).await;
+        self.send_handshake_response(&peer, &control_packet, status_tx)
+            .await;
 
         // Initialize data channel keys (simplified for MVP)
         self.initialize_data_channel(&peer, status_tx).await;
@@ -367,7 +386,9 @@ impl OpenvpnServer {
             protocol_info: ProtocolConnectionInfo::empty(),
         };
 
-        app_state.add_connection_to_server(server_id, conn_state).await;
+        app_state
+            .add_connection_to_server(server_id, conn_state)
+            .await;
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Trigger LLM event
@@ -435,22 +456,20 @@ impl OpenvpnServer {
         };
 
         // Update peer with cipher
-        self.peer_manager.update_peer(&peer.addr, |p| {
-            if let Err(e) = p.init_data_cipher(&keys, true) {
-                error!("Failed to initialize cipher: {}", e);
-            } else {
-                debug!("Data channel initialized for {}", peer.addr);
-                let _ = status_tx.send(format!("[DEBUG] Data channel ready for {}", peer.addr));
-            }
-        }).await;
+        self.peer_manager
+            .update_peer(&peer.addr, |p| {
+                if let Err(e) = p.init_data_cipher(&keys, true) {
+                    error!("Failed to initialize cipher: {}", e);
+                } else {
+                    debug!("Data channel initialized for {}", peer.addr);
+                    let _ = status_tx.send(format!("[DEBUG] Data channel ready for {}", peer.addr));
+                }
+            })
+            .await;
     }
 
     /// Handle control message (key exchange, config push)
-    async fn handle_control_message(
-        &self,
-        _control_packet: ControlPacket,
-        _peer_addr: SocketAddr,
-    ) {
+    async fn handle_control_message(&self, _control_packet: ControlPacket, _peer_addr: SocketAddr) {
         // Simplified for MVP
         trace!("Control message handling (simplified)");
     }
@@ -506,26 +525,21 @@ impl OpenvpnServer {
         }
 
         // Update stats
-        self.peer_manager.update_peer(&peer_addr, |p| {
-            p.update_stats(0, plaintext.len() as u64);
-        }).await;
+        self.peer_manager
+            .update_peer(&peer_addr, |p| {
+                p.update_stats(0, plaintext.len() as u64);
+            })
+            .await;
     }
 
     /// Handle ACK packet
-    async fn handle_ack_packet(
-        &self,
-        _packet: &[u8],
-        _peer_addr: SocketAddr,
-    ) {
+    async fn handle_ack_packet(&self, _packet: &[u8], _peer_addr: SocketAddr) {
         // Simplified for MVP
         trace!("ACK packet handling (simplified)");
     }
 
     /// Handle outgoing packets from TUN (to be sent to VPN clients)
-    async fn handle_tun_packets(
-        &self,
-        _status_tx: mpsc::UnboundedSender<String>,
-    ) -> Result<()> {
+    async fn handle_tun_packets(&self, _status_tx: mpsc::UnboundedSender<String>) -> Result<()> {
         let mut buf = vec![0u8; 2048];
 
         loop {
@@ -556,9 +570,11 @@ impl OpenvpnServer {
             // Encrypt and send
             if let Some(cipher) = &peer.data_cipher {
                 let mut packet_id = 0;
-                self.peer_manager.update_peer(&peer.addr, |p| {
-                    packet_id = p.next_packet_id();
-                }).await;
+                self.peer_manager
+                    .update_peer(&peer.addr, |p| {
+                        packet_id = p.next_packet_id();
+                    })
+                    .await;
 
                 let encrypted = match cipher.encrypt(packet_id, ip_packet, &[]) {
                     Ok(enc) => enc,
@@ -588,9 +604,11 @@ impl OpenvpnServer {
                 }
 
                 // Update stats
-                self.peer_manager.update_peer(&peer.addr, |p| {
-                    p.update_stats(serialized.len() as u64, 0);
-                }).await;
+                self.peer_manager
+                    .update_peer(&peer.addr, |p| {
+                        p.update_stats(serialized.len() as u64, 0);
+                    })
+                    .await;
             }
         }
     }
@@ -598,7 +616,8 @@ impl OpenvpnServer {
     /// Get peer list
     pub async fn list_peers(&self) -> Vec<(SocketAddr, Ipv4Addr)> {
         let peers = self.peer_manager.get_all_peers().await;
-        peers.iter()
+        peers
+            .iter()
             .filter_map(|p| p.vpn_ip.map(|ip| (p.addr, ip)))
             .collect()
     }

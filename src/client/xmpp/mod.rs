@@ -9,26 +9,25 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace, warn};
 
+use crate::client::xmpp::actions::{
+    XMPP_CLIENT_CONNECTED_EVENT, XMPP_CLIENT_MESSAGE_RECEIVED_EVENT,
+    XMPP_CLIENT_PRESENCE_RECEIVED_EVENT,
+};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::xmpp::actions::{
-    XMPP_CLIENT_CONNECTED_EVENT,
-    XMPP_CLIENT_MESSAGE_RECEIVED_EVENT,
-    XMPP_CLIENT_PRESENCE_RECEIVED_EVENT,
-};
 
-use tokio_xmpp::{Client as XmppClient, Event as XmppEvent};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use futures::StreamExt;
 use tokio_xmpp::jid::Jid;
+use tokio_xmpp::{Client as XmppClient, Event as XmppEvent};
 use xmpp_parsers::{
     message::{Lang, Message, MessageType},
     presence::{Presence, Show as PresenceShow, Type as PresenceType},
 };
-use futures::StreamExt;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -58,7 +57,8 @@ impl XmppClientConnection {
         client_id: ClientId,
     ) -> Result<SocketAddr> {
         // Parse JID and password from remote_addr or get from startup params
-        let (jid, password, _server_addr) = Self::parse_connection_info(&remote_addr, &app_state, client_id).await?;
+        let (jid, password, _server_addr) =
+            Self::parse_connection_info(&remote_addr, &app_state, client_id).await?;
 
         info!("XMPP client {} connecting as {}", client_id, jid);
         let _ = status_tx.send(format!("[CLIENT] XMPP client {} connecting...", client_id));
@@ -67,16 +67,20 @@ impl XmppClientConnection {
         let mut xmpp_client = XmppClient::new(jid.clone(), password);
 
         // Store JID in app state
-        app_state.with_client_mut(client_id, |client| {
-            client.set_protocol_field(
-                "jid".to_string(),
-                serde_json::json!(jid.to_string()),
-            );
-        }).await;
+        app_state
+            .with_client_mut(client_id, |client| {
+                client.set_protocol_field("jid".to_string(), serde_json::json!(jid.to_string()));
+            })
+            .await;
 
         // Update status
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] XMPP client {} connected as {}", client_id, jid));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] XMPP client {} connected as {}",
+            client_id, jid
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Initialize client data
@@ -87,7 +91,10 @@ impl XmppClientConnection {
         }));
 
         // Call LLM with connected event
-        let instruction = app_state.get_instruction_for_client(client_id).await.unwrap_or_default();
+        let instruction = app_state
+            .get_instruction_for_client(client_id)
+            .await
+            .unwrap_or_default();
         let protocol = Arc::new(crate::client::xmpp::actions::XmppClientProtocol::new());
         let event = Event::new(
             &XMPP_CLIENT_CONNECTED_EVENT,
@@ -109,8 +116,13 @@ impl XmppClientConnection {
             Some(&event),
             protocol.as_ref(),
             &status_tx,
-        ).await {
-            Ok(ClientLlmResult { actions, memory_updates }) => {
+        )
+        .await
+        {
+            Ok(ClientLlmResult {
+                actions,
+                memory_updates,
+            }) => {
                 if let Some(mem) = memory_updates {
                     client_data.lock().await.memory = mem;
                 }
@@ -123,7 +135,8 @@ impl XmppClientConnection {
                         stanza_tx.clone(),
                         client_id,
                         &status_tx,
-                    ).await;
+                    )
+                    .await;
                 }
             }
             Err(e) => {
@@ -204,7 +217,9 @@ impl XmppClientConnection {
             }
 
             info!("XMPP client {} disconnected", client_id);
-            app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
+            app_state
+                .update_client_status(client_id, ClientStatus::Disconnected)
+                .await;
             let _ = status_tx.send(format!("[CLIENT] XMPP client {} disconnected", client_id));
             let _ = status_tx.send("__UPDATE_UI__".to_string());
         });
@@ -220,15 +235,19 @@ impl XmppClientConnection {
         client_id: ClientId,
     ) -> Result<(Jid, String, String)> {
         // Try to get from startup params first
-        let params = app_state.with_client_mut(client_id, |client| {
-            let jid = client.get_protocol_field("jid")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            let pass = client.get_protocol_field("password")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            (jid, pass)
-        }).await;
+        let params = app_state
+            .with_client_mut(client_id, |client| {
+                let jid = client
+                    .get_protocol_field("jid")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let pass = client
+                    .get_protocol_field("password")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                (jid, pass)
+            })
+            .await;
 
         let (jid_str, password) = params.unwrap_or((None, None));
 
@@ -250,11 +269,12 @@ impl XmppClientConnection {
             }
         };
 
-        let jid: Jid = jid_str.parse()
-            .context("Invalid JID format")?;
+        let jid: Jid = jid_str.parse().context("Invalid JID format")?;
 
         // Server address is typically the domain from JID
-        let server_addr = remote_addr.split('@').nth(1)
+        let server_addr = remote_addr
+            .split('@')
+            .nth(1)
             .and_then(|s| s.split(':').next())
             .unwrap_or("localhost")
             .to_string();
@@ -289,10 +309,17 @@ impl XmppClientConnection {
                     Stanza::Message(msg) => {
                         let from = msg.from.as_ref().map(|j| j.to_string()).unwrap_or_default();
                         let to = msg.to.as_ref().map(|j| j.to_string()).unwrap_or_default();
-                        let body = msg.bodies.get(&Lang::default()).cloned().unwrap_or_default();
+                        let body = msg
+                            .bodies
+                            .get(&Lang::default())
+                            .cloned()
+                            .unwrap_or_default();
                         let msg_type = format!("{:?}", msg.type_);
 
-                        info!("XMPP client {} received message from {}: {}", client_id, from, body);
+                        info!(
+                            "XMPP client {} received message from {}: {}",
+                            client_id, from, body
+                        );
 
                         Some(Event::new(
                             &XMPP_CLIENT_MESSAGE_RECEIVED_EVENT,
@@ -305,12 +332,27 @@ impl XmppClientConnection {
                         ))
                     }
                     Stanza::Presence(presence) => {
-                        let from = presence.from.as_ref().map(|j| j.to_string()).unwrap_or_default();
+                        let from = presence
+                            .from
+                            .as_ref()
+                            .map(|j| j.to_string())
+                            .unwrap_or_default();
                         let presence_type = format!("{:?}", presence.type_);
-                        let show = presence.show.as_ref().map(|s| format!("{:?}", s)).unwrap_or_default();
-                        let status = presence.statuses.get(&Lang::default()).cloned().unwrap_or_default();
+                        let show = presence
+                            .show
+                            .as_ref()
+                            .map(|s| format!("{:?}", s))
+                            .unwrap_or_default();
+                        let status = presence
+                            .statuses
+                            .get(&Lang::default())
+                            .cloned()
+                            .unwrap_or_default();
 
-                        debug!("XMPP client {} received presence from {}: {:?}", client_id, from, presence_type);
+                        debug!(
+                            "XMPP client {} received presence from {}: {:?}",
+                            client_id, from, presence_type
+                        );
 
                         Some(Event::new(
                             &XMPP_CLIENT_PRESENCE_RECEIVED_EVENT,
@@ -323,7 +365,10 @@ impl XmppClientConnection {
                         ))
                     }
                     Stanza::Iq(_iq) => {
-                        debug!("XMPP client {} received IQ stanza (not yet supported)", client_id);
+                        debug!(
+                            "XMPP client {} received IQ stanza (not yet supported)",
+                            client_id
+                        );
                         None
                     }
                 }
@@ -341,8 +386,13 @@ impl XmppClientConnection {
                     Some(&event),
                     protocol.as_ref(),
                     status_tx,
-                ).await {
-                    Ok(ClientLlmResult { actions, memory_updates }) => {
+                )
+                .await
+                {
+                    Ok(ClientLlmResult {
+                        actions,
+                        memory_updates,
+                    }) => {
                         if let Some(mem) = memory_updates {
                             client_data.lock().await.memory = mem;
                         }
@@ -355,7 +405,8 @@ impl XmppClientConnection {
                                 stanza_tx.clone(),
                                 client_id,
                                 status_tx,
-                            ).await;
+                            )
+                            .await;
                         }
                     }
                     Err(e) => {
@@ -416,7 +467,9 @@ impl XmppClientConnection {
                         }
 
                         if let Some(status_str) = status {
-                            presence.statuses.insert(Lang::default(), status_str.to_string());
+                            presence
+                                .statuses
+                                .insert(Lang::default(), status_str.to_string());
                         }
 
                         use tokio_xmpp::Stanza;
@@ -437,7 +490,10 @@ impl XmppClientConnection {
             }
             Ok(_) => {}
             Err(e) => {
-                error!("Action execution error for XMPP client {}: {}", client_id, e);
+                error!(
+                    "Action execution error for XMPP client {}: {}",
+                    client_id, e
+                );
             }
         }
     }

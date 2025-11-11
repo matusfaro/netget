@@ -2,16 +2,19 @@
 
 ## Overview
 
-The IRC client connects to IRC servers using a custom line-based protocol implementation. Unlike the server which uses the `irc` crate, the client implements IRC manually for fine-grained LLM control.
+The IRC client connects to IRC servers using a custom line-based protocol implementation. Unlike the server which uses
+the `irc` crate, the client implements IRC manually for fine-grained LLM control.
 
 ## Library Choices
 
 **NO external IRC library** - Custom implementation using:
+
 - `tokio::net::TcpStream` - Raw TCP connection
 - Line-based protocol parsing (CRLF-delimited)
 - Manual IRC command construction
 
-**Rationale**: The `irc` crate is designed for full-featured IRC clients with automatic message handling, which would limit LLM control. Our custom implementation gives the LLM direct control over all IRC commands and responses.
+**Rationale**: The `irc` crate is designed for full-featured IRC clients with automatic message handling, which would
+limit LLM control. Our custom implementation gives the LLM direct control over all IRC commands and responses.
 
 ## Architecture
 
@@ -29,6 +32,7 @@ The IRC client connects to IRC servers using a custom line-based protocol implem
 ```
 
 Examples:
+
 ```
 PING :server.example.com
 :nick!user@host PRIVMSG #channel :Hello world
@@ -38,6 +42,7 @@ PING :server.example.com
 ### State Machine
 
 **ConnectionState**:
+
 - `Idle` - Ready to process messages
 - `Processing` - LLM call in progress
 - `Accumulating` - Queuing messages during LLM processing
@@ -49,11 +54,13 @@ This prevents concurrent LLM calls on the same client.
 ### Events
 
 **Connected Event** (`irc_connected`):
+
 - Triggered when registration completes (001 welcome message)
 - Contains: `remote_addr`, `nickname`
 - LLM decides: Join channels, set modes, etc.
 
 **Message Received Event** (`irc_message_received`):
+
 - Triggered for every IRC message (except PING)
 - Contains: `source`, `command`, `target`, `message`, `raw_message`
 - LLM decides: Respond with PRIVMSG, join/part channels, change nick
@@ -61,12 +68,14 @@ This prevents concurrent LLM calls on the same client.
 ### Actions
 
 **Async Actions** (user-triggered):
+
 - `join_channel` - Join a channel
 - `part_channel` - Leave a channel
 - `change_nick` - Change nickname
 - `disconnect` - Quit the server
 
 **Sync Actions** (response to messages):
+
 - `send_privmsg` - Send message to channel/user
 - `send_notice` - Send notice to channel/user
 - `send_raw` - Send raw IRC command
@@ -83,6 +92,7 @@ This prevents concurrent LLM calls on the same client.
 ### PING/PONG Handling
 
 PING messages are handled automatically without LLM involvement:
+
 ```rust
 if line.starts_with("PING ") {
     let pong = line.replace("PING", "PONG");
@@ -96,6 +106,7 @@ This ensures the connection stays alive without requiring LLM responses.
 ### Message Parsing
 
 The `parse_irc_message` function extracts:
+
 - **Source** - Who sent the message (nick!user@host or server)
 - **Command** - IRC command (PRIVMSG, JOIN, 001, etc.)
 - **Target** - Channel or user (for PRIVMSG/NOTICE)
@@ -119,22 +130,22 @@ The `parse_irc_message` function extracts:
 ## Limitations
 
 1. **No TLS** - Currently only plaintext IRC (port 6667)
-   - Future: Add TLS support for port 6697 (IRC over TLS)
+    - Future: Add TLS support for port 6697 (IRC over TLS)
 
 2. **No SASL** - No SASL authentication support
-   - Future: Add SASL PLAIN mechanism for authenticated connections
+    - Future: Add SASL PLAIN mechanism for authenticated connections
 
 3. **No DCC** - No Direct Client-to-Client protocol support
-   - Rationale: DCC is rarely used, complex to implement
+    - Rationale: DCC is rarely used, complex to implement
 
 4. **No CTCP** - No Client-to-Client Protocol (VERSION, TIME, etc.)
-   - Future: Add basic CTCP response actions
+    - Future: Add basic CTCP response actions
 
 5. **Single Encoding** - Assumes UTF-8, doesn't handle legacy encodings
-   - Rationale: Modern IRC servers use UTF-8
+    - Rationale: Modern IRC servers use UTF-8
 
 6. **No Message Splitting** - Long messages may be truncated by server
-   - Future: Auto-split messages longer than 512 bytes
+    - Future: Auto-split messages longer than 512 bytes
 
 ## Testing Strategy
 

@@ -2,7 +2,8 @@
 
 ## Overview
 
-The HTTP proxy client implements HTTP CONNECT tunneling, allowing NetGet to route connections through HTTP proxy servers. This enables LLM-controlled proxy operations for accessing remote servers through intermediate proxies.
+The HTTP proxy client implements HTTP CONNECT tunneling, allowing NetGet to route connections through HTTP proxy
+servers. This enables LLM-controlled proxy operations for accessing remote servers through intermediate proxies.
 
 ## Protocol Stack
 
@@ -20,7 +21,8 @@ ETH > IP > TCP > HTTP
 
 ### Rationale
 
-- **No external HTTP proxy library**: We implement the HTTP CONNECT protocol directly using TCP, giving us full control over the proxy handshake
+- **No external HTTP proxy library**: We implement the HTTP CONNECT protocol directly using TCP, giving us full control
+  over the proxy handshake
 - **Tokio async runtime**: Standard async I/O for concurrent client connections
 - **Manual protocol implementation**: HTTP CONNECT is simple enough to implement directly without heavy dependencies
 
@@ -66,24 +68,24 @@ Proxy -> Client: HTTP/1.1 200 Connection established
 #### Async Actions (User-Triggered)
 
 1. **establish_tunnel**
-   - Parameters: `target_host`, `target_port`
-   - Sends CONNECT request to proxy
-   - Waits for 200 response
-   - Triggers `http_proxy_tunnel_established` event on success
+    - Parameters: `target_host`, `target_port`
+    - Sends CONNECT request to proxy
+    - Waits for 200 response
+    - Triggers `http_proxy_tunnel_established` event on success
 
 2. **send_http_request**
-   - Parameters: `method`, `path`, `headers`, `body`
-   - Constructs HTTP request string
-   - Sends through established tunnel
-   - Example: GET / HTTP/1.1
+    - Parameters: `method`, `path`, `headers`, `body`
+    - Constructs HTTP request string
+    - Sends through established tunnel
+    - Example: GET / HTTP/1.1
 
 3. **send_data**
-   - Parameters: `data_hex`
-   - Sends raw data through tunnel
-   - For protocols other than HTTP
+    - Parameters: `data_hex`
+    - Sends raw data through tunnel
+    - For protocols other than HTTP
 
 4. **disconnect**
-   - Closes connection to proxy
+    - Closes connection to proxy
 
 #### Sync Actions (Response to Network Events)
 
@@ -94,18 +96,18 @@ Proxy -> Client: HTTP/1.1 200 Connection established
 ### Events
 
 1. **http_proxy_connected**
-   - Triggered when TCP connection to proxy is established
-   - LLM can decide whether to establish tunnel immediately or wait
+    - Triggered when TCP connection to proxy is established
+    - LLM can decide whether to establish tunnel immediately or wait
 
 2. **http_proxy_tunnel_established**
-   - Triggered when CONNECT succeeds (200 response)
-   - Parameters: `target_host`, `target_port`, `status_code`
-   - LLM can now send requests through tunnel
+    - Triggered when CONNECT succeeds (200 response)
+    - Parameters: `target_host`, `target_port`, `status_code`
+    - LLM can now send requests through tunnel
 
 3. **http_proxy_response_received**
-   - Triggered when data arrives through tunnel
-   - Parameters: `data_hex`, `data_length`
-   - LLM decides how to respond
+    - Triggered when data arrives through tunnel
+    - Parameters: `data_hex`, `data_length`
+    - LLM decides how to respond
 
 ## Implementation Details
 
@@ -123,6 +125,7 @@ Proxy -> Client: HTTP/1.1 200 Connection established
 ### Response Parsing
 
 We use `BufReader` to read the CONNECT response line-by-line:
+
 - First line: `HTTP/1.1 200 Connection established`
 - Following lines: Headers
 - Empty line: End of headers, tunnel ready
@@ -132,6 +135,7 @@ After tunnel establishment, we switch to raw byte reading.
 ### Proxy Authentication
 
 Basic authentication can be added via `Proxy-Authorization` header:
+
 ```
 Proxy-Authorization: Basic base64(username:password)
 ```
@@ -149,25 +153,25 @@ This is not yet implemented but can be added as a startup parameter.
 ## Future Enhancements
 
 1. **Proxy Authentication**
-   - Add `proxy_auth` startup parameter
-   - Send Proxy-Authorization header in CONNECT
+    - Add `proxy_auth` startup parameter
+    - Send Proxy-Authorization header in CONNECT
 
 2. **Proxy Response Parsing**
-   - Parse Proxy-Agent header
-   - Handle 407 Proxy Authentication Required
-   - Handle other error codes (502 Bad Gateway, etc.)
+    - Parse Proxy-Agent header
+    - Handle 407 Proxy Authentication Required
+    - Handle other error codes (502 Bad Gateway, etc.)
 
 3. **Connection Pooling**
-   - Reuse proxy connections for multiple tunnels
-   - HTTP/1.1 persistent connections
+    - Reuse proxy connections for multiple tunnels
+    - HTTP/1.1 persistent connections
 
 4. **Proxy PAC Files**
-   - Parse PAC (Proxy Auto-Configuration) files
-   - LLM decides which proxy to use based on destination
+    - Parse PAC (Proxy Auto-Configuration) files
+    - LLM decides which proxy to use based on destination
 
 5. **Transparent Proxying**
-   - Allow other client protocols to use proxy transparently
-   - Proxy-as-middleware pattern
+    - Allow other client protocols to use proxy transparently
+    - Proxy-as-middleware pattern
 
 ## Testing Strategy
 

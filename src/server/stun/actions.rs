@@ -48,7 +48,7 @@ impl crate::llm::actions::protocol_trait::Protocol for StunProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
@@ -87,7 +87,8 @@ impl Server for StunProtocol {
                 ctx.state,
                 ctx.status_tx,
                 ctx.server_id,
-            ).await
+            )
+            .await
         })
     }
 
@@ -137,8 +138,8 @@ impl StunProtocol {
             .unwrap_or(false);
 
         // Parse transaction ID from hex
-        let transaction_id_bytes = hex::decode(transaction_id)
-            .context("Invalid transaction_id hex")?;
+        let transaction_id_bytes =
+            hex::decode(transaction_id).context("Invalid transaction_id hex")?;
 
         if transaction_id_bytes.len() != 12 {
             return Err(anyhow::anyhow!("Transaction ID must be 12 bytes"));
@@ -179,8 +180,8 @@ impl StunProtocol {
             .context("Missing 'transaction_id' field")?;
 
         // Parse transaction ID from hex
-        let transaction_id_bytes = hex::decode(transaction_id)
-            .context("Invalid transaction_id hex")?;
+        let transaction_id_bytes =
+            hex::decode(transaction_id).context("Invalid transaction_id hex")?;
 
         if transaction_id_bytes.len() != 12 {
             return Err(anyhow::anyhow!("Transaction ID must be 12 bytes"));
@@ -268,7 +269,10 @@ impl StunProtocol {
     }
 
     /// Add MAPPED-ADDRESS attribute
-    fn add_mapped_address_attribute(packet: &mut Vec<u8>, addr: std::net::SocketAddr) -> Result<()> {
+    fn add_mapped_address_attribute(
+        packet: &mut Vec<u8>,
+        addr: std::net::SocketAddr,
+    ) -> Result<()> {
         // Attribute Type: 0x0001 (MAPPED-ADDRESS)
         packet.extend_from_slice(&0x0001u16.to_be_bytes());
 
@@ -440,7 +444,9 @@ fn send_stun_binding_response_action() -> ActionDefinition {
             Parameter {
                 name: "mapped_address".to_string(),
                 type_hint: "string".to_string(),
-                description: "Client's public IP:port as seen by server (e.g., \"203.0.113.45:54321\")".to_string(),
+                description:
+                    "Client's public IP:port as seen by server (e.g., \"203.0.113.45:54321\")"
+                        .to_string(),
                 required: true,
             },
             Parameter {
@@ -452,7 +458,9 @@ fn send_stun_binding_response_action() -> ActionDefinition {
             Parameter {
                 name: "xor_mapped_address".to_string(),
                 type_hint: "boolean".to_string(),
-                description: "Use XOR-MAPPED-ADDRESS (true) or MAPPED-ADDRESS (false). Default: true".to_string(),
+                description:
+                    "Use XOR-MAPPED-ADDRESS (true) or MAPPED-ADDRESS (false). Default: true"
+                        .to_string(),
                 required: false,
             },
             Parameter {
@@ -527,7 +535,7 @@ fn ignore_request_action() -> ActionDefinition {
 pub static STUN_BINDING_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "stun_binding_request",
-        "STUN binding request received from client"
+        "STUN binding request received from client",
     )
 });
 

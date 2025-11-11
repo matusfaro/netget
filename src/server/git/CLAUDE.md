@@ -2,46 +2,53 @@
 
 ## Overview
 
-Git Smart HTTP server implementing the Git Smart HTTP protocol (HTTP-based git clone/fetch). The LLM controls virtual repositories, reference advertisement, and pack file generation. This is a **read-only implementation** (clone/fetch only - no push support).
+Git Smart HTTP server implementing the Git Smart HTTP protocol (HTTP-based git clone/fetch). The LLM controls virtual
+repositories, reference advertisement, and pack file generation. This is a **read-only implementation** (clone/fetch
+only - no push support).
 
 ## Protocol Version
 
 - **Git Smart HTTP**: Protocol used by `git clone http://...` and `git fetch`
 - **Transport**: HTTP/1.1 GET and POST
 - **Endpoints**:
-  - `GET /info/refs?service=git-upload-pack` - Reference discovery
-  - `POST /git-upload-pack` - Pack negotiation and transfer
+    - `GET /info/refs?service=git-upload-pack` - Reference discovery
+    - `POST /git-upload-pack` - Pack negotiation and transfer
 - **Format**: Git pkt-line protocol (4-byte hex length + data)
 
 ## Library Choices
 
 ### Core Dependencies
+
 - **hyper** (v1) - HTTP/1.1 server implementation
-  - Chosen for: Existing NetGet infrastructure, async/await support
-  - Used for: HTTP request/response processing
+    - Chosen for: Existing NetGet infrastructure, async/await support
+    - Used for: HTTP request/response processing
 - **base64** - Base64 encoding/decoding
-  - Used for: Encoding pack file data from LLM responses
+    - Used for: Encoding pack file data from LLM responses
 - **No Git library** - Manual implementation for maximum LLM control
-  - Rationale: Git protocol is simple enough to implement directly, provides full flexibility
+    - Rationale: Git protocol is simple enough to implement directly, provides full flexibility
 
 ### Why No git2-rs for Server?
+
 - **git2-rs** (libgit2 bindings) is client-focused, no built-in server mode
 - **gitoxide/gix** server components are incomplete
 - **Manual implementation** provides:
-  - Full LLM control over protocol responses
-  - Virtual repositories without real .git directories
-  - Flexibility in pack generation
+    - Full LLM control over protocol responses
+    - Virtual repositories without real .git directories
+    - Flexibility in pack generation
 
 ## Architecture Decisions
 
 ### Virtual Repositories
+
 **No Real .git Directories** - All repository content is LLM-generated:
+
 1. **Repository metadata**: Stored in memory (not yet implemented - future enhancement)
 2. **References (branches/tags)**: LLM provides list with fake/real commit SHAs
 3. **Pack files**: LLM generates base64-encoded pack data (or simplified version)
 4. **No persistence**: Repositories exist only during server lifetime
 
 **Why Virtual**:
+
 - Maximum flexibility - LLM can create any content
 - No filesystem dependencies
 - Perfect for honeypots (serve fake repositories)
@@ -52,17 +59,17 @@ Git Smart HTTP server implementing the Git Smart HTTP protocol (HTTP-based git c
 **Complete Repository Control** - LLM implements all Git operations:
 
 1. **Reference Discovery** (`GET /info/refs`):
-   - Client: "What branches/tags exist?"
-   - LLM: Generates list of refs with commit SHAs
+    - Client: "What branches/tags exist?"
+    - LLM: Generates list of refs with commit SHAs
 
 2. **Pack Generation** (`POST /git-upload-pack`):
-   - Client: "Send me objects for these SHAs"
-   - LLM: Generates pack file (simplified or full)
+    - Client: "Send me objects for these SHAs"
+    - LLM: Generates pack file (simplified or full)
 
 3. **Error Handling**:
-   - Repository not found (404)
-   - Access denied (403)
-   - Custom error messages
+    - Repository not found (404)
+    - Access denied (403)
+    - Custom error messages
 
 ### Action-Based Responses
 
@@ -117,21 +124,26 @@ Example:
 ```
 
 **Special packets**:
+
 - `0000` - Flush packet (marks end of section)
 
 **Implementation**:
+
 ```rust
 fn format!("{:04x}{}", data.len() + 4, data)
 ```
 
 ### Connection Management
+
 - Each HTTP request spawned as separate tokio task
 - Connections tracked in `ProtocolConnectionInfo::Git` with `recent_repos: Vec<String>`
 - HTTP/1.1 keep-alive handled by hyper
 - No session state (each request is independent)
 
 ### Repository Parsing
+
 **URL Path Formats**:
+
 - `/repo-name/info/refs` - Repository named "repo-name"
 - `/info/refs` - Default repository
 - `/repo-name/git-upload-pack` - Upload pack for "repo-name"
@@ -139,6 +151,7 @@ fn format!("{:04x}{}", data.len() + 4, data)
 ## State Management
 
 ### Per-Connection State
+
 ```rust
 ProtocolConnectionInfo::Git {
     recent_repos: Vec<String>,  // Track last 10 repository accesses
@@ -146,6 +159,7 @@ ProtocolConnectionInfo::Git {
 ```
 
 ### No Repository Persistence
+
 - Repositories defined in LLM prompts only
 - No database or file storage
 - Each server startup requires repository recreation
@@ -153,6 +167,7 @@ ProtocolConnectionInfo::Git {
 ## Limitations
 
 ### Not Implemented
+
 - **Push operations** (`git-receive-pack`) - Read-only server
 - **Dumb HTTP protocol** - Only Smart HTTP supported
 - **Real .git directories** - Virtual repositories only
@@ -162,17 +177,21 @@ ProtocolConnectionInfo::Git {
 - **Protocol v2** - Only protocol v1 supported
 
 ### Simplified Pack Files
+
 **Current approach**: LLM can provide:
+
 1. **Base64-encoded minimal pack** - Just enough to satisfy `git clone`
 2. **Empty pack** - For demonstration (clone will fail)
 3. **Future**: Full pack generation with tree/blob/commit objects
 
 **Why simplified**:
+
 - Full pack generation requires understanding Git object format
 - MVP focuses on protocol flow
 - LLM can still generate realistic-looking responses
 
 ### LLM Interpretation Challenges
+
 - **SHA generation** - LLM must provide 40-character hex SHAs (can be fake)
 - **Pack format** - Complex binary format (simplified for MVP)
 - **Capabilities** - Must match Git client expectations
@@ -180,6 +199,7 @@ ProtocolConnectionInfo::Git {
 ## Example Prompts and Responses
 
 ### Startup
+
 ```
 listen on port 9418 via git
 
@@ -192,13 +212,16 @@ Allow public clones. When clients clone, provide minimal pack file.
 ```
 
 ### Network Event (GET /info/refs)
+
 **Received**:
+
 ```
 GET /hello-world/info/refs?service=git-upload-pack HTTP/1.1
 Host: localhost:9418
 ```
 
 **LLM Response**:
+
 ```json
 {
   "actions": [
@@ -218,6 +241,7 @@ Host: localhost:9418
 ```
 
 **Client Receives** (pkt-line format):
+
 ```
 001e# service=git-upload-pack\n
 0000
@@ -226,7 +250,9 @@ Host: localhost:9418
 ```
 
 ### Network Event (POST /git-upload-pack)
+
 **Received**:
+
 ```
 POST /hello-world/git-upload-pack HTTP/1.1
 Host: localhost:9418
@@ -236,6 +262,7 @@ Content-Length: 142
 ```
 
 **LLM Response**:
+
 ```json
 {
   "actions": [
@@ -252,6 +279,7 @@ Content-Length: 142
 ```
 
 **Client Receives**:
+
 ```
 Content-Type: application/x-git-upload-pack-result
 
@@ -259,12 +287,15 @@ Content-Type: application/x-git-upload-pack-result
 ```
 
 ### Error Response
+
 **Received**:
+
 ```
 GET /nonexistent/info/refs?service=git-upload-pack
 ```
 
 **LLM Response**:
+
 ```json
 {
   "actions": [
@@ -278,6 +309,7 @@ GET /nonexistent/info/refs?service=git-upload-pack
 ```
 
 **Client Receives**:
+
 ```
 HTTP/1.1 404 Not Found
 Content-Type: text/plain
@@ -288,6 +320,7 @@ Error: Repository 'nonexistent' not found
 ## Honeypot Use Cases
 
 ### Fake Credential Trap
+
 ```
 listen on port 9418 via git
 
@@ -300,6 +333,7 @@ Track which files are accessed in clone requests.
 ```
 
 ### Enticing Repository Names
+
 ```
 listen on port 9418 via git
 
@@ -313,6 +347,7 @@ All return 404 but log access attempts and source IPs.
 ```
 
 ### Dynamic Content Generation
+
 ```
 listen on port 9418 via git
 
@@ -325,6 +360,7 @@ For any repository name requested:
 ## Testing Strategy
 
 ### Manual Testing
+
 ```bash
 # Start NetGet with Git server
 netget "listen on port 9418 via git. Create repo 'test' with main branch."
@@ -334,6 +370,7 @@ git clone http://localhost:9418/test
 ```
 
 ### Expected Behavior
+
 1. Git client requests `/test/info/refs?service=git-upload-pack`
 2. Server sends pkt-line formatted refs
 3. Git client requests `/test/git-upload-pack` with wants

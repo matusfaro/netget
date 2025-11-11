@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::server::helpers::{
-    assert_stack_name, get_available_port, start_netget_server, wait_for_server_startup,
-    ServerConfig, E2EResult,
+    assert_stack_name, start_netget_server, wait_for_server_startup, E2EResult,
+    ServerConfig,
 };
 
 /// Test comprehensive route matching with file-based OpenAPI spec
@@ -12,8 +12,8 @@ use crate::server::helpers::{
 #[cfg(feature = "openapi")]
 async fn test_openapi_route_matching_comprehensive() -> E2EResult<()> {
     // Get path to test spec file
-    let spec_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/server/openapi/test_spec.yaml");
+    let spec_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/server/openapi/test_spec.yaml");
     let spec_path_str = spec_path.to_str().unwrap();
 
     // Create prompt that tells LLM to read spec and open server
@@ -45,11 +45,7 @@ async fn test_openapi_route_matching_comprehensive() -> E2EResult<()> {
         .send()
         .await?;
 
-    assert_eq!(
-        response.status(),
-        404,
-        "Expected 404 for non-existent path"
-    );
+    assert_eq!(response.status(), 404, "Expected 404 for non-existent path");
 
     let json: serde_json::Value = response.json().await?;
     assert!(
@@ -60,10 +56,7 @@ async fn test_openapi_route_matching_comprehensive() -> E2EResult<()> {
 
     println!("\n=== Testing 405 Method Not Allowed (path exists, wrong method) ===");
     // /users supports GET and POST, but not DELETE
-    let response = client
-        .delete(&format!("{}/users", base_url))
-        .send()
-        .await?;
+    let response = client.delete(&format!("{}/users", base_url)).send().await?;
 
     assert_eq!(
         response.status(),
@@ -91,7 +84,10 @@ async fn test_openapi_route_matching_comprehensive() -> E2EResult<()> {
     );
 
     println!("\n=== Testing path parameter extraction: /users/123 ===");
-    let response = client.get(&format!("{}/users/123", base_url)).send().await?;
+    let response = client
+        .get(&format!("{}/users/123", base_url))
+        .send()
+        .await?;
 
     let status = response.status();
     let body = response.text().await?;
@@ -172,8 +168,8 @@ async fn test_openapi_route_matching_comprehensive() -> E2EResult<()> {
 #[tokio::test]
 #[cfg(feature = "openapi")]
 async fn test_openapi_llm_on_invalid_override() -> E2EResult<()> {
-    let spec_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/server/openapi/test_spec.yaml");
+    let spec_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/server/openapi/test_spec.yaml");
     let spec_path_str = spec_path.to_str().unwrap();
 
     // Create prompt that tells LLM to read spec, open server, and configure error handling

@@ -8,4 +8,3 @@ pub mod helpers;
 #[path = "client/mod.rs"]
 mod client;
 
-pub use client::*;

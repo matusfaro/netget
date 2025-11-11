@@ -15,13 +15,13 @@
 
 #![cfg(all(test, feature = "bluetooth-ble"))]
 
-use super::super::super::helpers::{self, ServerConfig, E2EResult};
+use super::super::super::helpers::{self, E2EResult, ServerConfig};
 use std::time::Duration;
 
 #[cfg(feature = "bluetooth-ble")]
-use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter, WriteType};
+use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter};
 #[cfg(feature = "bluetooth-ble")]
-use btleplug::platform::{Manager, Adapter};
+use btleplug::platform::{Adapter, Manager};
 
 /// Helper: Get BLE adapter for testing
 #[cfg(feature = "bluetooth-ble")]
@@ -70,7 +70,11 @@ async fn find_peripheral_by_name(
     }
 
     adapter.stop_scan().await?;
-    Err(format!("Device '{}' not found within {} seconds", device_name, timeout_secs).into())
+    Err(format!(
+        "Device '{}' not found within {} seconds",
+        device_name, timeout_secs
+    )
+    .into())
 }
 
 #[tokio::test]

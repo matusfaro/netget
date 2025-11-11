@@ -16,14 +16,14 @@ use crate::llm::ollama_client::OllamaClient;
 #[cfg(feature = "tor")]
 use crate::llm::ActionResult;
 #[cfg(feature = "tor")]
-use actions::TOR_DIRECTORY_REQUEST_EVENT;
+use crate::protocol::Event;
 #[cfg(feature = "tor")]
 use crate::server::TorDirectoryProtocol;
 #[cfg(feature = "tor")]
-use crate::protocol::Event;
-#[cfg(feature = "tor")]
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+#[cfg(feature = "tor")]
+use actions::TOR_DIRECTORY_REQUEST_EVENT;
 
 /// Tor Directory server that serves consensus and descriptors
 pub struct TorDirectoryServer;
@@ -31,8 +31,7 @@ pub struct TorDirectoryServer;
 /// Authority keys for the directory (generated on startup)
 static AUTHORITY_KEYS: once_cell::sync::Lazy<authority_keys::AuthorityKeys> =
     once_cell::sync::Lazy::new(|| {
-        authority_keys::AuthorityKeys::generate()
-            .expect("Failed to generate authority keys")
+        authority_keys::AuthorityKeys::generate().expect("Failed to generate authority keys")
     });
 
 #[cfg(feature = "tor")]
@@ -45,19 +44,29 @@ impl TorDirectoryServer {
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
     ) -> Result<SocketAddr> {
-        let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let listener =
+            crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
 
         // Log authority fingerprints for test configuration
         let v3_ident = AUTHORITY_KEYS.v3_identity_fingerprint();
         let fingerprint = AUTHORITY_KEYS.authority_fingerprint();
 
-        info!("Tor Directory server (action-based) listening on {}", local_addr);
+        info!(
+            "Tor Directory server (action-based) listening on {}",
+            local_addr
+        );
         info!("Authority v3 identity fingerprint: {}", v3_ident);
         info!("Authority fingerprint: {}", fingerprint);
 
-        let _ = status_tx.send(format!("[INFO] Tor Directory server listening on {}", local_addr));
-        let _ = status_tx.send(format!("[INFO] Authority v3 identity fingerprint: {}", v3_ident));
+        let _ = status_tx.send(format!(
+            "[INFO] Tor Directory server listening on {}",
+            local_addr
+        ));
+        let _ = status_tx.send(format!(
+            "[INFO] Authority v3 identity fingerprint: {}",
+            v3_ident
+        ));
         let _ = status_tx.send(format!("[INFO] Authority fingerprint: {}", fingerprint));
 
         let protocol = Arc::new(TorDirectoryProtocol::new());
@@ -67,9 +76,14 @@ impl TorDirectoryServer {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
                         let connection_id = crate::server::connection::ConnectionId::new(
-                            app_state.get_next_unified_id().await
+                            app_state.get_next_unified_id().await,
                         );
-                        console_debug!(status_tx, "Tor Directory connection {} from {}", connection_id, remote_addr);
+                        console_debug!(
+                            status_tx,
+                            "Tor Directory connection {} from {}",
+                            connection_id,
+                            remote_addr
+                        );
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -91,7 +105,8 @@ impl TorDirectoryServer {
                             // Handle Tor Directory HTTP session
                             if let Err(e) = session.handle().await {
                                 error!("Tor Directory session error: {}", e);
-                                let _ = status_clone.send(format!("[ERROR] Tor Directory session error: {}", e));
+                                let _ = status_clone
+                                    .send(format!("[ERROR] Tor Directory session error: {}", e));
                             }
                         });
                     }
@@ -138,7 +153,10 @@ impl TorDirectorySession {
         let parts: Vec<&str> = request_line.split_whitespace().collect();
         if parts.len() < 2 {
             debug!("Tor Directory malformed request: {}", request_line.trim());
-            let _ = self.status_tx.send(format!("[DEBUG] Tor Directory malformed request from {}", self.remote_addr));
+            let _ = self.status_tx.send(format!(
+                "[DEBUG] Tor Directory malformed request from {}",
+                self.remote_addr
+            ));
 
             // Send 400 Bad Request
             let error_response = b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n";
@@ -151,7 +169,10 @@ impl TorDirectorySession {
         let path = parts[1];
 
         debug!("Tor Directory {} {}", method, path);
-        let _ = self.status_tx.send(format!("[DEBUG] Tor Directory {} {} from {}", method, path, self.remote_addr));
+        let _ = self.status_tx.send(format!(
+            "[DEBUG] Tor Directory {} {} from {}",
+            method, path, self.remote_addr
+        ));
 
         // Read remaining headers (but we don't need to parse them for now)
         let mut line = String::new();
@@ -164,11 +185,14 @@ impl TorDirectorySession {
         }
 
         // Create Tor Directory request event
-        let event = Event::new(&TOR_DIRECTORY_REQUEST_EVENT, serde_json::json!({
-            "path": path,
-            "client_ip": self.remote_addr.ip().to_string(),
-            "method": method,
-        }));
+        let event = Event::new(
+            &TOR_DIRECTORY_REQUEST_EVENT,
+            serde_json::json!({
+                "path": path,
+                "client_ip": self.remote_addr.ip().to_string(),
+                "method": method,
+            }),
+        );
 
         // Get LLM response
         if let Ok(execution_result) = call_llm(
@@ -178,7 +202,9 @@ impl TorDirectorySession {
             Some(self.connection_id),
             &event,
             self.protocol.as_ref(),
-        ).await {
+        )
+        .await
+        {
             for protocol_result in execution_result.protocol_results {
                 match protocol_result {
                     ActionResult::Output(data) => {
@@ -186,7 +212,9 @@ impl TorDirectorySession {
                         write_half.flush().await?;
 
                         debug!("Tor Directory sent {} bytes", data.len());
-                        let _ = self.status_tx.send(format!("[DEBUG] Tor Directory sent {} bytes", data.len()));
+                        let _ = self
+                            .status_tx
+                            .send(format!("[DEBUG] Tor Directory sent {} bytes", data.len()));
                     }
                     ActionResult::CloseConnection => {
                         debug!("Tor Directory closing connection");

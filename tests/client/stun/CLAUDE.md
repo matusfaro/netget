@@ -2,7 +2,8 @@
 
 ## Test Strategy
 
-E2E tests for STUN client using public Google STUN servers. Tests verify NAT traversal discovery by making real binding requests and parsing responses.
+E2E tests for STUN client using public Google STUN servers. Tests verify NAT traversal discovery by making real binding
+requests and parsing responses.
 
 ## LLM Call Budget
 
@@ -12,21 +13,21 @@ E2E tests for STUN client using public Google STUN servers. Tests verify NAT tra
 ## Tests
 
 1. **test_stun_client_discover_external_address** (1 LLM call)
-   - Connect to stun.l.google.com:19302
-   - Send binding request
-   - Verify external address discovery
-   - Runtime: ~2 seconds
+    - Connect to stun.l.google.com:19302
+    - Send binding request
+    - Verify external address discovery
+    - Runtime: ~2 seconds
 
 2. **test_stun_client_alternative_server** (1 LLM call)
-   - Connect to stun1.l.google.com:19302
-   - Verify STUN protocol detection
-   - Runtime: ~2 seconds
+    - Connect to stun1.l.google.com:19302
+    - Verify STUN protocol detection
+    - Runtime: ~2 seconds
 
 3. **test_stun_client_binding_response** (1 LLM call)
-   - Send binding request
-   - Process binding response
-   - Verify external IP/port parsing
-   - Runtime: ~2 seconds
+    - Send binding request
+    - Process binding response
+    - Verify external IP/port parsing
+    - Runtime: ~2 seconds
 
 ## Runtime
 
@@ -42,6 +43,7 @@ These are Google's free public STUN servers, reliable and always available.
 ## Test Approach
 
 Tests are **black-box** E2E tests that:
+
 1. Spawn NetGet binary with STUN client instruction
 2. Wait for binding request/response
 3. Verify output contains expected protocol/message indicators

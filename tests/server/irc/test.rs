@@ -7,9 +7,9 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, ServerConfig, E2EResult};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use super::super::super::helpers::{self, E2EResult, ServerConfig};
 use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 #[tokio::test]
 async fn test_irc_welcome() -> E2EResult<()> {
@@ -23,7 +23,6 @@ async fn test_irc_welcome() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-
     // VALIDATION: Connect and perform IRC registration
     println!("Connecting to IRC server...");
     let stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
@@ -35,7 +34,9 @@ async fn test_irc_welcome() -> E2EResult<()> {
     // Send IRC registration commands
     println!("Sending NICK and USER commands...");
     write_half.write_all(b"NICK testuser\r\n").await?;
-    write_half.write_all(b"USER testuser 0 * :Test User\r\n").await?;
+    write_half
+        .write_all(b"USER testuser 0 * :Test User\r\n")
+        .await?;
     write_half.flush().await?;
 
     // Read responses (may be multiple lines)
@@ -83,13 +84,13 @@ async fn test_irc_ping_pong() -> E2EResult<()> {
     println!("\n=== E2E Test: IRC PING/PONG ===");
 
     // PROMPT: Tell the LLM to handle IRC PING
-    let prompt = "listen on port {AVAILABLE_PORT} via irc. When you receive a PING command with a token, \
+    let prompt =
+        "listen on port {AVAILABLE_PORT} via irc. When you receive a PING command with a token, \
         respond with PONG using the same token. Format: 'PONG :token'";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
-
 
     // VALIDATION: Send PING and verify PONG
     let stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
@@ -101,7 +102,9 @@ async fn test_irc_ping_pong() -> E2EResult<()> {
     // Send PING command
     let ping_token = "1234567890";
     println!("Sending: PING :{}", ping_token);
-    write_half.write_all(format!("PING :{}\r\n", ping_token).as_bytes()).await?;
+    write_half
+        .write_all(format!("PING :{}\r\n", ping_token).as_bytes())
+        .await?;
     write_half.flush().await?;
 
     // Read PONG response
@@ -148,7 +151,6 @@ async fn test_irc_join_channel() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-
     // VALIDATION: Connect and join a channel
     let stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
     println!("✓ TCP connected");
@@ -159,7 +161,9 @@ async fn test_irc_join_channel() -> E2EResult<()> {
     // Send IRC registration and JOIN
     println!("Sending IRC commands...");
     write_half.write_all(b"NICK testuser\r\n").await?;
-    write_half.write_all(b"USER testuser 0 * :Test User\r\n").await?;
+    write_half
+        .write_all(b"USER testuser 0 * :Test User\r\n")
+        .await?;
     write_half.write_all(b"JOIN #test\r\n").await?;
     write_half.flush().await?;
 
@@ -197,13 +201,13 @@ async fn test_irc_privmsg() -> E2EResult<()> {
     println!("\n=== E2E Test: IRC PRIVMSG ===");
 
     // PROMPT: Tell the LLM to handle private messages
-    let prompt = "listen on port {AVAILABLE_PORT} via irc. When you receive 'PRIVMSG target :message', \
+    let prompt =
+        "listen on port {AVAILABLE_PORT} via irc. When you receive 'PRIVMSG target :message', \
         echo it back as 'PRIVMSG sender :message'";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
-
 
     // VALIDATION: Send PRIVMSG and check for response
     let stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
@@ -215,7 +219,9 @@ async fn test_irc_privmsg() -> E2EResult<()> {
     // Send registration and message
     println!("Sending IRC commands...");
     write_half.write_all(b"NICK testuser\r\n").await?;
-    write_half.write_all(b"USER testuser 0 * :Test User\r\n").await?;
+    write_half
+        .write_all(b"USER testuser 0 * :Test User\r\n")
+        .await?;
     write_half.write_all(b"PRIVMSG bot :Hello IRC\r\n").await?;
     write_half.flush().await?;
 
@@ -245,13 +251,13 @@ async fn test_irc_multiple_clients() -> E2EResult<()> {
     println!("\n=== E2E Test: IRC Multiple Clients ===");
 
     // PROMPT: Tell the LLM to handle multiple IRC clients
-    let prompt = "listen on port {AVAILABLE_PORT} via irc. Handle multiple concurrent IRC clients. \
+    let prompt =
+        "listen on port {AVAILABLE_PORT} via irc. Handle multiple concurrent IRC clients. \
         Send welcome message (001) to each client that connects with NICK and USER";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
-
 
     // VALIDATION: Connect multiple clients
     println!("Testing multiple IRC clients...");
@@ -264,8 +270,12 @@ async fn test_irc_multiple_clients() -> E2EResult<()> {
         let mut reader = BufReader::new(read_half);
 
         // Register
-        write_half.write_all(format!("NICK testuser{}\r\n", i).as_bytes()).await?;
-        write_half.write_all(format!("USER testuser{} 0 * :Test User {}\r\n", i, i).as_bytes()).await?;
+        write_half
+            .write_all(format!("NICK testuser{}\r\n", i).as_bytes())
+            .await?;
+        write_half
+            .write_all(format!("USER testuser{} 0 * :Test User {}\r\n", i, i).as_bytes())
+            .await?;
         write_half.flush().await?;
 
         // Try to read response

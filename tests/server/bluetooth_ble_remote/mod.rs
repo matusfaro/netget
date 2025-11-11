@@ -22,8 +22,9 @@ async fn test_remote_server_startup() -> Result<()> {
         "BLUETOOTH_BLE_REMOTE",
         8890,
         json!({}),
-        "Act as a BLE remote control"
-    ).await?;
+        "Act as a BLE remote control",
+    )
+    .await?;
 
     // Wait for server to start
     sleep(Duration::from_millis(500)).await;
@@ -44,8 +45,9 @@ async fn test_play_pause_button() -> Result<()> {
         "BLUETOOTH_BLE_REMOTE",
         8891,
         json!({}),
-        "Act as a Bluetooth remote. When connected, press play/pause"
-    ).await?;
+        "Act as a Bluetooth remote. When connected, press play/pause",
+    )
+    .await?;
 
     // Wait for server to start and LLM to press button
     sleep(Duration::from_secs(2)).await;
@@ -70,8 +72,9 @@ async fn test_volume_controls() -> Result<()> {
         "BLUETOOTH_BLE_REMOTE",
         8892,
         json!({}),
-        "Act as a Bluetooth remote. Press volume up, then volume down"
-    ).await?;
+        "Act as a Bluetooth remote. Press volume up, then volume down",
+    )
+    .await?;
 
     // Wait for server to start and LLM to press buttons
     sleep(Duration::from_secs(3)).await;
@@ -95,8 +98,9 @@ async fn test_track_navigation() -> Result<()> {
         "BLUETOOTH_BLE_REMOTE",
         8893,
         json!({}),
-        "Act as a Bluetooth remote. Press next track 3 times"
-    ).await?;
+        "Act as a Bluetooth remote. Press next track 3 times",
+    )
+    .await?;
 
     // Wait for server to start and LLM to press buttons
     sleep(Duration::from_secs(3)).await;

@@ -52,7 +52,8 @@ mod redis_client_tests {
     #[tokio::test]
     async fn test_redis_client_llm_controlled_commands() -> E2EResult<()> {
         // Start a simple Redis server
-        let server_config = NetGetConfig::new("Listen on port {} via Redis. Log all incoming commands.");
+        let server_config =
+            NetGetConfig::new("Listen on port {} via Redis. Log all incoming commands.");
 
         let mut server = start_netget_server(server_config).await?;
 

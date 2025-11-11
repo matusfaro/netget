@@ -2,13 +2,15 @@
 
 ## Overview
 
-The OpenID Connect (OIDC) client implements a full OAuth2/OIDC authentication client for NetGet. It supports multiple OAuth2 flows and allows the LLM to control authentication, token management, and user information retrieval.
+The OpenID Connect (OIDC) client implements a full OAuth2/OIDC authentication client for NetGet. It supports multiple
+OAuth2 flows and allows the LLM to control authentication, token management, and user information retrieval.
 
 ## Library Choice
 
 **Primary**: `openidconnect` crate v3.5 + direct HTTP requests
 
 The `openidconnect` crate is the official Rust implementation of OpenID Connect, providing:
+
 - Full OpenID Connect Discovery (`.well-known/openid-configuration`)
 - OAuth2 flows: Password and Client Credentials (via library APIs)
 - Automatic token validation and JWT parsing
@@ -17,14 +19,16 @@ The `openidconnect` crate is the official Rust implementation of OpenID Connect,
 - Async HTTP client support via `reqwest`
 
 **Additional implementations**:
+
 - **Device Code Flow (RFC 8628)**: Direct HTTP POST using `reqwest`
-  - openidconnect v3.5 doesn't expose device code APIs
-  - Manual implementation following RFC 8628 specification
+    - openidconnect v3.5 doesn't expose device code APIs
+    - Manual implementation following RFC 8628 specification
 - **Authorization Code Flow**: Direct HTTP GET/POST + local `TcpListener`
-  - Requires local callback server not provided by openidconnect
-  - Manual query parameter parsing and code exchange
+    - Requires local callback server not provided by openidconnect
+    - Manual query parameter parsing and code exchange
 
 **Why this approach**:
+
 - Hybrid: Use openidconnect for discovery and standard flows
 - Direct HTTP for flows requiring additional infrastructure
 - Maintains compatibility with all OIDC providers
@@ -34,6 +38,7 @@ The `openidconnect` crate is the official Rust implementation of OpenID Connect,
 ### Connection Model
 
 The OIDC client is **logically connected** (not a persistent TCP connection):
+
 - Connects to an OpenID Connect provider via HTTP/HTTPS
 - Discovery happens automatically on connection
 - Stores provider metadata and configuration
@@ -42,6 +47,7 @@ The OIDC client is **logically connected** (not a persistent TCP connection):
 ### State Management
 
 Client state stored in `protocol_data`:
+
 - `provider_url`: OIDC provider issuer URL
 - `provider_metadata`: Discovered configuration (endpoints, scopes)
 - `client_id`: OAuth2 client identifier
@@ -54,51 +60,52 @@ Client state stored in `protocol_data`:
 ### OAuth2/OIDC Flows Supported
 
 1. **Resource Owner Password Credentials** (`exchange_password`)
-   - User provides username and password directly
-   - NetGet exchanges credentials for tokens
-   - **Pros**: Simple, no browser redirect
-   - **Cons**: Less secure (user trusts NetGet with credentials)
-   - **Use case**: Internal apps, testing, automation
+    - User provides username and password directly
+    - NetGet exchanges credentials for tokens
+    - **Pros**: Simple, no browser redirect
+    - **Cons**: Less secure (user trusts NetGet with credentials)
+    - **Use case**: Internal apps, testing, automation
 
 2. **Client Credentials** (`exchange_client_credentials`)
-   - Machine-to-machine authentication
-   - Uses client ID and client secret only
-   - No user context
-   - **Use case**: Service accounts, API access
+    - Machine-to-machine authentication
+    - Uses client ID and client secret only
+    - No user context
+    - **Use case**: Service accounts, API access
 
 3. **Device Code Flow** (`start_device_flow`) - **RFC 8628**
-   - User authenticates via browser on another device
-   - NetGet displays code and URL for user
-   - Polls for completion with proper interval and expiration handling
-   - **Use case**: CLI apps, limited input devices
-   - **Implementation**: Direct HTTP POST to device authorization endpoint, background polling task
+    - User authenticates via browser on another device
+    - NetGet displays code and URL for user
+    - Polls for completion with proper interval and expiration handling
+    - **Use case**: CLI apps, limited input devices
+    - **Implementation**: Direct HTTP POST to device authorization endpoint, background polling task
 
 4. **Authorization Code Flow** (`start_authorization_code_flow`)
-   - Traditional web flow with browser redirect
-   - Local HTTP server receives callback on configurable port
-   - CSRF protection via state parameter
-   - **Use case**: Web apps, desktop apps with browser
-   - **Implementation**: Local TcpListener on localhost, query parameter parsing, code exchange
+    - Traditional web flow with browser redirect
+    - Local HTTP server receives callback on configurable port
+    - CSRF protection via state parameter
+    - **Use case**: Web apps, desktop apps with browser
+    - **Implementation**: Local TcpListener on localhost, query parameter parsing, code exchange
 
 ### LLM Integration
 
 #### Events Triggered
 
 1. **`oidc_discovered`**: Provider configuration discovered
-   - Issuer URL, endpoints, supported scopes
-   - LLM can decide which flow to use
+    - Issuer URL, endpoints, supported scopes
+    - LLM can decide which flow to use
 
 2. **`oidc_token_received`**: Tokens received
-   - Access token, ID token, refresh token
-   - LLM can fetch user info or make API calls
+    - Access token, ID token, refresh token
+    - LLM can fetch user info or make API calls
 
 3. **`oidc_userinfo_received`**: User information retrieved
-   - Subject (user ID), claims (name, email, etc.)
-   - LLM can process user data
+    - Subject (user ID), claims (name, email, etc.)
+    - LLM can process user data
 
 #### Actions Available
 
 **Async (User-Triggered)**:
+
 - `discover_configuration`: Discover provider metadata
 - `start_device_flow`: Begin device code authentication (RFC 8628)
 - `start_authorization_code_flow`: Begin authorization code flow with local callback server
@@ -109,6 +116,7 @@ Client state stored in `protocol_data`:
 - `disconnect`: Close connection
 
 **Sync (Response Actions)**:
+
 - `fetch_userinfo`: Automatically fetch user info after tokens
 - `refresh_token`: Refresh expired tokens
 
@@ -268,61 +276,63 @@ tokio::spawn(async move {
 ## Limitations
 
 1. **Device Code Flow**: Requires provider support
-   - Not all OIDC providers support RFC 8628 device code flow
-   - Provider must expose `/device/code` endpoint
-   - Implementation uses direct HTTP requests (not openidconnect crate APIs)
+    - Not all OIDC providers support RFC 8628 device code flow
+    - Provider must expose `/device/code` endpoint
+    - Implementation uses direct HTTP requests (not openidconnect crate APIs)
 
 2. **Authorization Code Flow**: Localhost only
-   - Local HTTP server binds to 127.0.0.1 (localhost)
-   - User must open browser on same machine
-   - Configurable port (default 8080)
-   - Implementation uses direct HTTP requests and TcpListener
+    - Local HTTP server binds to 127.0.0.1 (localhost)
+    - User must open browser on same machine
+    - Configurable port (default 8080)
+    - Implementation uses direct HTTP requests and TcpListener
 
 3. **Token Expiration**: Manual refresh required
-   - No automatic token refresh on expiry
-   - LLM must explicitly call `refresh_token` action
-   - Future enhancement: Automatic refresh before expiry
+    - No automatic token refresh on expiry
+    - LLM must explicitly call `refresh_token` action
+    - Future enhancement: Automatic refresh before expiry
 
 4. **PKCE Support**: Not explicitly configured
-   - PKCE (Proof Key for Code Exchange) enhances security
-   - `openidconnect` crate supports it but not enabled
+    - PKCE (Proof Key for Code Exchange) enhances security
+    - `openidconnect` crate supports it but not enabled
 
 5. **Certificate Validation**: Uses system defaults
-   - Custom CA certificates not configurable
-   - Self-signed certificates will fail validation
+    - Custom CA certificates not configurable
+    - Self-signed certificates will fail validation
 
 6. **ID Token Validation**: Basic validation only
-   - JWT signature validation handled by library
-   - Additional claims validation (audience, expiry) could be enhanced
+    - JWT signature validation handled by library
+    - Additional claims validation (audience, expiry) could be enhanced
 
 ## Security Considerations
 
 1. **Credential Storage**: Tokens stored in memory only
-   - Not persisted to disk
-   - Lost when client disconnected
-   - Refresh tokens allow re-authentication without credentials
+    - Not persisted to disk
+    - Lost when client disconnected
+    - Refresh tokens allow re-authentication without credentials
 
 2. **Client Secret**: Stored in plaintext in memory
-   - Should only be used for confidential clients
-   - Public clients (mobile/SPA) should not use client secret
+    - Should only be used for confidential clients
+    - Public clients (mobile/SPA) should not use client secret
 
 3. **Password Flow**: Less secure than other flows
-   - User credentials visible to NetGet
-   - Only use with trusted providers
-   - Prefer device code or authorization code flows when possible
+    - User credentials visible to NetGet
+    - Only use with trusted providers
+    - Prefer device code or authorization code flows when possible
 
 4. **TLS Enforcement**: All OIDC communications over HTTPS
-   - HTTP provider URLs will be rejected by most providers
-   - `openidconnect` crate enforces HTTPS for security
+    - HTTP provider URLs will be rejected by most providers
+    - `openidconnect` crate enforces HTTPS for security
 
 ## Testing Strategy
 
 ### Unit Tests
+
 - Provider metadata parsing
 - Token response parsing
 - Action execution logic
 
 ### E2E Tests
+
 - Use public OIDC test providers (Auth0, Keycloak)
 - Test password flow with test credentials
 - Test client credentials flow
@@ -330,6 +340,7 @@ tokio::spawn(async move {
 - Verify UserInfo retrieval
 
 ### Test Providers
+
 - **Local Keycloak**: Full OIDC implementation for testing
 - **Auth0**: Public test instances
 - **Google**: Real provider (requires test account)
@@ -337,6 +348,7 @@ tokio::spawn(async move {
 ## Example Prompts
 
 ### Password Flow
+
 ```
 Connect to https://login.microsoftonline.com/common/v2.0 as OpenID Connect client
 Exchange username user@example.com and password mypass123 for tokens
@@ -344,18 +356,21 @@ Fetch user information
 ```
 
 ### Client Credentials
+
 ```
 Connect to https://auth.example.com as OpenID Connect client
 Use client credentials to get service account token
 ```
 
 ### Device Code Flow
+
 ```
 Connect to https://accounts.google.com as OpenID Connect client
 Start device code flow for user authentication
 ```
 
 ### Authorization Code Flow
+
 ```
 Connect to https://auth.example.com as OpenID Connect client
 Start authorization code flow with callback on port 8080

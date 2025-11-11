@@ -2,7 +2,9 @@
 
 ## Overview
 
-SAML SP implements a SAML 2.0 Service Provider that validates SAML assertions and manages application sessions. This is an Experimental-status implementation where the LLM controls authorization decisions, attribute extraction, and session management.
+SAML SP implements a SAML 2.0 Service Provider that validates SAML assertions and manages application sessions. This is
+an Experimental-status implementation where the LLM controls authorization decisions, attribute extraction, and session
+management.
 
 **Protocol Compliance**: SAML 2.0 Web Browser SSO Profile
 **Transport**: HTTP/1.1 over TCP
@@ -11,26 +13,32 @@ SAML SP implements a SAML 2.0 Service Provider that validates SAML assertions an
 ## Library Choices
 
 ### HTTP Implementation
+
 - **hyper v1.5** - HTTP/1.1 server with async/await support
 - **http-body-util** - Request body collection
 - **tokio** - Async runtime
 
-**Rationale**: SAML uses HTTP as transport layer. Hyper provides robust HTTP server capabilities. No external SAML library needed since LLM validates assertions.
+**Rationale**: SAML uses HTTP as transport layer. Hyper provides robust HTTP server capabilities. No external SAML
+library needed since LLM validates assertions.
 
 ### No SAML Library
+
 - **Manual assertion parsing** - LLM extracts user data from assertions
 - **Manual metadata generation** - LLM generates EntityDescriptor XML
 - **No XML signature verification** - Validation can be performed by LLM if needed
 
-**Rationale**: The `samael` crate (0.0.19) is work-in-progress and may constrain LLM flexibility. Manual XML parsing allows full LLM control over validation logic, attribute extraction, and session creation.
+**Rationale**: The `samael` crate (0.0.19) is work-in-progress and may constrain LLM flexibility. Manual XML parsing
+allows full LLM control over validation logic, attribute extraction, and session creation.
 
 ## Architecture Decisions
 
 ### 1. LLM-Controlled Authorization
 
-**Design Philosophy**: All authorization decisions and session management are determined by the LLM based on user instructions.
+**Design Philosophy**: All authorization decisions and session management are determined by the LLM based on user
+instructions.
 
 **Control Points**:
+
 - Assertion validation (signature, expiration, issuer)
 - Attribute extraction (email, roles, groups)
 - Authorization logic (role-based access)
@@ -38,6 +46,7 @@ SAML SP implements a SAML 2.0 Service Provider that validates SAML assertions an
 - Error responses
 
 **Benefits**:
+
 - Flexible authorization rules
 - Dynamic attribute processing
 - Testing/demonstration scenarios
@@ -47,6 +56,7 @@ SAML SP implements a SAML 2.0 Service Provider that validates SAML assertions an
 ### 2. HTTP-Based Request Handling
 
 **Request Flow**:
+
 1. Accept HTTP connection
 2. Parse HTTP request (method, path, query, body)
 3. Create `SAML_SP_REQUEST_EVENT` with request details
@@ -54,27 +64,32 @@ SAML SP implements a SAML 2.0 Service Provider that validates SAML assertions an
 5. Execute action result (send response)
 
 **Supported Paths**:
+
 - `/login` - Initiate SP-initiated SSO (redirect to IDP)
 - `/acs` or `/AssertionConsumerService` - ACS endpoint (receives SAMLResponse)
 - `/metadata` - SP metadata endpoint
 - Custom paths (LLM-defined)
 
 **HTTP Bindings**:
+
 - **HTTP-Redirect**: Redirect user to IDP with AuthnRequest
 - **HTTP-POST**: Receive SAMLResponse in form body (POST)
 
 ### 3. Action-Based Response System
 
 **Sync Actions** (requires network context):
+
 - `send_authn_request` - Initiate authentication with IDP
 - `process_assertion` - Validate assertion and create session
 - `send_metadata` - Send SP metadata XML
 - `send_error_response` - Return authorization error
 
 **Async Actions** (user-triggered):
+
 - None currently (SP is request-response)
 
 **Action Execution**:
+
 - LLM returns action with request_xml, user_id, or metadata_xml
 - Action handler builds HTTP response
 - For AuthnRequest: HTTP-Redirect or HTTP-POST form
@@ -84,6 +99,7 @@ SAML SP implements a SAML 2.0 Service Provider that validates SAML assertions an
 ### 4. SP-Initiated SSO Flow
 
 **LLM Responsibility**: Generate AuthnRequest XML when user accesses `/login`:
+
 ```xml
 <samlp:AuthnRequest ID="_xyz789" IssueInstant="2025-01-01T00:00:00Z">
   <saml:Issuer>https://sp.example.com</saml:Issuer>
@@ -92,6 +108,7 @@ SAML SP implements a SAML 2.0 Service Provider that validates SAML assertions an
 ```
 
 **HTTP-Redirect Flow**:
+
 1. LLM generates AuthnRequest XML
 2. Server base64-encodes request
 3. Server builds redirect URL: `https://idp.example.com/sso?SAMLRequest=...`
@@ -102,6 +119,7 @@ SAML SP implements a SAML 2.0 Service Provider that validates SAML assertions an
 ### 5. IDP-Initiated SSO Flow
 
 **LLM Responsibility**: Receive and validate SAMLResponse at `/acs`:
+
 1. Extract SAMLResponse from POST body
 2. Base64-decode assertion XML
 3. Validate assertion (signature, expiration, issuer)
@@ -114,6 +132,7 @@ SAML SP implements a SAML 2.0 Service Provider that validates SAML assertions an
 ### 6. Assertion Validation
 
 **LLM Responsibility**: Validate incoming assertions for:
+
 - **Signature Verification** - Check XML signature (if LLM implements)
 - **Expiration** - Verify NotBefore/NotOnOrAfter conditions
 - **Issuer Validation** - Ensure assertion from trusted IDP
@@ -127,11 +146,13 @@ SAML SP implements a SAML 2.0 Service Provider that validates SAML assertions an
 **HTTP Keep-Alive**: Each request uses a new HTTP connection (hyper default).
 
 **Connection Tracking**:
+
 - Connections tracked in AppState with connection_id
 - Bytes sent/received tracked per request
 - Recent requests stored in ProtocolConnectionInfo::SamlSp
 
 **Dual Logging**:
+
 - All logs to tracing macros (debug!, info!, etc.)
 - Status updates sent via status_tx channel
 - Request summaries at DEBUG level
@@ -142,6 +163,7 @@ SAML SP implements a SAML 2.0 Service Provider that validates SAML assertions an
 **Event Type**: `SAML_SP_REQUEST_EVENT`
 
 **Event Data** (ACS endpoint receiving assertion):
+
 ```json
 {
   "method": "POST",
@@ -154,12 +176,14 @@ SAML SP implements a SAML 2.0 Service Provider that validates SAML assertions an
 ```
 
 **LLM Prompt Context**:
+
 - Available actions: send_authn_request, process_assertion, send_metadata, send_error_response
 - Path information (login, ACS, metadata)
 - Client IP (for logging)
 - Request parameters (SAMLResponse, RelayState)
 
 **Response Actions** (successful authentication):
+
 ```json
 {
   "actions": [
@@ -180,6 +204,7 @@ SAML SP implements a SAML 2.0 Service Provider that validates SAML assertions an
 ## Limitations
 
 ### Not Implemented
+
 1. **XML Signature Verification** - Assertion signatures not cryptographically verified
 2. **Certificate Management** - No cert storage or trust management
 3. **Metadata Refresh** - No automatic metadata generation
@@ -190,6 +215,7 @@ SAML SP implements a SAML 2.0 Service Provider that validates SAML assertions an
 8. **Replay Protection** - No assertion ID tracking
 
 ### Current Capabilities
+
 - Initiate SP-initiated SSO
 - Receive and process assertions via LLM
 - Serve SP metadata via LLM
@@ -199,6 +225,7 @@ SAML SP implements a SAML 2.0 Service Provider that validates SAML assertions an
 - Error responses
 
 ### Known Issues
+
 - No cryptographic signature verification
 - No persistent session storage
 - No replay attack prevention
@@ -207,6 +234,7 @@ SAML SP implements a SAML 2.0 Service Provider that validates SAML assertions an
 ## Example Prompts
 
 ### Start a simple SP
+
 ```
 Start a SAML Service Provider on port 8081.
 When users access /login, redirect them to IDP at https://idp.example.com/sso.
@@ -215,6 +243,7 @@ When users request /metadata, return a basic EntityDescriptor with ACS endpoint 
 ```
 
 ### SP with role-based access
+
 ```
 Start a SAML SP on port 8081.
 When receiving assertions at /acs:
@@ -225,6 +254,7 @@ When receiving assertions at /acs:
 ```
 
 ### SP with attribute extraction
+
 ```
 Start a SAML SP on port 8081.
 When receiving assertions:
@@ -243,10 +273,12 @@ When receiving assertions:
 
 ## Implementation Statistics
 
-| Module | Lines of Code | Purpose |
-|--------|--------------|---------|
-| `mod.rs` | ~270 | HTTP session handling, request parsing |
-| `actions.rs` | ~380 | Action definitions, response generation |
-| **Total** | **~650** | Basic SP implementation |
+| Module       | Lines of Code | Purpose                                 |
+|--------------|---------------|-----------------------------------------|
+| `mod.rs`     | ~270          | HTTP session handling, request parsing  |
+| `actions.rs` | ~380          | Action definitions, response generation |
+| **Total**    | **~650**      | Basic SP implementation                 |
 
-This is an Experimental implementation focused on LLM-controlled authorization and session management for testing, demonstration, and integration scenarios. Production use requires cryptographic signature verification and persistent session storage.
+This is an Experimental implementation focused on LLM-controlled authorization and session management for testing,
+demonstration, and integration scenarios. Production use requires cryptographic signature verification and persistent
+session storage.

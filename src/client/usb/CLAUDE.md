@@ -2,26 +2,30 @@
 
 ## Overview
 
-The USB client enables LLM-controlled interaction with USB devices through low-level USB transfers. This allows NetGet to communicate with USB hardware devices like development boards, custom peripherals, sensors, and other USB-connected equipment.
+The USB client enables LLM-controlled interaction with USB devices through low-level USB transfers. This allows NetGet
+to communicate with USB hardware devices like development boards, custom peripherals, sensors, and other USB-connected
+equipment.
 
 ## Library Choices
 
 **nusb v0.1** - Pure Rust USB library
+
 - **Why chosen**: Modern, pure Rust implementation with no C dependencies
 - **Advantages**:
-  - Cross-platform (Windows, macOS, Linux)
-  - Async-first design (no context object needed)
-  - No dependency on libusb (unlike rusb)
-  - Clean API for device enumeration and transfers
+    - Cross-platform (Windows, macOS, Linux)
+    - Async-first design (no context object needed)
+    - No dependency on libusb (unlike rusb)
+    - Clean API for device enumeration and transfers
 - **Comparison to alternatives**:
-  - `rusb`: Requires libusb C library, more mature but has C dependency
-  - `usb-device`: For USB device/gadget mode (peripheral), not host mode
+    - `rusb`: Requires libusb C library, more mature but has C dependency
+    - `usb-device`: For USB device/gadget mode (peripheral), not host mode
 
 ## Architecture
 
 ### Device Connection
 
 USB devices are identified using vendor ID and product ID:
+
 ```
 Format: "VID:PID:INTERFACE"
 Examples:
@@ -41,47 +45,49 @@ Examples:
 ### Transfer Types Supported
 
 1. **Control Transfers** (`control_transfer`):
-   - Standard USB control requests (setup packets)
-   - Vendor-specific requests
-   - Parameters: request_type, request, value, index, data, length
-   - Used for device configuration and status queries
+    - Standard USB control requests (setup packets)
+    - Vendor-specific requests
+    - Parameters: request_type, request, value, index, data, length
+    - Used for device configuration and status queries
 
 2. **Bulk Transfers** (`bulk_transfer_out`, `bulk_transfer_in`):
-   - Large data transfers (e.g., file transfers, data dumps)
-   - OUT: Send data to device
-   - IN: Receive data from device
+    - Large data transfers (e.g., file transfers, data dumps)
+    - OUT: Send data to device
+    - IN: Receive data from device
 
 3. **Interrupt Transfers** (`interrupt_transfer_in`):
-   - Periodic data from device (e.g., HID devices like keyboards/mice)
-   - Guaranteed latency for time-sensitive data
+    - Periodic data from device (e.g., HID devices like keyboards/mice)
+    - Guaranteed latency for time-sensitive data
 
 ## LLM Integration
 
 ### Events
 
 1. **usb_device_opened**: Triggered when device is successfully opened and interface claimed
-   - Provides: vendor_id, product_id, manufacturer, product strings
-   - LLM can decide which transfers to perform
+    - Provides: vendor_id, product_id, manufacturer, product strings
+    - LLM can decide which transfers to perform
 
 2. **usb_control_response**: Response from control transfer
-   - Provides: response data (hex), length
-   - LLM can parse device responses and decide next actions
+    - Provides: response data (hex), length
+    - LLM can parse device responses and decide next actions
 
 3. **usb_bulk_data_received**: Data received from bulk endpoint
-   - Provides: data (hex), length, endpoint
-   - LLM can process received data and continue communication
+    - Provides: data (hex), length, endpoint
+    - LLM can process received data and continue communication
 
 4. **usb_interrupt_data_received**: Data received from interrupt endpoint
-   - Provides: data (hex), length, endpoint
-   - LLM can handle periodic device events
+    - Provides: data (hex), length, endpoint
+    - LLM can handle periodic device events
 
 ### Actions
 
 **Async Actions** (user-triggered):
+
 - `list_usb_devices`: Enumerate connected USB devices
 - `detach_device`: Detach from device and close connection
 
 **Sync Actions** (response to events):
+
 - `control_transfer`: Send USB control request
 - `bulk_transfer_out`: Send data via bulk OUT endpoint
 - `bulk_transfer_in`: Read data from bulk IN endpoint
@@ -92,6 +98,7 @@ Examples:
 ## Data Encoding
 
 All USB data is **hex-encoded** for LLM interaction:
+
 - IN transfers: Device data → hex string → LLM
 - OUT transfers: LLM provides hex string → decoded to bytes → device
 
@@ -113,6 +120,7 @@ This avoids binary data issues and makes LLM-generated data human-readable.
 ## Example Interactions
 
 ### Get Device Descriptor
+
 ```json
 {
   "type": "control_transfer",
@@ -125,6 +133,7 @@ This avoids binary data issues and makes LLM-generated data human-readable.
 ```
 
 ### Bulk Data Transfer
+
 ```json
 {
   "type": "bulk_transfer_out",
@@ -134,6 +143,7 @@ This avoids binary data issues and makes LLM-generated data human-readable.
 ```
 
 ### Read Interrupt Data
+
 ```json
 {
   "type": "interrupt_transfer_in",
@@ -163,6 +173,7 @@ This avoids binary data issues and makes LLM-generated data human-readable.
 ## Error Handling
 
 nusb errors are converted to anyhow errors and logged. Common errors:
+
 - **Device not found**: VID/PID doesn't match any connected device
 - **Permission denied**: Insufficient permissions to access device
 - **Interface busy**: Another process has claimed the interface

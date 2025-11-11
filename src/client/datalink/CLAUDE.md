@@ -2,31 +2,35 @@
 
 ## Overview
 
-The DataLink client provides LLM-controlled raw Ethernet frame injection and capture at Layer 2 (Data Link layer). This enables custom protocol testing, ARP spoofing detection, network monitoring, and Ethernet frame analysis.
+The DataLink client provides LLM-controlled raw Ethernet frame injection and capture at Layer 2 (Data Link layer). This
+enables custom protocol testing, ARP spoofing detection, network monitoring, and Ethernet frame analysis.
 
 ## Architecture
 
 ### Library Choice
 
 **Primary Library:** `pcap` crate (v2.2)
+
 - **Rationale:** Industry-standard libpcap wrapper for packet capture/injection
 - **Capabilities:**
-  - Raw frame injection via `sendpacket()`
-  - Promiscuous mode frame capture
-  - BPF (Berkeley Packet Filter) filtering
-  - Cross-platform (Linux, macOS, Windows)
+    - Raw frame injection via `sendpacket()`
+    - Promiscuous mode frame capture
+    - BPF (Berkeley Packet Filter) filtering
+    - Cross-platform (Linux, macOS, Windows)
 - **Limitations:**
-  - Requires root/CAP_NET_RAW privileges
-  - Blocking I/O (requires `spawn_blocking`)
-  - Platform-specific behavior differences
+    - Requires root/CAP_NET_RAW privileges
+    - Blocking I/O (requires `spawn_blocking`)
+    - Platform-specific behavior differences
 
 ### Connection Model
 
 Unlike TCP/UDP clients, the DataLink client:
+
 1. **Interface-based**: Opens a network interface (e.g., `eth0`, `en0`) instead of connecting to a remote address
 2. **Bidirectional**: Can both inject frames and capture frames in promiscuous mode
 3. **Blocking Operations**: pcap is blocking, so we use `tokio::spawn_blocking` for the capture/injection loop
-4. **Channel-based Injection**: Uses `mpsc::unbounded_channel` to send injection commands from async context to blocking pcap thread
+4. **Channel-based Injection**: Uses `mpsc::unbounded_channel` to send injection commands from async context to blocking
+   pcap thread
 
 ### State Management
 
@@ -37,25 +41,25 @@ Unlike TCP/UDP clients, the DataLink client:
 ### Dual Mode Operation
 
 1. **Injection-only Mode** (`promiscuous: false`):
-   - LLM can inject frames via `inject_frame` action
-   - No frame capture
-   - Suitable for ARP spoofing tests, custom protocol injection
+    - LLM can inject frames via `inject_frame` action
+    - No frame capture
+    - Suitable for ARP spoofing tests, custom protocol injection
 
 2. **Capture + Injection Mode** (`promiscuous: true`):
-   - Captures all frames on interface
-   - LLM analyzes captured frames
-   - LLM can inject response frames
-   - Requires root/CAP_NET_RAW for promiscuous mode
+    - Captures all frames on interface
+    - LLM analyzes captured frames
+    - LLM can inject response frames
+    - Requires root/CAP_NET_RAW for promiscuous mode
 
 ## LLM Integration
 
 ### Events
 
 1. **datalink_frame_injected**: Triggered when frame is successfully injected
-   - Parameters: `frame_length` (number)
+    - Parameters: `frame_length` (number)
 
 2. **datalink_frame_captured**: Triggered when frame is captured (promiscuous mode only)
-   - Parameters: `frame_hex` (hex string), `frame_length` (number)
+    - Parameters: `frame_hex` (hex string), `frame_length` (number)
 
 ### Actions
 
@@ -79,7 +83,7 @@ Unlike TCP/UDP clients, the DataLink client:
 #### Sync Actions (Response to captured frames)
 
 1. **inject_frame**: Inject frame in response to captured frame
-   - Same parameters as async version
+    - Same parameters as async version
 
 2. **wait_for_more**: Wait for more frames before responding
    ```json
@@ -91,6 +95,7 @@ Unlike TCP/UDP clients, the DataLink client:
 ### Frame Format
 
 The LLM must construct complete Ethernet frames including:
+
 - **Destination MAC** (6 bytes): Target MAC address (or broadcast `ffffffffffff`)
 - **Source MAC** (6 bytes): Sender MAC address
 - **EtherType** (2 bytes): Protocol type (e.g., `0x0806` for ARP, `0x0800` for IPv4)
@@ -98,6 +103,7 @@ The LLM must construct complete Ethernet frames including:
 - **FCS** (4 bytes): Frame Check Sequence (optional, often added by hardware)
 
 Example ARP request frame:
+
 ```
 ff ff ff ff ff ff  // Destination MAC (broadcast)
 00 11 22 33 44 55  // Source MAC
@@ -138,6 +144,7 @@ ff ff ff ff ff ff  // Destination MAC (broadcast)
 - **promiscuous** (optional, boolean): Enable promiscuous mode for frame capture (default: `false`)
 
 Example:
+
 ```json
 {
   "interface": "eth0",
@@ -152,6 +159,7 @@ See `tests/client/datalink/CLAUDE.md` for E2E testing approach.
 ## Security Considerations
 
 **CRITICAL**: Raw frame injection can disrupt networks and violate regulations. Only use on authorized test networks:
+
 - ✅ Isolated lab environments
 - ✅ Virtual networks (VMs, containers)
 - ✅ Personal test setups
@@ -163,7 +171,8 @@ ARP spoofing and MAC address manipulation can be malicious - use responsibly.
 
 ## Implementation Notes
 
-1. **Channel-based Injection**: The async LLM code sends injection commands via `mpsc::unbounded_channel` to the blocking pcap thread
+1. **Channel-based Injection**: The async LLM code sends injection commands via `mpsc::unbounded_channel` to the
+   blocking pcap thread
 2. **State Machine**: Prevents concurrent LLM calls (Idle → Processing → Accumulating)
 3. **Dual Logging**: Uses both `tracing` macros and `status_tx` for TUI updates
 4. **Error Handling**: Injection failures are logged but don't crash the client

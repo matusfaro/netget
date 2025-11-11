@@ -33,7 +33,9 @@ mod webdav_client_tests {
 
         // Verify client output shows connection/response
         assert!(
-            client.output_contains("WebDAV").await || client.output_contains("connected").await || client.output_contains("PROPFIND").await,
+            client.output_contains("WebDAV").await
+                || client.output_contains("connected").await
+                || client.output_contains("PROPFIND").await,
             "Client should show WebDAV protocol or PROPFIND message. Output: {:?}",
             client.get_output().await
         );
@@ -52,7 +54,9 @@ mod webdav_client_tests {
     #[tokio::test]
     async fn test_webdav_client_llm_controlled() -> E2EResult<()> {
         // Start a simple WebDAV server
-        let server_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via WebDAV. Log all incoming WebDAV requests.");
+        let server_config = NetGetConfig::new(
+            "Listen on port {AVAILABLE_PORT} via WebDAV. Log all incoming WebDAV requests.",
+        );
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -69,7 +73,10 @@ mod webdav_client_tests {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Verify the client is WebDAV protocol
-        assert_eq!(client.protocol, "WebDAV", "Client should be WebDAV protocol");
+        assert_eq!(
+            client.protocol, "WebDAV",
+            "Client should be WebDAV protocol"
+        );
 
         println!("✅ WebDAV client responded to LLM instruction");
 

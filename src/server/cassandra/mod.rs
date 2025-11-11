@@ -17,6 +17,7 @@ use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use crate::state::server::{ConnectionState, ConnectionStatus, ProtocolConnectionInfo};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 use actions::*;
 use anyhow::{Context, Result};
 use bytes::{Buf, BytesMut};
@@ -31,7 +32,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace, warn};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Cassandra server implementation
 pub struct CassandraServer {
@@ -82,7 +82,10 @@ impl CassandraServer {
         let actual_addr = listener.local_addr()?;
 
         info!("Cassandra/CQL server starting on {}", actual_addr);
-        let _ = status_tx.send(format!("[INFO] Cassandra server listening on {}", actual_addr));
+        let _ = status_tx.send(format!(
+            "[INFO] Cassandra server listening on {}",
+            actual_addr
+        ));
 
         let server = Arc::new(CassandraServer::new(
             llm_client,
@@ -102,7 +105,10 @@ impl CassandraServer {
                         let status_tx_clone = status_tx.clone();
 
                         tokio::spawn(async move {
-                            if let Err(e) = server_clone.handle_connection(stream, addr, status_tx_clone).await {
+                            if let Err(e) = server_clone
+                                .handle_connection(stream, addr, status_tx_clone)
+                                .await
+                            {
                                 error!("Cassandra connection error: {}", e);
                             }
                         });
@@ -144,7 +150,9 @@ impl CassandraServer {
                 protocol_info: ProtocolConnectionInfo::empty(),
             };
 
-            self.app_state.add_connection_to_server(server_id, conn_state).await;
+            self.app_state
+                .add_connection_to_server(server_id, conn_state)
+                .await;
         }
 
         let mut conn_state = CassandraConnectionState {
@@ -191,7 +199,11 @@ impl CassandraServer {
 
                 // Check if we have the complete frame
                 if buffer.remaining() < 9 + length {
-                    trace!("Waiting for complete frame: have {}, need {}", buffer.remaining(), 9 + length);
+                    trace!(
+                        "Waiting for complete frame: have {}, need {}",
+                        buffer.remaining(),
+                        9 + length
+                    );
                     break;
                 }
 
@@ -248,7 +260,11 @@ impl CassandraServer {
             .context("Failed to parse Cassandra frame")?;
         let frame = parsed.envelope;
 
-        trace!("Received frame: opcode={:?}, stream={}", frame.opcode, frame.stream_id);
+        trace!(
+            "Received frame: opcode={:?}, stream={}",
+            frame.opcode,
+            frame.stream_id
+        );
         let _ = status_tx.send(format!("[TRACE] Cassandra ← {:?}", frame.opcode));
 
         match frame.opcode {
@@ -280,8 +296,14 @@ impl CassandraServer {
                 warn!("Unsupported Cassandra opcode: {:?}", frame.opcode);
                 let _ = status_tx.send(format!("[WARN] Unsupported opcode: {:?}", frame.opcode));
                 // Send error response
-                self.send_error(frame.stream_id, 0x000A, "Unsupported operation", stream, status_tx)
-                    .await?;
+                self.send_error(
+                    frame.stream_id,
+                    0x000A,
+                    "Unsupported operation",
+                    stream,
+                    status_tx,
+                )
+                .await?;
                 Ok(true)
             }
         }
@@ -302,11 +324,8 @@ impl CassandraServer {
         // For Phase 1, we just accept any version and send READY
 
         // Call LLM to decide response
-        let protocol = CassandraProtocol::new(
-            connection_id,
-            self.app_state.clone(),
-            status_tx.clone(),
-        );
+        let protocol =
+            CassandraProtocol::new(connection_id, self.app_state.clone(), status_tx.clone());
 
         let event = Event {
             event_type: &CASSANDRA_STARTUP_EVENT,
@@ -336,26 +355,27 @@ impl CassandraServer {
         // Execute the protocol actions
         for action_result in execution_result.protocol_results {
             match action_result {
-                ActionResult::Custom { name, data } => {
-                    match name.as_str() {
-                        "cassandra_ready" => {
-                            conn_state.ready = true;
-                            self.send_ready(frame.stream_id, stream, status_tx).await?;
-                            return Ok(true);
-                        }
-                        "cassandra_error" => {
-                            let error_code = data.get("error_code")
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(0x0000) as u32;
-                            let message = data.get("message")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("Unknown error");
-                            self.send_error(frame.stream_id, error_code, message, stream, status_tx).await?;
-                            return Ok(true);
-                        }
-                        _ => {}
+                ActionResult::Custom { name, data } => match name.as_str() {
+                    "cassandra_ready" => {
+                        conn_state.ready = true;
+                        self.send_ready(frame.stream_id, stream, status_tx).await?;
+                        return Ok(true);
                     }
-                }
+                    "cassandra_error" => {
+                        let error_code = data
+                            .get("error_code")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0x0000) as u32;
+                        let message = data
+                            .get("message")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Unknown error");
+                        self.send_error(frame.stream_id, error_code, message, stream, status_tx)
+                            .await?;
+                        return Ok(true);
+                    }
+                    _ => {}
+                },
                 _ => {
                     warn!("Unexpected action result for STARTUP");
                 }
@@ -377,11 +397,8 @@ impl CassandraServer {
     ) -> Result<bool> {
         debug!("Handling OPTIONS from connection {}", connection_id);
 
-        let protocol = CassandraProtocol::new(
-            connection_id,
-            self.app_state.clone(),
-            status_tx.clone(),
-        );
+        let protocol =
+            CassandraProtocol::new(connection_id, self.app_state.clone(), status_tx.clone());
 
         let event = Event {
             event_type: &CASSANDRA_OPTIONS_EVENT,
@@ -408,29 +425,32 @@ impl CassandraServer {
         // Execute the protocol actions
         for action_result in execution_result.protocol_results {
             match action_result {
-                ActionResult::Custom { name, data } => {
-                    match name.as_str() {
-                        "cassandra_supported" => {
-                            let options = data.get("options")
-                                .and_then(|v| v.as_object())
-                                .cloned()
-                                .unwrap_or_default();
-                            self.send_supported(frame.stream_id, options, stream, status_tx).await?;
-                            return Ok(true);
-                        }
-                        "cassandra_error" => {
-                            let error_code = data.get("error_code")
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(0x0000) as u32;
-                            let message = data.get("message")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("Unknown error");
-                            self.send_error(frame.stream_id, error_code, message, stream, status_tx).await?;
-                            return Ok(true);
-                        }
-                        _ => {}
+                ActionResult::Custom { name, data } => match name.as_str() {
+                    "cassandra_supported" => {
+                        let options = data
+                            .get("options")
+                            .and_then(|v| v.as_object())
+                            .cloned()
+                            .unwrap_or_default();
+                        self.send_supported(frame.stream_id, options, stream, status_tx)
+                            .await?;
+                        return Ok(true);
                     }
-                }
+                    "cassandra_error" => {
+                        let error_code = data
+                            .get("error_code")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0x0000) as u32;
+                        let message = data
+                            .get("message")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Unknown error");
+                        self.send_error(frame.stream_id, error_code, message, stream, status_tx)
+                            .await?;
+                        return Ok(true);
+                    }
+                    _ => {}
+                },
                 _ => {
                     warn!("Unexpected action result for OPTIONS");
                 }
@@ -438,7 +458,8 @@ impl CassandraServer {
         }
 
         // If no action was executed, send default SUPPORTED
-        self.send_supported(frame.stream_id, serde_json::Map::new(), stream, status_tx).await?;
+        self.send_supported(frame.stream_id, serde_json::Map::new(), stream, status_tx)
+            .await?;
         Ok(true)
     }
 
@@ -453,14 +474,14 @@ impl CassandraServer {
         // Parse query from frame body
         let query_str = self.parse_query(&frame)?;
 
-        debug!("Handling QUERY from connection {}: {}", connection_id, query_str);
+        debug!(
+            "Handling QUERY from connection {}: {}",
+            connection_id, query_str
+        );
         let _ = status_tx.send(format!("[DEBUG] Cassandra ← Query: {}", query_str));
 
-        let protocol = CassandraProtocol::new(
-            connection_id,
-            self.app_state.clone(),
-            status_tx.clone(),
-        );
+        let protocol =
+            CassandraProtocol::new(connection_id, self.app_state.clone(), status_tx.clone());
 
         let event = Event {
             event_type: &CASSANDRA_QUERY_EVENT,
@@ -490,33 +511,37 @@ impl CassandraServer {
         // Execute the protocol actions
         for action_result in execution_result.protocol_results {
             match action_result {
-                ActionResult::Custom { name, data } => {
-                    match name.as_str() {
-                        "cassandra_result_rows" => {
-                            let columns = data.get("columns")
-                                .and_then(|v| v.as_array())
-                                .cloned()
-                                .unwrap_or_default();
-                            let rows = data.get("rows")
-                                .and_then(|v| v.as_array())
-                                .cloned()
-                                .unwrap_or_default();
-                            self.send_result_rows(frame.stream_id, columns, rows, stream, status_tx).await?;
-                            return Ok(true);
-                        }
-                        "cassandra_error" => {
-                            let error_code = data.get("error_code")
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(0x0000) as u32;
-                            let message = data.get("message")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("Unknown error");
-                            self.send_error(frame.stream_id, error_code, message, stream, status_tx).await?;
-                            return Ok(true);
-                        }
-                        _ => {}
+                ActionResult::Custom { name, data } => match name.as_str() {
+                    "cassandra_result_rows" => {
+                        let columns = data
+                            .get("columns")
+                            .and_then(|v| v.as_array())
+                            .cloned()
+                            .unwrap_or_default();
+                        let rows = data
+                            .get("rows")
+                            .and_then(|v| v.as_array())
+                            .cloned()
+                            .unwrap_or_default();
+                        self.send_result_rows(frame.stream_id, columns, rows, stream, status_tx)
+                            .await?;
+                        return Ok(true);
                     }
-                }
+                    "cassandra_error" => {
+                        let error_code = data
+                            .get("error_code")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0x0000) as u32;
+                        let message = data
+                            .get("message")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Unknown error");
+                        self.send_error(frame.stream_id, error_code, message, stream, status_tx)
+                            .await?;
+                        return Ok(true);
+                    }
+                    _ => {}
+                },
                 ActionResult::CloseConnection => {
                     return Ok(false);
                 }
@@ -527,7 +552,8 @@ impl CassandraServer {
         }
 
         // Default: send empty result
-        self.send_result_rows(frame.stream_id, vec![], vec![], stream, status_tx).await?;
+        self.send_result_rows(frame.stream_id, vec![], vec![], stream, status_tx)
+            .await?;
         Ok(true)
     }
 
@@ -675,7 +701,10 @@ impl CassandraServer {
         // Column specs
         for col in &columns {
             let name = col.get("name").and_then(|v| v.as_str()).unwrap_or("col");
-            let col_type = col.get("type").and_then(|v| v.as_str()).unwrap_or("varchar");
+            let col_type = col
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("varchar");
 
             // Column name
             body.extend_from_slice(&(name.len() as u16).to_be_bytes());
@@ -737,7 +766,11 @@ impl CassandraServer {
     }
 
     /// Serialize a cell value based on its type
-    fn serialize_cell_value(&self, value: &serde_json::Value, _col_type: Option<&str>) -> Option<Vec<u8>> {
+    fn serialize_cell_value(
+        &self,
+        value: &serde_json::Value,
+        _col_type: Option<&str>,
+    ) -> Option<Vec<u8>> {
         match value {
             serde_json::Value::Null => None,
             serde_json::Value::String(s) => Some(s.as_bytes().to_vec()),
@@ -748,9 +781,7 @@ impl CassandraServer {
                     Some(n.to_string().as_bytes().to_vec())
                 }
             }
-            serde_json::Value::Bool(b) => {
-                Some(vec![if *b { 1 } else { 0 }])
-            }
+            serde_json::Value::Bool(b) => Some(vec![if *b { 1 } else { 0 }]),
             _ => Some(value.to_string().as_bytes().to_vec()),
         }
     }
@@ -782,19 +813,18 @@ impl CassandraServer {
         let param_count = query.matches('?').count();
 
         // Store prepared statement
-        conn_state.prepared_statements.insert(
-            statement_id.clone(),
-            (query.clone(), param_count),
-        );
+        conn_state
+            .prepared_statements
+            .insert(statement_id.clone(), (query.clone(), param_count));
 
-        debug!("Prepared statement ID {:?} with {} params", statement_id, param_count);
+        debug!(
+            "Prepared statement ID {:?} with {} params",
+            statement_id, param_count
+        );
 
         // Call LLM to decide response
-        let protocol = CassandraProtocol::new(
-            connection_id,
-            self.app_state.clone(),
-            status_tx.clone(),
-        );
+        let protocol =
+            CassandraProtocol::new(connection_id, self.app_state.clone(), status_tx.clone());
 
         let event = Event {
             event_type: &CASSANDRA_PREPARE_EVENT,
@@ -825,29 +855,39 @@ impl CassandraServer {
         // Execute the protocol actions
         for action_result in execution_result.protocol_results {
             match action_result {
-                ActionResult::Custom { name, data } => {
-                    match name.as_str() {
-                        "cassandra_prepared" => {
-                            let columns = data.get("columns")
-                                .and_then(|v| v.as_array())
-                                .cloned()
-                                .unwrap_or_default();
-                            self.send_prepared(frame.stream_id, statement_id, columns, param_count, stream, status_tx).await?;
-                            return Ok(true);
-                        }
-                        "cassandra_error" => {
-                            let error_code = data.get("error_code")
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(0x0000) as u32;
-                            let message = data.get("message")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("Unknown error");
-                            self.send_error(frame.stream_id, error_code, message, stream, status_tx).await?;
-                            return Ok(true);
-                        }
-                        _ => {}
+                ActionResult::Custom { name, data } => match name.as_str() {
+                    "cassandra_prepared" => {
+                        let columns = data
+                            .get("columns")
+                            .and_then(|v| v.as_array())
+                            .cloned()
+                            .unwrap_or_default();
+                        self.send_prepared(
+                            frame.stream_id,
+                            statement_id,
+                            columns,
+                            param_count,
+                            stream,
+                            status_tx,
+                        )
+                        .await?;
+                        return Ok(true);
                     }
-                }
+                    "cassandra_error" => {
+                        let error_code = data
+                            .get("error_code")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0x0000) as u32;
+                        let message = data
+                            .get("message")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Unknown error");
+                        self.send_error(frame.stream_id, error_code, message, stream, status_tx)
+                            .await?;
+                        return Ok(true);
+                    }
+                    _ => {}
+                },
                 ActionResult::CloseConnection => {
                     return Ok(false);
                 }
@@ -858,7 +898,15 @@ impl CassandraServer {
         }
 
         // Default: send empty prepared result
-        self.send_prepared(frame.stream_id, statement_id, vec![], param_count, stream, status_tx).await?;
+        self.send_prepared(
+            frame.stream_id,
+            statement_id,
+            vec![],
+            param_count,
+            stream,
+            status_tx,
+        )
+        .await?;
         Ok(true)
     }
 
@@ -892,16 +940,14 @@ impl CassandraServer {
                 expected_param_count,
                 params.len()
             );
-            self.send_error(frame.stream_id, 0x2200, &err_msg, stream, status_tx).await?;
+            self.send_error(frame.stream_id, 0x2200, &err_msg, stream, status_tx)
+                .await?;
             return Ok(true);
         }
 
         // Call LLM with query and bound parameters
-        let protocol = CassandraProtocol::new(
-            connection_id,
-            self.app_state.clone(),
-            status_tx.clone(),
-        );
+        let protocol =
+            CassandraProtocol::new(connection_id, self.app_state.clone(), status_tx.clone());
 
         let event = Event {
             event_type: &CASSANDRA_EXECUTE_EVENT,
@@ -932,33 +978,37 @@ impl CassandraServer {
         // Execute the protocol actions
         for action_result in execution_result.protocol_results {
             match action_result {
-                ActionResult::Custom { name, data } => {
-                    match name.as_str() {
-                        "cassandra_result_rows" => {
-                            let columns = data.get("columns")
-                                .and_then(|v| v.as_array())
-                                .cloned()
-                                .unwrap_or_default();
-                            let rows = data.get("rows")
-                                .and_then(|v| v.as_array())
-                                .cloned()
-                                .unwrap_or_default();
-                            self.send_result_rows(frame.stream_id, columns, rows, stream, status_tx).await?;
-                            return Ok(true);
-                        }
-                        "cassandra_error" => {
-                            let error_code = data.get("error_code")
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(0x0000) as u32;
-                            let message = data.get("message")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("Unknown error");
-                            self.send_error(frame.stream_id, error_code, message, stream, status_tx).await?;
-                            return Ok(true);
-                        }
-                        _ => {}
+                ActionResult::Custom { name, data } => match name.as_str() {
+                    "cassandra_result_rows" => {
+                        let columns = data
+                            .get("columns")
+                            .and_then(|v| v.as_array())
+                            .cloned()
+                            .unwrap_or_default();
+                        let rows = data
+                            .get("rows")
+                            .and_then(|v| v.as_array())
+                            .cloned()
+                            .unwrap_or_default();
+                        self.send_result_rows(frame.stream_id, columns, rows, stream, status_tx)
+                            .await?;
+                        return Ok(true);
                     }
-                }
+                    "cassandra_error" => {
+                        let error_code = data
+                            .get("error_code")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0x0000) as u32;
+                        let message = data
+                            .get("message")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Unknown error");
+                        self.send_error(frame.stream_id, error_code, message, stream, status_tx)
+                            .await?;
+                        return Ok(true);
+                    }
+                    _ => {}
+                },
                 ActionResult::CloseConnection => {
                     return Ok(false);
                 }
@@ -969,7 +1019,8 @@ impl CassandraServer {
         }
 
         // Default: send empty result
-        self.send_result_rows(frame.stream_id, vec![], vec![], stream, status_tx).await?;
+        self.send_result_rows(frame.stream_id, vec![], vec![], stream, status_tx)
+            .await?;
         Ok(true)
     }
 
@@ -1086,10 +1137,9 @@ impl CassandraServer {
 
         // Column specifications
         for col in columns {
-            let name = col.get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("col");
-            let col_type = col.get("type")
+            let name = col.get("name").and_then(|v| v.as_str()).unwrap_or("col");
+            let col_type = col
+                .get("type")
                 .and_then(|v| v.as_str())
                 .unwrap_or("varchar");
 
@@ -1214,11 +1264,8 @@ impl CassandraServer {
         trace!("AUTH_RESPONSE: username={}", username);
 
         // Call LLM to decide whether to accept authentication
-        let protocol = CassandraProtocol::new(
-            connection_id,
-            self.app_state.clone(),
-            status_tx.clone(),
-        );
+        let protocol =
+            CassandraProtocol::new(connection_id, self.app_state.clone(), status_tx.clone());
 
         let event = Event {
             event_type: &CASSANDRA_AUTH_EVENT,
@@ -1253,18 +1300,28 @@ impl CassandraServer {
                         "cassandra_auth_success" => {
                             conn_state.authenticated = true;
                             conn_state.username = Some(username);
-                            self.send_auth_success(frame.stream_id, stream, status_tx).await?;
+                            self.send_auth_success(frame.stream_id, stream, status_tx)
+                                .await?;
                             return Ok(true);
                         }
                         "cassandra_error" => {
-                            let error_code = data.get("error_code")
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(0x0000) as u32;
-                            let message = data.get("message")
+                            let error_code =
+                                data.get("error_code")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0x0000) as u32;
+                            let message = data
+                                .get("message")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("Unknown error");
-                            self.send_error(frame.stream_id, error_code, message, stream, status_tx).await?;
-                            return Ok(false);  // Close connection on auth failure
+                            self.send_error(
+                                frame.stream_id,
+                                error_code,
+                                message,
+                                stream,
+                                status_tx,
+                            )
+                            .await?;
+                            return Ok(false); // Close connection on auth failure
                         }
                         _ => {}
                     }
@@ -1279,7 +1336,14 @@ impl CassandraServer {
         }
 
         // Default: deny authentication
-        self.send_error(frame.stream_id, 0x0100, "Authentication failed", stream, status_tx).await?;
+        self.send_error(
+            frame.stream_id,
+            0x0100,
+            "Authentication failed",
+            stream,
+            status_tx,
+        )
+        .await?;
         Ok(false)
     }
 
@@ -1309,7 +1373,9 @@ impl CassandraServer {
         idx += 1; // Skip the \0
 
         if idx >= body.len() {
-            return Err(anyhow::anyhow!("Invalid SASL PLAIN format - missing password"));
+            return Err(anyhow::anyhow!(
+                "Invalid SASL PLAIN format - missing password"
+            ));
         }
 
         // Extract password
@@ -1348,7 +1414,10 @@ impl CassandraServer {
         stream.write_all(&bytes).await?;
 
         trace!("Sent AUTHENTICATE response: {}", authenticator);
-        let _ = status_tx.send(format!("[TRACE] Cassandra → AUTHENTICATE ({})", authenticator));
+        let _ = status_tx.send(format!(
+            "[TRACE] Cassandra → AUTHENTICATE ({})",
+            authenticator
+        ));
 
         Ok(())
     }

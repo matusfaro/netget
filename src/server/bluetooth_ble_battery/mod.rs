@@ -11,8 +11,8 @@ use tokio::sync::mpsc;
 use tracing::info;
 
 use crate::llm::ollama_client::OllamaClient;
-use crate::state::app_state::AppState;
 use crate::server::bluetooth_ble::BluetoothBle;
+use crate::state::app_state::AppState;
 
 /// BLE Battery Service server
 pub struct BluetoothBleBattery;
@@ -28,7 +28,10 @@ impl BluetoothBleBattery {
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
     ) -> Result<std::net::SocketAddr> {
-        info!("Starting BLE Battery Service: {} (initial level: {}%)", device_name, initial_level);
+        info!(
+            "Starting BLE Battery Service: {} (initial level: {}%)",
+            device_name, initial_level
+        );
 
         // Use the base bluetooth-ble server with Battery Service configuration
         BluetoothBle::spawn_with_llm_actions(
@@ -37,8 +40,12 @@ impl BluetoothBleBattery {
             app_state,
             status_tx,
             server_id,
-            format!("Act as a Bluetooth Battery Service. Report battery level at {}%.", initial_level),
-        ).await
+            format!(
+                "Act as a Bluetooth Battery Service. Report battery level at {}%.",
+                initial_level
+            ),
+        )
+        .await
     }
 }
 
@@ -53,7 +60,9 @@ impl BluetoothBleBattery {
         _server_id: crate::state::ServerId,
         _instruction: String,
     ) -> Result<std::net::SocketAddr> {
-        anyhow::bail!("BLE battery support not enabled - compile with --features bluetooth-ble-battery")
+        anyhow::bail!(
+            "BLE battery support not enabled - compile with --features bluetooth-ble-battery"
+        )
     }
 }
 

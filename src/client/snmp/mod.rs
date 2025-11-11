@@ -12,6 +12,9 @@ use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tracing::{debug, error, info, trace};
 
+use crate::client::snmp::actions::{
+    SNMP_CLIENT_CONNECTED_EVENT, SNMP_CLIENT_RESPONSE_RECEIVED_EVENT,
+};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::actions::client_trait::Client;
 use crate::llm::ollama_client::OllamaClient;
@@ -19,14 +22,13 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::snmp::actions::{SNMP_CLIENT_CONNECTED_EVENT, SNMP_CLIENT_RESPONSE_RECEIVED_EVENT};
 
 // SNMP protocol support
-use rasn_snmp::{v1, v2, v2c};
-use rasn_smi::v1::{SimpleSyntax as V1SimpleSyntax, ObjectSyntax as V1ObjectSyntax};
-use rasn_smi::v2::{SimpleSyntax as V2SimpleSyntax, ObjectSyntax as V2ObjectSyntax};
-use rasn::types::{Integer, ObjectIdentifier};
 use rasn::ber;
+use rasn::types::{Integer, ObjectIdentifier};
+use rasn_smi::v1::{ObjectSyntax as V1ObjectSyntax, SimpleSyntax as V1SimpleSyntax};
+use rasn_smi::v2::{ObjectSyntax as V2ObjectSyntax, SimpleSyntax as V2SimpleSyntax};
+use rasn_snmp::{v1, v2, v2c};
 use serde_json::Value;
 
 /// SNMP client configuration
@@ -111,26 +113,35 @@ impl SnmpClient {
     ) -> Result<SocketAddr> {
         // Parse configuration
         let config = parse_startup_params(startup_params);
-        debug!("SNMP client config: community={}, version={:?}, timeout={}ms, retries={}",
-            config.community, config.version, config.timeout_ms, config.retries);
+        debug!(
+            "SNMP client config: community={}, version={:?}, timeout={}ms, retries={}",
+            config.community, config.version, config.timeout_ms, config.retries
+        );
 
         // Bind UDP socket to any local port
-        let socket = UdpSocket::bind("0.0.0.0:0").await
+        let socket = UdpSocket::bind("0.0.0.0:0")
+            .await
             .context("Failed to bind UDP socket")?;
 
         let local_addr = socket.local_addr()?;
 
         // Connect to remote agent (sets default destination for send/recv)
-        socket.connect(&remote_addr).await
-            .context(format!("Failed to connect to SNMP agent at {}", remote_addr))?;
+        socket.connect(&remote_addr).await.context(format!(
+            "Failed to connect to SNMP agent at {}",
+            remote_addr
+        ))?;
 
-        let remote_sock_addr: SocketAddr = remote_addr.parse()
-            .context("Invalid remote address")?;
+        let remote_sock_addr: SocketAddr = remote_addr.parse().context("Invalid remote address")?;
 
-        info!("SNMP client {} connected to {} (local: {})", client_id, remote_sock_addr, local_addr);
+        info!(
+            "SNMP client {} connected to {} (local: {})",
+            client_id, remote_sock_addr, local_addr
+        );
 
         // Update client state
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
         let _ = status_tx.send(format!("[CLIENT] SNMP client {} connected", client_id));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
@@ -144,7 +155,10 @@ impl SnmpClient {
                 }),
             );
 
-            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+            let memory = app_state
+                .get_memory_for_client(client_id)
+                .await
+                .unwrap_or_default();
 
             let llm_clone = llm_client.clone();
             let state_clone = app_state.clone();
@@ -165,8 +179,13 @@ impl SnmpClient {
                     Some(&event),
                     protocol_clone.as_ref(),
                     &status_clone,
-                ).await {
-                    Ok(ClientLlmResult { actions, memory_updates }) => {
+                )
+                .await
+                {
+                    Ok(ClientLlmResult {
+                        actions,
+                        memory_updates,
+                    }) => {
                         // Update memory
                         if let Some(mem) = memory_updates {
                             state_clone.set_memory_for_client(client_id, mem).await;
@@ -182,10 +201,14 @@ impl SnmpClient {
                             &llm_clone,
                             &state_clone,
                             &status_clone,
-                        ).await;
+                        )
+                        .await;
                     }
                     Err(e) => {
-                        error!("Initial LLM call failed for SNMP client {}: {}", client_id, e);
+                        error!(
+                            "Initial LLM call failed for SNMP client {}: {}",
+                            client_id, e
+                        );
                     }
                 }
             });
@@ -209,72 +232,107 @@ impl SnmpClient {
 
         for action in actions {
             match protocol.execute_action(action) {
-                Ok(ClientActionResult::Custom { name, data }) => {
-                    match name.as_str() {
-                        "snmp_get" => {
-                            if let Some(oids) = data.get("oids").and_then(|v| v.as_array()) {
-                                let oid_strings: Vec<String> = oids.iter()
-                                    .filter_map(|v| v.as_str().map(String::from))
-                                    .collect();
+                Ok(ClientActionResult::Custom { name, data }) => match name.as_str() {
+                    "snmp_get" => {
+                        if let Some(oids) = data.get("oids").and_then(|v| v.as_array()) {
+                            let oid_strings: Vec<String> = oids
+                                .iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect();
 
-                                if let Err(e) = Self::send_get_request(
-                                    socket, &oid_strings, config, client_id,
-                                    llm_client, app_state, status_tx, protocol
-                                ).await {
-                                    error!("Failed to send SNMP GET: {}", e);
-                                }
+                            if let Err(e) = Self::send_get_request(
+                                socket,
+                                &oid_strings,
+                                config,
+                                client_id,
+                                llm_client,
+                                app_state,
+                                status_tx,
+                                protocol,
+                            )
+                            .await
+                            {
+                                error!("Failed to send SNMP GET: {}", e);
                             }
-                        }
-                        "snmp_getnext" => {
-                            if let Some(oids) = data.get("oids").and_then(|v| v.as_array()) {
-                                let oid_strings: Vec<String> = oids.iter()
-                                    .filter_map(|v| v.as_str().map(String::from))
-                                    .collect();
-
-                                if let Err(e) = Self::send_getnext_request(
-                                    socket, &oid_strings, config, client_id,
-                                    llm_client, app_state, status_tx, protocol
-                                ).await {
-                                    error!("Failed to send SNMP GETNEXT: {}", e);
-                                }
-                            }
-                        }
-                        "snmp_getbulk" => {
-                            if let Some(oids) = data.get("oids").and_then(|v| v.as_array()) {
-                                let oid_strings: Vec<String> = oids.iter()
-                                    .filter_map(|v| v.as_str().map(String::from))
-                                    .collect();
-                                let non_repeaters = data.get("non_repeaters")
-                                    .and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                                let max_repetitions = data.get("max_repetitions")
-                                    .and_then(|v| v.as_i64()).unwrap_or(10) as i32;
-
-                                if let Err(e) = Self::send_getbulk_request(
-                                    socket, &oid_strings, non_repeaters, max_repetitions,
-                                    config, client_id, llm_client, app_state, status_tx, protocol
-                                ).await {
-                                    error!("Failed to send SNMP GETBULK: {}", e);
-                                }
-                            }
-                        }
-                        "snmp_set" => {
-                            if let Some(variables) = data.get("variables").and_then(|v| v.as_array()) {
-                                if let Err(e) = Self::send_set_request(
-                                    socket, variables, config, client_id,
-                                    llm_client, app_state, status_tx, protocol
-                                ).await {
-                                    error!("Failed to send SNMP SET: {}", e);
-                                }
-                            }
-                        }
-                        _ => {
-                            debug!("Unknown SNMP action: {}", name);
                         }
                     }
-                }
+                    "snmp_getnext" => {
+                        if let Some(oids) = data.get("oids").and_then(|v| v.as_array()) {
+                            let oid_strings: Vec<String> = oids
+                                .iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect();
+
+                            if let Err(e) = Self::send_getnext_request(
+                                socket,
+                                &oid_strings,
+                                config,
+                                client_id,
+                                llm_client,
+                                app_state,
+                                status_tx,
+                                protocol,
+                            )
+                            .await
+                            {
+                                error!("Failed to send SNMP GETNEXT: {}", e);
+                            }
+                        }
+                    }
+                    "snmp_getbulk" => {
+                        if let Some(oids) = data.get("oids").and_then(|v| v.as_array()) {
+                            let oid_strings: Vec<String> = oids
+                                .iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect();
+                            let non_repeaters =
+                                data.get("non_repeaters")
+                                    .and_then(|v| v.as_i64())
+                                    .unwrap_or(0) as i32;
+                            let max_repetitions =
+                                data.get("max_repetitions")
+                                    .and_then(|v| v.as_i64())
+                                    .unwrap_or(10) as i32;
+
+                            if let Err(e) = Self::send_getbulk_request(
+                                socket,
+                                &oid_strings,
+                                non_repeaters,
+                                max_repetitions,
+                                config,
+                                client_id,
+                                llm_client,
+                                app_state,
+                                status_tx,
+                                protocol,
+                            )
+                            .await
+                            {
+                                error!("Failed to send SNMP GETBULK: {}", e);
+                            }
+                        }
+                    }
+                    "snmp_set" => {
+                        if let Some(variables) = data.get("variables").and_then(|v| v.as_array()) {
+                            if let Err(e) = Self::send_set_request(
+                                socket, variables, config, client_id, llm_client, app_state,
+                                status_tx, protocol,
+                            )
+                            .await
+                            {
+                                error!("Failed to send SNMP SET: {}", e);
+                            }
+                        }
+                    }
+                    _ => {
+                        debug!("Unknown SNMP action: {}", name);
+                    }
+                },
                 Ok(ClientActionResult::Disconnect) => {
                     info!("SNMP client {} disconnecting", client_id);
-                    app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
+                    app_state
+                        .update_client_status(client_id, ClientStatus::Disconnected)
+                        .await;
                     let _ = status_tx.send("__UPDATE_UI__".to_string());
                 }
                 Ok(ClientActionResult::WaitForMore) => {
@@ -307,14 +365,26 @@ impl SnmpClient {
             SnmpVersion::V2c => Self::build_v2c_get_request(oids, &config.community, request_id)?,
         };
 
-        debug!("SNMP client {} sending GET for {} OIDs", client_id, oids.len());
+        debug!(
+            "SNMP client {} sending GET for {} OIDs",
+            client_id,
+            oids.len()
+        );
         trace!("SNMP GET request (hex): {}", hex::encode(&request_bytes));
 
         // Send request and wait for response
         Self::send_request_and_handle_response(
-            socket, &request_bytes, "GetRequest", config, client_id,
-            llm_client, app_state, status_tx, protocol
-        ).await
+            socket,
+            &request_bytes,
+            "GetRequest",
+            config,
+            client_id,
+            llm_client,
+            app_state,
+            status_tx,
+            protocol,
+        )
+        .await
     }
 
     /// Send SNMP GETNEXT request
@@ -332,15 +402,29 @@ impl SnmpClient {
 
         let request_bytes = match config.version {
             SnmpVersion::V1 => Self::build_v1_getnext_request(oids, &config.community, request_id)?,
-            SnmpVersion::V2c => Self::build_v2c_getnext_request(oids, &config.community, request_id)?,
+            SnmpVersion::V2c => {
+                Self::build_v2c_getnext_request(oids, &config.community, request_id)?
+            }
         };
 
-        debug!("SNMP client {} sending GETNEXT for {} OIDs", client_id, oids.len());
+        debug!(
+            "SNMP client {} sending GETNEXT for {} OIDs",
+            client_id,
+            oids.len()
+        );
 
         Self::send_request_and_handle_response(
-            socket, &request_bytes, "GetNextRequest", config, client_id,
-            llm_client, app_state, status_tx, protocol
-        ).await
+            socket,
+            &request_bytes,
+            "GetNextRequest",
+            config,
+            client_id,
+            llm_client,
+            app_state,
+            status_tx,
+            protocol,
+        )
+        .await
     }
 
     /// Send SNMP GETBULK request (v2c only)
@@ -362,16 +446,30 @@ impl SnmpClient {
 
         let request_id = rand::random::<i32>();
         let request_bytes = Self::build_v2c_getbulk_request(
-            oids, &config.community, request_id, non_repeaters, max_repetitions
+            oids,
+            &config.community,
+            request_id,
+            non_repeaters,
+            max_repetitions,
         )?;
 
-        debug!("SNMP client {} sending GETBULK (non_repeaters={}, max_repetitions={})",
-            client_id, non_repeaters, max_repetitions);
+        debug!(
+            "SNMP client {} sending GETBULK (non_repeaters={}, max_repetitions={})",
+            client_id, non_repeaters, max_repetitions
+        );
 
         Self::send_request_and_handle_response(
-            socket, &request_bytes, "GetBulkRequest", config, client_id,
-            llm_client, app_state, status_tx, protocol
-        ).await
+            socket,
+            &request_bytes,
+            "GetBulkRequest",
+            config,
+            client_id,
+            llm_client,
+            app_state,
+            status_tx,
+            protocol,
+        )
+        .await
     }
 
     /// Send SNMP SET request
@@ -388,16 +486,32 @@ impl SnmpClient {
         let request_id = rand::random::<i32>();
 
         let request_bytes = match config.version {
-            SnmpVersion::V1 => Self::build_v1_set_request(variables, &config.community, request_id)?,
-            SnmpVersion::V2c => Self::build_v2c_set_request(variables, &config.community, request_id)?,
+            SnmpVersion::V1 => {
+                Self::build_v1_set_request(variables, &config.community, request_id)?
+            }
+            SnmpVersion::V2c => {
+                Self::build_v2c_set_request(variables, &config.community, request_id)?
+            }
         };
 
-        debug!("SNMP client {} sending SET for {} variables", client_id, variables.len());
+        debug!(
+            "SNMP client {} sending SET for {} variables",
+            client_id,
+            variables.len()
+        );
 
         Self::send_request_and_handle_response(
-            socket, &request_bytes, "SetRequest", config, client_id,
-            llm_client, app_state, status_tx, protocol
-        ).await
+            socket,
+            &request_bytes,
+            "SetRequest",
+            config,
+            client_id,
+            llm_client,
+            app_state,
+            status_tx,
+            protocol,
+        )
+        .await
     }
 
     /// Send request and handle response
@@ -428,9 +542,17 @@ impl SnmpClient {
 
                     // Parse response and call LLM
                     Self::handle_response(
-                        response_data, request_type, client_id, llm_client,
-                        app_state, status_tx, protocol, socket, config
-                    ).await?;
+                        response_data,
+                        request_type,
+                        client_id,
+                        llm_client,
+                        app_state,
+                        status_tx,
+                        protocol,
+                        socket,
+                        config,
+                    )
+                    .await?;
 
                     return Ok(());
                 }
@@ -441,10 +563,16 @@ impl SnmpClient {
                     // Timeout
                     if retries > 0 {
                         retries -= 1;
-                        debug!("SNMP client {} request timeout, retrying ({} left)", client_id, retries);
+                        debug!(
+                            "SNMP client {} request timeout, retrying ({} left)",
+                            client_id, retries
+                        );
                         continue;
                     } else {
-                        return Err(anyhow::anyhow!("SNMP request timeout after {} retries", config.retries));
+                        return Err(anyhow::anyhow!(
+                            "SNMP request timeout after {} retries",
+                            config.retries
+                        ));
                     }
                 }
             }
@@ -464,16 +592,21 @@ impl SnmpClient {
         config: &Arc<SnmpConfig>,
     ) -> Result<()> {
         // Try parsing as v2c first
-        let (variables, error_status) = if let Ok(msg) = ber::decode::<v2c::Message<v2::Pdus>>(response_data) {
-            Self::extract_v2c_response(&msg)?
-        } else if let Ok(msg) = ber::decode::<v1::Message<v1::Pdus>>(response_data) {
-            Self::extract_v1_response(&msg)?
-        } else {
-            return Err(anyhow::anyhow!("Failed to parse SNMP response"));
-        };
+        let (variables, error_status) =
+            if let Ok(msg) = ber::decode::<v2c::Message<v2::Pdus>>(response_data) {
+                Self::extract_v2c_response(&msg)?
+            } else if let Ok(msg) = ber::decode::<v1::Message<v1::Pdus>>(response_data) {
+                Self::extract_v1_response(&msg)?
+            } else {
+                return Err(anyhow::anyhow!("Failed to parse SNMP response"));
+            };
 
-        debug!("SNMP client {} received response with {} variables, error_status={}",
-            client_id, variables.len(), error_status);
+        debug!(
+            "SNMP client {} received response with {} variables, error_status={}",
+            client_id,
+            variables.len(),
+            error_status
+        );
 
         // Call LLM with response
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -486,7 +619,10 @@ impl SnmpClient {
                 }),
             );
 
-            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+            let memory = app_state
+                .get_memory_for_client(client_id)
+                .await
+                .unwrap_or_default();
 
             match call_llm_for_client(
                 llm_client,
@@ -497,8 +633,13 @@ impl SnmpClient {
                 Some(&event),
                 protocol.as_ref(),
                 status_tx,
-            ).await {
-                Ok(ClientLlmResult { actions, memory_updates }) => {
+            )
+            .await
+            {
+                Ok(ClientLlmResult {
+                    actions,
+                    memory_updates,
+                }) => {
                     // Update memory
                     if let Some(mem) = memory_updates {
                         app_state.set_memory_for_client(client_id, mem).await;
@@ -506,9 +647,10 @@ impl SnmpClient {
 
                     // Execute follow-up actions (boxed to avoid infinite recursion)
                     Box::pin(Self::execute_actions(
-                        actions, protocol, socket, client_id, config,
-                        llm_client, app_state, status_tx
-                    )).await;
+                        actions, protocol, socket, client_id, config, llm_client, app_state,
+                        status_tx,
+                    ))
+                    .await;
                 }
                 Err(e) => {
                     error!("LLM error for SNMP client {}: {}", client_id, e);
@@ -526,12 +668,15 @@ impl SnmpClient {
             _ => return Err(anyhow::anyhow!("Unexpected PDU type in response")),
         };
 
-        let variables: Vec<Value> = var_binds.iter().map(|vb| {
-            serde_json::json!({
-                "oid": vb.name.to_string(),
-                "value": Self::format_v2_value(&vb.value),
+        let variables: Vec<Value> = var_binds
+            .iter()
+            .map(|vb| {
+                serde_json::json!({
+                    "oid": vb.name.to_string(),
+                    "value": Self::format_v2_value(&vb.value),
+                })
             })
-        }).collect();
+            .collect();
 
         Ok((variables, error_status))
     }
@@ -549,12 +694,15 @@ impl SnmpClient {
             _ => return Err(anyhow::anyhow!("Unexpected PDU type in response")),
         };
 
-        let variables: Vec<Value> = var_binds.iter().map(|vb| {
-            serde_json::json!({
-                "oid": vb.name.to_string(),
-                "value": Self::format_v1_value(&vb.value),
+        let variables: Vec<Value> = var_binds
+            .iter()
+            .map(|vb| {
+                serde_json::json!({
+                    "oid": vb.name.to_string(),
+                    "value": Self::format_v1_value(&vb.value),
+                })
             })
-        }).collect();
+            .collect();
 
         Ok((variables, error_status))
     }
@@ -573,13 +721,13 @@ impl SnmpClient {
 
     fn format_object_syntax_v2(syntax: &V2ObjectSyntax) -> Value {
         match syntax {
-            V2ObjectSyntax::Simple(V2SimpleSyntax::Integer(n)) => {
-                match n {
-                    Integer::Primitive(val) => serde_json::json!(val),
-                    Integer::Variable(val) => serde_json::json!(val.to_string()),
-                }
+            V2ObjectSyntax::Simple(V2SimpleSyntax::Integer(n)) => match n {
+                Integer::Primitive(val) => serde_json::json!(val),
+                Integer::Variable(val) => serde_json::json!(val.to_string()),
             },
-            V2ObjectSyntax::Simple(V2SimpleSyntax::String(s)) => serde_json::json!(String::from_utf8_lossy(s)),
+            V2ObjectSyntax::Simple(V2SimpleSyntax::String(s)) => {
+                serde_json::json!(String::from_utf8_lossy(s))
+            }
             V2ObjectSyntax::Simple(V2SimpleSyntax::ObjectId(_)) => serde_json::json!("(object-id)"),
             V2ObjectSyntax::ApplicationWide(_) => serde_json::json!("(application-wide)"),
         }
@@ -588,13 +736,13 @@ impl SnmpClient {
     /// Format v1 value for JSON
     fn format_v1_value(value: &V1ObjectSyntax) -> Value {
         match value {
-            V1ObjectSyntax::Simple(V1SimpleSyntax::Number(n)) => {
-                match n {
-                    Integer::Primitive(val) => serde_json::json!(val),
-                    Integer::Variable(val) => serde_json::json!(val.to_string()),
-                }
+            V1ObjectSyntax::Simple(V1SimpleSyntax::Number(n)) => match n {
+                Integer::Primitive(val) => serde_json::json!(val),
+                Integer::Variable(val) => serde_json::json!(val.to_string()),
             },
-            V1ObjectSyntax::Simple(V1SimpleSyntax::String(s)) => serde_json::json!(String::from_utf8_lossy(s)),
+            V1ObjectSyntax::Simple(V1SimpleSyntax::String(s)) => {
+                serde_json::json!(String::from_utf8_lossy(s))
+            }
             V1ObjectSyntax::Simple(V1SimpleSyntax::Object(_)) => serde_json::json!("(object-id)"),
             V1ObjectSyntax::Simple(V1SimpleSyntax::Empty) => serde_json::json!(null),
             V1ObjectSyntax::ApplicationWide(_) => serde_json::json!("(application-wide)"),
@@ -604,12 +752,13 @@ impl SnmpClient {
     // Request builders (simplified - using rasn-snmp encoding)
 
     fn build_v2c_get_request(oids: &[String], community: &str, request_id: i32) -> Result<Vec<u8>> {
-        let var_binds: Vec<v2::VarBind> = oids.iter().map(|oid| {
-            v2::VarBind {
+        let var_binds: Vec<v2::VarBind> = oids
+            .iter()
+            .map(|oid| v2::VarBind {
                 name: parse_oid(oid),
                 value: v2::VarBindValue::Unspecified,
-            }
-        }).collect();
+            })
+            .collect();
 
         let pdu = v2::Pdus::GetRequest(v2::GetRequest(v2::Pdu {
             request_id,
@@ -619,21 +768,27 @@ impl SnmpClient {
         }));
 
         let message = v2c::Message {
-            version: Integer::Primitive(1),  // v2c uses version 1
+            version: Integer::Primitive(1), // v2c uses version 1
             community: community.as_bytes().to_vec().into(),
             data: pdu,
         };
 
-        ber::encode(&message).map_err(|e| anyhow::anyhow!("Failed to encode SNMP v2c GET request: {}", e))
+        ber::encode(&message)
+            .map_err(|e| anyhow::anyhow!("Failed to encode SNMP v2c GET request: {}", e))
     }
 
-    fn build_v2c_getnext_request(oids: &[String], community: &str, request_id: i32) -> Result<Vec<u8>> {
-        let var_binds: Vec<v2::VarBind> = oids.iter().map(|oid| {
-            v2::VarBind {
+    fn build_v2c_getnext_request(
+        oids: &[String],
+        community: &str,
+        request_id: i32,
+    ) -> Result<Vec<u8>> {
+        let var_binds: Vec<v2::VarBind> = oids
+            .iter()
+            .map(|oid| v2::VarBind {
                 name: parse_oid(oid),
                 value: v2::VarBindValue::Unspecified,
-            }
-        }).collect();
+            })
+            .collect();
 
         let pdu = v2::Pdus::GetNextRequest(v2::GetNextRequest(v2::Pdu {
             request_id,
@@ -648,7 +803,8 @@ impl SnmpClient {
             data: pdu,
         };
 
-        ber::encode(&message).map_err(|e| anyhow::anyhow!("Failed to encode SNMP v2c GETNEXT request: {}", e))
+        ber::encode(&message)
+            .map_err(|e| anyhow::anyhow!("Failed to encode SNMP v2c GETNEXT request: {}", e))
     }
 
     fn build_v2c_getbulk_request(
@@ -658,12 +814,13 @@ impl SnmpClient {
         non_repeaters: i32,
         max_repetitions: i32,
     ) -> Result<Vec<u8>> {
-        let var_binds: Vec<v2::VarBind> = oids.iter().map(|oid| {
-            v2::VarBind {
+        let var_binds: Vec<v2::VarBind> = oids
+            .iter()
+            .map(|oid| v2::VarBind {
                 name: parse_oid(oid),
                 value: v2::VarBindValue::Unspecified,
-            }
-        }).collect();
+            })
+            .collect();
 
         let pdu = v2::Pdus::GetBulkRequest(v2::GetBulkRequest(v2::BulkPdu {
             request_id,
@@ -678,32 +835,47 @@ impl SnmpClient {
             data: pdu,
         };
 
-        ber::encode(&message).map_err(|e| anyhow::anyhow!("Failed to encode SNMP v2c GETBULK request: {}", e))
+        ber::encode(&message)
+            .map_err(|e| anyhow::anyhow!("Failed to encode SNMP v2c GETBULK request: {}", e))
     }
 
-    fn build_v2c_set_request(variables: &[Value], community: &str, request_id: i32) -> Result<Vec<u8>> {
-        let var_binds: Vec<v2::VarBind> = variables.iter().map(|var| {
-            let oid = var.get("oid").and_then(|v| v.as_str()).unwrap_or("1.3.6.1.2.1.1.1.0");
-            let value_type = var.get("type").and_then(|v| v.as_str()).unwrap_or("string");
-            let value = var.get("value").unwrap_or(&serde_json::json!(null));
+    fn build_v2c_set_request(
+        variables: &[Value],
+        community: &str,
+        request_id: i32,
+    ) -> Result<Vec<u8>> {
+        let var_binds: Vec<v2::VarBind> = variables
+            .iter()
+            .map(|var| {
+                let oid = var
+                    .get("oid")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("1.3.6.1.2.1.1.1.0");
+                let value_type = var.get("type").and_then(|v| v.as_str()).unwrap_or("string");
+                let value = var.get("value").unwrap_or(&serde_json::json!(null));
 
-            let data = match value_type {
-                "integer" => {
-                    let n = value.as_i64().unwrap_or(0);
-                    v2::VarBindValue::Value(V2ObjectSyntax::Simple(V2SimpleSyntax::Integer(Integer::Primitive(n as isize))))
-                }
-                "string" => {
-                    let s = value.as_str().unwrap_or("");
-                    v2::VarBindValue::Value(V2ObjectSyntax::Simple(V2SimpleSyntax::String(s.as_bytes().to_vec().into())))
-                }
-                _ => v2::VarBindValue::Unspecified,
-            };
+                let data = match value_type {
+                    "integer" => {
+                        let n = value.as_i64().unwrap_or(0);
+                        v2::VarBindValue::Value(V2ObjectSyntax::Simple(V2SimpleSyntax::Integer(
+                            Integer::Primitive(n as isize),
+                        )))
+                    }
+                    "string" => {
+                        let s = value.as_str().unwrap_or("");
+                        v2::VarBindValue::Value(V2ObjectSyntax::Simple(V2SimpleSyntax::String(
+                            s.as_bytes().to_vec().into(),
+                        )))
+                    }
+                    _ => v2::VarBindValue::Unspecified,
+                };
 
-            v2::VarBind {
-                name: parse_oid(oid),
-                value: data,
-            }
-        }).collect();
+                v2::VarBind {
+                    name: parse_oid(oid),
+                    value: data,
+                }
+            })
+            .collect();
 
         let pdu = v2::Pdus::SetRequest(v2::SetRequest(v2::Pdu {
             request_id,
@@ -718,16 +890,18 @@ impl SnmpClient {
             data: pdu,
         };
 
-        ber::encode(&message).map_err(|e| anyhow::anyhow!("Failed to encode SNMP v2c SET request: {}", e))
+        ber::encode(&message)
+            .map_err(|e| anyhow::anyhow!("Failed to encode SNMP v2c SET request: {}", e))
     }
 
     fn build_v1_get_request(oids: &[String], community: &str, request_id: i32) -> Result<Vec<u8>> {
-        let var_binds: Vec<v1::VarBind> = oids.iter().map(|oid| {
-            v1::VarBind {
+        let var_binds: Vec<v1::VarBind> = oids
+            .iter()
+            .map(|oid| v1::VarBind {
                 name: parse_oid(oid),
                 value: V1ObjectSyntax::Simple(V1SimpleSyntax::Empty),
-            }
-        }).collect();
+            })
+            .collect();
 
         let pdu = v1::Pdus::GetRequest(v1::GetRequest(v1::Pdu {
             request_id: Integer::Primitive(request_id as isize),
@@ -737,21 +911,27 @@ impl SnmpClient {
         }));
 
         let message = v1::Message {
-            version: Integer::Primitive(0),  // v1 uses version 0
+            version: Integer::Primitive(0), // v1 uses version 0
             community: community.as_bytes().to_vec().into(),
             data: pdu,
         };
 
-        ber::encode(&message).map_err(|e| anyhow::anyhow!("Failed to encode SNMP v1 GET request: {}", e))
+        ber::encode(&message)
+            .map_err(|e| anyhow::anyhow!("Failed to encode SNMP v1 GET request: {}", e))
     }
 
-    fn build_v1_getnext_request(oids: &[String], community: &str, request_id: i32) -> Result<Vec<u8>> {
-        let var_binds: Vec<v1::VarBind> = oids.iter().map(|oid| {
-            v1::VarBind {
+    fn build_v1_getnext_request(
+        oids: &[String],
+        community: &str,
+        request_id: i32,
+    ) -> Result<Vec<u8>> {
+        let var_binds: Vec<v1::VarBind> = oids
+            .iter()
+            .map(|oid| v1::VarBind {
                 name: parse_oid(oid),
                 value: V1ObjectSyntax::Simple(V1SimpleSyntax::Empty),
-            }
-        }).collect();
+            })
+            .collect();
 
         let pdu = v1::Pdus::GetNextRequest(v1::GetNextRequest(v1::Pdu {
             request_id: Integer::Primitive(request_id as isize),
@@ -766,32 +946,45 @@ impl SnmpClient {
             data: pdu,
         };
 
-        ber::encode(&message).map_err(|e| anyhow::anyhow!("Failed to encode SNMP v1 GETNEXT request: {}", e))
+        ber::encode(&message)
+            .map_err(|e| anyhow::anyhow!("Failed to encode SNMP v1 GETNEXT request: {}", e))
     }
 
-    fn build_v1_set_request(variables: &[Value], community: &str, request_id: i32) -> Result<Vec<u8>> {
-        let var_binds: Vec<v1::VarBind> = variables.iter().map(|var| {
-            let oid = var.get("oid").and_then(|v| v.as_str()).unwrap_or("1.3.6.1.2.1.1.1.0");
-            let value_type = var.get("type").and_then(|v| v.as_str()).unwrap_or("string");
-            let value = var.get("value").unwrap_or(&serde_json::json!(null));
+    fn build_v1_set_request(
+        variables: &[Value],
+        community: &str,
+        request_id: i32,
+    ) -> Result<Vec<u8>> {
+        let var_binds: Vec<v1::VarBind> = variables
+            .iter()
+            .map(|var| {
+                let oid = var
+                    .get("oid")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("1.3.6.1.2.1.1.1.0");
+                let value_type = var.get("type").and_then(|v| v.as_str()).unwrap_or("string");
+                let value = var.get("value").unwrap_or(&serde_json::json!(null));
 
-            let value_obj = match value_type {
-                "integer" => {
-                    let n = value.as_i64().unwrap_or(0);
-                    V1ObjectSyntax::Simple(V1SimpleSyntax::Number(Integer::Primitive(n as isize)))
-                }
-                "string" => {
-                    let s = value.as_str().unwrap_or("");
-                    V1ObjectSyntax::Simple(V1SimpleSyntax::String(s.as_bytes().to_vec().into()))
-                }
-                _ => V1ObjectSyntax::Simple(V1SimpleSyntax::Empty),
-            };
+                let value_obj = match value_type {
+                    "integer" => {
+                        let n = value.as_i64().unwrap_or(0);
+                        V1ObjectSyntax::Simple(V1SimpleSyntax::Number(Integer::Primitive(
+                            n as isize,
+                        )))
+                    }
+                    "string" => {
+                        let s = value.as_str().unwrap_or("");
+                        V1ObjectSyntax::Simple(V1SimpleSyntax::String(s.as_bytes().to_vec().into()))
+                    }
+                    _ => V1ObjectSyntax::Simple(V1SimpleSyntax::Empty),
+                };
 
-            v1::VarBind {
-                name: parse_oid(oid),
-                value: value_obj,
-            }
-        }).collect();
+                v1::VarBind {
+                    name: parse_oid(oid),
+                    value: value_obj,
+                }
+            })
+            .collect();
 
         let pdu = v1::Pdus::SetRequest(v1::SetRequest(v1::Pdu {
             request_id: Integer::Primitive(request_id as isize),
@@ -806,6 +999,7 @@ impl SnmpClient {
             data: pdu,
         };
 
-        ber::encode(&message).map_err(|e| anyhow::anyhow!("Failed to encode SNMP v1 SET request: {}", e))
+        ber::encode(&message)
+            .map_err(|e| anyhow::anyhow!("Failed to encode SNMP v1 SET request: {}", e))
     }
 }

@@ -11,8 +11,8 @@ use tokio::sync::mpsc;
 use tracing::info;
 
 use crate::llm::ollama_client::OllamaClient;
-use crate::state::app_state::AppState;
 use crate::server::bluetooth_ble::BluetoothBle;
+use crate::state::app_state::AppState;
 
 /// BLE Remote Control server
 pub struct BluetoothBleRemote;
@@ -45,7 +45,8 @@ impl BluetoothBleRemote {
             status_tx,
             server_id,
             remote_instruction,
-        ).await
+        )
+        .await
     }
 }
 
@@ -59,7 +60,9 @@ impl BluetoothBleRemote {
         _server_id: crate::state::ServerId,
         _instruction: String,
     ) -> Result<std::net::SocketAddr> {
-        anyhow::bail!("BLE remote support not enabled - compile with --features bluetooth-ble-remote")
+        anyhow::bail!(
+            "BLE remote support not enabled - compile with --features bluetooth-ble-remote"
+        )
     }
 }
 
@@ -86,34 +89,32 @@ pub mod consumer_control {
 
 /// HID Report Descriptor for Consumer Control remote
 pub const HID_REMOTE_REPORT_DESCRIPTOR: &[u8] = &[
-    0x05, 0x0C,       // Usage Page (Consumer)
-    0x09, 0x01,       // Usage (Consumer Control)
-    0xA1, 0x01,       // Collection (Application)
-    0x15, 0x00,       //   Logical Minimum (0)
-    0x25, 0x01,       //   Logical Maximum (1)
-    0x75, 0x01,       //   Report Size (1)
-    0x95, 0x10,       //   Report Count (16)
-
+    0x05, 0x0C, // Usage Page (Consumer)
+    0x09, 0x01, // Usage (Consumer Control)
+    0xA1, 0x01, // Collection (Application)
+    0x15, 0x00, //   Logical Minimum (0)
+    0x25, 0x01, //   Logical Maximum (1)
+    0x75, 0x01, //   Report Size (1)
+    0x95, 0x10, //   Report Count (16)
     // Media controls (16 bits)
-    0x09, 0xCD,       //   Usage (Play/Pause)
-    0x09, 0xB5,       //   Usage (Next Track)
-    0x09, 0xB6,       //   Usage (Previous Track)
-    0x09, 0xB7,       //   Usage (Stop)
-    0x09, 0xB3,       //   Usage (Fast Forward)
-    0x09, 0xB4,       //   Usage (Rewind)
-    0x09, 0xE9,       //   Usage (Volume Up)
-    0x09, 0xEA,       //   Usage (Volume Down)
-    0x09, 0xE2,       //   Usage (Mute)
-    0x09, 0x30,       //   Usage (Power)
-    0x09, 0x40,       //   Usage (Menu)
+    0x09, 0xCD, //   Usage (Play/Pause)
+    0x09, 0xB5, //   Usage (Next Track)
+    0x09, 0xB6, //   Usage (Previous Track)
+    0x09, 0xB7, //   Usage (Stop)
+    0x09, 0xB3, //   Usage (Fast Forward)
+    0x09, 0xB4, //   Usage (Rewind)
+    0x09, 0xE9, //   Usage (Volume Up)
+    0x09, 0xEA, //   Usage (Volume Down)
+    0x09, 0xE2, //   Usage (Mute)
+    0x09, 0x30, //   Usage (Power)
+    0x09, 0x40, //   Usage (Menu)
     0x09, 0x23, 0x02, //   Usage (Home)
-    0x09, 0x00,       //   Usage (Unassigned) - padding
-    0x09, 0x00,       //   Usage (Unassigned) - padding
-    0x09, 0x00,       //   Usage (Unassigned) - padding
-    0x09, 0x00,       //   Usage (Unassigned) - padding
-
-    0x81, 0x02,       //   Input (Data, Variable, Absolute)
-    0xC0,             // End Collection
+    0x09, 0x00, //   Usage (Unassigned) - padding
+    0x09, 0x00, //   Usage (Unassigned) - padding
+    0x09, 0x00, //   Usage (Unassigned) - padding
+    0x09, 0x00, //   Usage (Unassigned) - padding
+    0x81, 0x02, //   Input (Data, Variable, Absolute)
+    0xC0, // End Collection
 ];
 
 /// Build a remote control report (2 bytes)

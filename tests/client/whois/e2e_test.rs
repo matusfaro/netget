@@ -66,7 +66,9 @@ mod whois_client_tests {
         // Verify response contains domain information
         let output = client.get_output().await;
         assert!(
-            output.contains("Domain Name") || output.contains("Registrar") || output.contains("EXAMPLE.COM"),
+            output.contains("Domain Name")
+                || output.contains("Registrar")
+                || output.contains("EXAMPLE.COM"),
             "Client should receive domain information. Output: {:?}",
             output
         );
@@ -84,9 +86,8 @@ mod whois_client_tests {
     #[tokio::test]
     async fn test_whois_auto_disconnect() -> E2EResult<()> {
         // WHOIS servers close the connection after sending response
-        let client_config = NetGetConfig::new(
-            "Connect to whois.iana.org:43 via WHOIS and query 'com'."
-        );
+        let client_config =
+            NetGetConfig::new("Connect to whois.iana.org:43 via WHOIS and query 'com'.");
 
         let mut client = start_netget_client(client_config).await?;
 
@@ -96,7 +97,9 @@ mod whois_client_tests {
         // Verify client shows disconnection (WHOIS is one-shot)
         let output = client.get_output().await;
         assert!(
-            output.contains("disconnected") || output.contains("closed") || output.contains("complete"),
+            output.contains("disconnected")
+                || output.contains("closed")
+                || output.contains("complete"),
             "Client should show disconnection after response. Output: {:?}",
             output
         );

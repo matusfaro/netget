@@ -37,8 +37,9 @@ pub enum WireguardCommand {
 }
 
 /// Global storage for WireGuard client command channels
-static WIREGUARD_CLIENTS: LazyLock<Arc<RwLock<HashMap<ClientId, mpsc::UnboundedSender<WireguardCommand>>>>> =
-    LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
+static WIREGUARD_CLIENTS: LazyLock<
+    Arc<RwLock<HashMap<ClientId, mpsc::UnboundedSender<WireguardCommand>>>>,
+> = LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
 
 /// WireGuard client startup parameters
 #[derive(Debug, Clone)]
@@ -116,14 +117,14 @@ impl WireguardClient {
             .context("Failed to create WireGuard interface (requires elevated privileges)")?;
 
         info!("Created WireGuard interface: {}", interface_name);
-        let _ = status_tx.send(format!(
-            "[CLIENT] Created interface: {}",
-            interface_name
-        ));
+        let _ = status_tx.send(format!("[CLIENT] Created interface: {}", interface_name));
 
         // Parse client address (e.g., "10.20.30.2/32")
         use defguard_wireguard_rs::net::IpAddrMask;
-        let client_addr_mask: IpAddrMask = params.client_address.parse().context("Invalid client address")?;
+        let client_addr_mask: IpAddrMask = params
+            .client_address
+            .parse()
+            .context("Invalid client address")?;
 
         // Parse server endpoint
         let server_endpoint_addr: SocketAddr = params
@@ -178,10 +179,7 @@ impl WireguardClient {
         app_state
             .update_client_status(client_id, ClientStatus::Connected)
             .await;
-        let _ = status_tx.send(format!(
-            "[CLIENT] WireGuard client {} connected",
-            client_id
-        ));
+        let _ = status_tx.send(format!("[CLIENT] WireGuard client {} connected", client_id));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Wrap wgapi in Arc<RwLock>
@@ -242,8 +240,14 @@ impl WireguardClient {
         );
 
         // Get client instruction and memory
-        let instruction = app_state.get_instruction_for_client(client_id).await.unwrap_or_default();
-        let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+        let instruction = app_state
+            .get_instruction_for_client(client_id)
+            .await
+            .unwrap_or_default();
+        let memory = app_state
+            .get_memory_for_client(client_id)
+            .await
+            .unwrap_or_default();
 
         // Create protocol instance for LLM call
         let protocol = Arc::new(crate::client::wireguard::WireguardClientProtocol::new());
@@ -265,9 +269,7 @@ impl WireguardClient {
                 debug!("LLM response for connected event: {:?}", result);
                 // Update memory if provided
                 if let Some(new_memory) = result.memory_updates {
-                    app_state
-                        .set_memory_for_client(client_id, new_memory)
-                        .await;
+                    app_state.set_memory_for_client(client_id, new_memory).await;
                 }
             }
             Err(e) => {
@@ -329,7 +331,10 @@ impl WireguardClient {
             // Check if client is still active
             if let Some(client) = app_state.get_client(client_id).await {
                 if client.status == ClientStatus::Disconnected {
-                    info!("WireGuard client {} stopped, exiting monitor loop", client_id);
+                    info!(
+                        "WireGuard client {} stopped, exiting monitor loop",
+                        client_id
+                    );
                     break;
                 }
             } else {
@@ -352,10 +357,7 @@ impl WireguardClient {
                                 < Duration::from_secs(180); // 3 minutes
 
                         if is_connected && !was_connected {
-                            info!(
-                                "WireGuard client {} handshake successful",
-                                client_id
-                            );
+                            info!("WireGuard client {} handshake successful", client_id);
                             let _ = status_tx.send(format!(
                                 "[CLIENT] WireGuard client {} handshake successful",
                                 client_id
@@ -363,10 +365,7 @@ impl WireguardClient {
 
                             was_connected = true;
                         } else if !is_connected && was_connected {
-                            warn!(
-                                "WireGuard client {} lost connection to server",
-                                client_id
-                            );
+                            warn!("WireGuard client {} lost connection to server", client_id);
                             let _ = status_tx.send(format!(
                                 "[CLIENT] WireGuard client {} lost connection",
                                 client_id
@@ -380,9 +379,16 @@ impl WireguardClient {
                                 }),
                             );
 
-                            let instruction = app_state.get_instruction_for_client(client_id).await.unwrap_or_default();
-                            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
-                            let protocol = Arc::new(crate::client::wireguard::WireguardClientProtocol::new());
+                            let instruction = app_state
+                                .get_instruction_for_client(client_id)
+                                .await
+                                .unwrap_or_default();
+                            let memory = app_state
+                                .get_memory_for_client(client_id)
+                                .await
+                                .unwrap_or_default();
+                            let protocol =
+                                Arc::new(crate::client::wireguard::WireguardClientProtocol::new());
 
                             if let Ok(result) = call_llm_for_client(
                                 &llm_client,
@@ -397,9 +403,7 @@ impl WireguardClient {
                             .await
                             {
                                 if let Some(new_memory) = result.memory_updates {
-                                    app_state
-                                        .set_memory_for_client(client_id, new_memory)
-                                        .await;
+                                    app_state.set_memory_for_client(client_id, new_memory).await;
                                 }
                             }
 
@@ -420,10 +424,7 @@ impl WireguardClient {
                         }
                     } else {
                         if was_connected {
-                            warn!(
-                                "WireGuard client {} server peer disappeared",
-                                client_id
-                            );
+                            warn!("WireGuard client {} server peer disappeared", client_id);
                             was_connected = false;
                         }
                     }

@@ -5,9 +5,9 @@
 
 #![cfg(feature = "xmpp")]
 
-use super::super::super::helpers::{self, ServerConfig, E2EResult};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use super::super::super::helpers::{self, E2EResult, ServerConfig};
 use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[tokio::test]
 async fn test_xmpp_stream_header() -> E2EResult<()> {
@@ -114,7 +114,9 @@ async fn test_xmpp_message() -> E2EResult<()> {
             println!("Echo response: {}", response);
 
             // Check if message was echoed
-            if response.contains("<message") && (response.contains("Echo:") || response.contains("Hello XMPP")) {
+            if response.contains("<message")
+                && (response.contains("Echo:") || response.contains("Hello XMPP"))
+            {
                 println!("✓ XMPP message echo received");
             } else {
                 println!("Note: Echo response not in expected format");
@@ -161,7 +163,9 @@ async fn test_xmpp_presence() -> E2EResult<()> {
     // Read server stream header
     let mut buffer = vec![0u8; 4096];
     println!("Waiting for server stream header...");
-    tokio::time::timeout(Duration::from_secs(10), stream.read(&mut buffer)).await.ok();
+    tokio::time::timeout(Duration::from_secs(10), stream.read(&mut buffer))
+        .await
+        .ok();
 
     // Send presence
     let presence = "<presence><show>chat</show><status>Available</status></presence>";

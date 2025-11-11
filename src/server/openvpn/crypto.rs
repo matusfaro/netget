@@ -2,11 +2,11 @@
 //!
 //! Supports AES-GCM and ChaCha20-Poly1305 for data channel encryption.
 
-use anyhow::{Result, Context};
 use aes_gcm::{
     aead::{Aead, KeyInit, Payload},
     Aes256Gcm, Nonce,
 };
+use anyhow::{Context, Result};
 use chacha20poly1305::{ChaCha20Poly1305, Key as ChaChaKey, Nonce as ChachaNonce};
 
 /// Cipher suite for data channel encryption
@@ -26,8 +26,8 @@ pub struct DataChannelCipher {
 impl DataChannelCipher {
     /// Create new cipher with AES-256-GCM
     pub fn new_aes256gcm(key: &[u8; 32]) -> Result<Self> {
-        let cipher = Aes256Gcm::new_from_slice(key)
-            .context("Failed to create AES-256-GCM cipher")?;
+        let cipher =
+            Aes256Gcm::new_from_slice(key).context("Failed to create AES-256-GCM cipher")?;
 
         Ok(DataChannelCipher {
             suite: CipherSuite::Aes256Gcm,
@@ -52,10 +52,17 @@ impl DataChannelCipher {
     ///
     /// packet_id is used as the nonce (IV) for the encryption.
     /// In OpenVPN, packet ID serves as replay protection and nonce.
-    pub fn encrypt(&self, packet_id: u32, plaintext: &[u8], additional_data: &[u8]) -> Result<Vec<u8>> {
+    pub fn encrypt(
+        &self,
+        packet_id: u32,
+        plaintext: &[u8],
+        additional_data: &[u8],
+    ) -> Result<Vec<u8>> {
         match self.suite {
             CipherSuite::Aes256Gcm => {
-                let cipher = self.aes_cipher.as_ref()
+                let cipher = self
+                    .aes_cipher
+                    .as_ref()
                     .context("AES cipher not initialized")?;
 
                 // Create 12-byte nonce from packet_id
@@ -73,7 +80,9 @@ impl DataChannelCipher {
                     .map_err(|e| anyhow::anyhow!("AES-GCM encryption failed: {}", e))
             }
             CipherSuite::ChaCha20Poly1305 => {
-                let cipher = self.chacha_cipher.as_ref()
+                let cipher = self
+                    .chacha_cipher
+                    .as_ref()
                     .context("ChaCha20-Poly1305 cipher not initialized")?;
 
                 // Create 12-byte nonce from packet_id
@@ -94,10 +103,17 @@ impl DataChannelCipher {
     }
 
     /// Decrypt data channel packet
-    pub fn decrypt(&self, packet_id: u32, ciphertext: &[u8], additional_data: &[u8]) -> Result<Vec<u8>> {
+    pub fn decrypt(
+        &self,
+        packet_id: u32,
+        ciphertext: &[u8],
+        additional_data: &[u8],
+    ) -> Result<Vec<u8>> {
         match self.suite {
             CipherSuite::Aes256Gcm => {
-                let cipher = self.aes_cipher.as_ref()
+                let cipher = self
+                    .aes_cipher
+                    .as_ref()
                     .context("AES cipher not initialized")?;
 
                 // Create 12-byte nonce from packet_id
@@ -115,7 +131,9 @@ impl DataChannelCipher {
                     .map_err(|e| anyhow::anyhow!("AES-GCM decryption failed: {}", e))
             }
             CipherSuite::ChaCha20Poly1305 => {
-                let cipher = self.chacha_cipher.as_ref()
+                let cipher = self
+                    .chacha_cipher
+                    .as_ref()
                     .context("ChaCha20-Poly1305 cipher not initialized")?;
 
                 // Create 12-byte nonce from packet_id
@@ -141,7 +159,11 @@ impl DataChannelCipher {
 /// This implements OpenVPN's key derivation using PRF (Pseudo-Random Function).
 /// In a full implementation, this would use the TLS PRF with proper labels.
 /// For MVP, we use a simplified HKDF-based approach.
-pub fn derive_data_keys(master_secret: &[u8], client_random: &[u8], server_random: &[u8]) -> Result<DataChannelKeys> {
+pub fn derive_data_keys(
+    master_secret: &[u8],
+    client_random: &[u8],
+    server_random: &[u8],
+) -> Result<DataChannelKeys> {
     use hkdf::Hkdf;
     use sha2::Sha256;
 
@@ -184,4 +206,3 @@ pub struct DataChannelKeys {
     pub server_encrypt_key: [u8; 32],
     pub server_hmac_key: [u8; 32],
 }
-

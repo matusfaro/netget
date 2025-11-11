@@ -9,15 +9,18 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::server::connection::ConnectionId;
 use crate::server::KafkaProtocol;
 use crate::state::app_state::AppState;
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 use anyhow::Result;
+use bytes::Bytes;
 use kafka_protocol::messages::{
-    ApiKey, ApiVersionsResponse, FetchRequest, FetchResponse,
-    MetadataRequest, MetadataResponse, OffsetCommitRequest, OffsetCommitResponse, ProduceRequest,
-    ProduceResponse, RequestHeader, ResponseHeader,
+    ApiKey, ApiVersionsResponse, FetchRequest, FetchResponse, MetadataRequest, MetadataResponse,
+    OffsetCommitRequest, OffsetCommitResponse, ProduceRequest, ProduceResponse, RequestHeader,
+    ResponseHeader,
 };
 use kafka_protocol::protocol::{Decodable, Encodable};
-use kafka_protocol::records::{Record, RecordBatchDecoder, RecordBatchEncoder, RecordEncodeOptions, Compression};
-use bytes::Bytes;
+use kafka_protocol::records::{
+    Compression, Record, RecordBatchDecoder, RecordBatchEncoder, RecordEncodeOptions,
+};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -25,7 +28,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, trace, warn};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Kafka broker server state
 pub struct KafkaServer {
@@ -115,7 +117,8 @@ impl KafkaServer {
                     Ok((stream, peer_addr)) => {
                         console_debug!(status_tx, "Kafka client connected from {}", peer_addr);
 
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
                         let status_clone = status_tx.clone();
@@ -198,16 +201,26 @@ impl KafkaServer {
                 break;
             }
 
-            let message_size = i32::from_be_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]) as usize;
+            let message_size =
+                i32::from_be_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]) as usize;
 
             // Read full message
             buffer.resize(message_size, 0);
             stream.read_exact(&mut buffer[..message_size]).await?;
 
-            console_debug!(status_tx, "Kafka received {} bytes from {}", message_size, peer_addr);
+            console_debug!(
+                status_tx,
+                "Kafka received {} bytes from {}",
+                message_size,
+                peer_addr
+            );
 
             // TRACE: Log hex dump of raw message
-            console_trace!(status_tx, "Kafka raw message (hex): {}", hex::encode(&buffer[..message_size]));
+            console_trace!(
+                status_tx,
+                "Kafka raw message (hex): {}",
+                hex::encode(&buffer[..message_size])
+            );
 
             // Parse request header
             let mut cursor = std::io::Cursor::new(&buffer[..message_size]);
@@ -219,13 +232,16 @@ impl KafkaServer {
                 }
             };
 
-            console_debug!(status_tx, "Kafka request: API={:?}, correlation_id={}", header.request_api_key, header.correlation_id);
+            console_debug!(
+                status_tx,
+                "Kafka request: API={:?}, correlation_id={}",
+                header.request_api_key,
+                header.correlation_id
+            );
 
             // Handle different API keys
             let response_bytes = match header.request_api_key.try_into() {
-                Ok(ApiKey::ApiVersions) => {
-                    Self::handle_api_versions(&header, &status_tx).await?
-                }
+                Ok(ApiKey::ApiVersions) => Self::handle_api_versions(&header, &status_tx).await?,
                 Ok(ApiKey::Metadata) => {
                     Self::handle_metadata(
                         &header,
@@ -292,7 +308,11 @@ impl KafkaServer {
                     Self::create_error_response(&header, 35 /* UNSUPPORTED_VERSION */)
                 }
                 Err(_) => {
-                    console_debug!(status_tx, "Invalid Kafka API key: {}", header.request_api_key);
+                    console_debug!(
+                        status_tx,
+                        "Invalid Kafka API key: {}",
+                        header.request_api_key
+                    );
                     Self::create_error_response(&header, 35)
                 }
             };
@@ -302,9 +322,18 @@ impl KafkaServer {
             stream.write_all(&response_size).await?;
             stream.write_all(&response_bytes).await?;
 
-            console_debug!(status_tx, "Kafka sent {} bytes to {}", response_bytes.len(), peer_addr);
+            console_debug!(
+                status_tx,
+                "Kafka sent {} bytes to {}",
+                response_bytes.len(),
+                peer_addr
+            );
 
-            console_trace!(status_tx, "Kafka response (hex): {}", hex::encode(&response_bytes));
+            console_trace!(
+                status_tx,
+                "Kafka response (hex): {}",
+                hex::encode(&response_bytes)
+            );
         }
 
         Ok(())
@@ -321,8 +350,7 @@ impl KafkaServer {
         // Build ApiVersions response with supported APIs
         let response = ApiVersionsResponse::default();
 
-        let response_header = ResponseHeader::default()
-            .with_correlation_id(header.correlation_id);
+        let response_header = ResponseHeader::default().with_correlation_id(header.correlation_id);
 
         let mut buf = Vec::new();
         response_header.encode(&mut buf, 0)?;
@@ -344,7 +372,9 @@ impl KafkaServer {
         _peer_addr: SocketAddr,
         local_addr: SocketAddr,
     ) -> Result<Vec<u8>> {
-        use kafka_protocol::messages::metadata_response::{MetadataResponseBroker, MetadataResponseTopic, MetadataResponsePartition};
+        use kafka_protocol::messages::metadata_response::{
+            MetadataResponseBroker, MetadataResponsePartition, MetadataResponseTopic,
+        };
         use kafka_protocol::messages::BrokerId;
         use kafka_protocol::protocol::StrBytes;
 
@@ -364,7 +394,11 @@ impl KafkaServer {
             .filter_map(|t| t.name.as_ref().map(|n| n.to_string()))
             .collect();
 
-        console_debug!(status_tx, "Metadata request for topics: {:?}", requested_topics);
+        console_debug!(
+            status_tx,
+            "Metadata request for topics: {:?}",
+            requested_topics
+        );
 
         // Build broker info
         let broker = MetadataResponseBroker::default()
@@ -431,8 +465,15 @@ impl KafkaServer {
             }
         }
 
-        info!("Returning metadata for {} topic(s), {} broker(s)", response_topics.len(), 1);
-        let _ = status_tx.send(format!("[INFO] Returning metadata for {} topic(s)", response_topics.len()));
+        info!(
+            "Returning metadata for {} topic(s), {} broker(s)",
+            response_topics.len(),
+            1
+        );
+        let _ = status_tx.send(format!(
+            "[INFO] Returning metadata for {} topic(s)",
+            response_topics.len()
+        ));
 
         // Build response
         let response = MetadataResponse::default()
@@ -441,8 +482,7 @@ impl KafkaServer {
             .with_controller_id(BrokerId(server.broker_id))
             .with_topics(response_topics);
 
-        let response_header = ResponseHeader::default()
-            .with_correlation_id(header.correlation_id);
+        let response_header = ResponseHeader::default().with_correlation_id(header.correlation_id);
 
         let mut buf = Vec::new();
         response_header.encode(&mut buf, 0)?;
@@ -464,7 +504,9 @@ impl KafkaServer {
         _peer_addr: SocketAddr,
         _local_addr: SocketAddr,
     ) -> Result<Vec<u8>> {
-        use kafka_protocol::messages::produce_response::{TopicProduceResponse, PartitionProduceResponse};
+        use kafka_protocol::messages::produce_response::{
+            PartitionProduceResponse, TopicProduceResponse,
+        };
         use kafka_protocol::protocol::StrBytes;
 
         debug!("Handling Produce request");
@@ -489,7 +531,10 @@ impl KafkaServer {
 
                 // Auto-create topic if needed
                 let partitions = topics_lock.entry(topic_name.clone()).or_insert_with(|| {
-                    info!("Auto-creating topic '{}' with {} partition(s)", topic_name, server.default_partitions);
+                    info!(
+                        "Auto-creating topic '{}' with {} partition(s)",
+                        topic_name, server.default_partitions
+                    );
                     let _ = status_tx.send(format!("[INFO] Auto-creating topic '{}'", topic_name));
                     vec![Vec::new(); server.default_partitions as usize]
                 });
@@ -509,12 +554,19 @@ impl KafkaServer {
                     let owned_bytes = Bytes::copy_from_slice(records_bytes.as_ref());
                     let mut records_cursor = std::io::Cursor::new(owned_bytes);
 
-                    match RecordBatchDecoder::decode_with_custom_compression::<_, fn(&mut Bytes, Compression) -> Result<std::io::Cursor<Bytes>>>(
+                    match RecordBatchDecoder::decode_with_custom_compression::<
+                        _,
+                        fn(&mut Bytes, Compression) -> Result<std::io::Cursor<Bytes>>,
+                    >(
                         &mut records_cursor,
                         None::<fn(&mut Bytes, Compression) -> Result<std::io::Cursor<Bytes>>>,
                     ) {
                         Ok(decoded_records) => {
-                            debug!("Parsed {} record(s) from batch ({} bytes)", decoded_records.len(), records_bytes.len());
+                            debug!(
+                                "Parsed {} record(s) from batch ({} bytes)",
+                                decoded_records.len(),
+                                records_bytes.len()
+                            );
                             record_count = decoded_records.len();
 
                             // Store records in partition
@@ -530,7 +582,8 @@ impl KafkaServer {
                         }
                         Err(e) => {
                             warn!("Failed to parse record batch: {:?}, storing placeholder", e);
-                            let _ = status_tx.send(format!("[WARN] Failed to parse records: {:?}", e));
+                            let _ =
+                                status_tx.send(format!("[WARN] Failed to parse records: {:?}", e));
 
                             // Store a placeholder record on parse failure
                             let offset = partition.len() as i64;
@@ -552,10 +605,14 @@ impl KafkaServer {
                     partition.len() as i64 - record_count as i64
                 };
 
-                info!("Produced {} record(s) to topic '{}' partition {} at offset {}",
-                      record_count, topic_name, partition_idx, base_offset);
-                let _ = status_tx.send(format!("[INFO] Produced {} record(s) to '{}' partition {}",
-                                                record_count, topic_name, partition_idx));
+                info!(
+                    "Produced {} record(s) to topic '{}' partition {} at offset {}",
+                    record_count, topic_name, partition_idx, base_offset
+                );
+                let _ = status_tx.send(format!(
+                    "[INFO] Produced {} record(s) to '{}' partition {}",
+                    record_count, topic_name, partition_idx
+                ));
 
                 partition_responses.push(
                     PartitionProduceResponse::default()
@@ -579,8 +636,7 @@ impl KafkaServer {
             .with_responses(topic_responses)
             .with_throttle_time_ms(0);
 
-        let response_header = ResponseHeader::default()
-            .with_correlation_id(header.correlation_id);
+        let response_header = ResponseHeader::default().with_correlation_id(header.correlation_id);
 
         let mut buf = Vec::new();
         response_header.encode(&mut buf, 0)?;
@@ -602,9 +658,9 @@ impl KafkaServer {
         _peer_addr: SocketAddr,
         _local_addr: SocketAddr,
     ) -> Result<Vec<u8>> {
+        use bytes::Bytes;
         use kafka_protocol::messages::fetch_response::{FetchableTopicResponse, PartitionData};
         use kafka_protocol::protocol::StrBytes;
-        use bytes::Bytes;
 
         debug!("Handling Fetch request");
         let _ = status_tx.send("[DEBUG] Handling Fetch request".to_string());
@@ -648,7 +704,8 @@ impl KafkaServer {
                                     partition_leader_epoch: 0,
                                     producer_id: -1,
                                     producer_epoch: -1,
-                                    timestamp_type: kafka_protocol::records::TimestampType::Creation,
+                                    timestamp_type:
+                                        kafka_protocol::records::TimestampType::Creation,
                                     offset: r.offset,
                                     sequence: 0,
                                     timestamp: r.timestamp,
@@ -665,19 +722,37 @@ impl KafkaServer {
                                 compression: Compression::None,
                             };
 
-                            match RecordBatchEncoder::encode_with_custom_compression::<_, _, fn(&mut bytes::BytesMut, &mut Vec<u8>, Compression) -> Result<()>>(
+                            match RecordBatchEncoder::encode_with_custom_compression::<
+                                _,
+                                _,
+                                fn(&mut bytes::BytesMut, &mut Vec<u8>, Compression) -> Result<()>,
+                            >(
                                 &mut records_buf,
                                 &kafka_records,
                                 &encode_options,
-                                None::<fn(&mut bytes::BytesMut, &mut Vec<u8>, Compression) -> Result<()>>,
+                                None::<
+                                    fn(
+                                        &mut bytes::BytesMut,
+                                        &mut Vec<u8>,
+                                        Compression,
+                                    ) -> Result<()>,
+                                >,
                             ) {
                                 Ok(_) => {
-                                    debug!("Encoded {} record(s) into {} bytes", kafka_records.len(), records_buf.len());
+                                    debug!(
+                                        "Encoded {} record(s) into {} bytes",
+                                        kafka_records.len(),
+                                        records_buf.len()
+                                    );
 
                                     info!("Fetched {} record(s) from topic '{}' partition {} starting at offset {}",
                                           matching_records.len(), topic_name, partition_idx, fetch_offset);
-                                    let _ = status_tx.send(format!("[INFO] Fetched {} record(s) from '{}' partition {}",
-                                                                    matching_records.len(), topic_name, partition_idx));
+                                    let _ = status_tx.send(format!(
+                                        "[INFO] Fetched {} record(s) from '{}' partition {}",
+                                        matching_records.len(),
+                                        topic_name,
+                                        partition_idx
+                                    ));
 
                                     partition_responses.push(
                                         PartitionData::default()
@@ -688,8 +763,12 @@ impl KafkaServer {
                                     );
                                 }
                                 Err(e) => {
-                                    warn!("Failed to encode records: {:?}, returning empty batch", e);
-                                    let _ = status_tx.send(format!("[WARN] Failed to encode records: {:?}", e));
+                                    warn!(
+                                        "Failed to encode records: {:?}, returning empty batch",
+                                        e
+                                    );
+                                    let _ = status_tx
+                                        .send(format!("[WARN] Failed to encode records: {:?}", e));
 
                                     // Return empty records on encoding failure
                                     partition_responses.push(
@@ -702,8 +781,10 @@ impl KafkaServer {
                             }
                         } else {
                             // No records at this offset
-                            debug!("No records at offset {} for topic '{}' partition {}",
-                                   fetch_offset, topic_name, partition_idx);
+                            debug!(
+                                "No records at offset {} for topic '{}' partition {}",
+                                fetch_offset, topic_name, partition_idx
+                            );
                             partition_responses.push(
                                 PartitionData::default()
                                     .with_partition_index(partition_idx)
@@ -743,8 +824,7 @@ impl KafkaServer {
             .with_responses(topic_responses)
             .with_throttle_time_ms(0);
 
-        let response_header = ResponseHeader::default()
-            .with_correlation_id(header.correlation_id);
+        let response_header = ResponseHeader::default().with_correlation_id(header.correlation_id);
 
         let mut buf = Vec::new();
         response_header.encode(&mut buf, 0)?;
@@ -766,7 +846,9 @@ impl KafkaServer {
         _peer_addr: SocketAddr,
         _local_addr: SocketAddr,
     ) -> Result<Vec<u8>> {
-        use kafka_protocol::messages::offset_commit_response::{OffsetCommitResponseTopic, OffsetCommitResponsePartition};
+        use kafka_protocol::messages::offset_commit_response::{
+            OffsetCommitResponsePartition, OffsetCommitResponseTopic,
+        };
         use kafka_protocol::protocol::StrBytes;
 
         debug!("Handling OffsetCommit request");
@@ -782,7 +864,9 @@ impl KafkaServer {
         let mut offsets_lock = server.consumer_offsets.write().await;
 
         // Get or create group
-        let group_offsets = offsets_lock.entry(group_id.clone()).or_insert_with(HashMap::new);
+        let group_offsets = offsets_lock
+            .entry(group_id.clone())
+            .or_insert_with(HashMap::new);
 
         // Process each topic
         for topic in &request.topics {
@@ -790,7 +874,9 @@ impl KafkaServer {
             let mut partition_responses = Vec::new();
 
             // Get or create topic
-            let topic_offsets = group_offsets.entry(topic_name.clone()).or_insert_with(HashMap::new);
+            let topic_offsets = group_offsets
+                .entry(topic_name.clone())
+                .or_insert_with(HashMap::new);
 
             // Process each partition
             for partition in &topic.partitions {
@@ -800,10 +886,14 @@ impl KafkaServer {
                 // Store offset
                 topic_offsets.insert(partition_idx, committed_offset);
 
-                info!("Consumer group '{}' committed offset {} for topic '{}' partition {}",
-                      group_id, committed_offset, topic_name, partition_idx);
-                let _ = status_tx.send(format!("[INFO] Group '{}' committed offset {} for '{}' partition {}",
-                                                group_id, committed_offset, topic_name, partition_idx));
+                info!(
+                    "Consumer group '{}' committed offset {} for topic '{}' partition {}",
+                    group_id, committed_offset, topic_name, partition_idx
+                );
+                let _ = status_tx.send(format!(
+                    "[INFO] Group '{}' committed offset {} for '{}' partition {}",
+                    group_id, committed_offset, topic_name, partition_idx
+                ));
 
                 partition_responses.push(
                     OffsetCommitResponsePartition::default()
@@ -826,8 +916,7 @@ impl KafkaServer {
             .with_topics(topic_responses)
             .with_throttle_time_ms(0);
 
-        let response_header = ResponseHeader::default()
-            .with_correlation_id(header.correlation_id);
+        let response_header = ResponseHeader::default().with_correlation_id(header.correlation_id);
 
         let mut buf = Vec::new();
         response_header.encode(&mut buf, 0)?;
@@ -838,8 +927,7 @@ impl KafkaServer {
 
     /// Create error response
     fn create_error_response(header: &RequestHeader, error_code: i16) -> Vec<u8> {
-        let response_header = ResponseHeader::default()
-            .with_correlation_id(header.correlation_id);
+        let response_header = ResponseHeader::default().with_correlation_id(header.correlation_id);
 
         let mut buf = Vec::new();
         let _ = response_header.encode(&mut buf, 0);

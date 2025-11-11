@@ -24,265 +24,266 @@ impl SipClientProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for SipClientProtocol {
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            vec![
-                // User-triggered actions
-                sip_register_action(),
-                sip_invite_action(),
-                sip_ack_action(),
-                sip_bye_action(),
-                sip_options_action(),
-                sip_cancel_action(),
-            ]
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                // Response actions
-                disconnect_action(),
-                wait_for_more_action(),
-            ]
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            vec![
-                SIP_CLIENT_CONNECTED_EVENT.clone(),
-                SIP_CLIENT_RESPONSE_RECEIVED_EVENT.clone(),
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "SIP"
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>UDP>SIP"
-        }
-        fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-            vec![]
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["sip", "voip", "session initiation"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Experimental)
-                .implementation("Manual SIP client - RFC 3261 compliant request generation")
-                .llm_control("REGISTER, INVITE, BYE, OPTIONS, CANCEL methods")
-                .e2e_testing("Self-testing against NetGet SIP server - < 10 LLM calls")
-                .notes("VoIP signaling, no RTP media streams")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "SIP client for VoIP signaling"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Connect to 192.168.1.100:5060 via SIP and register as alice@example.com"
-        }
-        fn group_name(&self) -> &'static str {
-            "VoIP & Multimedia"
-        }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        vec![
+            // User-triggered actions
+            sip_register_action(),
+            sip_invite_action(),
+            sip_ack_action(),
+            sip_bye_action(),
+            sip_options_action(),
+            sip_cancel_action(),
+        ]
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            // Response actions
+            disconnect_action(),
+            wait_for_more_action(),
+        ]
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        vec![
+            SIP_CLIENT_CONNECTED_EVENT.clone(),
+            SIP_CLIENT_RESPONSE_RECEIVED_EVENT.clone(),
+        ]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "SIP"
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>UDP>SIP"
+    }
+    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
+        vec![]
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["sip", "voip", "session initiation"]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("Manual SIP client - RFC 3261 compliant request generation")
+            .llm_control("REGISTER, INVITE, BYE, OPTIONS, CANCEL methods")
+            .e2e_testing("Self-testing against NetGet SIP server - < 10 LLM calls")
+            .notes("VoIP signaling, no RTP media streams")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "SIP client for VoIP signaling"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Connect to 192.168.1.100:5060 via SIP and register as alice@example.com"
+    }
+    fn group_name(&self) -> &'static str {
+        "VoIP & Multimedia"
+    }
 }
 
 // Implement Client trait (client-specific functionality)
 impl Client for SipClientProtocol {
-        fn connect(
-            &self,
-            ctx: ConnectContext,
-        ) -> Pin<Box<dyn Future<Output = Result<SocketAddr>> + Send>> {
-            Box::pin(async move {
-                crate::client::sip::SipClient::connect_with_llm_actions(
-                    ctx.remote_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.client_id,
-                )
-                .await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "sip_register" => {
-                    let from = action["from"]
-                        .as_str()
-                        .context("Missing 'from' field")?
-                        .to_string();
-                    let to = action["to"]
-                        .as_str()
-                        .context("Missing 'to' field")?
-                        .to_string();
-                    let request_uri = action["request_uri"]
-                        .as_str()
-                        .context("Missing 'request_uri' field")?
-                        .to_string();
-                    let contact = action["contact"]
-                        .as_str()
-                        .context("Missing 'contact' field")?
-                        .to_string();
-                    let expires = action["expires"].as_u64().unwrap_or(3600);
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "sip_register".to_string(),
-                        data: json!({
-                            "from": from,
-                            "to": to,
-                            "request_uri": request_uri,
-                            "contact": contact,
-                            "expires": expires,
-                        }),
-                    })
-                }
-                "sip_invite" => {
-                    let from = action["from"]
-                        .as_str()
-                        .context("Missing 'from' field")?
-                        .to_string();
-                    let to = action["to"]
-                        .as_str()
-                        .context("Missing 'to' field")?
-                        .to_string();
-                    let request_uri = action["request_uri"]
-                        .as_str()
-                        .context("Missing 'request_uri' field")?
-                        .to_string();
-                    let sdp = action["sdp"]
-                        .as_str()
-                        .context("Missing 'sdp' field")?
-                        .to_string();
-                    let contact = action["contact"].as_str().unwrap_or("sip:user@127.0.0.1");
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "sip_invite".to_string(),
-                        data: json!({
-                            "from": from,
-                            "to": to,
-                            "request_uri": request_uri,
-                            "contact": contact,
-                            "sdp": sdp,
-                        }),
-                    })
-                }
-                "sip_bye" => {
-                    let from = action["from"]
-                        .as_str()
-                        .context("Missing 'from' field")?
-                        .to_string();
-                    let to = action["to"]
-                        .as_str()
-                        .context("Missing 'to' field")?
-                        .to_string();
-                    let request_uri = action["request_uri"]
-                        .as_str()
-                        .context("Missing 'request_uri' field")?
-                        .to_string();
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "sip_bye".to_string(),
-                        data: json!({
-                            "from": from,
-                            "to": to,
-                            "request_uri": request_uri,
-                        }),
-                    })
-                }
-                "sip_options" => {
-                    let from = action["from"]
-                        .as_str()
-                        .context("Missing 'from' field")?
-                        .to_string();
-                    let to = action["to"]
-                        .as_str()
-                        .context("Missing 'to' field")?
-                        .to_string();
-                    let request_uri = action["request_uri"]
-                        .as_str()
-                        .context("Missing 'request_uri' field")?
-                        .to_string();
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "sip_options".to_string(),
-                        data: json!({
-                            "from": from,
-                            "to": to,
-                            "request_uri": request_uri,
-                        }),
-                    })
-                }
-                "sip_ack" => {
-                    let from = action["from"]
-                        .as_str()
-                        .context("Missing 'from' field")?
-                        .to_string();
-                    let to = action["to"]
-                        .as_str()
-                        .context("Missing 'to' field")?
-                        .to_string();
-                    let request_uri = action["request_uri"]
-                        .as_str()
-                        .context("Missing 'request_uri' field")?
-                        .to_string();
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "sip_ack".to_string(),
-                        data: json!({
-                            "from": from,
-                            "to": to,
-                            "request_uri": request_uri,
-                        }),
-                    })
-                }
-                "sip_cancel" => {
-                    let from = action["from"]
-                        .as_str()
-                        .context("Missing 'from' field")?
-                        .to_string();
-                    let to = action["to"]
-                        .as_str()
-                        .context("Missing 'to' field")?
-                        .to_string();
-                    let request_uri = action["request_uri"]
-                        .as_str()
-                        .context("Missing 'request_uri' field")?
-                        .to_string();
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "sip_cancel".to_string(),
-                        data: json!({
-                            "from": from,
-                            "to": to,
-                            "request_uri": request_uri,
-                        }),
-                    })
-                }
-                "disconnect" => Ok(ClientActionResult::Disconnect),
-                "wait_for_more" => Ok(ClientActionResult::WaitForMore),
-                _ => Err(anyhow::anyhow!("Unknown SIP client action: {}", action_type)),
-            }
-        }
-}
+    fn connect(
+        &self,
+        ctx: ConnectContext,
+    ) -> Pin<Box<dyn Future<Output = Result<SocketAddr>> + Send>> {
+        Box::pin(async move {
+            crate::client::sip::SipClient::connect_with_llm_actions(
+                ctx.remote_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.client_id,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
 
+        match action_type {
+            "sip_register" => {
+                let from = action["from"]
+                    .as_str()
+                    .context("Missing 'from' field")?
+                    .to_string();
+                let to = action["to"]
+                    .as_str()
+                    .context("Missing 'to' field")?
+                    .to_string();
+                let request_uri = action["request_uri"]
+                    .as_str()
+                    .context("Missing 'request_uri' field")?
+                    .to_string();
+                let contact = action["contact"]
+                    .as_str()
+                    .context("Missing 'contact' field")?
+                    .to_string();
+                let expires = action["expires"].as_u64().unwrap_or(3600);
+
+                Ok(ClientActionResult::Custom {
+                    name: "sip_register".to_string(),
+                    data: json!({
+                        "from": from,
+                        "to": to,
+                        "request_uri": request_uri,
+                        "contact": contact,
+                        "expires": expires,
+                    }),
+                })
+            }
+            "sip_invite" => {
+                let from = action["from"]
+                    .as_str()
+                    .context("Missing 'from' field")?
+                    .to_string();
+                let to = action["to"]
+                    .as_str()
+                    .context("Missing 'to' field")?
+                    .to_string();
+                let request_uri = action["request_uri"]
+                    .as_str()
+                    .context("Missing 'request_uri' field")?
+                    .to_string();
+                let sdp = action["sdp"]
+                    .as_str()
+                    .context("Missing 'sdp' field")?
+                    .to_string();
+                let contact = action["contact"].as_str().unwrap_or("sip:user@127.0.0.1");
+
+                Ok(ClientActionResult::Custom {
+                    name: "sip_invite".to_string(),
+                    data: json!({
+                        "from": from,
+                        "to": to,
+                        "request_uri": request_uri,
+                        "contact": contact,
+                        "sdp": sdp,
+                    }),
+                })
+            }
+            "sip_bye" => {
+                let from = action["from"]
+                    .as_str()
+                    .context("Missing 'from' field")?
+                    .to_string();
+                let to = action["to"]
+                    .as_str()
+                    .context("Missing 'to' field")?
+                    .to_string();
+                let request_uri = action["request_uri"]
+                    .as_str()
+                    .context("Missing 'request_uri' field")?
+                    .to_string();
+
+                Ok(ClientActionResult::Custom {
+                    name: "sip_bye".to_string(),
+                    data: json!({
+                        "from": from,
+                        "to": to,
+                        "request_uri": request_uri,
+                    }),
+                })
+            }
+            "sip_options" => {
+                let from = action["from"]
+                    .as_str()
+                    .context("Missing 'from' field")?
+                    .to_string();
+                let to = action["to"]
+                    .as_str()
+                    .context("Missing 'to' field")?
+                    .to_string();
+                let request_uri = action["request_uri"]
+                    .as_str()
+                    .context("Missing 'request_uri' field")?
+                    .to_string();
+
+                Ok(ClientActionResult::Custom {
+                    name: "sip_options".to_string(),
+                    data: json!({
+                        "from": from,
+                        "to": to,
+                        "request_uri": request_uri,
+                    }),
+                })
+            }
+            "sip_ack" => {
+                let from = action["from"]
+                    .as_str()
+                    .context("Missing 'from' field")?
+                    .to_string();
+                let to = action["to"]
+                    .as_str()
+                    .context("Missing 'to' field")?
+                    .to_string();
+                let request_uri = action["request_uri"]
+                    .as_str()
+                    .context("Missing 'request_uri' field")?
+                    .to_string();
+
+                Ok(ClientActionResult::Custom {
+                    name: "sip_ack".to_string(),
+                    data: json!({
+                        "from": from,
+                        "to": to,
+                        "request_uri": request_uri,
+                    }),
+                })
+            }
+            "sip_cancel" => {
+                let from = action["from"]
+                    .as_str()
+                    .context("Missing 'from' field")?
+                    .to_string();
+                let to = action["to"]
+                    .as_str()
+                    .context("Missing 'to' field")?
+                    .to_string();
+                let request_uri = action["request_uri"]
+                    .as_str()
+                    .context("Missing 'request_uri' field")?
+                    .to_string();
+
+                Ok(ClientActionResult::Custom {
+                    name: "sip_cancel".to_string(),
+                    data: json!({
+                        "from": from,
+                        "to": to,
+                        "request_uri": request_uri,
+                    }),
+                })
+            }
+            "disconnect" => Ok(ClientActionResult::Disconnect),
+            "wait_for_more" => Ok(ClientActionResult::WaitForMore),
+            _ => Err(anyhow::anyhow!(
+                "Unknown SIP client action: {}",
+                action_type
+            )),
+        }
+    }
+}
 
 // Event type constants
 pub static SIP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("sip_client_connected", "SIP client connected to server")
-        .with_parameters(vec![
-            Parameter {
-                name: "remote_addr".to_string(),
-                type_hint: "string".to_string(),
-                description: "Remote SIP server address".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "local_addr".to_string(),
-                type_hint: "string".to_string(),
-                description: "Local client address".to_string(),
-                required: true,
-            },
-        ])
+    EventType::new("sip_client_connected", "SIP client connected to server").with_parameters(vec![
+        Parameter {
+            name: "remote_addr".to_string(),
+            type_hint: "string".to_string(),
+            description: "Remote SIP server address".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "local_addr".to_string(),
+            type_hint: "string".to_string(),
+            description: "Local client address".to_string(),
+            required: true,
+        },
+    ])
 });
 
 pub static SIP_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
@@ -363,7 +364,8 @@ fn sip_register_action() -> ActionDefinition {
             Parameter {
                 name: "contact".to_string(),
                 type_hint: "string".to_string(),
-                description: "Contact URI with IP:port (e.g., sip:alice@192.0.2.1:5060)".to_string(),
+                description: "Contact URI with IP:port (e.g., sip:alice@192.0.2.1:5060)"
+                    .to_string(),
                 required: true,
             },
             Parameter {
@@ -433,7 +435,8 @@ fn sip_invite_action() -> ActionDefinition {
 fn sip_ack_action() -> ActionDefinition {
     ActionDefinition {
         name: "sip_ack".to_string(),
-        description: "Send SIP ACK request to acknowledge INVITE 200 OK (usually automatic)".to_string(),
+        description: "Send SIP ACK request to acknowledge INVITE 200 OK (usually automatic)"
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "from".to_string(),

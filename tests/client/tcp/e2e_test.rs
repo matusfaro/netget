@@ -52,9 +52,9 @@ mod tcp_client_tests {
     /// LLM calls: 2 (client startup)
     #[tokio::test]
     async fn test_tcp_client_command_via_prompt() -> E2EResult<()> {
-
         // Start a simple TCP server
-        let server_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via TCP. Log all incoming data.");
+        let server_config =
+            NetGetConfig::new("Listen on port {AVAILABLE_PORT} via TCP. Log all incoming data.");
 
         let mut server = start_netget_server(server_config).await?;
 

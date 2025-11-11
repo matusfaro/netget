@@ -11,8 +11,8 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, warn};
 
 use crate::llm::action_helper::call_llm;
-use crate::llm::ollama_client::OllamaClient;
 use crate::llm::actions::protocol_trait::ActionResult;
+use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::server::Http2Protocol;
@@ -37,27 +37,36 @@ impl H2Server {
         let listener = TcpListener::bind(listen_addr).await?;
         let local_addr = listener.local_addr()?;
 
-        let protocol_name = if tls_config.is_some() { "HTTP/2 (TLS, h2 with push)" } else { "HTTP/2 (h2c with push)" };
+        let protocol_name = if tls_config.is_some() {
+            "HTTP/2 (TLS, h2 with push)"
+        } else {
+            "HTTP/2 (h2c with push)"
+        };
         info!("{} server listening on {}", protocol_name, local_addr);
 
         let protocol = Arc::new(Http2Protocol::new());
 
         // Create TLS acceptor if TLS is enabled
-        let tls_acceptor = tls_config.map(|config| {
-            tokio_rustls::TlsAcceptor::from(config)
-        });
+        let tls_acceptor = tls_config.map(|config| tokio_rustls::TlsAcceptor::from(config));
 
         // Spawn server loop
         tokio::spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((tcp_stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = tcp_stream.local_addr().unwrap_or(local_addr);
-                        info!("Accepted {} connection {} from {}", protocol_name, connection_id, remote_addr);
+                        info!(
+                            "Accepted {} connection {} from {}",
+                            protocol_name, connection_id, remote_addr
+                        );
 
                         // Add connection to ServerInstance
-                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -74,7 +83,9 @@ impl H2Server {
                                 "recent_requests": []
                             })),
                         };
-                        app_state.add_connection_to_server(server_id, conn_state).await;
+                        app_state
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let llm_client_clone = llm_client.clone();
@@ -86,47 +97,64 @@ impl H2Server {
                         // Spawn task to handle this connection
                         tokio::spawn(async move {
                             // Perform TLS handshake if TLS is enabled
-                            let result: Result<(), Box<dyn std::error::Error + Send + Sync>> = if let Some(acceptor) = tls_acceptor_clone {
-                                match acceptor.accept(tcp_stream).await {
-                                    Ok(tls_stream) => {
-                                        debug!("{} TLS handshake complete with {}", protocol_name, remote_addr);
-                                        let _ = status_tx_clone.send(format!("[DEBUG] {} TLS handshake complete with {}", protocol_name, remote_addr));
-                                        handle_h2_connection(
-                                            tls_stream,
-                                            connection_id,
-                                            server_id,
-                                            llm_client_clone,
-                                            app_state_clone.clone(),
-                                            status_tx_clone.clone(),
-                                            protocol_clone,
-                                        ).await
+                            let result: Result<(), Box<dyn std::error::Error + Send + Sync>> =
+                                if let Some(acceptor) = tls_acceptor_clone {
+                                    match acceptor.accept(tcp_stream).await {
+                                        Ok(tls_stream) => {
+                                            debug!(
+                                                "{} TLS handshake complete with {}",
+                                                protocol_name, remote_addr
+                                            );
+                                            let _ = status_tx_clone.send(format!(
+                                                "[DEBUG] {} TLS handshake complete with {}",
+                                                protocol_name, remote_addr
+                                            ));
+                                            handle_h2_connection(
+                                                tls_stream,
+                                                connection_id,
+                                                server_id,
+                                                llm_client_clone,
+                                                app_state_clone.clone(),
+                                                status_tx_clone.clone(),
+                                                protocol_clone,
+                                            )
+                                            .await
+                                        }
+                                        Err(e) => {
+                                            error!("{} TLS handshake failed: {}", protocol_name, e);
+                                            let _ = status_tx_clone.send(format!(
+                                                "[ERROR] {} TLS handshake failed: {}",
+                                                protocol_name, e
+                                            ));
+                                            Err(Box::new(e))
+                                        }
                                     }
-                                    Err(e) => {
-                                        error!("{} TLS handshake failed: {}", protocol_name, e);
-                                        let _ = status_tx_clone.send(format!("[ERROR] {} TLS handshake failed: {}", protocol_name, e));
-                                        Err(Box::new(e))
-                                    }
-                                }
-                            } else {
-                                // No TLS, use plain TCP (h2c)
-                                handle_h2_connection(
-                                    tcp_stream,
-                                    connection_id,
-                                    server_id,
-                                    llm_client_clone,
-                                    app_state_clone.clone(),
-                                    status_tx_clone.clone(),
-                                    protocol_clone,
-                                ).await
-                            };
+                                } else {
+                                    // No TLS, use plain TCP (h2c)
+                                    handle_h2_connection(
+                                        tcp_stream,
+                                        connection_id,
+                                        server_id,
+                                        llm_client_clone,
+                                        app_state_clone.clone(),
+                                        status_tx_clone.clone(),
+                                        protocol_clone,
+                                    )
+                                    .await
+                                };
 
                             if let Err(e) = result {
                                 error!("{} connection error: {}", protocol_name, e);
                             }
 
                             // Mark connection as closed
-                            app_state_clone.close_connection_on_server(server_id, connection_id).await;
-                            let _ = status_tx_clone.send(format!("✗ {} connection {connection_id} closed", protocol_name));
+                            app_state_clone
+                                .close_connection_on_server(server_id, connection_id)
+                                .await;
+                            let _ = status_tx_clone.send(format!(
+                                "✗ {} connection {connection_id} closed",
+                                protocol_name
+                            ));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
@@ -179,7 +207,9 @@ where
                 app_state_clone,
                 status_clone,
                 protocol_clone,
-            ).await {
+            )
+            .await
+            {
                 error!("Error handling HTTP/2 request: {}", e);
             }
         });
@@ -238,22 +268,32 @@ pub async fn handle_h2_request(
     // Log request
     debug!(
         "HTTP/2 request: {} {} {} ({} bytes) from {:?}",
-        method, uri, version, body_bytes.len(), connection_id
+        method,
+        uri,
+        version,
+        body_bytes.len(),
+        connection_id
     );
     let _ = status_tx.send(format!(
         "[DEBUG] HTTP/2 request: {} {} {} ({} bytes)",
-        method, uri, version, body_bytes.len()
+        method,
+        uri,
+        version,
+        body_bytes.len()
     ));
 
     // Create event for LLM
     let body_text = String::from_utf8_lossy(&body_bytes);
-    let event = Event::new(&HTTP2_REQUEST_EVENT, serde_json::json!({
-        "method": method,
-        "uri": uri,
-        "version": version,
-        "headers": headers,
-        "body": if body_text.is_empty() { "" } else { body_text.as_ref() }
-    }));
+    let event = Event::new(
+        &HTTP2_REQUEST_EVENT,
+        serde_json::json!({
+            "method": method,
+            "uri": uri,
+            "version": version,
+            "headers": headers,
+            "body": if body_text.is_empty() { "" } else { body_text.as_ref() }
+        }),
+    );
 
     // Create push manager for this request
     let push_manager = Arc::new(Mutex::new(PushManager::new()));
@@ -270,7 +310,9 @@ pub async fn handle_h2_request(
         Some(connection_id),
         &event,
         protocol.as_ref(),
-    ).await {
+    )
+    .await
+    {
         Ok(execution_result) => {
             debug!("LLM HTTP/2 response received");
 
@@ -289,44 +331,69 @@ pub async fn handle_h2_request(
                 match protocol_result {
                     ActionResult::Output(output_data) => {
                         // Parse JSON output
-                        if let Ok(json_value) = serde_json::from_slice::<serde_json::Value>(&output_data) {
+                        if let Ok(json_value) =
+                            serde_json::from_slice::<serde_json::Value>(&output_data)
+                        {
                             // Check if this is a push directive
-                            if json_value.get("_push_directive").and_then(|v| v.as_bool()).unwrap_or(false) {
+                            if json_value
+                                .get("_push_directive")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false)
+                            {
                                 // This is a push request
                                 let push = PendingPush {
-                                    path: json_value.get("path")
+                                    path: json_value
+                                        .get("path")
                                         .and_then(|v| v.as_str())
-                                        .unwrap_or("/").to_string(),
-                                    method: json_value.get("method")
+                                        .unwrap_or("/")
+                                        .to_string(),
+                                    method: json_value
+                                        .get("method")
                                         .and_then(|v| v.as_str())
-                                        .unwrap_or("GET").to_string(),
-                                    status: json_value.get("status")
+                                        .unwrap_or("GET")
+                                        .to_string(),
+                                    status: json_value
+                                        .get("status")
                                         .and_then(|v| v.as_u64())
-                                        .unwrap_or(200) as u16,
-                                    headers: json_value.get("headers")
+                                        .unwrap_or(200)
+                                        as u16,
+                                    headers: json_value
+                                        .get("headers")
                                         .and_then(|v| v.as_object())
-                                        .map(|obj| obj.iter()
-                                            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                                            .collect())
+                                        .map(|obj| {
+                                            obj.iter()
+                                                .filter_map(|(k, v)| {
+                                                    v.as_str().map(|s| (k.clone(), s.to_string()))
+                                                })
+                                                .collect()
+                                        })
                                         .unwrap_or_default(),
-                                    body: json_value.get("body")
+                                    body: json_value
+                                        .get("body")
                                         .and_then(|v| v.as_str())
-                                        .unwrap_or("").as_bytes().to_vec(),
+                                        .unwrap_or("")
+                                        .as_bytes()
+                                        .to_vec(),
                                 };
                                 pushes.push(push);
                             } else {
                                 // This is the main HTTP response
-                                if let Some(status) = json_value.get("status").and_then(|v| v.as_u64()) {
+                                if let Some(status) =
+                                    json_value.get("status").and_then(|v| v.as_u64())
+                                {
                                     status_code = status as u16;
                                 }
-                                if let Some(headers_obj) = json_value.get("headers").and_then(|v| v.as_object()) {
+                                if let Some(headers_obj) =
+                                    json_value.get("headers").and_then(|v| v.as_object())
+                                {
                                     for (k, v) in headers_obj {
                                         if let Some(v_str) = v.as_str() {
                                             response_headers.insert(k.clone(), v_str.to_string());
                                         }
                                     }
                                 }
-                                if let Some(body) = json_value.get("body").and_then(|v| v.as_str()) {
+                                if let Some(body) = json_value.get("body").and_then(|v| v.as_str())
+                                {
                                     response_body = body.to_string();
                                 }
                             }
@@ -355,8 +422,7 @@ pub async fn handle_h2_request(
                     match send_response.push_request(push_req) {
                         Ok(mut push_stream) => {
                             // Send push response
-                            let mut push_response = http::Response::builder()
-                                .status(push.status);
+                            let mut push_response = http::Response::builder().status(push.status);
 
                             for (name, value) in &push.headers {
                                 push_response = push_response.header(name, value);
@@ -365,15 +431,26 @@ pub async fn handle_h2_request(
                             if let Ok(push_resp) = push_response.body(()) {
                                 match push_stream.send_response(push_resp, false) {
                                     Ok(mut stream) => {
-                                        if let Err(e) = stream.send_data(Bytes::from(push.body), true) {
-                                            warn!("Failed to send push body for {}: {}", push.path, e);
+                                        if let Err(e) =
+                                            stream.send_data(Bytes::from(push.body), true)
+                                        {
+                                            warn!(
+                                                "Failed to send push body for {}: {}",
+                                                push.path, e
+                                            );
                                         } else {
                                             debug!("Successfully pushed {}", push.path);
-                                            let _ = status_tx.send(format!("⬆ Pushed {} ({} bytes)", push.path, push_body_len));
+                                            let _ = status_tx.send(format!(
+                                                "⬆ Pushed {} ({} bytes)",
+                                                push.path, push_body_len
+                                            ));
                                         }
                                     }
                                     Err(e) => {
-                                        warn!("Failed to send push response for {}: {}", push.path, e);
+                                        warn!(
+                                            "Failed to send push response for {}: {}",
+                                            push.path, e
+                                        );
                                     }
                                 }
                             }
@@ -388,7 +465,10 @@ pub async fn handle_h2_request(
             // Send main response
             let _ = status_tx.send(format!(
                 "→ HTTP/2 {} {} → {} ({} bytes)",
-                method, uri, status_code, response_body.len()
+                method,
+                uri,
+                status_code,
+                response_body.len()
             ));
 
             let mut response = Response::builder().status(status_code);

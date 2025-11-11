@@ -1,7 +1,7 @@
 //! SOCKS5 filter configuration
 
+use super::AUTH_METHOD_NO_AUTH;
 use serde::{Deserialize, Serialize};
-use super::{AUTH_METHOD_NO_AUTH};
 
 /// Filter mode for SOCKS5 connections
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

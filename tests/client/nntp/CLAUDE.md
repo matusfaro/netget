@@ -2,11 +2,13 @@
 
 ## Overview
 
-This document describes the E2E testing strategy for the NNTP (Network News Transfer Protocol) client implementation. Tests verify LLM-controlled client behavior by spawning the actual NetGet binary and testing as a black-box.
+This document describes the E2E testing strategy for the NNTP (Network News Transfer Protocol) client implementation.
+Tests verify LLM-controlled client behavior by spawning the actual NetGet binary and testing as a black-box.
 
 ## Test Approach
 
 ### Philosophy
+
 - **Black-box testing**: Tests interact with NetGet as a user would
 - **LLM-driven**: Tests rely on the LLM to interpret instructions and execute commands
 - **Server integration**: Tests use NetGet's NNTP server implementation
@@ -15,6 +17,7 @@ This document describes the E2E testing strategy for the NNTP (Network News Tran
 ### Test Infrastructure
 
 Tests use the shared helper functions in `tests/helpers/`:
+
 - `start_netget_server()`: Start NetGet server with instruction
 - `start_netget_client()`: Start NetGet client with instruction
 - `NetGetConfig`: Configuration for server/client instances
@@ -23,17 +26,20 @@ Tests use the shared helper functions in `tests/helpers/`:
 ## Test Cases
 
 ### Test 1: Connect and LIST
+
 **LLM Calls**: 2 (server startup, client connection)
 
 **Purpose**: Verify NNTP client can connect and execute basic LIST command
 
 **Flow**:
+
 1. Start NNTP server with instruction to respond to LIST
 2. Start NNTP client with instruction to connect and send LIST
 3. Verify client shows "connected" in output
 4. Cleanup both server and client
 
 **Expected Behavior**:
+
 - Client establishes TCP connection
 - Client receives welcome banner (200 or 201)
 - Client sends LIST command
@@ -41,11 +47,13 @@ Tests use the shared helper functions in `tests/helpers/`:
 - No errors or crashes
 
 ### Test 2: Select Newsgroup
+
 **LLM Calls**: 2 (server startup, client connection)
 
 **Purpose**: Verify NNTP client can select a newsgroup with GROUP command
 
 **Flow**:
+
 1. Start NNTP server configured to handle GROUP commands
 2. Start NNTP client with instruction to select "comp.lang.rust"
 3. Verify client protocol is "NNTP"
@@ -53,22 +61,26 @@ Tests use the shared helper functions in `tests/helpers/`:
 5. Cleanup
 
 **Expected Behavior**:
+
 - Client sends GROUP command with newsgroup name
 - Server responds with 211 status (group selected)
 - Client receives article count and range information
 
 ### Test 3: Retrieve Article
+
 **LLM Calls**: 2 (server startup, client connection)
 
 **Purpose**: Verify NNTP client can retrieve articles with ARTICLE command
 
 **Flow**:
+
 1. Start NNTP server configured to respond to ARTICLE requests
 2. Start NNTP client with instruction to retrieve article 1
 3. Verify client protocol is "NNTP"
 4. Cleanup
 
 **Expected Behavior**:
+
 - Client sends ARTICLE command
 - Server responds with 220 status and article data
 - Client receives headers and body
@@ -79,6 +91,7 @@ Tests use the shared helper functions in `tests/helpers/`:
 **Total LLM Calls**: 6 (3 tests × 2 calls each)
 
 Budget breakdown:
+
 - Server startup: 1 LLM call per test (3 total)
 - Client connection: 1 LLM call per test (3 total)
 
@@ -89,6 +102,7 @@ This is well under the 10 LLM call budget for client tests.
 **Total Runtime**: ~8-12 seconds
 
 Breakdown per test:
+
 - Server startup: ~500ms
 - Client startup: ~500ms
 - Sleep for connection: 2s (to allow LLM processing)
@@ -126,12 +140,14 @@ With 3 tests: 10.5-12s total
 ### Test Stability
 
 Current tests should be stable because:
+
 - Use local NetGet server (no external dependencies)
 - Fixed LLM call count (predictable)
 - Simple commands (LIST, GROUP, ARTICLE)
 - Clear success criteria (connection established)
 
 Potential stability issues:
+
 - LLM may refuse to parse certain instructions
 - Server implementation bugs
 - Port allocation conflicts

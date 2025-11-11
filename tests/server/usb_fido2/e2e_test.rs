@@ -11,9 +11,11 @@ mod tests {
     use tokio::time::{sleep, Duration};
 
     use netget::llm::OllamaClient;
-    use netget::state::app_state::AppState;
+    use netget::server::usb::fido2::approval::{
+        ApprovalConfig, ApprovalDecision, ApprovalManager, OperationType,
+    };
     use netget::server::usb::fido2::UsbFido2Server;
-    use netget::server::usb::fido2::approval::{ApprovalManager, ApprovalConfig, ApprovalDecision, OperationType};
+    use netget::state::app_state::AppState;
 
     /// Test FIDO2 server startup with LLM integration
     #[tokio::test]
@@ -21,7 +23,10 @@ mod tests {
     async fn test_fido2_server_startup_with_llm() {
         // Create test infrastructure
         let (status_tx, mut status_rx) = mpsc::unbounded_channel();
-        let llm_client = OllamaClient::new("http://localhost:11434".to_string(), "qwen3-coder:30b".to_string());
+        let llm_client = OllamaClient::new(
+            "http://localhost:11434".to_string(),
+            "qwen3-coder:30b".to_string(),
+        );
         let app_state = Arc::new(AppState::new(llm_client.clone()));
         let server_id = netget::state::ServerId::new(1);
 
@@ -34,16 +39,20 @@ mod tests {
             app_state,
             status_tx,
             server_id,
-            Some(true),  // support_u2f
-            Some(true),  // support_fido2
-            Some(true),  // auto_approve for testing
-        ).await;
+            Some(true), // support_u2f
+            Some(true), // support_fido2
+            Some(true), // auto_approve for testing
+        )
+        .await;
 
         assert!(result.is_ok(), "Server should start successfully");
         let actual_addr = result.unwrap();
 
         // Verify server is listening
-        assert!(actual_addr.port() > 0, "Server should be listening on a port");
+        assert!(
+            actual_addr.port() > 0,
+            "Server should be listening on a port"
+        );
 
         // Verify status message was sent
         tokio::select! {
@@ -68,7 +77,10 @@ mod tests {
 
         // Test PIN not set initially
         assert!(!store.has_pin(), "PIN should not be set initially");
-        assert!(!store.pin_verified(), "PIN should not be verified initially");
+        assert!(
+            !store.pin_verified(),
+            "PIN should not be verified initially"
+        );
         assert_eq!(store.pin_retries(), 8, "Should start with 8 retries");
 
         // Set a PIN
@@ -80,14 +92,20 @@ mod tests {
         let result = store.verify_pin("test1234");
         assert!(result.is_ok(), "PIN verification should not error");
         assert_eq!(result.unwrap(), true, "Correct PIN should verify");
-        assert!(store.pin_verified(), "PIN should be verified after correct entry");
+        assert!(
+            store.pin_verified(),
+            "PIN should be verified after correct entry"
+        );
         assert_eq!(store.pin_retries(), 8, "Retries should reset on success");
 
         // Verify incorrect PIN
         let result = store.verify_pin("wrong");
         assert!(result.is_ok(), "PIN verification should not error");
         assert_eq!(result.unwrap(), false, "Wrong PIN should not verify");
-        assert!(!store.pin_verified(), "PIN should not be verified after wrong entry");
+        assert!(
+            !store.pin_verified(),
+            "PIN should not be verified after wrong entry"
+        );
         assert_eq!(store.pin_retries(), 7, "Retries should decrement");
 
         // Test PIN too short
@@ -157,12 +175,14 @@ mod tests {
         let manager = ApprovalManager::new(config);
 
         // Request approval - should instantly approve
-        let (id, decision) = manager.request_approval(
-            OperationType::Register,
-            "example.com".to_string(),
-            Some("user@example.com".to_string()),
-            None,
-        ).await;
+        let (id, decision) = manager
+            .request_approval(
+                OperationType::Register,
+                "example.com".to_string(),
+                Some("user@example.com".to_string()),
+                None,
+            )
+            .await;
 
         assert_eq!(decision, ApprovalDecision::Approved, "Should auto-approve");
         assert!(id > 0, "Should have valid approval ID");
@@ -193,14 +213,20 @@ mod tests {
         });
 
         // Request approval - should wait and then be approved
-        let (id, decision) = manager.request_approval(
-            OperationType::Authenticate,
-            "test.com".to_string(),
-            None,
-            None,
-        ).await;
+        let (id, decision) = manager
+            .request_approval(
+                OperationType::Authenticate,
+                "test.com".to_string(),
+                None,
+                None,
+            )
+            .await;
 
-        assert_eq!(decision, ApprovalDecision::Approved, "Should be approved by task");
+        assert_eq!(
+            decision,
+            ApprovalDecision::Approved,
+            "Should be approved by task"
+        );
 
         // Verify approval task completed successfully
         let result = approve_task.await;
@@ -230,12 +256,14 @@ mod tests {
         });
 
         // Request approval - should be denied
-        let (_id, decision) = manager.request_approval(
-            OperationType::Register,
-            "example.com".to_string(),
-            Some("test@example.com".to_string()),
-            None,
-        ).await;
+        let (_id, decision) = manager
+            .request_approval(
+                OperationType::Register,
+                "example.com".to_string(),
+                Some("test@example.com".to_string()),
+                None,
+            )
+            .await;
 
         assert_eq!(decision, ApprovalDecision::Denied, "Should be denied");
     }
@@ -252,14 +280,20 @@ mod tests {
         let manager = ApprovalManager::new(config);
 
         // Request approval without responding - should timeout
-        let (_id, decision) = manager.request_approval(
-            OperationType::Register,
-            "example.com".to_string(),
-            None,
-            None,
-        ).await;
+        let (_id, decision) = manager
+            .request_approval(
+                OperationType::Register,
+                "example.com".to_string(),
+                None,
+                None,
+            )
+            .await;
 
-        assert_eq!(decision, ApprovalDecision::Denied, "Should timeout and deny");
+        assert_eq!(
+            decision,
+            ApprovalDecision::Denied,
+            "Should timeout and deny"
+        );
     }
 
     /// Test approval system list pending
@@ -316,7 +350,10 @@ mod tests {
             false, // not resident
             true,  // require UV
         );
-        assert!(result.is_err(), "Should fail when UV required but PIN not set");
+        assert!(
+            result.is_err(),
+            "Should fail when UV required but PIN not set"
+        );
 
         // Set PIN
         store.set_pin("test1234").unwrap();
@@ -329,7 +366,10 @@ mod tests {
             false, // not resident
             true,  // require UV
         );
-        assert!(result.is_err(), "Should fail when UV required but PIN not verified");
+        assert!(
+            result.is_err(),
+            "Should fail when UV required but PIN not verified"
+        );
 
         // Verify PIN
         store.verify_pin("test1234").unwrap();
@@ -342,13 +382,16 @@ mod tests {
             false, // not resident
             true,  // require UV
         );
-        assert!(result.is_ok(), "Should succeed when UV required and PIN verified");
+        assert!(
+            result.is_ok(),
+            "Should succeed when UV required and PIN verified"
+        );
     }
 
     /// Test CTAPHID packet fragmentation for small messages
     #[tokio::test]
     async fn test_ctaphid_small_message() {
-        use netget::server::usb::fido2::ctaphid::{CtapHidHandler, CtapHidCommand};
+        use netget::server::usb::fido2::ctaphid::{CtapHidCommand, CtapHidHandler};
 
         let handler = CtapHidHandler::new();
         let cid = 0x12345678u32;
@@ -371,7 +414,11 @@ mod tests {
         assert_eq!(packet_cid, cid, "CID should match");
 
         // Verify CMD with init bit
-        assert_eq!(packet[4], (cmd as u8) | 0x80, "CMD should have init bit set");
+        assert_eq!(
+            packet[4],
+            (cmd as u8) | 0x80,
+            "CMD should have init bit set"
+        );
 
         // Verify BCNT (byte count)
         let bcnt = u16::from_be_bytes([packet[5], packet[6]]);
@@ -384,7 +431,7 @@ mod tests {
     /// Test CTAPHID packet fragmentation for large messages
     #[tokio::test]
     async fn test_ctaphid_large_message_fragmentation() {
-        use netget::server::usb::fido2::ctaphid::{CtapHidHandler, CtapHidCommand};
+        use netget::server::usb::fido2::ctaphid::{CtapHidCommand, CtapHidHandler};
 
         let handler = CtapHidHandler::new();
         let cid = 0xabcdef01u32;
@@ -405,10 +452,18 @@ mod tests {
         // Verify init packet
         let init_packet = &packets[0];
         assert_eq!(init_packet.len(), 64);
-        assert_eq!(init_packet[4], (cmd as u8) | 0x80, "Init packet should have CMD with init bit");
+        assert_eq!(
+            init_packet[4],
+            (cmd as u8) | 0x80,
+            "Init packet should have CMD with init bit"
+        );
         let bcnt = u16::from_be_bytes([init_packet[5], init_packet[6]]);
         assert_eq!(bcnt, 150, "BCNT should be total message length");
-        assert_eq!(&init_packet[7..64], &data[0..57], "Init packet data should match first 57 bytes");
+        assert_eq!(
+            &init_packet[7..64],
+            &data[0..57],
+            "Init packet data should match first 57 bytes"
+        );
 
         // Verify first continuation packet
         let cont1 = &packets[1];
@@ -416,19 +471,27 @@ mod tests {
         let cid1 = u32::from_be_bytes([cont1[0], cont1[1], cont1[2], cont1[3]]);
         assert_eq!(cid1, cid, "Continuation packet CID should match");
         assert_eq!(cont1[4], 0, "First continuation packet should have SEQ=0");
-        assert_eq!(&cont1[5..64], &data[57..116], "First cont packet data should match bytes 57-115");
+        assert_eq!(
+            &cont1[5..64],
+            &data[57..116],
+            "First cont packet data should match bytes 57-115"
+        );
 
         // Verify second continuation packet
         let cont2 = &packets[2];
         assert_eq!(cont2.len(), 64);
         assert_eq!(cont2[4], 1, "Second continuation packet should have SEQ=1");
-        assert_eq!(&cont2[5..5 + 34], &data[116..150], "Second cont packet data should match remaining bytes");
+        assert_eq!(
+            &cont2[5..5 + 34],
+            &data[116..150],
+            "Second cont packet data should match remaining bytes"
+        );
     }
 
     /// Test CTAPHID packet assembly from fragments
     #[tokio::test]
     async fn test_ctaphid_packet_assembly() {
-        use netget::server::usb::fido2::ctaphid::{CtapHidHandler, CtapHidCommand, CtapHidPacket};
+        use netget::server::usb::fido2::ctaphid::{CtapHidCommand, CtapHidHandler, CtapHidPacket};
 
         let mut handler = CtapHidHandler::new();
         let cid = 0x99887766u32;
@@ -453,14 +516,24 @@ mod tests {
         }
 
         // Verify message was assembled
-        assert!(assembled_message.is_some(), "Message should be assembled after all packets");
+        assert!(
+            assembled_message.is_some(),
+            "Message should be assembled after all packets"
+        );
         let message = assembled_message.unwrap();
 
         assert_eq!(message.cid, cid, "Assembled message CID should match");
-        assert_eq!(message.cmd, CtapHidCommand::Ping, "Assembled message CMD should match");
+        assert_eq!(
+            message.cmd,
+            CtapHidCommand::Ping,
+            "Assembled message CMD should match"
+        );
 
         let reassembled_data = message.into_data();
-        assert_eq!(reassembled_data, original_data, "Reassembled data should match original");
+        assert_eq!(
+            reassembled_data, original_data,
+            "Reassembled data should match original"
+        );
     }
 
     /// Test CTAPHID invalid sequence error
@@ -473,12 +546,19 @@ mod tests {
 
         // Create a fragmented message
         let data = vec![0x55u8; 150];
-        let packets = handler.fragment_response(cid, netget::server::usb::fido2::ctaphid::CtapHidCommand::Cbor, &data);
+        let packets = handler.fragment_response(
+            cid,
+            netget::server::usb::fido2::ctaphid::CtapHidCommand::Cbor,
+            &data,
+        );
 
         // Process init packet
         let result = handler.process_packet(&packets[0]);
         assert!(result.is_ok());
-        assert!(result.unwrap().is_none(), "Init packet should not complete message");
+        assert!(
+            result.unwrap().is_none(),
+            "Init packet should not complete message"
+        );
 
         // Skip continuation packet 0, send continuation packet 1 (wrong sequence)
         let result = handler.process_packet(&packets[2]);
@@ -490,7 +570,7 @@ mod tests {
     /// Test CTAPHID maximum message size
     #[tokio::test]
     async fn test_ctaphid_max_message_size() {
-        use netget::server::usb::fido2::ctaphid::{CtapHidHandler, CtapHidCommand};
+        use netget::server::usb::fido2::ctaphid::{CtapHidCommand, CtapHidHandler};
 
         let handler = CtapHidHandler::new();
         let cid = 0xfedcba98u32;
@@ -503,7 +583,11 @@ mod tests {
         let packets = handler.fragment_response(cid, CtapHidCommand::Msg, &data);
 
         // Should be 1 init + 128 continuation = 129 packets
-        assert_eq!(packets.len(), 129, "Max size message should use 129 packets");
+        assert_eq!(
+            packets.len(),
+            129,
+            "Max size message should use 129 packets"
+        );
 
         // Verify all packets are 64 bytes
         for packet in &packets {

@@ -1,6 +1,7 @@
 # etcd Client Implementation
 
 ## Overview
+
 etcd client for connecting to etcd v3 servers and performing key-value operations under LLM control.
 
 **Status**: Experimental
@@ -10,25 +11,30 @@ etcd client for connecting to etcd v3 servers and performing key-value operation
 ## Library Choices
 
 ### Core Dependencies
+
 - **etcd-client** v0.14 - Official etcd v3 Rust client
-  - Provides async gRPC-based KV operations
-  - Handles connection management and retries
-  - Built on top of tonic (gRPC) and tokio
+    - Provides async gRPC-based KV operations
+    - Handles connection management and retries
+    - Built on top of tonic (gRPC) and tokio
 - **tonic** - gRPC framework (dependency of etcd-client)
 - **tokio** - Async runtime
 
-**Rationale**: etcd-client is the official and most mature Rust client for etcd v3, providing a high-level API that abstracts the complexity of gRPC and protobuf encoding.
+**Rationale**: etcd-client is the official and most mature Rust client for etcd v3, providing a high-level API that
+abstracts the complexity of gRPC and protobuf encoding.
 
 ## Architecture
 
 ### Connection Model
+
 **Stateless with Reconnection**:
+
 - Client connects on startup to validate connectivity
 - Each operation (get/put/delete) creates a fresh etcd-client connection
 - No persistent connection state maintained
 - Operations are independent and idempotent
 
 **Why reconnect per operation?**:
+
 - etcd-client manages connection pooling internally
 - Simplifies error handling (no stale connection issues)
 - Matches the HTTP client pattern (stateless request-response)
@@ -37,11 +43,13 @@ etcd client for connecting to etcd v3 servers and performing key-value operation
 ### LLM Integration
 
 **Event Flow**:
+
 1. **Connect** → `etcd_connected` event → LLM generates initial actions
 2. **Operation** → Execute get/put/delete → `etcd_response_received` event → LLM decides next action
 3. **Disconnect** → Client cleanup
 
 **State Machine**:
+
 - Unlike TCP/Redis, etcd client doesn't use Idle/Processing/Accumulating states
 - Operations are synchronous and don't queue
 - Each LLM action triggers an immediate etcd operation
@@ -49,38 +57,43 @@ etcd client for connecting to etcd v3 servers and performing key-value operation
 ### Action System
 
 **Async Actions** (user-triggered):
+
 - `etcd_get` - Retrieve key-value pairs
 - `etcd_put` - Store key-value pairs
 - `etcd_delete` - Delete keys
 - `disconnect` - Close client
 
 **Sync Actions** (response-triggered):
+
 - `etcd_get` - Follow-up get after response
 - `etcd_put` - Follow-up put after response
 
 **Custom Action Results**:
+
 - All etcd operations return `ClientActionResult::Custom` with operation-specific data
 - Action executor in event handler unpacks custom data and calls appropriate EtcdClient methods
 
 ### Event Types
 
 **Defined Events**:
+
 - `etcd_connected` - Client successfully connected to server
-  - Parameters: `remote_addr` (string)
+    - Parameters: `remote_addr` (string)
 
 - `etcd_response_received` - Operation completed
-  - Parameters:
-    - `operation` (string) - "get", "put", or "delete"
-    - `key` (string) - Key that was operated on
-    - `kvs` (array, for get) - Key-value pairs returned
-    - `count` (number, for get) - Total matching keys
-    - `more` (boolean, for get) - Whether more results exist
-    - `revision` (number, for put) - Revision after put
-    - `deleted` (number, for delete) - Number of keys deleted
+    - Parameters:
+        - `operation` (string) - "get", "put", or "delete"
+        - `key` (string) - Key that was operated on
+        - `kvs` (array, for get) - Key-value pairs returned
+        - `count` (number, for get) - Total matching keys
+        - `more` (boolean, for get) - Whether more results exist
+        - `revision` (number, for put) - Revision after put
+        - `deleted` (number, for delete) - Number of keys deleted
 
 ## Implementation Details
 
 ### Get Operation
+
 ```rust
 // LLM action: {"type": "etcd_get", "key": "/config/database"}
 etcd_client.get(key, None).await?
@@ -92,6 +105,7 @@ etcd_client.get(key, None).await?
 ```
 
 ### Put Operation
+
 ```rust
 // LLM action: {"type": "etcd_put", "key": "/config/database", "value": "postgres://..."}
 etcd_client.put(key, value, None).await?
@@ -102,6 +116,7 @@ etcd_client.put(key, value, None).await?
 ```
 
 ### Delete Operation
+
 ```rust
 // LLM action: {"type": "etcd_delete", "key": "/config/database"}
 etcd_client.delete(key, None).await?
@@ -112,7 +127,9 @@ etcd_client.delete(key, None).await?
 ```
 
 ### Options (Future Enhancement)
+
 etcd-client supports rich options that can be exposed to LLM:
+
 - **GetOptions**: `with_prefix()`, `with_range()`, `with_limit()`, `with_sort_order()`
 - **PutOptions**: `with_lease()`, `with_prev_kv()`
 - **DeleteOptions**: `with_prefix()`, `with_prev_kv()`
@@ -122,6 +139,7 @@ Currently using `None` for all options (simple get/put/delete).
 ## Logging
 
 **Dual Logging**:
+
 - **INFO**: Connection events ("etcd client 1 connected to localhost:2379")
 - **DEBUG**: Operation summaries ("etcd client 1 received 3 key-value pairs")
 - **ERROR**: Operation failures ("etcd client 1 LLM call failed after get")
@@ -133,11 +151,13 @@ Both tracing macros and `status_tx` used for TUI visibility.
 ### Phase 1 (Current) - Basic KV Operations
 
 **Implemented**:
+
 - ✅ Get - Retrieve single keys
 - ✅ Put - Store key-value pairs
 - ✅ Delete - Delete keys
 
 **Not Implemented**:
+
 - ❌ Range queries - Get keys with prefix (requires GetOptions)
 - ❌ Watch - Real-time change notifications (streaming RPC)
 - ❌ Transactions - Compare-and-swap operations
@@ -146,11 +166,13 @@ Both tracing macros and `status_tx` used for TUI visibility.
 - ❌ TLS - Encrypted connections
 
 ### No Connection Pooling Control
+
 - etcd-client manages connection pool internally
 - No explicit control over connection lifecycle
 - Reconnects on every operation (simple but potentially inefficient)
 
 ### No Streaming RPCs
+
 - Watch requires bidirectional streaming
 - LeaseKeepAlive requires streaming
 - Current implementation is unary RPC only (request-response)
@@ -158,30 +180,35 @@ Both tracing macros and `status_tx` used for TUI visibility.
 ## Known Issues
 
 ### protoc Binary Dependency
+
 - **Status**: etcd-client v0.15 requires protoc binary at build time
 - **Workaround**: Install protoc or download from https://github.com/protocolbuffers/protobuf/releases
 - **NetGet Integration**: NetGet's build.rs now uses protox (pure Rust) for etcd server protobuf compilation
 - **Limitation**: etcd-client crate's build.rs still requires protoc (cannot be controlled from our build.rs)
 
 **protox Integration Investigation**:
+
 - Successfully integrated protox v0.7 in NetGet's build.rs
 - Our etcd server protobuf compilation (proto/etcd/rpc.proto) works WITHOUT protoc binary
 - However, etcd-client dependency has its own build.rs that calls tonic-build/prost-build with protoc
 - Error when protoc unavailable: "Could not find `protoc`" from etcd-client v0.15.0 build script
 
 **Potential Solutions** (future work):
+
 1. **Fork etcd-client**: Modify its build.rs to use protox instead of requiring protoc
 2. **Alternative library**: Use etcd-rs or implement custom gRPC client with protox
 3. **Upstream PR**: Submit PR to etcd-client to add protox support
 4. **Accept dependency**: Document protoc requirement (current approach)
 
 **Why This Matters**:
+
 - protoc binary is large (~2MB) and platform-specific
 - Requires system package manager or manual download
 - protox is pure Rust, works anywhere Rust compiles
 - Reduces build environment setup complexity
 
 **Current Status**: protoc binary required for building etcd client feature. Install via:
+
 ```bash
 # Debian/Ubuntu
 apt-get install protobuf-compiler
@@ -193,16 +220,19 @@ export PATH="$HOME/protoc/bin:$PATH"
 ```
 
 ### Reconnection Overhead
+
 - Each operation creates a new etcd-client connection
 - May be slow for high-frequency operations
 - **Mitigation**: etcd-client has built-in connection pooling
 
 ### No Watch Support
+
 - LLM cannot be notified of key changes in real-time
 - Must poll with get operations
 - **Future**: Implement streaming RPCs for watch
 
 ### Error Handling
+
 - etcd errors (key not found, etc.) propagate as Rust errors
 - LLM doesn't get structured error events
 - **Future**: Add `etcd_error_received` event
@@ -210,6 +240,7 @@ export PATH="$HOME/protoc/bin:$PATH"
 ## Example Prompts
 
 ### Simple Get/Put
+
 ```
 connect to etcd at localhost:2379
 Store configuration: PUT /config/database = "postgres://localhost:5432/mydb"
@@ -217,6 +248,7 @@ Retrieve it back with GET /config/database
 ```
 
 ### Service Discovery Simulation
+
 ```
 connect to etcd at localhost:2379
 Register service instances:
@@ -226,6 +258,7 @@ Then retrieve /services/api/instance-1 to verify
 ```
 
 ### Configuration Management
+
 ```
 connect to etcd at localhost:2379
 Store application config:
@@ -238,16 +271,19 @@ Then retrieve /app/timeout
 ## Performance Characteristics
 
 ### Latency
+
 - **Connect**: ~50-200ms (one-time handshake)
 - **Get/Put/Delete**: ~10-50ms per operation + 2-5s LLM processing
 - Total: ~2-5 seconds per LLM-controlled operation
 
 ### Throughput
+
 - **Limited by LLM**: ~0.2-0.5 operations per second
 - etcd operations are fast (~10-50ms) but LLM processing dominates
 - Concurrent clients can operate independently
 
 ### Network Efficiency
+
 - gRPC uses HTTP/2 (multiplexed, binary)
 - Protobuf encoding is compact
 - Reconnection per operation adds overhead (future optimization: persistent connection)
@@ -255,16 +291,19 @@ Then retrieve /app/timeout
 ## Security Considerations
 
 ### No Authentication (Phase 1)
+
 - Connects to etcd without credentials
 - Assumes etcd server is open or on trusted network
 - **Future**: Add username/password auth support
 
 ### No TLS (Phase 1)
+
 - Plaintext gRPC connection
 - Data transmitted unencrypted
 - **Future**: Add TLS support with certificate validation
 
 ### Endpoint Validation
+
 - Client accepts arbitrary endpoints from user
 - No validation of hostname/IP
 - Could connect to malicious etcd servers
@@ -272,22 +311,26 @@ Then retrieve /app/timeout
 ## Future Enhancements
 
 ### Phase 2: Advanced KV Operations
+
 - Range queries (prefix-based get)
 - Sorted results
 - Pagination with limit
 - Previous key-value retrieval
 
 ### Phase 3: Transactions
+
 - Compare-and-swap operations
 - Atomic multi-key updates
 - Distributed locking support
 
 ### Phase 4: Streaming
+
 - Watch for key changes
 - Real-time notifications to LLM
 - Event-driven architecture
 
 ### Phase 5: Auth & Security
+
 - Username/password authentication
 - TLS encryption
 - Certificate validation
@@ -296,15 +339,18 @@ Then retrieve /app/timeout
 
 ### macOS Setup
 
-**etcd-client on macOS**: The `etcd-client` v0.15 Rust crate is a pure gRPC client with **no system dependencies** for normal operation.
+**etcd-client on macOS**: The `etcd-client` v0.15 Rust crate is a pure gRPC client with **no system dependencies** for
+normal operation.
 
 **Build**:
+
 ```bash
 # No special setup needed
 ./cargo-isolated.sh build --no-default-features --features etcd
 ```
 
 **Run with etcd server**:
+
 ```bash
 # Requires running etcd server on localhost:2379
 # Start etcd first (if installed):
@@ -315,6 +361,7 @@ netget> connect to etcd at localhost:2379
 ```
 
 **Optional: Installing etcd server locally for testing**:
+
 ```bash
 # Install via Homebrew
 brew install etcd
@@ -330,6 +377,7 @@ etcd --version
 ### Linux Setup
 
 **Installation**:
+
 ```bash
 # Debian/Ubuntu - install etcd server (optional, for testing)
 sudo apt-get install etcd
@@ -347,16 +395,19 @@ sudo pacman -S etcd
 ### Troubleshooting
 
 **"Connection refused" when connecting to etcd**:
+
 - Ensure etcd server is running: `etcd &` or `brew services start etcd`
 - Check etcd is listening on port 2379: `lsof -i :2379`
 - Try connecting to explicit address: `connect to etcd at 127.0.0.1:2379`
 
 **protoc binary requirement (for etcd-client build)**:
+
 - The etcd-client crate v0.15 requires protoc at build time
 - Install protoc: `brew install protobuf`
 - Or download binary: https://github.com/protocolbuffers/protobuf/releases
 
 ## References
+
 - [etcd-client Documentation](https://docs.rs/etcd-client/)
 - [etcd v3 API](https://etcd.io/docs/v3.5/learning/api/)
 - [etcd gRPC Protocol](https://github.com/etcd-io/etcd/tree/main/api/etcdserverpb)

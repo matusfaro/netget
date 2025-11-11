@@ -325,7 +325,9 @@ impl InputState {
         match key_code {
             KeyCode::Char(c) => {
                 // Check for special modifiers (not Shift which is normal)
-                if modifiers.contains(KeyModifiers::CONTROL) || modifiers.contains(KeyModifiers::ALT) {
+                if modifiers.contains(KeyModifiers::CONTROL)
+                    || modifiers.contains(KeyModifiers::ALT)
+                {
                     // Let caller handle Ctrl+C, Ctrl+N, etc.
                     return false;
                 }
@@ -368,4 +370,3 @@ impl InputState {
         }
     }
 }
-

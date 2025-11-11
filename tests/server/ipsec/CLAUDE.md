@@ -2,7 +2,8 @@
 
 ## Test Overview
 
-Tests IPSec/IKEv2 honeypot functionality by sending crafted IKE handshake packets to NetGet and verifying reconnaissance detection.
+Tests IPSec/IKEv2 honeypot functionality by sending crafted IKE handshake packets to NetGet and verifying reconnaissance
+detection.
 
 **Protocol Status**: Honeypot-only (no actual VPN tunnels)
 **Test Focus**: IKE packet detection and logging
@@ -12,18 +13,21 @@ Tests IPSec/IKEv2 honeypot functionality by sending crafted IKE handshake packet
 ### Consolidated Test Suite
 
 Tests reuse single server instances across multiple scenarios:
+
 - **5 test functions** covering IKEv2/IKEv1, multiple exchange types, concurrency
 - Each test spawns server, sends packets, verifies detection
 
 ### Packet-Level Testing
 
 No actual IPSec clients used - tests construct raw IKE packets:
+
 - **IKEv2**: IKE_SA_INIT (34), IKE_AUTH (35), CREATE_CHILD_SA (36), INFORMATIONAL (37)
 - **IKEv1**: Identity Protection (2), Aggressive Mode (4)
 
 ### Disabled Protocol Flag
 
 IPSec is disabled by default. Tests use `--include-disabled-protocols`:
+
 ```rust
 let config = ServerConfig::new(prompt)
     .with_include_disabled_protocols(true);
@@ -34,19 +38,19 @@ let config = ServerConfig::new(prompt)
 ### Per-Test Breakdown
 
 1. **test_ipsec_ikev2_sa_init_detection**: 1 LLM call
-   - Server startup (prompt interpretation)
+    - Server startup (prompt interpretation)
 
 2. **test_ipsec_ikev2_auth_detection**: 1 LLM call
-   - Server startup
+    - Server startup
 
 3. **test_ipsec_ikev1_detection**: 1 LLM call
-   - Server startup
+    - Server startup
 
 4. **test_ipsec_multiple_exchange_types**: 1 LLM call
-   - Server startup (handles 4 exchange types without additional calls)
+    - Server startup (handles 4 exchange types without additional calls)
 
 5. **test_ipsec_concurrent_connections**: 1 LLM call
-   - Server startup (3 concurrent clients, no LLM per-client)
+    - Server startup (3 concurrent clients, no LLM per-client)
 
 **Total: 5 LLM calls** (well under 10 limit)
 
@@ -67,6 +71,7 @@ Honeypot mode logs packets without LLM interpretation. LLM only consulted on sta
 ### IKE Packet Format
 
 **IKE Header (28 bytes)**:
+
 ```
 | Initiator SPI (8) | Responder SPI (8) |
 | Next Payload (1) | Version (1) | Exchange Type (1) | Flags (1) |
@@ -80,12 +85,14 @@ Honeypot mode logs packets without LLM interpretation. LLM only consulted on sta
 ### Exchange Types
 
 **IKEv2**:
+
 - 34 (IKE_SA_INIT) - Initial exchange, establish SA
 - 35 (IKE_AUTH) - Authentication exchange
 - 36 (CREATE_CHILD_SA) - Create new Child SA
 - 37 (INFORMATIONAL) - Informational messages
 
 **IKEv1**:
+
 - 2 (Identity Protection) - Main mode
 - 4 (Aggressive Mode) - Aggressive mode
 
@@ -111,6 +118,7 @@ fn build_ikev2_sa_init() -> Vec<u8> {
 **Model**: qwen3-coder:30b (or configured model)
 **Runtime**: ~20-25 seconds for full test suite
 **Breakdown**:
+
 - Server startup: 2-5 seconds per test (5 tests)
 - Packet sending: <1 second per test
 - LLM calls: 2-3 seconds each (startup only)
@@ -121,13 +129,15 @@ fn build_ikev2_sa_init() -> Vec<u8> {
 
 **Low-Medium** (5-10%) - Occasional stack selection issues.
 
-**Known flakiness**: LLM sometimes selects generic UDP stack instead of IPSec-specific stack, even with "via ipsec" keyword.
+**Known flakiness**: LLM sometimes selects generic UDP stack instead of IPSec-specific stack, even with "via ipsec"
+keyword.
 
 ## Test Cases
 
 ### 1. test_ipsec_ikev2_sa_init_detection
 
 **What it tests**:
+
 - Server starts with IPSec stack
 - Sends IKEv2 IKE_SA_INIT packet
 - Verifies handshake detected in logs
@@ -135,12 +145,14 @@ fn build_ikev2_sa_init() -> Vec<u8> {
 **Packet structure**: 28-byte header + ~88 bytes payloads = ~116 bytes total
 
 **Assertions**:
+
 ```rust
 assert_stack_name(&mut server, "IPSEC");
 assert!(output_str.contains("IPSec") || output_str.contains("IKE") || output_str.contains("handshake"));
 ```
 
 **Expected output**:
+
 ```
 [INFO] Starting IPSec/IKEv2 honeypot on 0.0.0.0:XXXXX (reconnaissance detection only)
 [TRACE] IPSec: IKEv2 IKE_SA_INIT from 127.0.0.1:XXXXX (116 bytes)
@@ -150,12 +162,14 @@ assert!(output_str.contains("IPSec") || output_str.contains("IKE") || output_str
 ### 2. test_ipsec_ikev2_auth_detection
 
 **What it tests**:
+
 - Sends IKEv2 IKE_AUTH packet (exchange type 35)
 - Verifies AUTH exchange detected
 
 **Key difference**: Non-zero responder SPI (after SA_INIT completed)
 
 **Expected output**:
+
 ```
 [TRACE] IPSec: IKEv2 IKE_AUTH from 127.0.0.1:XXXXX (XXX bytes)
 [INFO] IPSec: IKEv2 handshake reconnaissance from 127.0.0.1:XXXXX
@@ -164,12 +178,14 @@ assert!(output_str.contains("IPSec") || output_str.contains("IKE") || output_str
 ### 3. test_ipsec_ikev1_detection
 
 **What it tests**:
+
 - Sends IKEv1 Identity Protection packet
 - Verifies IKEv1 vs IKEv2 distinction
 
 **Packet structure**: Version byte = 0x10 (IKEv1)
 
 **Expected output**:
+
 ```
 [TRACE] IPSec: IKEv1 Identity Protection from 127.0.0.1:XXXXX
 ```
@@ -177,16 +193,18 @@ assert!(output_str.contains("IPSec") || output_str.contains("IKE") || output_str
 ### 4. test_ipsec_multiple_exchange_types
 
 **What it tests**:
+
 - Sends 4 different IKEv2 exchange types:
-  1. IKE_SA_INIT (34)
-  2. IKE_AUTH (35)
-  3. CREATE_CHILD_SA (36)
-  4. INFORMATIONAL (37)
+    1. IKE_SA_INIT (34)
+    2. IKE_AUTH (35)
+    3. CREATE_CHILD_SA (36)
+    4. INFORMATIONAL (37)
 - Verifies all exchanges logged
 
 **Expected behavior**: Server logs all exchange types without crashing.
 
 **Expected output**:
+
 ```
 [TRACE] IPSec: IKEv2 IKE_SA_INIT from 127.0.0.1:XXXXX
 [TRACE] IPSec: IKEv2 IKE_AUTH from 127.0.0.1:XXXXX
@@ -199,6 +217,7 @@ assert!(output_str.contains("IPSec") || output_str.contains("IKE") || output_str
 ### 5. test_ipsec_concurrent_connections
 
 **What it tests**:
+
 - Three concurrent clients send IKE_SA_INIT
 - Verifies honeypot handles concurrent UDP packets
 
@@ -225,6 +244,7 @@ assert!(output_str.contains("IPSec") || output_str.contains("IKE") || output_str
 **Issue**: Tests don't verify IKE negotiation (SA establishment).
 
 **Why**: Full IPSec requires:
+
 - IKE SA establishment
 - IPSec SA (ESP) creation
 - Kernel XFRM policy configuration
@@ -286,12 +306,14 @@ test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 ### Handling Failures
 
 If tests fail due to stack selection:
+
 ```
 thread 'test_ipsec_ikev2_sa_init_detection' panicked at tests/server/ipsec/e2e_test.rs:32:5:
 assertion failed: Expected stack name to contain "IPSEC", but got "UDP"
 ```
 
 **Debug**:
+
 1. Check server output: `./cargo-isolated.sh test ... -- --nocapture`
 2. Verify LLM saw "via ipsec" keyword
 3. Try different prompt phrasing
@@ -302,6 +324,7 @@ assertion failed: Expected stack name to contain "IPSEC", but got "UDP"
 ### Security Research
 
 Tests demonstrate honeypot's ability to:
+
 - Detect IPSec/IKE reconnaissance
 - Log handshake attempts
 - Identify IKE version (v1 vs v2)
@@ -311,6 +334,7 @@ Tests demonstrate honeypot's ability to:
 ### Protocol Analysis
 
 Tests verify:
+
 - IKE header parsing works correctly
 - Version detection (IKEv1 vs IKEv2)
 - Exchange type identification
@@ -322,6 +346,7 @@ Tests verify:
 ### Full IPSec Server (Not Planned)
 
 If full IPSec server ever implemented, tests would need:
+
 ```rust
 #[tokio::test]
 #[ignore] // Requires XFRM and root
@@ -339,6 +364,7 @@ async fn test_ipsec_full_tunnel() {
 ### ESP Detection
 
 Add ESP packet detection to honeypot:
+
 ```rust
 #[tokio::test]
 async fn test_esp_packet_detection() {
@@ -351,6 +377,7 @@ async fn test_esp_packet_detection() {
 ### LLM Analysis Tests
 
 Test LLM's ability to analyze IKE handshakes:
+
 ```rust
 #[tokio::test]
 async fn test_llm_ike_analysis() {
@@ -363,6 +390,7 @@ async fn test_llm_ike_analysis() {
 ### NAT-T Testing
 
 Add NAT-T (UDP port 4500) tests:
+
 ```rust
 #[tokio::test]
 async fn test_ipsec_nat_t() {

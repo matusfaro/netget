@@ -28,7 +28,7 @@ use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::server::openid::actions::OpenIdProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 
 /// OpenID Connect provider state
 pub struct OpenIdState {
@@ -137,7 +137,8 @@ async fn handle_llm_response(
 
                         response_body = serde_json::to_string_pretty(&discovery)
                             .unwrap_or_else(|_| discovery.to_string());
-                        response_headers.insert("content-type".to_string(), "application/json".to_string());
+                        response_headers
+                            .insert("content-type".to_string(), "application/json".to_string());
                         status_code = 200;
                     }
                     "send_authorization_response" => {
@@ -155,13 +156,19 @@ async fn handle_llm_response(
                         if let Some(error) = data.get("error").and_then(|v| v.as_str()) {
                             params.push(format!("error={}", urlencoding::encode(error)));
                         }
-                        if let Some(error_desc) = data.get("error_description").and_then(|v| v.as_str()) {
-                            params.push(format!("error_description={}", urlencoding::encode(error_desc)));
+                        if let Some(error_desc) =
+                            data.get("error_description").and_then(|v| v.as_str())
+                        {
+                            params.push(format!(
+                                "error_description={}",
+                                urlencoding::encode(error_desc)
+                            ));
                         }
 
                         if !params.is_empty() {
                             let separator = if redirect_url.contains('?') { "&" } else { "?" };
-                            redirect_url = format!("{}{}{}", redirect_url, separator, params.join("&"));
+                            redirect_url =
+                                format!("{}{}{}", redirect_url, separator, params.join("&"));
                         }
 
                         redirect_location = Some(redirect_url.clone());
@@ -189,8 +196,10 @@ async fn handle_llm_response(
                         }
 
                         response_body = token_response.to_string();
-                        response_headers.insert("content-type".to_string(), "application/json".to_string());
-                        response_headers.insert("cache-control".to_string(), "no-store".to_string());
+                        response_headers
+                            .insert("content-type".to_string(), "application/json".to_string());
+                        response_headers
+                            .insert("cache-control".to_string(), "no-store".to_string());
                         response_headers.insert("pragma".to_string(), "no-cache".to_string());
                         status_code = 200;
                     }
@@ -212,14 +221,17 @@ async fn handle_llm_response(
                         if let Some(picture) = data.get("picture") {
                             userinfo["picture"] = picture.clone();
                         }
-                        if let Some(additional_claims) = data.get("additional_claims").and_then(|v| v.as_object()) {
+                        if let Some(additional_claims) =
+                            data.get("additional_claims").and_then(|v| v.as_object())
+                        {
                             for (k, v) in additional_claims {
                                 userinfo[k] = v.clone();
                             }
                         }
 
                         response_body = userinfo.to_string();
-                        response_headers.insert("content-type".to_string(), "application/json".to_string());
+                        response_headers
+                            .insert("content-type".to_string(), "application/json".to_string());
                         status_code = 200;
                     }
                     "send_jwks_response" => {
@@ -229,7 +241,8 @@ async fn handle_llm_response(
                         });
 
                         response_body = jwks.to_string();
-                        response_headers.insert("content-type".to_string(), "application/json".to_string());
+                        response_headers
+                            .insert("content-type".to_string(), "application/json".to_string());
                         status_code = 200;
                     }
                     "send_error_response" => {
@@ -240,8 +253,12 @@ async fn handle_llm_response(
                         });
 
                         response_body = error_response.to_string();
-                        response_headers.insert("content-type".to_string(), "application/json".to_string());
-                        status_code = data.get("status_code").and_then(|v| v.as_u64()).unwrap_or(400) as u16;
+                        response_headers
+                            .insert("content-type".to_string(), "application/json".to_string());
+                        status_code = data
+                            .get("status_code")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(400) as u16;
                     }
                     _ => {
                         debug!("Unknown custom action: {}", name);
@@ -268,7 +285,11 @@ async fn handle_llm_response(
         path,
         status_code,
         response_body.len(),
-        if redirect_location.is_some() { ", redirect" } else { "" }
+        if redirect_location.is_some() {
+            ", redirect"
+        } else {
+            ""
+        }
     ));
 
     // Build the HTTP response
@@ -279,7 +300,9 @@ async fn handle_llm_response(
         response = response.header(name, value);
     }
 
-    Ok(response.body(Full::new(Bytes::from(response_body))).unwrap())
+    Ok(response
+        .body(Full::new(Bytes::from(response_body)))
+        .unwrap())
 }
 
 /// OpenID Connect server that uses LLM to handle all endpoints
@@ -326,7 +349,8 @@ impl OpenIdServer {
         let _ = status_tx.send("[INFO] Starting OpenID Connect server...".to_string());
 
         // Start HTTP server
-        let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let listener =
+            crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         console_info!(status_tx, "OpenID server listening on {}", local_addr);
 
@@ -335,13 +359,18 @@ impl OpenIdServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
                         info!("OpenID connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!("[INFO] OpenID connection from {}", remote_addr));
+                        let _ = status_tx
+                            .send(format!("[INFO] OpenID connection from {}", remote_addr));
 
                         // Add connection to ServerInstance
-                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -359,7 +388,9 @@ impl OpenIdServer {
                                 "authenticated": false,
                             })),
                         };
-                        app_state.add_connection_to_server(server_id, conn_state).await;
+                        app_state
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let llm_client_clone = llm_client.clone();
@@ -397,13 +428,18 @@ impl OpenIdServer {
                             });
 
                             // Serve HTTP/1 on this connection
-                            if let Err(err) = http1::Builder::new().serve_connection(io, service).await {
+                            if let Err(err) =
+                                http1::Builder::new().serve_connection(io, service).await
+                            {
                                 error!("Error serving OpenID connection: {:?}", err);
                             }
 
                             // Mark connection as closed
-                            app_state_clone.close_connection_on_server(server_id, connection_id).await;
-                            let _ = status_tx_clone.send(format!("[INFO] OpenID connection {} closed", connection_id));
+                            app_state_clone
+                                .close_connection_on_server(server_id, connection_id)
+                                .await;
+                            let _ = status_tx_clone
+                                .send(format!("[INFO] OpenID connection {} closed", connection_id));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
@@ -460,7 +496,8 @@ async fn handle_openid_request(
     let query_params = parse_query_string(query_str.as_deref());
 
     // Parse form data if Content-Type is application/x-www-form-urlencoded
-    let form_data = if headers.get("content-type")
+    let form_data = if headers
+        .get("content-type")
         .map(|v| v.contains("application/x-www-form-urlencoded"))
         .unwrap_or(false)
     {
@@ -520,14 +557,11 @@ async fn handle_openid_request(
         Some(connection_id),
         &event,
         protocol.as_ref(),
-    ).await {
+    )
+    .await
+    {
         Ok(execution_result) => {
-            handle_llm_response(
-                execution_result,
-                status_tx,
-                method,
-                path,
-            ).await
+            handle_llm_response(execution_result, status_tx, method, path).await
         }
         Err(e) => {
             error!("LLM error generating OpenID response: {}", e);
@@ -536,10 +570,13 @@ async fn handle_openid_request(
             Ok(Response::builder()
                 .status(500)
                 .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(json!({
-                    "error": "server_error",
-                    "error_description": "Failed to generate response"
-                }).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({
+                        "error": "server_error",
+                        "error_description": "Failed to generate response"
+                    })
+                    .to_string(),
+                )))
                 .unwrap())
         }
     }

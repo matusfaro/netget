@@ -3,9 +3,7 @@
 use anyhow::Result;
 use crossterm::event::PopKeyboardEnhancementFlags;
 use crossterm::execute;
-use crossterm::terminal::{
-    disable_raw_mode, LeaveAlternateScreen,
-};
+use crossterm::terminal::{disable_raw_mode, LeaveAlternateScreen};
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};

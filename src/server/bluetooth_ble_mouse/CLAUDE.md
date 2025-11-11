@@ -2,7 +2,9 @@
 
 ## Overview
 
-Bluetooth Low Energy (BLE) HID mouse server that allows devices to pair with NetGet and receive mouse movements. Built on top of the `bluetooth-ble` protocol, providing a high-level mouse interface with connection tracking and targeted messaging.
+Bluetooth Low Energy (BLE) HID mouse server that allows devices to pair with NetGet and receive mouse movements. Built
+on top of the `bluetooth-ble` protocol, providing a high-level mouse interface with connection tracking and targeted
+messaging.
 
 ## Architecture
 
@@ -30,6 +32,7 @@ Like the keyboard, the mouse tracks individual client connections for targeted m
 ### HID Report Descriptor
 
 Standard HID mouse with:
+
 - 3 buttons (left, right, middle)
 - Relative X/Y movement
 - Scroll wheel
@@ -44,6 +47,7 @@ Standard HID mouse with:
 ```
 
 **Example**: Move right 10 pixels, no buttons
+
 ```
 00 0A 00 00
 ││ ││ ││ ││
@@ -54,6 +58,7 @@ Standard HID mouse with:
 ```
 
 **Example**: Left click at current position
+
 ```
 01 00 00 00
 ││
@@ -63,6 +68,7 @@ Standard HID mouse with:
 ## LLM Actions
 
 ### move_cursor
+
 Move the cursor by relative amounts.
 
 ```json
@@ -75,6 +81,7 @@ Move the cursor by relative amounts.
 ```
 
 ### click
+
 Click a mouse button.
 
 ```json
@@ -87,6 +94,7 @@ Click a mouse button.
 Buttons: `left`, `right`, `middle`
 
 ### scroll
+
 Scroll the mouse wheel.
 
 ```json
@@ -97,6 +105,7 @@ Scroll the mouse wheel.
 ```
 
 ### drag
+
 Drag with button held.
 
 ```json
@@ -109,6 +118,7 @@ Drag with button held.
 ```
 
 ### send_to_client
+
 Send to a specific client.
 
 ```json
@@ -121,6 +131,7 @@ Send to a specific client.
 ```
 
 ### list_clients
+
 List connected clients.
 
 ```json
@@ -132,6 +143,7 @@ List connected clients.
 ## Events
 
 ### mouse_client_connected
+
 ```json
 {
   "event": "mouse_client_connected",
@@ -140,6 +152,7 @@ List connected clients.
 ```
 
 ### mouse_client_disconnected
+
 ```json
 {
   "event": "mouse_client_disconnected",
@@ -150,6 +163,7 @@ List connected clients.
 ## Example Usage
 
 ### Draw a Circle
+
 ```
 User: "Act as a Bluetooth mouse. When a device connects, move the cursor in a circle."
 
@@ -165,6 +179,7 @@ move_cursor(7, -7)
 ```
 
 ### Click and Drag
+
 ```
 User: "Click and drag from current position 100 pixels to the right"
 
@@ -172,6 +187,7 @@ LLM: drag("left", 100, 0)
 ```
 
 ### Scroll Page
+
 ```
 User: "Scroll down 5 notches"
 
@@ -189,6 +205,7 @@ LLM: scroll(-5)
 ## Platform Requirements
 
 Same as `bluetooth-ble`:
+
 - **Linux**: BlueZ daemon
 - **macOS**: Bluetooth enabled
 - **Windows**: Windows 10+ with Bluetooth

@@ -2,7 +2,8 @@
 
 ## Overview
 
-MCP client implementing the Model Context Protocol specification for connecting to MCP servers and accessing their capabilities (resources, tools, prompts). Built on JSON-RPC 2.0 over HTTP with three-phase initialization.
+MCP client implementing the Model Context Protocol specification for connecting to MCP servers and accessing their
+capabilities (resources, tools, prompts). Built on JSON-RPC 2.0 over HTTP with three-phase initialization.
 
 ## Protocol Version
 
@@ -13,14 +14,17 @@ MCP client implementing the Model Context Protocol specification for connecting 
 ## Library Choices
 
 ### Core Dependencies
+
 - **reqwest** - HTTP client library
-  - Chosen for: Async HTTP requests, JSON support, wide adoption
-  - Used for: HTTP POST requests to MCP server
+    - Chosen for: Async HTTP requests, JSON support, wide adoption
+    - Used for: HTTP POST requests to MCP server
 - **serde_json** - JSON handling
 - **tokio** - Async runtime
 
 ### Custom JSON-RPC Implementation
+
 **Why Not Use a JSON-RPC Library?**
+
 - MCP has specific JSON-RPC patterns (initialize flow, notifications)
 - Custom implementation provides full control over MCP semantics
 - Simple enough to implement directly (borrowed from server implementation)
@@ -28,7 +32,9 @@ MCP client implementing the Model Context Protocol specification for connecting 
 ## Architecture Decisions
 
 ### Three-Phase Initialization
+
 **MCP Handshake**:
+
 1. **Client → initialize request** (with clientInfo, capabilities)
 2. **Server → initialize response** (with serverInfo, capabilities)
 3. **Client → initialized notification** (confirms connection)
@@ -36,13 +42,16 @@ MCP client implementing the Model Context Protocol specification for connecting 
 Only after phase 3 can client make resource/tool/prompt requests.
 
 ### Connection Model
+
 - **HTTP-based**: No persistent connection (unlike TCP/Redis clients)
 - **Request-Response**: Each MCP operation is a separate HTTP POST
 - **Stateless HTTP**: Server tracks session via JSON-RPC, not TCP connection
 - **Request ID Tracking**: Client maintains request ID counter for matching responses
 
 ### LLM Control Points
+
 **Complete MCP Operations Control** - LLM decides what to do after connection:
+
 1. **After Initialize**: LLM receives connected event with server capabilities
 2. **list_resources**: LLM requests available resources
 3. **read_resource**: LLM reads specific resource by URI
@@ -52,6 +61,7 @@ Only after phase 3 can client make resource/tool/prompt requests.
 7. **get_prompt**: LLM retrieves prompt template
 
 **Event-Driven Flow**:
+
 1. Client connects and initializes → `mcp_client_connected` event
 2. LLM receives event with server capabilities
 3. LLM decides which actions to take (list tools, call tool, etc.)
@@ -63,6 +73,7 @@ Only after phase 3 can client make resource/tool/prompt requests.
 ### State Management
 
 **Client State (in AppState protocol_data)**:
+
 ```rust
 {
     "base_url": "http://localhost:8000",
@@ -81,6 +92,7 @@ Only after phase 3 can client make resource/tool/prompt requests.
 ```
 
 **Request ID Management**:
+
 - Starts at 1
 - Incremented for each JSON-RPC request
 - Used to match responses to requests
@@ -88,6 +100,7 @@ Only after phase 3 can client make resource/tool/prompt requests.
 ### LLM Integration Flow
 
 **Initial Connection**:
+
 1. `connect_with_llm_actions()` called
 2. Send initialize request (Phase 1)
 3. Receive initialize response (Phase 2)
@@ -97,6 +110,7 @@ Only after phase 3 can client make resource/tool/prompt requests.
 7. Execute LLM actions (recursive)
 
 **Action Execution Cycle**:
+
 1. LLM returns actions (e.g., `call_tool`)
 2. `execute_action()` parses action JSON
 3. Returns `ClientActionResult::Custom`
@@ -107,11 +121,13 @@ Only after phase 3 can client make resource/tool/prompt requests.
 
 **Recursive Pattern**:
 The LLM can chain multiple operations naturally:
+
 - Initialize → List Tools → Call Tool → Read Resource → Disconnect
 
 ## Limitations
 
 ### Not Implemented
+
 - **Streaming**: No streaming responses (single HTTP POST per request)
 - **Server Push**: No server-initiated events (would require WebSocket/SSE)
 - **Subscriptions**: Resource subscriptions tracked but no change notifications
@@ -120,12 +136,14 @@ The LLM can chain multiple operations naturally:
 - **Sampling**: LLM sampling API not exposed
 
 ### Session Management
+
 - **No Server Session**: HTTP is stateless, server may track session separately
 - **Client State Only**: Client tracks initialization state, server capabilities
 - **No Expiration**: Client state never times out
 - **No Reconnection**: If disconnected, must create new client
 
 ### Error Handling
+
 - **JSON-RPC Errors**: Parsed and returned as errors
 - **HTTP Errors**: Non-2xx status codes returned as errors
 - **Network Errors**: Timeouts (30s) and connection failures
@@ -133,6 +151,7 @@ The LLM can chain multiple operations naturally:
 ## Example Prompts and LLM Flow
 
 ### Startup
+
 ```
 Connect to http://localhost:8000 via MCP.
 
@@ -142,6 +161,7 @@ List available tools, then call the 'calculate' tool with expression "2+2".
 ### Expected LLM Flow
 
 **Phase 1: Initialize** (automatic)
+
 ```json
 {
   "jsonrpc": "2.0",
@@ -156,6 +176,7 @@ List available tools, then call the 'calculate' tool with expression "2+2".
 ```
 
 **Phase 2: Server Response**
+
 ```json
 {
   "jsonrpc": "2.0",
@@ -169,6 +190,7 @@ List available tools, then call the 'calculate' tool with expression "2+2".
 ```
 
 **Phase 3: Initialized Notification** (automatic)
+
 ```json
 {
   "jsonrpc": "2.0",
@@ -178,6 +200,7 @@ List available tools, then call the 'calculate' tool with expression "2+2".
 ```
 
 **LLM Receives Connected Event**:
+
 ```json
 {
   "event_type": "mcp_client_connected",
@@ -190,6 +213,7 @@ List available tools, then call the 'calculate' tool with expression "2+2".
 ```
 
 **LLM Action 1: List Tools**:
+
 ```json
 {
   "actions": [
@@ -201,6 +225,7 @@ List available tools, then call the 'calculate' tool with expression "2+2".
 ```
 
 **Client Sends**:
+
 ```json
 {
   "jsonrpc": "2.0",
@@ -210,6 +235,7 @@ List available tools, then call the 'calculate' tool with expression "2+2".
 ```
 
 **Server Responds**:
+
 ```json
 {
   "jsonrpc": "2.0",
@@ -232,6 +258,7 @@ List available tools, then call the 'calculate' tool with expression "2+2".
 ```
 
 **LLM Receives Response Event**:
+
 ```json
 {
   "event_type": "mcp_response_received",
@@ -245,6 +272,7 @@ List available tools, then call the 'calculate' tool with expression "2+2".
 ```
 
 **LLM Action 2: Call Tool**:
+
 ```json
 {
   "actions": [
@@ -260,6 +288,7 @@ List available tools, then call the 'calculate' tool with expression "2+2".
 ```
 
 **Client Sends**:
+
 ```json
 {
   "jsonrpc": "2.0",
@@ -273,6 +302,7 @@ List available tools, then call the 'calculate' tool with expression "2+2".
 ```
 
 **Server Responds**:
+
 ```json
 {
   "jsonrpc": "2.0",
@@ -298,13 +328,13 @@ List available tools, then call the 'calculate' tool with expression "2+2".
 
 ## Comparison with Other Clients
 
-| Aspect | MCP Client | HTTP Client | TCP Client |
-|--------|------------|-------------|------------|
-| **Connection** | HTTP POST per request | HTTP request per action | Persistent TCP socket |
-| **State** | Client-side only | Stateless | Connection-based |
-| **LLM Trigger** | Connected + Response events | Connected + Response events | Connected + Data events |
-| **Initialization** | 3-phase handshake | Immediate | Connect only |
-| **Protocol** | JSON-RPC 2.0 | HTTP | Raw bytes |
+| Aspect             | MCP Client                  | HTTP Client                 | TCP Client              |
+|--------------------|-----------------------------|-----------------------------|-------------------------|
+| **Connection**     | HTTP POST per request       | HTTP request per action     | Persistent TCP socket   |
+| **State**          | Client-side only            | Stateless                   | Connection-based        |
+| **LLM Trigger**    | Connected + Response events | Connected + Response events | Connected + Data events |
+| **Initialization** | 3-phase handshake           | Immediate                   | Connect only            |
+| **Protocol**       | JSON-RPC 2.0                | HTTP                        | Raw bytes               |
 
 ## References
 

@@ -19,10 +19,10 @@ use super::connection::ConnectionId;
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
-use actions::*;
-use crate::server::SshAgentProtocol;
 use crate::protocol::Event;
+use crate::server::SshAgentProtocol;
 use crate::state::app_state::AppState;
+use actions::*;
 
 /// SSH Agent message types (from SSH Agent Protocol specification)
 const SSH_AGENTC_REQUEST_IDENTITIES: u8 = 11;
@@ -69,8 +69,9 @@ impl SshAgentServer {
     ) -> Result<PathBuf> {
         // Remove existing socket file if present
         if socket_path.exists() {
-            std::fs::remove_file(&socket_path)
-                .with_context(|| format!("Failed to remove existing socket file: {:?}", socket_path))?;
+            std::fs::remove_file(&socket_path).with_context(|| {
+                format!("Failed to remove existing socket file: {:?}", socket_path)
+            })?;
         }
 
         // Create and bind Unix domain socket server
@@ -90,16 +91,21 @@ impl SshAgentServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, _)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         info!("Accepted SSH Agent connection {}", connection_id);
-                        let _ = status_tx.send(format!("✓ SSH Agent connection {} opened", connection_id));
+                        let _ = status_tx
+                            .send(format!("✓ SSH Agent connection {} opened", connection_id));
 
                         // Split stream
                         let (read_half, write_half) = tokio::io::split(stream);
                         let write_half_arc = Arc::new(Mutex::new(write_half));
 
                         // Add connection to ServerInstance
-                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
                         let now = std::time::Instant::now();
                         let dummy_addr = "127.0.0.1:0".parse().unwrap();
                         let conn_state = ServerConnectionState {
@@ -118,7 +124,9 @@ impl SshAgentServer {
                                 "socket_path": socket_path_clone.to_string_lossy()
                             })),
                         };
-                        app_state.add_connection_to_server(server_id, conn_state).await;
+                        app_state
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         // Handle connection with LLM integration
@@ -138,7 +146,8 @@ impl SshAgentServer {
                                 connections_clone,
                                 write_half_for_conn,
                                 protocol_clone,
-                            ).await;
+                            )
+                            .await;
                         });
 
                         // Spawn reader task
@@ -156,14 +165,23 @@ impl SshAgentServer {
                                     Ok(0) => {
                                         // Connection closed
                                         connections_clone.lock().await.remove(&connection_id);
-                                        app_state_clone.close_connection_on_server(server_id, connection_id).await;
-                                        let _ = status_tx_clone.send(format!("✗ SSH Agent connection {} closed", connection_id));
+                                        app_state_clone
+                                            .close_connection_on_server(server_id, connection_id)
+                                            .await;
+                                        let _ = status_tx_clone.send(format!(
+                                            "✗ SSH Agent connection {} closed",
+                                            connection_id
+                                        ));
                                         let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                                         break;
                                     }
                                     Ok(n) => {
                                         let data = Bytes::copy_from_slice(&buffer[..n]);
-                                        trace!("SSH Agent received {} bytes on connection {}", n, connection_id);
+                                        trace!(
+                                            "SSH Agent received {} bytes on connection {}",
+                                            n,
+                                            connection_id
+                                        );
 
                                         // Handle data in separate task
                                         let llm_clone = llm_client_clone.clone();
@@ -181,11 +199,15 @@ impl SshAgentServer {
                                                 status_clone,
                                                 conns_clone,
                                                 protocol_clone,
-                                            ).await;
+                                            )
+                                            .await;
                                         });
                                     }
                                     Err(e) => {
-                                        error!("Read error on SSH Agent connection {}: {}", connection_id, e);
+                                        error!(
+                                            "Read error on SSH Agent connection {}: {}",
+                                            connection_id, e
+                                        );
                                         connections_clone.lock().await.remove(&connection_id);
                                         break;
                                     }
@@ -499,8 +521,14 @@ impl SshAgentServer {
                 &SSH_AGENT_REMOVE_ALL_IDENTITIES_EVENT,
                 serde_json::json!({}),
             ))),
-            SSH_AGENTC_LOCK => Ok(Some(Event::new(&SSH_AGENT_LOCK_EVENT, serde_json::json!({})))),
-            SSH_AGENTC_UNLOCK => Ok(Some(Event::new(&SSH_AGENT_UNLOCK_EVENT, serde_json::json!({})))),
+            SSH_AGENTC_LOCK => Ok(Some(Event::new(
+                &SSH_AGENT_LOCK_EVENT,
+                serde_json::json!({}),
+            ))),
+            SSH_AGENTC_UNLOCK => Ok(Some(Event::new(
+                &SSH_AGENT_UNLOCK_EVENT,
+                serde_json::json!({}),
+            ))),
             _ => {
                 debug!("Unknown SSH Agent message type: {}", msg_type);
                 Ok(None)
@@ -544,34 +572,34 @@ impl SshAgentServer {
         status_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         match action {
-            ActionResult::Custom { name, data } => {
-                match name.as_str() {
-                    "send_identities_list" => {
-                        let identities = data["identities"]
-                            .as_array()
-                            .context("Missing 'identities' field")?;
-                        Self::send_identities_list(connection_id, identities, connections).await;
-                    }
-                    "send_sign_response" => {
-                        let signature_hex = data["signature_hex"]
-                            .as_str()
-                            .context("Missing 'signature_hex' field")?;
-                        Self::send_sign_response(connection_id, signature_hex, connections).await;
-                    }
-                    "send_success" => {
-                        Self::send_success(connection_id, connections).await;
-                    }
-                    "send_failure" => {
-                        Self::send_failure(connection_id, connections).await;
-                    }
-                    _ => {
-                        debug!("Unknown custom action: {}", name);
-                    }
+            ActionResult::Custom { name, data } => match name.as_str() {
+                "send_identities_list" => {
+                    let identities = data["identities"]
+                        .as_array()
+                        .context("Missing 'identities' field")?;
+                    Self::send_identities_list(connection_id, identities, connections).await;
                 }
-            }
+                "send_sign_response" => {
+                    let signature_hex = data["signature_hex"]
+                        .as_str()
+                        .context("Missing 'signature_hex' field")?;
+                    Self::send_sign_response(connection_id, signature_hex, connections).await;
+                }
+                "send_success" => {
+                    Self::send_success(connection_id, connections).await;
+                }
+                "send_failure" => {
+                    Self::send_failure(connection_id, connections).await;
+                }
+                _ => {
+                    debug!("Unknown custom action: {}", name);
+                }
+            },
             ActionResult::CloseConnection => {
                 connections.lock().await.remove(&connection_id);
-                app_state.close_connection_on_server(server_id, connection_id).await;
+                app_state
+                    .close_connection_on_server(server_id, connection_id)
+                    .await;
                 let _ = status_tx.send(format!("✗ SSH Agent connection {} closed", connection_id));
                 let _ = status_tx.send("__UPDATE_UI__".to_string());
             }

@@ -125,7 +125,8 @@ mod tests {
     }
 
     /// Helper: Start Smart Card server
-    async fn start_smartcard_server() -> Result<(tokio::process::Child, u16), Box<dyn std::error::Error>> {
+    async fn start_smartcard_server(
+    ) -> Result<(tokio::process::Child, u16), Box<dyn std::error::Error>> {
         // TODO: Implement server startup helper
         // - Build netget with usb-smartcard feature
         // - Start on random port

@@ -32,7 +32,7 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::server::connection::ConnectionId;
 use crate::server::git::actions::GitProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 
 /// Git Smart HTTP server
 pub struct GitServer;
@@ -59,11 +59,12 @@ impl GitServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
                         info!("Git connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx
-                            .send(format!("[INFO] Git connection from {}", remote_addr));
+                        let _ =
+                            status_tx.send(format!("[INFO] Git connection from {}", remote_addr));
 
                         // Add connection to ServerInstance
                         use crate::state::server::{
@@ -130,10 +131,8 @@ impl GitServer {
                             app_state_clone
                                 .close_connection_on_server(server_id, connection_id)
                                 .await;
-                            let _ = status_tx_clone.send(format!(
-                                "[INFO] Git connection {} closed",
-                                connection_id
-                            ));
+                            let _ = status_tx_clone
+                                .send(format!("[INFO] Git connection {} closed", connection_id));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
@@ -342,7 +341,7 @@ Provide references for this repository."#,
         .generate_with_retry(
             &model_str,
             &prompt,
-            r#"[{"type": "git_advertise_refs", ...}]"#
+            r#"[{"type": "git_advertise_refs", ...}]"#,
         )
         .await
     {
@@ -396,18 +395,20 @@ Provide references for this repository."#,
 
                 Ok(Response::builder()
                     .status(StatusCode::OK)
-                    .header("Content-Type", "application/x-git-upload-pack-advertisement")
+                    .header(
+                        "Content-Type",
+                        "application/x-git-upload-pack-advertisement",
+                    )
                     .header("Cache-Control", "no-cache")
                     .body(Full::new(Bytes::from(response_body)))
                     .unwrap())
             }
             Ok(ActionResult::Custom { name, data }) if name == "git_error_response" => {
-                let message = data.get("message").and_then(|v| v.as_str()).unwrap_or("Error");
-                let code = data
-                    .get("code")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(500)
-                    as u16;
+                let message = data
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Error");
+                let code = data.get("code").and_then(|v| v.as_u64()).unwrap_or(500) as u16;
 
                 Ok(build_error_response(
                     StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
@@ -510,11 +511,7 @@ Generate a pack file response."#,
         }
     };
     let llm_response = match llm_client
-        .generate_with_retry(
-            &model_str,
-            &prompt,
-            r#"[{"type": "git_send_pack", ...}]"#
-        )
+        .generate_with_retry(&model_str, &prompt, r#"[{"type": "git_send_pack", ...}]"#)
         .await
     {
         Ok(response) => response,
@@ -542,10 +539,7 @@ Generate a pack file response."#,
         }
     };
 
-    let actions = match actions_result
-        .get("actions")
-        .and_then(|v| v.as_array())
-    {
+    let actions = match actions_result.get("actions").and_then(|v| v.as_array()) {
         Some(a) => a,
         None => {
             return Ok(build_error_response(
@@ -558,14 +552,10 @@ Generate a pack file response."#,
     if let Some(action) = actions.first() {
         match protocol.execute_action(action.clone()) {
             Ok(ActionResult::Custom { name, data }) if name == "git_pack_response" => {
-                let pack_data = data
-                    .get("pack_data")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                let pack_data = data.get("pack_data").and_then(|v| v.as_str()).unwrap_or("");
 
                 // Decode base64 pack data
-                let pack_bytes = match base64::engine::general_purpose::STANDARD.decode(pack_data)
-                {
+                let pack_bytes = match base64::engine::general_purpose::STANDARD.decode(pack_data) {
                     Ok(bytes) => bytes,
                     Err(e) => {
                         error!("Failed to decode pack data: {}", e);
@@ -584,12 +574,11 @@ Generate a pack file response."#,
                     .unwrap())
             }
             Ok(ActionResult::Custom { name, data }) if name == "git_error_response" => {
-                let message = data.get("message").and_then(|v| v.as_str()).unwrap_or("Error");
-                let code = data
-                    .get("code")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(500)
-                    as u16;
+                let message = data
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Error");
+                let code = data.get("code").and_then(|v| v.as_u64()).unwrap_or(500) as u16;
 
                 Ok(build_error_response(
                     StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
@@ -619,7 +608,8 @@ fn build_refs_response(data: &Value) -> Vec<u8> {
 
     // Service announcement
     let service_line = "# service=git-upload-pack\n";
-    response.extend_from_slice(format!("{:04x}{}", service_line.len() + 4, service_line).as_bytes());
+    response
+        .extend_from_slice(format!("{:04x}{}", service_line.len() + 4, service_line).as_bytes());
     response.extend_from_slice(b"0000"); // Flush packet
 
     // Get refs from data
@@ -637,9 +627,15 @@ fn build_refs_response(data: &Value) -> Vec<u8> {
 
     if let Some(refs_array) = refs {
         for (idx, ref_obj) in refs_array.iter().enumerate() {
-            let name = ref_obj.get("name").and_then(|v| v.as_str()).unwrap_or("refs/heads/main");
+            let name = ref_obj
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("refs/heads/main");
             let default_sha = "0".repeat(40);
-            let sha = ref_obj.get("sha").and_then(|v| v.as_str()).unwrap_or(&default_sha);
+            let sha = ref_obj
+                .get("sha")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&default_sha);
 
             let ref_line = if idx == 0 {
                 // First ref includes capabilities
@@ -666,13 +662,12 @@ async fn track_repo_access(
     connection_id: ConnectionId,
     repo_name: &str,
 ) -> anyhow::Result<()> {
-    
-
     app_state
         .with_server_mut(server_id, |server| {
             if let Some(conn) = server.connections.get_mut(&connection_id) {
                 if let Some(obj) = conn.protocol_info.data.as_object_mut() {
-                    let mut recent_repos: Vec<String> = obj.get("recent_repos")
+                    let mut recent_repos: Vec<String> = obj
+                        .get("recent_repos")
                         .and_then(|v| serde_json::from_value(v.clone()).ok())
                         .unwrap_or_default();
                     if !recent_repos.contains(&repo_name.to_string()) {
@@ -682,7 +677,10 @@ async fn track_repo_access(
                             recent_repos.remove(0);
                         }
                     }
-                    obj.insert("recent_repos".to_string(), serde_json::to_value(&recent_repos).unwrap_or(serde_json::json!([])));
+                    obj.insert(
+                        "recent_repos".to_string(),
+                        serde_json::to_value(&recent_repos).unwrap_or(serde_json::json!([])),
+                    );
                 }
             }
         })

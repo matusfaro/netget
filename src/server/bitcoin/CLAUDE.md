@@ -2,11 +2,14 @@
 
 ## Overview
 
-This implementation provides a Bitcoin P2P protocol server that is **NOT a real full node**. Instead, the LLM controls all protocol responses, allowing NetGet to simulate Bitcoin P2P protocol behavior without implementing the full blockchain validation, storage, and consensus logic.
+This implementation provides a Bitcoin P2P protocol server that is **NOT a real full node**. Instead, the LLM controls
+all protocol responses, allowing NetGet to simulate Bitcoin P2P protocol behavior without implementing the full
+blockchain validation, storage, and consensus logic.
 
 ## Library Choice
 
 **Server**: `rust-bitcoin` crate (v0.32+)
+
 - Industry-standard Bitcoin library for Rust
 - Comprehensive message parsing/serialization via `bitcoin::network::message`
 - Supports all Bitcoin P2P message types (version, verack, ping, pong, getdata, inv, block, tx, etc.)
@@ -20,26 +23,28 @@ This implementation provides a Bitcoin P2P protocol server that is **NOT a real 
 ### Message Flow
 
 1. **Connection Established**: TCP connection accepted
-   - Event: `bitcoin_connection_opened`
-   - LLM decides: wait for peer's version, or send our version first
-   - Actions available: `send_version`, `close_this_connection`
+    - Event: `bitcoin_connection_opened`
+    - LLM decides: wait for peer's version, or send our version first
+    - Actions available: `send_version`, `close_this_connection`
 
 2. **Message Received**: Raw bytes arrive
-   - Parse using `RawNetworkMessage::consensus_decode()`
-   - Validate magic bytes match configured network
-   - Extract message type and payload
-   - Event: `bitcoin_message_received` with parsed message data
-   - LLM decides response based on message type
-   - Actions available: `send_version`, `send_verack`, `send_ping`, `send_pong`, `send_getaddr`, `send_bitcoin_message`, `close_this_connection`
+    - Parse using `RawNetworkMessage::consensus_decode()`
+    - Validate magic bytes match configured network
+    - Extract message type and payload
+    - Event: `bitcoin_message_received` with parsed message data
+    - LLM decides response based on message type
+    - Actions available: `send_version`, `send_verack`, `send_ping`, `send_pong`, `send_getaddr`,
+      `send_bitcoin_message`, `close_this_connection`
 
 3. **Message Sent**: LLM action executed
-   - Build message using `RawNetworkMessage::new(magic, payload)`
-   - Encode using `consensus_encode()`
-   - Send raw bytes over TCP
+    - Build message using `RawNetworkMessage::new(magic, payload)`
+    - Encode using `consensus_encode()`
+    - Send raw bytes over TCP
 
 ### Network Support
 
 Supports all Bitcoin networks via `network` startup parameter:
+
 - `mainnet` (default): Magic bytes `0xF9BEB4D9`
 - `testnet`: Magic bytes `0x0B110907`
 - `signet`: Magic bytes `0x40CF030A`
@@ -48,6 +53,7 @@ Supports all Bitcoin networks via `network` startup parameter:
 ### Message Types Handled
 
 The implementation parses all Bitcoin P2P message types:
+
 - **Handshake**: `version`, `verack`
 - **Connectivity**: `ping`, `pong`, `getaddr`, `addr`, `addrv2`, `sendaddrv2`
 - **Inventory**: `inv`, `getdata`, `notfound`
@@ -66,42 +72,44 @@ The implementation parses all Bitcoin P2P message types:
 Triggered by network events, return `ActionResult`:
 
 1. **send_bitcoin_message** - Send raw hex-encoded message
-   - Use for complex messages not covered by helpers
-   - Example: `{"type": "send_bitcoin_message", "hex_data": "f9beb4d9..."}`
+    - Use for complex messages not covered by helpers
+    - Example: `{"type": "send_bitcoin_message", "hex_data": "f9beb4d9..."}`
 
 2. **send_version** - Send version handshake message
-   - Parameters: `network`, `version`, `services`, `user_agent`, `start_height`, `relay`
-   - Automatically generates nonce and timestamp
-   - Example: `{"type": "send_version", "network": "mainnet", "version": 70015}`
+    - Parameters: `network`, `version`, `services`, `user_agent`, `start_height`, `relay`
+    - Automatically generates nonce and timestamp
+    - Example: `{"type": "send_version", "network": "mainnet", "version": 70015}`
 
 3. **send_verack** - Acknowledge version (complete handshake)
-   - Parameters: `network`
-   - Example: `{"type": "send_verack", "network": "mainnet"}`
+    - Parameters: `network`
+    - Example: `{"type": "send_verack", "network": "mainnet"}`
 
 4. **send_ping** - Send ping with nonce
-   - Parameters: `network`, `nonce` (optional, random if not provided)
-   - Example: `{"type": "send_ping", "nonce": 123456789}`
+    - Parameters: `network`, `nonce` (optional, random if not provided)
+    - Example: `{"type": "send_ping", "nonce": 123456789}`
 
 5. **send_pong** - Respond to ping
-   - Parameters: `network`, `nonce` (must match ping nonce)
-   - Example: `{"type": "send_pong", "nonce": 123456789}`
+    - Parameters: `network`, `nonce` (must match ping nonce)
+    - Example: `{"type": "send_pong", "nonce": 123456789}`
 
 6. **send_getaddr** - Request peer addresses
-   - Parameters: `network`
-   - Example: `{"type": "send_getaddr", "network": "mainnet"}`
+    - Parameters: `network`
+    - Example: `{"type": "send_getaddr", "network": "mainnet"}`
 
 7. **close_this_connection** - Close connection
-   - No parameters
-   - Example: `{"type": "close_this_connection"}`
+    - No parameters
+    - Example: `{"type": "close_this_connection"}`
 
 #### Event Data Format
 
 **bitcoin_connection_opened**:
+
 ```json
 {}
 ```
 
 **bitcoin_message_received**:
+
 ```json
 {
   "message_type": "version",
@@ -120,6 +128,7 @@ Triggered by network events, return `ActionResult`:
 ```
 
 For `ping`/`pong`:
+
 ```json
 {
   "message_type": "ping",
@@ -190,6 +199,7 @@ When in `Processing` state, incoming data is queued. After LLM response, queued 
 - ❌ **No wallet functionality** - cannot create or sign transactions
 
 This is a **protocol honeypot/simulator** where the LLM controls all responses. Useful for:
+
 - Security research and honeypots
 - Protocol testing and fuzzing
 - Educational demonstrations
@@ -198,6 +208,7 @@ This is a **protocol honeypot/simulator** where the LLM controls all responses. 
 ## Example LLM Prompts
 
 ### Basic Handshake
+
 ```
 Open Bitcoin P2P server on port 8333.
 When a peer connects, wait for their version message.
@@ -207,6 +218,7 @@ Handle ping/pong messages normally.
 ```
 
 ### Testnet Node Simulation
+
 ```
 Run Bitcoin P2P server on port 18333 for testnet network.
 Respond to version with version 70015, services=0.
@@ -215,6 +227,7 @@ Log all message types received.
 ```
 
 ### Custom Behavior
+
 ```
 Bitcoin P2P server on port 9333.
 After handshake, ignore all getdata requests (don't respond).
@@ -232,21 +245,27 @@ hex = "0.4"   # For hex encoding/decoding
 
 ## Implementation Notes
 
-1. **Message Parsing**: Uses `RawNetworkMessage::consensus_decode()` which may return error if message is incomplete (need more bytes) or malformed (actual error). We handle incomplete messages by accumulating data.
+1. **Message Parsing**: Uses `RawNetworkMessage::consensus_decode()` which may return error if message is incomplete (
+   need more bytes) or malformed (actual error). We handle incomplete messages by accumulating data.
 
-2. **Magic Bytes**: Network is configured at server startup via `network` parameter. All messages must match the configured network's magic bytes.
+2. **Magic Bytes**: Network is configured at server startup via `network` parameter. All messages must match the
+   configured network's magic bytes.
 
 3. **Nonce Generation**: Version and ping messages use `rand::random()` for nonces.
 
-4. **Address Fields**: Version message receiver/sender addresses are set to `0.0.0.0:0` (can be customized via LLM if needed).
+4. **Address Fields**: Version message receiver/sender addresses are set to `0.0.0.0:0` (can be customized via LLM if
+   needed).
 
-5. **Message Encoding**: All response messages are built using `RawNetworkMessage::new()` and encoded with `consensus_encode()` to ensure proper format.
+5. **Message Encoding**: All response messages are built using `RawNetworkMessage::new()` and encoded with
+   `consensus_encode()` to ensure proper format.
 
-6. **Connection Tracking**: Each connection tracks `handshake_complete` and `last_message_type` in `ProtocolConnectionInfo::Bitcoin`.
+6. **Connection Tracking**: Each connection tracks `handshake_complete` and `last_message_type` in
+   `ProtocolConnectionInfo::Bitcoin`.
 
 ## Future Enhancements
 
 Potential additions (not currently implemented):
+
 - Parse and provide more detail for complex message types (block, tx, inv)
 - Support BIP324 encrypted P2P messages
 - Implement simple blockchain state for more realistic responses

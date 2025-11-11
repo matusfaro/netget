@@ -14,7 +14,7 @@ use std::sync::LazyLock;
 pub static S3_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "s3_connected",
-        "S3 client initialized and ready to access buckets"
+        "S3 client initialized and ready to access buckets",
     )
     .with_parameters(vec![
         Parameter {
@@ -36,7 +36,7 @@ pub static S3_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 pub static S3_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "s3_response_received",
-        "S3 operation completed with response"
+        "S3 operation completed with response",
     )
     .with_parameters(vec![
         Parameter {
@@ -101,7 +101,8 @@ impl crate::llm::actions::protocol_trait::Protocol for S3ClientProtocol {
             },
             ParameterDefinition {
                 name: "endpoint_url".to_string(),
-                description: "Custom S3 endpoint URL (for S3-compatible services like MinIO)".to_string(),
+                description: "Custom S3 endpoint URL (for S3-compatible services like MinIO)"
+                    .to_string(),
                 type_hint: "string".to_string(),
                 required: false,
                 example: json!("http://localhost:9000"),
@@ -136,7 +137,8 @@ impl crate::llm::actions::protocol_trait::Protocol for S3ClientProtocol {
                     Parameter {
                         name: "content_type".to_string(),
                         type_hint: "string".to_string(),
-                        description: "Content type (e.g., text/plain, application/json)".to_string(),
+                        description: "Content type (e.g., text/plain, application/json)"
+                            .to_string(),
                         required: false,
                     },
                 ],
@@ -258,14 +260,12 @@ impl crate::llm::actions::protocol_trait::Protocol for S3ClientProtocol {
             ActionDefinition {
                 name: "create_bucket".to_string(),
                 description: "Create a new S3 bucket".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "bucket".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Bucket name".to_string(),
-                        required: true,
-                    },
-                ],
+                parameters: vec![Parameter {
+                    name: "bucket".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Bucket name".to_string(),
+                    required: true,
+                }],
                 example: json!({
                     "type": "create_bucket",
                     "bucket": "my-new-bucket"
@@ -274,14 +274,12 @@ impl crate::llm::actions::protocol_trait::Protocol for S3ClientProtocol {
             ActionDefinition {
                 name: "delete_bucket".to_string(),
                 description: "Delete an S3 bucket (must be empty)".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "bucket".to_string(),
-                        type_hint: "string".to_string(),
-                        description: "Bucket name".to_string(),
-                        required: true,
-                    },
-                ],
+                parameters: vec![Parameter {
+                    name: "bucket".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Bucket name".to_string(),
+                    required: true,
+                }],
                 example: json!({
                     "type": "delete_bucket",
                     "bucket": "my-old-bucket"
@@ -333,7 +331,8 @@ impl crate::llm::actions::protocol_trait::Protocol for S3ClientProtocol {
             },
             ActionDefinition {
                 name: "get_object".to_string(),
-                description: "Download another object in response to previous operation".to_string(),
+                description: "Download another object in response to previous operation"
+                    .to_string(),
                 parameters: vec![
                     Parameter {
                         name: "bucket".to_string(),
@@ -492,12 +491,10 @@ impl Client for S3ClientProtocol {
                     }),
                 })
             }
-            "list_buckets" => {
-                Ok(ClientActionResult::Custom {
-                    name: "s3_list_buckets".to_string(),
-                    data: json!({}),
-                })
-            }
+            "list_buckets" => Ok(ClientActionResult::Custom {
+                name: "s3_list_buckets".to_string(),
+                data: json!({}),
+            }),
             "list_objects" => {
                 let bucket = action
                     .get("bucket")

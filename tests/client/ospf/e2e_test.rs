@@ -40,7 +40,7 @@ mod ospf_client_tests {
 
         // Start OSPF client on loopback interface
         let client_config = NetGetConfig::new(
-            "Connect to 127.0.0.1 via OSPF. Monitor for Hello packets. Don't send any packets yet."
+            "Connect to 127.0.0.1 via OSPF. Monitor for Hello packets. Don't send any packets yet.",
         );
 
         let mut client = start_netget_client(client_config).await?;

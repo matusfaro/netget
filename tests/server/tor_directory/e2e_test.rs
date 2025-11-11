@@ -5,7 +5,7 @@
 
 #![cfg(feature = "tor_directory")]
 
-use crate::server::helpers::{self, ServerConfig, E2EResult};
+use crate::server::helpers::{self, E2EResult, ServerConfig};
 use std::time::Duration;
 
 #[tokio::test]
@@ -29,11 +29,16 @@ async fn test_tor_directory_consensus_request() -> E2EResult<()> {
 
     let client = reqwest::Client::new();
     let response = match tokio::time::timeout(
-        Duration::from_secs(60),  // Increased from 15 to 60 seconds for LLM response
+        Duration::from_secs(60), // Increased from 15 to 60 seconds for LLM response
         client
-            .get(format!("http://127.0.0.1:{}/tor/status-vote/current/consensus", server.port))
-            .send()
-    ).await {
+            .get(format!(
+                "http://127.0.0.1:{}/tor/status-vote/current/consensus",
+                server.port
+            ))
+            .send(),
+    )
+    .await
+    {
         Ok(Ok(resp)) => {
             println!("✓ Received HTTP response: {}", resp.status());
             resp
@@ -53,11 +58,16 @@ async fn test_tor_directory_consensus_request() -> E2EResult<()> {
     // Get response text
     let text = response.text().await?;
     println!("Response length: {} bytes", text.len());
-    println!("Response preview: {}", &text.chars().take(200).collect::<String>());
+    println!(
+        "Response preview: {}",
+        &text.chars().take(200).collect::<String>()
+    );
 
     // Validate consensus format (basic check)
-    assert!(text.contains("network-status-version") || text.len() > 0,
-            "Expected consensus document to contain network-status-version or have content");
+    assert!(
+        text.contains("network-status-version") || text.len() > 0,
+        "Expected consensus document to contain network-status-version or have content"
+    );
 
     println!("✓ Tor Directory Consensus request test completed\n");
     Ok(())
@@ -84,8 +94,10 @@ async fn test_tor_directory_404_error() -> E2EResult<()> {
         Duration::from_secs(15),
         client
             .get(format!("http://127.0.0.1:{}/tor/invalid/path", server.port))
-            .send()
-    ).await {
+            .send(),
+    )
+    .await
+    {
         Ok(Ok(resp)) => {
             println!("✓ Received HTTP response: {}", resp.status());
             resp
@@ -101,8 +113,11 @@ async fn test_tor_directory_404_error() -> E2EResult<()> {
     };
 
     // Expect 404 or similar error
-    assert!(response.status().is_client_error() || response.status().is_server_error(),
-            "Expected error status code for unknown path, got {}", response.status());
+    assert!(
+        response.status().is_client_error() || response.status().is_server_error(),
+        "Expected error status code for unknown path, got {}",
+        response.status()
+    );
 
     println!("✓ Tor Directory 404 Error test completed\n");
     Ok(())
@@ -130,8 +145,10 @@ async fn test_tor_directory_microdescriptors() -> E2EResult<()> {
         Duration::from_secs(15),
         client
             .get(format!("http://127.0.0.1:{}/tor/micro/d/test", server.port))
-            .send()
-    ).await {
+            .send(),
+    )
+    .await
+    {
         Ok(Ok(resp)) => {
             println!("✓ Received HTTP response: {}", resp.status());
             resp
@@ -151,11 +168,16 @@ async fn test_tor_directory_microdescriptors() -> E2EResult<()> {
     // Get response text
     let text = response.text().await?;
     println!("Response length: {} bytes", text.len());
-    println!("Response preview: {}", &text.chars().take(200).collect::<String>());
+    println!(
+        "Response preview: {}",
+        &text.chars().take(200).collect::<String>()
+    );
 
     // Validate microdescriptor format (basic check)
-    assert!(text.contains("onion-key") || text.len() > 0,
-            "Expected microdescriptor to contain onion-key or have content");
+    assert!(
+        text.contains("onion-key") || text.len() > 0,
+        "Expected microdescriptor to contain onion-key or have content"
+    );
 
     println!("✓ Tor Directory Microdescriptors test completed\n");
     Ok(())

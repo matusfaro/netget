@@ -40,14 +40,12 @@ pub static BLUETOOTH_STATE_CHANGED_EVENT: LazyLock<EventType> = LazyLock::new(||
         "bluetooth_state_changed",
         "Bluetooth adapter state changed (powered on/off, advertising started/stopped, etc.)",
     )
-    .with_parameters(vec![
-        Parameter {
-            name: "state".to_string(),
-            type_hint: "string".to_string(),
-            description: "Current state description".to_string(),
-            required: true,
-        },
-    ])
+    .with_parameters(vec![Parameter {
+        name: "state".to_string(),
+        type_hint: "string".to_string(),
+        description: "Current state description".to_string(),
+        required: true,
+    }])
 });
 
 /// Read request event
@@ -144,14 +142,16 @@ impl Protocol for BluetoothBleProtocol {
             ParameterDefinition {
                 name: "device_name".to_string(),
                 type_hint: "string".to_string(),
-                description: "Bluetooth device name for advertising (default: NetGet-BLE)".to_string(),
+                description: "Bluetooth device name for advertising (default: NetGet-BLE)"
+                    .to_string(),
                 required: false,
                 example: json!("MyDevice"),
             },
             ParameterDefinition {
                 name: "auto_advertise".to_string(),
                 type_hint: "boolean".to_string(),
-                description: "Start advertising immediately after server starts (default: true)".to_string(),
+                description: "Start advertising immediately after server starts (default: true)"
+                    .to_string(),
                 required: false,
                 example: json!(true),
             },
@@ -168,10 +168,7 @@ impl Protocol for BluetoothBleProtocol {
     }
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![
-            respond_to_read_action(),
-            respond_to_write_action(),
-        ]
+        vec![respond_to_read_action(), respond_to_write_action()]
     }
 
     fn protocol_name(&self) -> &'static str {
@@ -197,7 +194,7 @@ impl Protocol for BluetoothBleProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
@@ -226,11 +223,12 @@ impl Server for BluetoothBleProtocol {
     fn spawn(
         &self,
         ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>,
-    > {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>>
+    {
         Box::pin(async move {
-            let device_name = ctx.startup_params.as_ref()
+            let device_name = ctx
+                .startup_params
+                .as_ref()
                 .and_then(|p| p.get_optional_string("device_name"))
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| "NetGet-BLE".to_string());
@@ -249,10 +247,7 @@ impl Server for BluetoothBleProtocol {
         })
     }
 
-    fn execute_action(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         // Actions are executed directly in the server event loop
         // This is just for validation
         let action_type = action["type"]
@@ -260,14 +255,15 @@ impl Server for BluetoothBleProtocol {
             .context("Action must have 'type' field")?;
 
         match action_type {
-            "add_service" | "start_advertising" | "stop_advertising" | "send_notification" |
-            "respond_to_read" | "respond_to_write" => {
-                Ok(ActionResult::Custom {
-                    name: action_type.to_string(),
-                    data: action,
-                })
-            }
-            _ => Err(anyhow::anyhow!("Unknown Bluetooth action type: {}", action_type)),
+            "add_service" | "start_advertising" | "stop_advertising" | "send_notification"
+            | "respond_to_read" | "respond_to_write" => Ok(ActionResult::Custom {
+                name: action_type.to_string(),
+                data: action,
+            }),
+            _ => Err(anyhow::anyhow!(
+                "Unknown Bluetooth action type: {}",
+                action_type
+            )),
         }
     }
 }
@@ -282,7 +278,8 @@ fn add_service_action() -> ActionDefinition {
             Parameter {
                 name: "uuid".to_string(),
                 type_hint: "string".to_string(),
-                description: "Service UUID (standard 16-bit like '180D' or full 128-bit UUID)".to_string(),
+                description: "Service UUID (standard 16-bit like '180D' or full 128-bit UUID)"
+                    .to_string(),
                 required: true,
             },
             Parameter {
@@ -316,15 +313,15 @@ fn start_advertising_action() -> ActionDefinition {
     ActionDefinition {
         name: "start_advertising".to_string(),
         description: "Start BLE advertising to make the device discoverable".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "device_name".to_string(),
-                type_hint: "string".to_string(),
-                description: "Device name to advertise (optional, uses server default if not specified)".to_string(),
-                required: false,
-            },
-        ],
-    example: json!({
+        parameters: vec![Parameter {
+            name: "device_name".to_string(),
+            type_hint: "string".to_string(),
+            description:
+                "Device name to advertise (optional, uses server default if not specified)"
+                    .to_string(),
+            required: false,
+        }],
+        example: json!({
             "type": "start_advertising"
         }),
     }
@@ -335,7 +332,7 @@ fn stop_advertising_action() -> ActionDefinition {
         name: "stop_advertising".to_string(),
         description: "Stop BLE advertising".to_string(),
         parameters: vec![],
-    example: json!({
+        example: json!({
             "type": "stop_advertising"
         }),
     }
@@ -355,11 +352,12 @@ fn send_notification_action() -> ActionDefinition {
             Parameter {
                 name: "value".to_string(),
                 type_hint: "string".to_string(),
-                description: "Hex-encoded value to send (e.g., '0048' for 72 in decimal)".to_string(),
+                description: "Hex-encoded value to send (e.g., '0048' for 72 in decimal)"
+                    .to_string(),
                 required: true,
             },
         ],
-    example: json!({
+        example: json!({
             "type": "send_notification",
             "characteristic_uuid": "example_characteristic_uuid",
             "value": "example_value"

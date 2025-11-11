@@ -5,6 +5,7 @@
 **OSPF query client** that joins an OSPF network to monitor and query routers for topology information.
 
 **Philosophy**: NetGet handles protocol details, LLM controls querying behavior
+
 - ✅ Real OSPF protocol (IP 89)
 - ✅ Multicast support (224.0.0.5)
 - ✅ LLM queries routers
@@ -19,28 +20,36 @@
 ## Use Cases
 
 ### 1. OSPF Topology Discovery
+
 Query OSPF network for topology information:
+
 ```
 netget> Open OSPF client on 192.168.1.100
 LLM: "Send Hello to discover neighbors. Request LSDB for topology map."
 ```
 
 ### 2. OSPF Network Monitoring
+
 Monitor OSPF state changes and neighbor relationships:
+
 ```
 netget> OSPF client on 10.0.0.1, monitor DR elections
 LLM: "Observe Hello packets. Track DR/BDR changes. Alert on priority changes."
 ```
 
 ### 3. Link Cost Analysis
+
 Analyze OSPF link costs and routing decisions:
+
 ```
 netget> OSPF client, query LSDB and analyze link costs
 LLM: "Request LSAs from router 2.2.2.2. Parse link costs. Calculate shortest paths."
 ```
 
 ### 4. OSPF Debugging
+
 Debug OSPF issues without affecting production:
+
 ```
 netget> OSPF client, passive monitoring
 LLM: "Listen for Hello packets. Log neighbor states. Don't respond."
@@ -62,6 +71,7 @@ let socket = create_ospf_raw_socket(interface_ip, true, false)?;
 ### Packet Flow
 
 **Incoming**:
+
 ```
 OSPF Router → OSPF packet (IP proto 89) → NetGet Client
                                               ↓
@@ -75,6 +85,7 @@ OSPF Router → OSPF packet (IP proto 89) → NetGet Client
 ```
 
 **Outgoing**:
+
 ```
 LLM → JSON action → execute_action() → ClientActionResult::Custom
                                               ↓
@@ -88,6 +99,7 @@ LLM → JSON action → execute_action() → ClientActionResult::Custom
 ### Query Mode Only
 
 **What we DON'T implement**:
+
 - Full OSPF adjacency formation
 - Real routing table
 - Route installation
@@ -95,6 +107,7 @@ LLM → JSON action → execute_action() → ClientActionResult::Custom
 - DR/BDR election participation
 
 **What LLM controls**:
+
 - Send Hello for neighbor discovery
 - Request LSDB info (DD packets)
 - Request specific LSAs (LSR)
@@ -155,6 +168,7 @@ When Link State Update received:
 ### Action Structure (Output from LLM)
 
 **Send Hello** (neighbor discovery):
+
 ```json
 {
   "type": "send_hello",
@@ -168,6 +182,7 @@ When Link State Update received:
 ```
 
 **Send Database Description Request**:
+
 ```json
 {
   "type": "send_database_description",
@@ -182,6 +197,7 @@ When Link State Update received:
 ```
 
 **Send Link State Request**:
+
 ```json
 {
   "type": "send_link_state_request",
@@ -192,6 +208,7 @@ When Link State Update received:
 ```
 
 **Wait for More Packets**:
+
 ```json
 {
   "type": "wait_for_more"
@@ -199,6 +216,7 @@ When Link State Update received:
 ```
 
 **Disconnect**:
+
 ```json
 {
   "type": "disconnect"
@@ -216,6 +234,7 @@ Client uses state machine to prevent concurrent LLM calls:
 - **Accumulating**: LLM busy, queuing packets
 
 **Transitions**:
+
 ```
 Idle → Processing (receive packet, call LLM)
 Processing → Idle (LLM done, no queued packets)
@@ -226,6 +245,7 @@ Accumulating → Processing (LLM done, process queued packet)
 ### Memory Management
 
 LLM can maintain memory across events:
+
 - Track discovered neighbors
 - Remember LSDB state
 - Track topology changes
@@ -273,6 +293,7 @@ send_ospf_packet(socket_fd, router_ip, &packet)?;
 ### Destination Options
 
 LLM specifies destination in action:
+
 - `"multicast"` → 224.0.0.5 (AllSPFRouters)
 - `"dr_multicast"` → 224.0.0.6 (AllDRRouters)
 - `"192.168.1.2"` → Unicast to specific router
@@ -280,6 +301,7 @@ LLM specifies destination in action:
 ## Current Implementation Status
 
 ### ✅ Completed
+
 - Raw IP socket creation (protocol 89)
 - Multicast group join (224.0.0.5)
 - IP header parsing
@@ -296,6 +318,7 @@ LLM specifies destination in action:
 - Memory management
 
 ### 📋 TODO
+
 - LSA detailed parsing (Router, Network, Summary LSAs)
 - LSA content analysis by LLM
 - Topology graph construction
@@ -307,6 +330,7 @@ LLM specifies destination in action:
 ### With Real OSPF Router (FRR)
 
 **Setup FRR** (on another machine):
+
 ```bash
 # On Linux router
 sudo apt install frr
@@ -321,6 +345,7 @@ interface eth0
 ```
 
 **Start NetGet Client** (requires root):
+
 ```bash
 sudo ./netget
 netget> open_client ospf 192.168.1.100 "Discover OSPF neighbors and query topology"
@@ -333,6 +358,7 @@ netget> open_client ospf 192.168.1.100 "Discover OSPF neighbors and query topolo
 ```
 
 **Observe FRR**:
+
 ```bash
 sudo vtysh -c "show ip ospf neighbor"
 # May or may not show NetGet (depends on LLM responses)
@@ -341,6 +367,7 @@ sudo vtysh -c "show ip ospf neighbor"
 ### Current Testing Capabilities
 
 **Can test**:
+
 - Hello packet reception
 - Neighbor discovery
 - DD packet exchange (partial)
@@ -349,6 +376,7 @@ sudo vtysh -c "show ip ospf neighbor"
 - Protocol parsing
 
 **Cannot test yet**:
+
 - Full adjacency formation
 - Complete LSDB synchronization
 - LSA detailed analysis
@@ -359,6 +387,7 @@ sudo vtysh -c "show ip ospf neighbor"
 ### Passive Monitoring Mode
 
 LLM can choose to only listen:
+
 - Set priority to 0 (never DR)
 - Don't respond to Hellos
 - Monitor without participating
@@ -366,6 +395,7 @@ LLM can choose to only listen:
 ### Minimal Impact
 
 Query mode has minimal network impact:
+
 - No route installation
 - No packet forwarding
 - No DR/BDR participation
@@ -374,12 +404,14 @@ Query mode has minimal network impact:
 ### Use Cases
 
 **Safe for**:
+
 - Production network monitoring
 - Topology discovery
 - OSPF debugging
 - Educational purposes
 
 **Caution**:
+
 - Sending Hellos may create neighbor relationships
 - Requesting LSDB creates network traffic
 - Use with network admin permission
@@ -420,6 +452,7 @@ LLM:
 ### Code Reuse
 
 OSPF client reuses server code:
+
 - `create_ospf_raw_socket()` - Socket creation
 - `build_hello_packet()` - Packet construction
 - `build_database_description_packet()` - DD construction
@@ -427,24 +460,26 @@ OSPF client reuses server code:
 
 ### Differences from Server
 
-| Aspect | Server | Client |
-|--------|--------|--------|
-| **Role** | Respond to queries | Query routers |
-| **Neighbors** | Track all neighbors | Observe neighbors |
-| **LSDB** | Generate fake LSAs | Parse real LSAs |
-| **DR/BDR** | Claim DR (LLM control) | Observe DR |
-| **Adjacency** | Form adjacencies | Monitor adjacencies |
-| **Use Case** | Honeypot, testing | Topology discovery |
+| Aspect        | Server                 | Client              |
+|---------------|------------------------|---------------------|
+| **Role**      | Respond to queries     | Query routers       |
+| **Neighbors** | Track all neighbors    | Observe neighbors   |
+| **LSDB**      | Generate fake LSAs     | Parse real LSAs     |
+| **DR/BDR**    | Claim DR (LLM control) | Observe DR          |
+| **Adjacency** | Form adjacencies       | Monitor adjacencies |
+| **Use Case**  | Honeypot, testing      | Topology discovery  |
 
 ### Limitations
 
 **Current**:
+
 - No full adjacency state machine
 - No LSA aging/refresh
 - No SPF calculation (intentional)
 - No route installation (intentional)
 
 **Future Enhancements**:
+
 - Detailed LSA parsing (Router, Network, Summary types)
 - Topology graph visualization
 - Link cost analysis
@@ -459,15 +494,18 @@ OSPF client reuses server code:
 ## Library Choices
 
 **Libraries Used:**
+
 - None (custom implementation)
 
 **Rationale:**
+
 - No mature Rust OSPF client library exists
 - Reuses server implementation for packet construction
 - Custom raw socket handling via `create_ospf_raw_socket()`
 - Direct libc calls for sendto/recvfrom
 
 **Dependencies:**
+
 - `socket2` (via server socket helpers)
 - `libc` (raw socket operations)
 - Standard tokio async runtime
@@ -475,18 +513,21 @@ OSPF client reuses server code:
 ## LLM Integration Strategy
 
 **Strengths:**
+
 - LLM excellent at analyzing topology data
 - JSON events clearly structured
 - Protocol parsing handled by code
 - LLM focuses on high-level decisions
 
 **Challenges:**
+
 - OSPF protocol complexity (many packet types)
 - LSA parsing requires detailed understanding
 - Adjacency state machine is complex
 - Topology graph reasoning
 
 **Mitigation:**
+
 - Start with Hello-only monitoring (simplest)
 - Gradually add DD/LSR support
 - LLM receives pre-parsed structured data
@@ -497,38 +538,41 @@ OSPF client reuses server code:
 ### Current Limitations
 
 1. **No Full Adjacency Formation**
-   - Client doesn't implement full state machine
-   - Can send DD/LSR, but doesn't track complete exchange
-   - Good for monitoring, not for full OSPF participation
+    - Client doesn't implement full state machine
+    - Can send DD/LSR, but doesn't track complete exchange
+    - Good for monitoring, not for full OSPF participation
 
 2. **No LSA Content Parsing**
-   - LSUs received but LSAs not fully parsed
-   - LLM sees "5 LSAs" but not link details
-   - TODO: Add Router/Network/Summary LSA parsing
+    - LSUs received but LSAs not fully parsed
+    - LLM sees "5 LSAs" but not link details
+    - TODO: Add Router/Network/Summary LSA parsing
 
 3. **No Periodic Hellos**
-   - Client doesn't proactively send Hellos
-   - LLM must explicitly request Hello sends
-   - TODO: Add scheduled task support
+    - Client doesn't proactively send Hellos
+    - LLM must explicitly request Hello sends
+    - TODO: Add scheduled task support
 
 4. **Requires Root**
-   - Raw IP sockets need CAP_NET_RAW
-   - Cannot run as regular user
-   - Platform-specific (Linux/macOS)
+    - Raw IP sockets need CAP_NET_RAW
+    - Cannot run as regular user
+    - Platform-specific (Linux/macOS)
 
 ### Design Trade-offs
 
 **Simplified State Machine**:
+
 - Pro: Easier to understand and maintain
 - Con: Cannot form full adjacencies
 - Decision: Query mode doesn't need full adjacency
 
 **No LSDB Storage**:
+
 - Pro: Stateless, LLM maintains context
 - Con: Cannot answer queries without re-fetching
 - Decision: LLM memory handles context
 
 **Code Reuse from Server**:
+
 - Pro: Consistent packet format, less code
 - Con: Tighter coupling with server
 - Decision: OSPF packet format is standard
@@ -536,7 +580,9 @@ OSPF client reuses server code:
 ## Future Enhancements
 
 ### Priority 1: LSA Parsing
+
 Parse Router/Network/Summary LSA content:
+
 ```json
 {
   "event": "ospf_lsa_parsed",
@@ -552,13 +598,16 @@ Parse Router/Network/Summary LSA content:
 ```
 
 LLM can then:
+
 - Build topology graph
 - Calculate link costs
 - Identify network segments
 - Detect topology changes
 
 ### Priority 2: Topology Visualization
+
 Generate topology graph from LSAs:
+
 ```
 LLM: "Discovered topology:
   Router 1.1.1.1 → Router 2.2.2.2 (cost 10)
@@ -568,7 +617,9 @@ LLM: "Discovered topology:
 ```
 
 ### Priority 3: Scheduled Hello
+
 Add periodic Hello sending:
+
 ```rust
 // Use scheduled tasks
 let task = ScheduledTask {
@@ -582,17 +633,17 @@ let task = ScheduledTask {
 
 ## Comparison: Full Router vs Query Client
 
-| Feature | Full OSPF Router | NetGet Query Client |
-|---------|------------------|---------------------|
-| Packet RX/TX | ✅ | ✅ |
-| Neighbor states | ✅ | ✅ (partial) |
-| DR/BDR election | ✅ Algorithm | ❌ Observe only |
-| LSA flooding | ✅ Automatic | ❌ Request only |
-| LSDB sync | ✅ Real sync | ❌ Query mode |
-| SPF calculation | ✅ Dijkstra | ❌ None |
-| Routing table | ✅ Real routes | ❌ Analysis only |
-| Route install | ✅ Kernel | ❌ None |
-| Code complexity | ~10,000 lines | ~600 lines |
-| Use case | Production routing | Topology discovery |
+| Feature         | Full OSPF Router   | NetGet Query Client |
+|-----------------|--------------------|---------------------|
+| Packet RX/TX    | ✅                  | ✅                   |
+| Neighbor states | ✅                  | ✅ (partial)         |
+| DR/BDR election | ✅ Algorithm        | ❌ Observe only      |
+| LSA flooding    | ✅ Automatic        | ❌ Request only      |
+| LSDB sync       | ✅ Real sync        | ❌ Query mode        |
+| SPF calculation | ✅ Dijkstra         | ❌ None              |
+| Routing table   | ✅ Real routes      | ❌ Analysis only     |
+| Route install   | ✅ Kernel           | ❌ None              |
+| Code complexity | ~10,000 lines      | ~600 lines          |
+| Use case        | Production routing | Topology discovery  |
 
 **Winner**: Query client for NetGet's use cases! 🎉

@@ -57,25 +57,37 @@ impl SshClient {
         startup_params: Option<crate::protocol::StartupParams>,
     ) -> Result<SocketAddr> {
         // Parse startup parameters
-        let params = startup_params.context("Missing required startup parameters for SSH client")?;
+        let params =
+            startup_params.context("Missing required startup parameters for SSH client")?;
 
         let username = params.get_string("username");
         let password = params.get_optional_string("password");
-        let auth_method = params.get_optional_string("auth_method")
+        let auth_method = params
+            .get_optional_string("auth_method")
             .unwrap_or_else(|| "password".to_string());
 
         if auth_method != "password" {
-            return Err(anyhow::anyhow!("Only password authentication is currently supported"));
+            return Err(anyhow::anyhow!(
+                "Only password authentication is currently supported"
+            ));
         }
 
         if password.is_none() {
-            return Err(anyhow::anyhow!("Password is required for password authentication"));
+            return Err(anyhow::anyhow!(
+                "Password is required for password authentication"
+            ));
         }
 
         let password = password.unwrap();
 
-        info!("SSH client {} connecting to {} as user '{}'", client_id, remote_addr, username);
-        let _ = status_tx.send(format!("[CLIENT] SSH connecting to {} as {}", remote_addr, username));
+        info!(
+            "SSH client {} connecting to {} as user '{}'",
+            client_id, remote_addr, username
+        );
+        let _ = status_tx.send(format!(
+            "[CLIENT] SSH connecting to {} as {}",
+            remote_addr, username
+        ));
 
         // Parse address
         let addr = match remote_addr.parse::<SocketAddr>() {
@@ -87,15 +99,16 @@ impl SshClient {
                     return Err(anyhow::anyhow!("Invalid address format: {}", remote_addr));
                 }
                 let host = parts[0];
-                let port: u16 = parts[1].parse()
-                    .context("Invalid port number")?;
+                let port: u16 = parts[1].parse().context("Invalid port number")?;
 
                 let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host, port))
                     .await
                     .context(format!("Failed to resolve hostname: {}", host))?
                     .collect();
 
-                addrs.first().cloned()
+                addrs
+                    .first()
+                    .cloned()
                     .ok_or_else(|| anyhow::anyhow!("No addresses found for {}", host))?
             }
         };
@@ -118,14 +131,18 @@ impl SshClient {
             .context("SSH authentication failed")?;
 
         if !auth_result {
-            return Err(anyhow::anyhow!("SSH authentication failed: incorrect credentials"));
+            return Err(anyhow::anyhow!(
+                "SSH authentication failed: incorrect credentials"
+            ));
         }
 
         info!("SSH client {} authenticated successfully", client_id);
         let _ = status_tx.send(format!("[CLIENT] SSH client {} authenticated", client_id));
 
         // Update client status
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Get local address (use the connected socket address)
@@ -248,7 +265,11 @@ impl SshClient {
                     match channel.wait().await {
                         Some(ChannelMsg::Data { ref data }) => {
                             output.extend_from_slice(data);
-                            trace!("SSH client {} received {} bytes of output", client_id, data.len());
+                            trace!(
+                                "SSH client {} received {} bytes of output",
+                                client_id,
+                                data.len()
+                            );
                         }
                         Some(ChannelMsg::ExitStatus { exit_status }) => {
                             exit_code = Some(exit_status);
@@ -343,7 +364,9 @@ impl SshClient {
 
                 // Close session
                 let session = session_arc.lock().await;
-                session.disconnect(Disconnect::ByApplication, "", "en").await?;
+                session
+                    .disconnect(Disconnect::ByApplication, "", "en")
+                    .await?;
 
                 Ok(())
             }

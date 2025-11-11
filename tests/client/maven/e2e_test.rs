@@ -44,7 +44,7 @@ mod maven_client_tests {
     async fn test_maven_client_download_pom() -> E2EResult<()> {
         // Start Maven client to download a POM file
         let client_config = NetGetConfig::new(
-            "Connect to Maven Central and download the POM file for junit:junit:4.13.2"
+            "Connect to Maven Central and download the POM file for junit:junit:4.13.2",
         );
 
         let mut client = start_netget_client(client_config).await?;
@@ -55,7 +55,10 @@ mod maven_client_tests {
         // Verify client output shows Maven and POM-related messages
         let output = client.get_output().await;
         assert!(
-            output.contains("Maven") || output.contains("maven") || output.contains("POM") || output.contains("pom"),
+            output.contains("Maven")
+                || output.contains("maven")
+                || output.contains("POM")
+                || output.contains("pom"),
             "Client should show Maven and POM messages. Output: {:?}",
             output
         );
@@ -74,7 +77,7 @@ mod maven_client_tests {
     async fn test_maven_client_search_versions() -> E2EResult<()> {
         // Start Maven client to search for artifact versions
         let client_config = NetGetConfig::new(
-            "Connect to Maven Central and find all available versions of com.google.guava:guava"
+            "Connect to Maven Central and find all available versions of com.google.guava:guava",
         );
 
         let mut client = start_netget_client(client_config).await?;
@@ -129,7 +132,7 @@ mod maven_client_tests {
     async fn test_maven_client_missing_artifact() -> E2EResult<()> {
         // Start Maven client trying to download a non-existent artifact
         let client_config = NetGetConfig::new(
-            "Connect to Maven Central and try to download nonexistent:artifact:99.99.99"
+            "Connect to Maven Central and try to download nonexistent:artifact:99.99.99",
         );
 
         let mut client = start_netget_client(client_config).await?;
@@ -141,7 +144,11 @@ mod maven_client_tests {
         let output = client.get_output().await;
         // Either shows error or Maven connection
         assert!(
-            output.contains("Maven") || output.contains("maven") || output.contains("ERROR") || output.contains("not found") || output.contains("404"),
+            output.contains("Maven")
+                || output.contains("maven")
+                || output.contains("ERROR")
+                || output.contains("not found")
+                || output.contains("404"),
             "Client should show Maven protocol or error message. Output: {:?}",
             output
         );

@@ -11,16 +11,16 @@ use tracing::{debug, error, info, trace};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
-use actions::BOOTP_REQUEST_EVENT;
-use crate::server::BootpProtocol;
 use crate::protocol::Event;
+use crate::server::BootpProtocol;
 use crate::state::app_state::AppState;
+use actions::BOOTP_REQUEST_EVENT;
 
-#[cfg(feature = "bootp")]
-use dhcproto::{v4, Decodable, Decoder};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 #[cfg(feature = "bootp")]
 use actions::BootpRequestContext;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
+#[cfg(feature = "bootp")]
+use dhcproto::{v4, Decodable, Decoder};
 
 /// BOOTP server that forwards requests to LLM
 pub struct BootpServer;
@@ -48,7 +48,8 @@ impl BootpServer {
                 match socket.recv_from(&mut buffer).await {
                     Ok((n, peer_addr)) => {
                         let data = buffer[..n].to_vec();
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
 
                         // DEBUG: Log summary
                         console_debug!(status_tx, "BOOTP received {} bytes from {}", n, peer_addr);
@@ -61,14 +62,21 @@ impl BootpServer {
                         let parsed_info = Self::parse_bootp_message(&data);
 
                         #[cfg(not(feature = "bootp"))]
-                        let parsed_info: Option<(String, Option<BootpRequestContext>)> = None;
+                        let parsed_info: Option<(
+                            String,
+                            Option<BootpRequestContext>,
+                        )> = None;
 
                         // Add connection to ServerInstance
-                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
                         let now = std::time::Instant::now();
 
                         #[cfg(feature = "bootp")]
-                        let _request_type = parsed_info.as_ref()
+                        let _request_type = parsed_info
+                            .as_ref()
                             .map(|(desc, _)| desc.clone())
                             .unwrap_or_else(|| "unknown".to_string());
 
@@ -88,7 +96,9 @@ impl BootpServer {
                             status_changed_at: now,
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
-                        app_state.add_connection_to_server(server_id, conn_state).await;
+                        app_state
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let llm_clone = llm_client.clone();
@@ -107,18 +117,27 @@ impl BootpServer {
 
                             // Extract event data
                             #[cfg(feature = "bootp")]
-                            let (op_code, client_mac, client_ip) = if let Some((_, Some(ctx))) = &parsed_info {
-                                (
-                                    format!("{:?}", ctx.op),
-                                    hex::encode(&ctx.chaddr),
-                                    ctx.ciaddr.to_string()
-                                )
-                            } else {
-                                ("unknown".to_string(), "unknown".to_string(), "0.0.0.0".to_string())
-                            };
+                            let (op_code, client_mac, client_ip) =
+                                if let Some((_, Some(ctx))) = &parsed_info {
+                                    (
+                                        format!("{:?}", ctx.op),
+                                        hex::encode(&ctx.chaddr),
+                                        ctx.ciaddr.to_string(),
+                                    )
+                                } else {
+                                    (
+                                        "unknown".to_string(),
+                                        "unknown".to_string(),
+                                        "0.0.0.0".to_string(),
+                                    )
+                                };
 
                             #[cfg(not(feature = "bootp"))]
-                            let (op_code, client_mac, client_ip) = ("unknown".to_string(), "unknown".to_string(), "0.0.0.0".to_string());
+                            let (op_code, client_mac, client_ip) = (
+                                "unknown".to_string(),
+                                "unknown".to_string(),
+                                "0.0.0.0".to_string(),
+                            );
 
                             let event_data = serde_json::json!({
                                 "op_code": op_code,
@@ -129,7 +148,10 @@ impl BootpServer {
                             let event = Event::new(&BOOTP_REQUEST_EVENT, event_data);
 
                             debug!("BOOTP calling LLM for request from {}", peer_addr);
-                            let _ = status_clone.send(format!("[DEBUG] BOOTP calling LLM for request from {}", peer_addr));
+                            let _ = status_clone.send(format!(
+                                "[DEBUG] BOOTP calling LLM for request from {}",
+                                peer_addr
+                            ));
 
                             match call_llm(
                                 &llm_clone,
@@ -138,33 +160,62 @@ impl BootpServer {
                                 None,
                                 &event,
                                 protocol_clone.as_ref(),
-                            ).await {
+                            )
+                            .await
+                            {
                                 Ok(execution_result) => {
                                     for message in &execution_result.messages {
                                         info!("{}", message);
                                         let _ = status_clone.send(format!("[INFO] {}", message));
                                     }
 
-                                    debug!("BOOTP got {} protocol results", execution_result.protocol_results.len());
-                                    let _ = status_clone.send(format!("[DEBUG] BOOTP got {} protocol results", execution_result.protocol_results.len()));
+                                    debug!(
+                                        "BOOTP got {} protocol results",
+                                        execution_result.protocol_results.len()
+                                    );
+                                    let _ = status_clone.send(format!(
+                                        "[DEBUG] BOOTP got {} protocol results",
+                                        execution_result.protocol_results.len()
+                                    ));
 
                                     for protocol_result in execution_result.protocol_results {
-                                                        if let Some(output_data) = protocol_result.get_all_output().first() {
-                                                            let _ = socket_clone.send_to(output_data, peer_addr).await;
+                                        if let Some(output_data) =
+                                            protocol_result.get_all_output().first()
+                                        {
+                                            let _ =
+                                                socket_clone.send_to(output_data, peer_addr).await;
 
-                                                            // DEBUG: Log summary
-                                                            debug!("BOOTP sent {} bytes to {}", output_data.len(), peer_addr);
-                                                            let _ = status_clone.send(format!("[DEBUG] BOOTP sent {} bytes to {}", output_data.len(), peer_addr));
+                                            // DEBUG: Log summary
+                                            debug!(
+                                                "BOOTP sent {} bytes to {}",
+                                                output_data.len(),
+                                                peer_addr
+                                            );
+                                            let _ = status_clone.send(format!(
+                                                "[DEBUG] BOOTP sent {} bytes to {}",
+                                                output_data.len(),
+                                                peer_addr
+                                            ));
 
-                                                            // TRACE: Log full payload
-                                                            let hex_str = hex::encode(output_data);
-                                                            trace!("BOOTP sent (hex): {}", hex_str);
-                                                            let _ = status_clone.send(format!("[TRACE] BOOTP sent (hex): {}", hex_str));
+                                            // TRACE: Log full payload
+                                            let hex_str = hex::encode(output_data);
+                                            trace!("BOOTP sent (hex): {}", hex_str);
+                                            let _ = status_clone.send(format!(
+                                                "[TRACE] BOOTP sent (hex): {}",
+                                                hex_str
+                                            ));
 
-                                                            let _ = status_clone.send(format!("→ BOOTP response to {} ({} bytes)", peer_addr, output_data.len()));
+                                            let _ = status_clone.send(format!(
+                                                "→ BOOTP response to {} ({} bytes)",
+                                                peer_addr,
+                                                output_data.len()
+                                            ));
                                         } else {
                                             debug!("BOOTP protocol result has no output data");
-                                            let _ = status_clone.send("[DEBUG] BOOTP protocol result has no output data".to_string());
+                                            let _ = status_clone.send(
+                                                "[DEBUG] BOOTP protocol result has no output data"
+                                                    .to_string(),
+                                            );
                                         }
                                     }
                                 }
@@ -189,8 +240,6 @@ impl BootpServer {
 
     #[cfg(feature = "bootp")]
     fn parse_bootp_message(data: &[u8]) -> Option<(String, Option<BootpRequestContext>)> {
-        
-
         match v4::Message::decode(&mut Decoder::new(data)) {
             Ok(msg) => {
                 let op = msg.opcode();
@@ -199,7 +248,10 @@ impl BootpServer {
                 let mac_str = hex::encode(msg.chaddr());
                 let description = format!(
                     "BOOTP {} from client MAC {} (transaction ID: 0x{:08x}, client IP: {})",
-                    format!("{:?}", op), mac_str, msg.xid(), msg.ciaddr()
+                    format!("{:?}", op),
+                    mac_str,
+                    msg.xid(),
+                    msg.ciaddr()
                 );
 
                 // Create context for action execution
@@ -209,10 +261,12 @@ impl BootpServer {
                     op: op,
                     ciaddr: msg.ciaddr(),
                     giaddr: msg.giaddr(),
-                    sname: msg.sname()
+                    sname: msg
+                        .sname()
                         .map(|s| String::from_utf8_lossy(s).trim_matches('\0').to_string())
                         .unwrap_or_default(),
-                    file: msg.fname()
+                    file: msg
+                        .fname()
                         .map(|f| String::from_utf8_lossy(f).trim_matches('\0').to_string())
                         .unwrap_or_default(),
                 };

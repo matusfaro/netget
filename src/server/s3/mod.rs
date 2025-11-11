@@ -19,12 +19,12 @@ use hyper_util::rt::TokioIo;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
 
-use crate::server::connection::ConnectionId;
-use crate::server::S3Protocol;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
+use crate::server::connection::ConnectionId;
+use crate::server::S3Protocol;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 
 /// S3 server that delegates API operations to LLM
 pub struct S3Server;
@@ -38,7 +38,8 @@ impl S3Server {
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
     ) -> anyhow::Result<SocketAddr> {
-        let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let listener =
+            crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         console_info!(status_tx, "S3 server listening on {}", local_addr);
 
@@ -49,13 +50,18 @@ impl S3Server {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
                         info!("S3 connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!("[INFO] S3 connection from {}", remote_addr));
+                        let _ =
+                            status_tx.send(format!("[INFO] S3 connection from {}", remote_addr));
 
                         // Add connection to ServerInstance
-                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -70,7 +76,9 @@ impl S3Server {
                             status_changed_at: now,
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
-                        app_state.add_connection_to_server(server_id, conn_state).await;
+                        app_state
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let llm_client_clone = llm_client.clone();
@@ -104,13 +112,18 @@ impl S3Server {
                             });
 
                             // Serve HTTP/1 on this connection
-                            if let Err(err) = http1::Builder::new().serve_connection(io, service).await {
+                            if let Err(err) =
+                                http1::Builder::new().serve_connection(io, service).await
+                            {
                                 error!("Error serving S3 connection: {:?}", err);
                             }
 
                             // Mark connection as closed
-                            app_state_clone.close_connection_on_server(server_id, connection_id).await;
-                            let _ = status_tx_clone.send(format!("[INFO] S3 connection {} closed", connection_id));
+                            app_state_clone
+                                .close_connection_on_server(server_id, connection_id)
+                                .await;
+                            let _ = status_tx_clone
+                                .send(format!("[INFO] S3 connection {} closed", connection_id));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
@@ -165,7 +178,10 @@ async fn handle_s3_request_with_llm(
 
     if !body_bytes.is_empty() {
         trace!("S3 request body ({} bytes)", body_bytes.len());
-        let _ = status_tx.send(format!("[TRACE] S3 request body: {} bytes", body_bytes.len()));
+        let _ = status_tx.send(format!(
+            "[TRACE] S3 request body: {} bytes",
+            body_bytes.len()
+        ));
     }
 
     // Create S3 request event
@@ -191,7 +207,8 @@ async fn handle_s3_request_with_llm(
         None, // Connection ID not needed for stateless HTTP
         &event,
         protocol.as_ref(),
-    ).await;
+    )
+    .await;
 
     // Process LLM result and build HTTP response
     match llm_result {
@@ -233,39 +250,51 @@ async fn handle_s3_request_with_llm(
 
 /// Parse S3 path into bucket, key, and operation
 fn parse_s3_path(method: &Method, path: &str) -> (Option<String>, Option<String>, String) {
-    let parts: Vec<&str> = path.trim_start_matches('/').split('/').filter(|s| !s.is_empty()).collect();
+    let parts: Vec<&str> = path
+        .trim_start_matches('/')
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
 
     match (method, parts.as_slice()) {
         // List buckets: GET /
         (m, []) if m == Method::GET => (None, None, "ListBuckets".to_string()),
 
         // Bucket operations: GET /bucket, PUT /bucket, DELETE /bucket
-        (m, [bucket]) if m == Method::GET => (Some(bucket.to_string()), None, "ListObjects".to_string()),
-        (m, [bucket]) if m == Method::PUT => (Some(bucket.to_string()), None, "CreateBucket".to_string()),
-        (m, [bucket]) if m == Method::DELETE => (Some(bucket.to_string()), None, "DeleteBucket".to_string()),
-        (m, [bucket]) if m == Method::HEAD => (Some(bucket.to_string()), None, "HeadBucket".to_string()),
+        (m, [bucket]) if m == Method::GET => {
+            (Some(bucket.to_string()), None, "ListObjects".to_string())
+        }
+        (m, [bucket]) if m == Method::PUT => {
+            (Some(bucket.to_string()), None, "CreateBucket".to_string())
+        }
+        (m, [bucket]) if m == Method::DELETE => {
+            (Some(bucket.to_string()), None, "DeleteBucket".to_string())
+        }
+        (m, [bucket]) if m == Method::HEAD => {
+            (Some(bucket.to_string()), None, "HeadBucket".to_string())
+        }
 
         // Object operations: GET /bucket/key, PUT /bucket/key, DELETE /bucket/key
         (m, parts) if parts.len() >= 2 && m == Method::GET => {
             let bucket = parts[0].to_string();
             let key = parts[1..].join("/");
             (Some(bucket), Some(key), "GetObject".to_string())
-        },
+        }
         (m, parts) if parts.len() >= 2 && m == Method::PUT => {
             let bucket = parts[0].to_string();
             let key = parts[1..].join("/");
             (Some(bucket), Some(key), "PutObject".to_string())
-        },
+        }
         (m, parts) if parts.len() >= 2 && m == Method::DELETE => {
             let bucket = parts[0].to_string();
             let key = parts[1..].join("/");
             (Some(bucket), Some(key), "DeleteObject".to_string())
-        },
+        }
         (m, parts) if parts.len() >= 2 && m == Method::HEAD => {
             let bucket = parts[0].to_string();
             let key = parts[1..].join("/");
             (Some(bucket), Some(key), "HeadObject".to_string())
-        },
+        }
 
         // Unknown
         _ => (None, None, "Unknown".to_string()),
@@ -282,20 +311,27 @@ async fn process_s3_action_result(
             match name.as_str() {
                 "s3_object" => {
                     // Send object content
-                    let content = data.get("content")
+                    let content = data
+                        .get("content")
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
 
-                    let content_type = data.get("content_type")
+                    let content_type = data
+                        .get("content_type")
                         .and_then(|v| v.as_str())
                         .unwrap_or("application/octet-stream");
 
-                    let etag = data.get("etag")
+                    let etag = data
+                        .get("etag")
                         .and_then(|v| v.as_str())
                         .unwrap_or("\"default-etag\"");
 
-                    debug!("Sending S3 object ({} bytes, {})", content.len(), content_type);
+                    debug!(
+                        "Sending S3 object ({} bytes, {})",
+                        content.len(),
+                        content_type
+                    );
                     let _ = status_tx.send(format!("[DEBUG] → S3 object {} bytes", content.len()));
 
                     Ok(Response::builder()
@@ -307,19 +343,24 @@ async fn process_s3_action_result(
                 }
                 "s3_object_list" => {
                     // Send list of objects as XML
-                    let objects = data.get("objects")
+                    let objects = data
+                        .get("objects")
                         .and_then(|v| v.as_array())
                         .map(|arr| arr.clone())
                         .unwrap_or_default();
 
-                    let is_truncated = data.get("is_truncated")
+                    let is_truncated = data
+                        .get("is_truncated")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
 
                     let xml = build_list_objects_xml(&objects, is_truncated);
 
                     debug!("Sending S3 object list ({} objects)", objects.len());
-                    let _ = status_tx.send(format!("[DEBUG] → S3 object list: {} objects", objects.len()));
+                    let _ = status_tx.send(format!(
+                        "[DEBUG] → S3 object list: {} objects",
+                        objects.len()
+                    ));
 
                     Ok(Response::builder()
                         .status(StatusCode::OK)
@@ -329,7 +370,8 @@ async fn process_s3_action_result(
                 }
                 "s3_bucket_list" => {
                     // Send list of buckets as XML
-                    let buckets = data.get("buckets")
+                    let buckets = data
+                        .get("buckets")
                         .and_then(|v| v.as_array())
                         .map(|arr| arr.clone())
                         .unwrap_or_default();
@@ -337,7 +379,10 @@ async fn process_s3_action_result(
                     let xml = build_list_buckets_xml(&buckets);
 
                     debug!("Sending S3 bucket list ({} buckets)", buckets.len());
-                    let _ = status_tx.send(format!("[DEBUG] → S3 bucket list: {} buckets", buckets.len()));
+                    let _ = status_tx.send(format!(
+                        "[DEBUG] → S3 bucket list: {} buckets",
+                        buckets.len()
+                    ));
 
                     Ok(Response::builder()
                         .status(StatusCode::OK)
@@ -347,15 +392,18 @@ async fn process_s3_action_result(
                 }
                 "s3_error" => {
                     // Send S3 error response
-                    let error_code = data.get("error_code")
+                    let error_code = data
+                        .get("error_code")
                         .and_then(|v| v.as_str())
                         .unwrap_or("InternalError");
 
-                    let message = data.get("message")
+                    let message = data
+                        .get("message")
                         .and_then(|v| v.as_str())
                         .unwrap_or("An error occurred");
 
-                    let status_code = data.get("status_code")
+                    let status_code = data
+                        .get("status_code")
                         .and_then(|v| v.as_u64())
                         .unwrap_or(500) as u16;
 
@@ -369,10 +417,16 @@ async fn process_s3_action_result(
                     );
 
                     debug!("Sending S3 error: {} ({})", error_code, status_code);
-                    let _ = status_tx.send(format!("[DEBUG] → S3 error: {} {}", status_code, error_code));
+                    let _ = status_tx.send(format!(
+                        "[DEBUG] → S3 error: {} {}",
+                        status_code, error_code
+                    ));
 
                     Ok(Response::builder()
-                        .status(StatusCode::from_u16(status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR))
+                        .status(
+                            StatusCode::from_u16(status_code)
+                                .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                        )
                         .header("Content-Type", "application/xml")
                         .body(Full::new(Bytes::from(xml)))
                         .unwrap())
@@ -405,12 +459,15 @@ fn build_list_buckets_xml(buckets: &[serde_json::Value]) -> String {
     <DisplayName>netget</DisplayName>
     <ID>netget-user</ID>
   </Owner>
-  <Buckets>"#
+  <Buckets>"#,
     );
 
     for bucket in buckets {
         let name = bucket.get("name").and_then(|v| v.as_str()).unwrap_or("");
-        let creation_date = bucket.get("creation_date").and_then(|v| v.as_str()).unwrap_or("2024-01-01T00:00:00.000Z");
+        let creation_date = bucket
+            .get("creation_date")
+            .and_then(|v| v.as_str())
+            .unwrap_or("2024-01-01T00:00:00.000Z");
 
         xml.push_str(&format!(
             r#"
@@ -425,7 +482,7 @@ fn build_list_buckets_xml(buckets: &[serde_json::Value]) -> String {
     xml.push_str(
         r#"
   </Buckets>
-</ListAllMyBucketsResult>"#
+</ListAllMyBucketsResult>"#,
     );
 
     xml
@@ -435,17 +492,26 @@ fn build_list_buckets_xml(buckets: &[serde_json::Value]) -> String {
 fn build_list_objects_xml(objects: &[serde_json::Value], is_truncated: bool) -> String {
     let mut xml = String::from(
         r#"<?xml version="1.0" encoding="UTF-8"?>
-<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">"#
+<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">"#,
     );
 
-    xml.push_str(&format!(r#"
-  <IsTruncated>{}</IsTruncated>"#, is_truncated));
+    xml.push_str(&format!(
+        r#"
+  <IsTruncated>{}</IsTruncated>"#,
+        is_truncated
+    ));
 
     for object in objects {
         let key = object.get("key").and_then(|v| v.as_str()).unwrap_or("");
         let size = object.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
-        let last_modified = object.get("last_modified").and_then(|v| v.as_str()).unwrap_or("2024-01-01T00:00:00.000Z");
-        let etag = object.get("etag").and_then(|v| v.as_str()).unwrap_or("\"default\"");
+        let last_modified = object
+            .get("last_modified")
+            .and_then(|v| v.as_str())
+            .unwrap_or("2024-01-01T00:00:00.000Z");
+        let etag = object
+            .get("etag")
+            .and_then(|v| v.as_str())
+            .unwrap_or("\"default\"");
 
         xml.push_str(&format!(
             r#"
@@ -461,7 +527,7 @@ fn build_list_objects_xml(objects: &[serde_json::Value], is_truncated: bool) -> 
 
     xml.push_str(
         r#"
-</ListBucketResult>"#
+</ListBucketResult>"#,
     );
 
     xml

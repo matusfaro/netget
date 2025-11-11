@@ -61,7 +61,10 @@ mod logging_unit_tests {
         });
 
         let action = CommonAction::from_json(&json);
-        assert!(action.is_ok(), "Failed to parse append_to_log with special characters");
+        assert!(
+            action.is_ok(),
+            "Failed to parse append_to_log with special characters"
+        );
 
         match action.unwrap() {
             CommonAction::AppendToLog {

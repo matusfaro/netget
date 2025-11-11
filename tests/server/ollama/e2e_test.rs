@@ -5,7 +5,7 @@
 
 #![cfg(all(test, feature = "ollama"))]
 
-use crate::server::helpers::{self, ServerConfig, E2EResult};
+use crate::server::helpers::{self, E2EResult, ServerConfig};
 use serde_json::Value;
 use std::time::Duration;
 
@@ -31,8 +31,10 @@ async fn test_ollama_list_models() -> E2EResult<()> {
         Duration::from_secs(15),
         client
             .get(format!("http://127.0.0.1:{}/api/tags", server.port))
-            .send()
-    ).await {
+            .send(),
+    )
+    .await
+    {
         Ok(Ok(resp)) => {
             println!("✓ Received HTTP response: {}", resp.status());
             resp
@@ -54,8 +56,10 @@ async fn test_ollama_list_models() -> E2EResult<()> {
     println!("Response JSON: {}", serde_json::to_string_pretty(&json)?);
 
     // Validate Ollama models list format
-    assert!(json.get("models").and_then(|v| v.as_array()).is_some(),
-            "Expected 'models' field to be an array");
+    assert!(
+        json.get("models").and_then(|v| v.as_array()).is_some(),
+        "Expected 'models' field to be an array"
+    );
 
     let models = json["models"].as_array().unwrap();
     println!("✓ Found {} models", models.len());
@@ -63,7 +67,10 @@ async fn test_ollama_list_models() -> E2EResult<()> {
     // Verify at least one model exists
     if !models.is_empty() {
         let first_model = &models[0];
-        assert!(first_model.get("name").is_some(), "Model should have 'name' field");
+        assert!(
+            first_model.get("name").is_some(),
+            "Model should have 'name' field"
+        );
         println!("✓ First model: {}", first_model.get("name").unwrap());
     }
 
@@ -99,8 +106,10 @@ async fn test_ollama_generate() -> E2EResult<()> {
         client
             .post(format!("http://127.0.0.1:{}/api/generate", server.port))
             .json(&request_body)
-            .send()
-    ).await {
+            .send(),
+    )
+    .await
+    {
         Ok(Ok(resp)) => {
             println!("✓ Received HTTP response: {}", resp.status());
             resp
@@ -124,8 +133,11 @@ async fn test_ollama_generate() -> E2EResult<()> {
     // Validate Ollama generate response format
     assert!(json.get("model").is_some(), "Expected 'model' field");
     assert!(json.get("response").is_some(), "Expected 'response' field");
-    assert_eq!(json.get("done").and_then(|v| v.as_bool()), Some(true),
-               "Expected 'done' to be true");
+    assert_eq!(
+        json.get("done").and_then(|v| v.as_bool()),
+        Some(true),
+        "Expected 'done' to be true"
+    );
 
     let response_text = json["response"].as_str().unwrap();
     println!("✓ Generated response: {}", response_text);
@@ -165,8 +177,10 @@ async fn test_ollama_chat() -> E2EResult<()> {
         client
             .post(format!("http://127.0.0.1:{}/api/chat", server.port))
             .json(&request_body)
-            .send()
-    ).await {
+            .send(),
+    )
+    .await
+    {
         Ok(Ok(resp)) => {
             println!("✓ Received HTTP response: {}", resp.status());
             resp
@@ -190,12 +204,18 @@ async fn test_ollama_chat() -> E2EResult<()> {
     // Validate Ollama chat response format
     assert!(json.get("model").is_some(), "Expected 'model' field");
     assert!(json.get("message").is_some(), "Expected 'message' field");
-    assert_eq!(json.get("done").and_then(|v| v.as_bool()), Some(true),
-               "Expected 'done' to be true");
+    assert_eq!(
+        json.get("done").and_then(|v| v.as_bool()),
+        Some(true),
+        "Expected 'done' to be true"
+    );
 
     let message = json["message"].as_object().unwrap();
-    assert_eq!(message.get("role").and_then(|v| v.as_str()), Some("assistant"),
-               "Expected message role to be 'assistant'");
+    assert_eq!(
+        message.get("role").and_then(|v| v.as_str()),
+        Some("assistant"),
+        "Expected message role to be 'assistant'"
+    );
 
     let content = message.get("content").and_then(|v| v.as_str()).unwrap();
     println!("✓ Chat response: {}", content);
@@ -233,7 +253,10 @@ async fn test_ollama_invalid_endpoint() -> E2EResult<()> {
     let json: Value = response.json().await?;
     println!("Response JSON: {}", serde_json::to_string_pretty(&json)?);
 
-    assert!(json.get("error").is_some(), "Expected 'error' field in response");
+    assert!(
+        json.get("error").is_some(),
+        "Expected 'error' field in response"
+    );
 
     println!("✓ Ollama Invalid Endpoint test completed\n");
     Ok(())

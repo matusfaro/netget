@@ -2,7 +2,8 @@
 
 ## Test Strategy
 
-Black-box E2E tests that verify SQS client functionality by spawning the actual NetGet binary and testing client behavior with both a NetGet SQS server and optionally LocalStack.
+Black-box E2E tests that verify SQS client functionality by spawning the actual NetGet binary and testing client
+behavior with both a NetGet SQS server and optionally LocalStack.
 
 ## LLM Call Budget
 
@@ -10,28 +11,30 @@ Black-box E2E tests that verify SQS client functionality by spawning the actual 
 **Actual**: 13 total LLM calls across 5 tests
 
 ### Call Breakdown
+
 1. **test_sqs_client_connect_and_send**: 3 LLM calls
-   - Server startup (1 call)
-   - Client connection (1 call)
-   - Message send operation (1 call)
+    - Server startup (1 call)
+    - Client connection (1 call)
+    - Message send operation (1 call)
 
 2. **test_sqs_client_receive_messages**: 3 LLM calls
-   - Server startup (1 call)
-   - Client connection (1 call)
-   - Receive messages operation (1 call)
+    - Server startup (1 call)
+    - Client connection (1 call)
+    - Receive messages operation (1 call)
 
 3. **test_sqs_client_with_localstack**: 2 LLM calls (ignored by default)
-   - Client connection (1 call)
-   - Send and receive operations (1 call)
+    - Client connection (1 call)
+    - Send and receive operations (1 call)
 
 4. **test_sqs_client_invalid_queue**: 1 LLM call
-   - Client connection attempt (1 call)
+    - Client connection attempt (1 call)
 
 5. **test_sqs_client_get_attributes**: 2 LLM calls
-   - Server startup (1 call)
-   - Client connection + get attributes (1 call)
+    - Server startup (1 call)
+    - Client connection + get attributes (1 call)
 
 ### Budget Justification
+
 - **Server-based tests**: Use NetGet SQS server for controlled testing
 - **LocalStack test**: Marked as `#[ignore]` by default (requires external service)
 - **Efficient reuse**: Each test starts fresh server/client to ensure isolation
@@ -43,6 +46,7 @@ Black-box E2E tests that verify SQS client functionality by spawning the actual 
 **CI**: ~10-15 seconds (without LocalStack test)
 
 ### Runtime Breakdown
+
 - Each test: ~2-3 seconds
 - LLM latency: ~500-800ms per call (local Ollama)
 - Server/client startup: ~500ms total
@@ -51,6 +55,7 @@ Black-box E2E tests that verify SQS client functionality by spawning the actual 
 ## Test Organization
 
 ### Test Files
+
 ```
 tests/client/sqs/
 ├── e2e_test.rs         # Main E2E tests
@@ -59,7 +64,9 @@ tests/client/sqs/
 ```
 
 ### Feature Gating
+
 All tests are feature-gated with:
+
 ```rust
 #[cfg(all(test, feature = "sqs"))]
 ```
@@ -69,6 +76,7 @@ This ensures tests only compile when the `sqs` feature is enabled.
 ## Test Coverage
 
 ### ✅ Covered Scenarios
+
 1. **Basic Connection**: Client connects to SQS queue URL
 2. **Send Message**: Client sends message with body and attributes
 3. **Receive Messages**: Client polls and receives messages
@@ -77,6 +85,7 @@ This ensures tests only compile when the `sqs` feature is enabled.
 6. **LocalStack Integration**: Real AWS SDK with LocalStack (optional)
 
 ### ❌ Not Covered (Future Work)
+
 1. **Delete Message**: Message deletion after processing
 2. **Purge Queue**: Clearing all messages
 3. **Long Polling**: Wait time configuration
@@ -87,16 +96,19 @@ This ensures tests only compile when the `sqs` feature is enabled.
 ## Running Tests
 
 ### Run All SQS Client Tests
+
 ```bash
 ./cargo-isolated.sh test --no-default-features --features sqs --test client::sqs::e2e_test
 ```
 
 ### Run Single Test
+
 ```bash
 ./cargo-isolated.sh test --no-default-features --features sqs --test client::sqs::e2e_test test_sqs_client_connect_and_send
 ```
 
 ### Run with LocalStack Test
+
 ```bash
 # First, start LocalStack
 docker run -d -p 4566:4566 localstack/localstack
@@ -111,8 +123,10 @@ aws --endpoint-url=http://localhost:4566 sqs create-queue --queue-name NetGetTes
 ## Known Issues
 
 ### 1. Credential Configuration
+
 **Issue**: AWS SDK requires credentials even for LocalStack
 **Workaround**: Set environment variables:
+
 ```bash
 export AWS_ACCESS_KEY_ID=test
 export AWS_SECRET_ACCESS_KEY=test
@@ -120,27 +134,33 @@ export AWS_DEFAULT_REGION=us-east-1
 ```
 
 ### 2. LocalStack Connectivity
+
 **Issue**: LocalStack test assumes service is running
 **Solution**: Test is marked `#[ignore]` by default
 
 ### 3. Timing Sensitivity
+
 **Issue**: Operations may take longer with slow LLM
 **Mitigation**: Tests use generous 1-2 second delays
 
 ### 4. No Message Persistence
+
 **Issue**: NetGet SQS server doesn't persist messages
 **Expected**: LLM maintains queue state in memory during test
 
 ## Test Maintenance
 
 ### When to Update Tests
+
 - **New SQS actions added**: Add test for new operation
 - **Error handling changes**: Update error test expectations
 - **Performance improvements**: Reduce wait times if applicable
 - **LocalStack version changes**: Update test configuration
 
 ### Adding New Tests
+
 Follow the pattern:
+
 1. Start server with specific instruction
 2. Wait 500ms for server startup
 3. Start client with queue URL and instruction
@@ -149,7 +169,9 @@ Follow the pattern:
 6. Cleanup server and client
 
 ### Performance Tuning
+
 If tests become too slow:
+
 - Reduce wait times (currently conservative)
 - Use scripting mode for multi-step operations
 - Batch operations in single test where appropriate
@@ -159,12 +181,13 @@ If tests become too slow:
 
 | Client | Test Count | LLM Calls | Runtime | LocalStack |
 |--------|------------|-----------|---------|------------|
-| TCP | 2 | 4 | ~4s | No |
-| HTTP | 3 | 6 | ~6s | No |
-| Redis | 2 | 4 | ~4s | No |
-| SQS | 5 | 13 | ~10s | Optional |
+| TCP    | 2          | 4         | ~4s     | No         |
+| HTTP   | 3          | 6         | ~6s     | No         |
+| Redis  | 2          | 4         | ~4s     | No         |
+| SQS    | 5          | 13        | ~10s    | Optional   |
 
 SQS tests have slightly higher LLM call count due to:
+
 - Server-side logic complexity (queue state)
 - More operation types (send, receive, delete, purge, attributes)
 - Optional LocalStack integration test

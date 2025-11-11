@@ -8,7 +8,7 @@
 
 #[cfg(feature = "dynamo")]
 mod tests {
-    use crate::server::helpers::{start_netget_server, retry, ServerConfig, E2EResult};
+    use crate::server::helpers::{retry, start_netget_server, E2EResult, ServerConfig};
     use reqwest::Client;
     use serde_json::json;
 
@@ -17,15 +17,20 @@ mod tests {
         println!("\n=== Test: DynamoDB GetItem ===");
 
         let prompt = "Start a DynamoDB-compatible server on port 0 that stores user data in memory";
-        let config = ServerConfig::new(prompt)
-            .with_log_level("off");
+        let config = ServerConfig::new(prompt).with_log_level("off");
 
         let server = start_netget_server(config).await?;
-        println!("Server started on port {} with stack: {}", server.port, server.stack);
+        println!(
+            "Server started on port {} with stack: {}",
+            server.port, server.stack
+        );
 
         // Verify stack
-        assert!(server.stack.contains("DYNAMO"),
-            "Expected DYNAMO stack, got: {}", server.stack);
+        assert!(
+            server.stack.contains("DYNAMO"),
+            "Expected DYNAMO stack, got: {}",
+            server.stack
+        );
 
         let client = Client::new();
         let url = format!("http://127.0.0.1:{}", server.port);
@@ -59,11 +64,13 @@ mod tests {
         println!("\n=== Test: DynamoDB PutItem ===");
 
         let prompt = "Start a DynamoDB server on port 0";
-        let config = ServerConfig::new(prompt)
-            .with_log_level("off");
+        let config = ServerConfig::new(prompt).with_log_level("off");
 
         let server = start_netget_server(config).await?;
-        println!("Server started on port {} with stack: {}", server.port, server.stack);
+        println!(
+            "Server started on port {} with stack: {}",
+            server.port, server.stack
+        );
 
         let client = Client::new();
         let url = format!("http://127.0.0.1:{}", server.port);
@@ -87,8 +94,11 @@ mod tests {
         })
         .await?;
 
-        assert!(response.status().is_success(),
-            "PutItem request failed with status: {}", response.status());
+        assert!(
+            response.status().is_success(),
+            "PutItem request failed with status: {}",
+            response.status()
+        );
 
         println!("[PASS] DynamoDB PutItem request succeeded");
 
@@ -102,11 +112,13 @@ mod tests {
         println!("\n=== Test: DynamoDB Query ===");
 
         let prompt = "Start a DynamoDB-compatible database server on port 0";
-        let config = ServerConfig::new(prompt)
-            .with_log_level("off");
+        let config = ServerConfig::new(prompt).with_log_level("off");
 
         let server = start_netget_server(config).await?;
-        println!("Server started on port {} with stack: {}", server.port, server.stack);
+        println!(
+            "Server started on port {} with stack: {}",
+            server.port, server.stack
+        );
 
         let client = Client::new();
         let url = format!("http://127.0.0.1:{}", server.port);
@@ -129,13 +141,16 @@ mod tests {
         })
         .await?;
 
-        assert!(response.status().is_success(),
-            "Query request failed with status: {}", response.status());
+        assert!(
+            response.status().is_success(),
+            "Query request failed with status: {}",
+            response.status()
+        );
 
         // Check response is valid JSON
         let body = response.text().await?;
-        let _: serde_json::Value = serde_json::from_str(&body)
-            .map_err(|e| format!("Invalid JSON response: {}", e))?;
+        let _: serde_json::Value =
+            serde_json::from_str(&body).map_err(|e| format!("Invalid JSON response: {}", e))?;
 
         println!("[PASS] DynamoDB Query request succeeded with valid JSON");
 
@@ -149,11 +164,13 @@ mod tests {
         println!("\n=== Test: DynamoDB CreateTable ===");
 
         let prompt = "Start a DynamoDB API server on port 0 that can create tables";
-        let config = ServerConfig::new(prompt)
-            .with_log_level("off");
+        let config = ServerConfig::new(prompt).with_log_level("off");
 
         let server = start_netget_server(config).await?;
-        println!("Server started on port {} with stack: {}", server.port, server.stack);
+        println!(
+            "Server started on port {} with stack: {}",
+            server.port, server.stack
+        );
 
         let client = Client::new();
         let url = format!("http://127.0.0.1:{}", server.port);
@@ -179,8 +196,11 @@ mod tests {
         })
         .await?;
 
-        assert!(response.status().is_success(),
-            "CreateTable request failed with status: {}", response.status());
+        assert!(
+            response.status().is_success(),
+            "CreateTable request failed with status: {}",
+            response.status()
+        );
 
         println!("[PASS] DynamoDB CreateTable request succeeded");
 
@@ -194,11 +214,13 @@ mod tests {
         println!("\n=== Test: DynamoDB Multiple Operations ===");
 
         let prompt = "Start a DynamoDB server on port 0 that remembers items across requests";
-        let config = ServerConfig::new(prompt)
-            .with_log_level("off");
+        let config = ServerConfig::new(prompt).with_log_level("off");
 
         let server = start_netget_server(config).await?;
-        println!("Server started on port {} with stack: {}", server.port, server.stack);
+        println!(
+            "Server started on port {} with stack: {}",
+            server.port, server.stack
+        );
 
         let client = Client::new();
         let url = format!("http://127.0.0.1:{}", server.port);

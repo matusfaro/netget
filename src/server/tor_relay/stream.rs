@@ -112,7 +112,8 @@ impl Stream {
             deliver_window,
             data_cells_received,
             ..
-        } = &mut self.state {
+        } = &mut self.state
+        {
             *deliver_window = deliver_window.saturating_sub(1);
             *data_cells_received += 1;
 
@@ -130,7 +131,11 @@ impl Stream {
     pub fn process_sendme(&mut self) {
         if let StreamState::Active { package_window, .. } = &mut self.state {
             *package_window += STREAM_WINDOW_INCREMENT;
-            trace!("Stream {} package window increased to {}", self.id.as_u16(), package_window);
+            trace!(
+                "Stream {} package window increased to {}",
+                self.id.as_u16(),
+                package_window
+            );
         }
     }
 
@@ -225,12 +230,14 @@ impl StreamManager {
 pub fn parse_begin_target(data: &[u8]) -> Result<String> {
     // Find null terminator
     let end = data.iter().position(|&b| b == 0).unwrap_or(data.len());
-    let target_str = std::str::from_utf8(&data[..end])
-        .context("Invalid UTF-8 in BEGIN target")?;
+    let target_str = std::str::from_utf8(&data[..end]).context("Invalid UTF-8 in BEGIN target")?;
 
     // Validate format (should be host:port)
     if !target_str.contains(':') {
-        return Err(anyhow::anyhow!("Invalid BEGIN target format: {}", target_str));
+        return Err(anyhow::anyhow!(
+            "Invalid BEGIN target format: {}",
+            target_str
+        ));
     }
 
     Ok(target_str.to_string())
@@ -255,12 +262,7 @@ pub async fn connect_to_target(target: &str) -> Result<TcpStream> {
 
 /// Build RELAY cell response
 /// Format: Command (1) | Recognized (2) | StreamID (2) | Digest (4) | Length (2) | Data (Length)
-pub fn build_relay_cell(
-    circuit_id: u32,
-    stream_id: u16,
-    command: u8,
-    data: &[u8],
-) -> Vec<u8> {
+pub fn build_relay_cell(circuit_id: u32, stream_id: u16, command: u8, data: &[u8]) -> Vec<u8> {
     let mut cell = Vec::with_capacity(514);
 
     // Circuit ID (4 bytes)
@@ -320,4 +322,3 @@ pub mod end_reason {
     pub const CONNECT_RESET: u8 = 12;
     pub const TOR_PROTOCOL: u8 = 13;
 }
-

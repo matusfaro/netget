@@ -5,7 +5,7 @@
 
 #[cfg(all(test, feature = "cassandra", feature = "cassandra"))]
 mod e2e_cassandra {
-    use crate::server::helpers::{start_netget_server, ServerConfig, E2EResult};
+    use crate::server::helpers::{start_netget_server, E2EResult, ServerConfig};
     use std::time::Duration;
     use tokio::time::sleep;
 
@@ -76,13 +76,17 @@ mod e2e_cassandra {
 
         // Execute SELECT query
         println!("  [TEST] Executing: SELECT * FROM users");
-        let rows = session.query_unpaged("SELECT * FROM users", &[])
+        let rows = session
+            .query_unpaged("SELECT * FROM users", &[])
             .await
             .expect("Query failed")
             .into_rows_result()
             .expect("Should have rows");
 
-        println!("  [TEST] ✓ Query executed, {} rows returned", rows.rows_num());
+        println!(
+            "  [TEST] ✓ Query executed, {} rows returned",
+            rows.rows_num()
+        );
 
         // Verify we got rows back
         assert!(rows.rows_num() > 0, "Should receive at least one row");
@@ -124,7 +128,8 @@ mod e2e_cassandra {
 
         // Execute query that should fail
         println!("  [TEST] Executing: SELECT * FROM nonexistent");
-        let result = session.query_unpaged("SELECT * FROM nonexistent", &[])
+        let result = session
+            .query_unpaged("SELECT * FROM nonexistent", &[])
             .await;
 
         // Should receive an error
@@ -167,7 +172,8 @@ mod e2e_cassandra {
 
         // First query
         println!("  [TEST] Executing: SELECT count(*) FROM users");
-        let rows1 = session.query_unpaged("SELECT count(*) FROM users", &[])
+        let rows1 = session
+            .query_unpaged("SELECT count(*) FROM users", &[])
             .await
             .expect("First query failed")
             .into_rows_result()
@@ -178,7 +184,8 @@ mod e2e_cassandra {
 
         // Second query
         println!("  [TEST] Executing: SELECT * FROM users WHERE id=1");
-        let rows2 = session.query_unpaged("SELECT * FROM users WHERE id=1", &[])
+        let rows2 = session
+            .query_unpaged("SELECT * FROM users WHERE id=1", &[])
             .await
             .expect("Second query failed")
             .into_rows_result()
@@ -224,7 +231,8 @@ mod e2e_cassandra {
                     .await
                     .expect("Failed to connect");
 
-                let rows = session.query_unpaged("SELECT value", &[])
+                let rows = session
+                    .query_unpaged("SELECT value", &[])
                     .await
                     .expect("Query failed")
                     .into_rows_result()
@@ -288,7 +296,8 @@ mod e2e_cassandra {
 
         // Execute with parameter
         println!("  [TEST] Executing with parameter: 1");
-        let rows = session.execute_unpaged(&prepared, (1,))
+        let rows = session
+            .execute_unpaged(&prepared, (1,))
             .await
             .expect("Execute failed")
             .into_rows_result()
@@ -354,7 +363,8 @@ mod e2e_cassandra {
 
         // Execute first statement
         println!("  [TEST] Executing statement 1 with param: 1");
-        let _rows1 = session.execute_unpaged(&prepared1, (1,))
+        let _rows1 = session
+            .execute_unpaged(&prepared1, (1,))
             .await
             .expect("Execute 1 failed");
 
@@ -362,7 +372,8 @@ mod e2e_cassandra {
 
         // Execute second statement
         println!("  [TEST] Executing statement 2");
-        let _rows2 = session.execute_unpaged(&prepared2, ())
+        let _rows2 = session
+            .execute_unpaged(&prepared2, ())
             .await
             .expect("Execute 2 failed");
 
@@ -370,7 +381,8 @@ mod e2e_cassandra {
 
         // Execute first statement again with different param
         println!("  [TEST] Executing statement 1 again with param: 2");
-        let _rows3 = session.execute_unpaged(&prepared1, (2,))
+        let _rows3 = session
+            .execute_unpaged(&prepared1, (2,))
             .await
             .expect("Execute 3 failed");
 
@@ -423,7 +435,10 @@ mod e2e_cassandra {
         let result = session.execute_unpaged(&prepared, (1,)).await;
 
         // Should receive an error
-        assert!(result.is_err(), "Execute should fail with parameter count mismatch");
+        assert!(
+            result.is_err(),
+            "Execute should fail with parameter count mismatch"
+        );
         println!("  [TEST] ✓ Received expected error for parameter mismatch");
 
         drop(session);

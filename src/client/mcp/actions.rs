@@ -15,7 +15,7 @@ use std::sync::LazyLock;
 pub static MCP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "mcp_client_connected",
-        "MCP client completed initialization handshake with server"
+        "MCP client completed initialization handshake with server",
     )
     .with_parameters(vec![
         Parameter {
@@ -43,7 +43,7 @@ pub static MCP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 pub static MCP_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "mcp_response_received",
-        "MCP client received response from server"
+        "MCP client received response from server",
     )
     .with_parameters(vec![
         Parameter {
@@ -78,309 +78,302 @@ impl McpClientProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for McpClientProtocol {
-        fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-            vec![
-                ParameterDefinition {
-                    name: "client_name".to_string(),
-                    description: "Name to identify this MCP client".to_string(),
+    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
+        vec![
+            ParameterDefinition {
+                name: "client_name".to_string(),
+                description: "Name to identify this MCP client".to_string(),
+                type_hint: "string".to_string(),
+                required: false,
+                example: json!("netget-client"),
+            },
+            ParameterDefinition {
+                name: "client_version".to_string(),
+                description: "Version of this MCP client".to_string(),
+                type_hint: "string".to_string(),
+                required: false,
+                example: json!("1.0.0"),
+            },
+        ]
+    }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        vec![
+            ActionDefinition {
+                name: "list_resources".to_string(),
+                description: "List available resources from MCP server".to_string(),
+                parameters: vec![],
+                example: json!({
+                    "type": "list_resources"
+                }),
+            },
+            ActionDefinition {
+                name: "read_resource".to_string(),
+                description: "Read a resource from MCP server".to_string(),
+                parameters: vec![Parameter {
+                    name: "uri".to_string(),
                     type_hint: "string".to_string(),
-                    required: false,
-                    example: json!("netget-client"),
-                },
-                ParameterDefinition {
-                    name: "client_version".to_string(),
-                    description: "Version of this MCP client".to_string(),
-                    type_hint: "string".to_string(),
-                    required: false,
-                    example: json!("1.0.0"),
-                },
-            ]
-        }
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            vec![
-                ActionDefinition {
-                    name: "list_resources".to_string(),
-                    description: "List available resources from MCP server".to_string(),
-                    parameters: vec![],
-                    example: json!({
-                        "type": "list_resources"
-                    }),
-                },
-                ActionDefinition {
-                    name: "read_resource".to_string(),
-                    description: "Read a resource from MCP server".to_string(),
-                    parameters: vec![
-                        Parameter {
-                            name: "uri".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "Resource URI (e.g., file:///README.md)".to_string(),
-                            required: true,
-                        },
-                    ],
-                    example: json!({
-                        "type": "read_resource",
-                        "uri": "file:///README.md"
-                    }),
-                },
-                ActionDefinition {
-                    name: "list_tools".to_string(),
-                    description: "List available tools from MCP server".to_string(),
-                    parameters: vec![],
-                    example: json!({
-                        "type": "list_tools"
-                    }),
-                },
-                ActionDefinition {
-                    name: "call_tool".to_string(),
-                    description: "Call a tool on the MCP server".to_string(),
-                    parameters: vec![
-                        Parameter {
-                            name: "name".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "Tool name".to_string(),
-                            required: true,
-                        },
-                        Parameter {
-                            name: "arguments".to_string(),
-                            type_hint: "object".to_string(),
-                            description: "Tool arguments".to_string(),
-                            required: false,
-                        },
-                    ],
-                    example: json!({
-                        "type": "call_tool",
-                        "name": "calculate",
-                        "arguments": {
-                            "expression": "2+2"
-                        }
-                    }),
-                },
-                ActionDefinition {
-                    name: "list_prompts".to_string(),
-                    description: "List available prompts from MCP server".to_string(),
-                    parameters: vec![],
-                    example: json!({
-                        "type": "list_prompts"
-                    }),
-                },
-                ActionDefinition {
-                    name: "get_prompt".to_string(),
-                    description: "Get a prompt from MCP server".to_string(),
-                    parameters: vec![
-                        Parameter {
-                            name: "name".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "Prompt name".to_string(),
-                            required: true,
-                        },
-                        Parameter {
-                            name: "arguments".to_string(),
-                            type_hint: "object".to_string(),
-                            description: "Prompt arguments".to_string(),
-                            required: false,
-                        },
-                    ],
-                    example: json!({
-                        "type": "get_prompt",
-                        "name": "code-review",
-                        "arguments": {}
-                    }),
-                },
-                ActionDefinition {
-                    name: "disconnect".to_string(),
-                    description: "Disconnect from the MCP server".to_string(),
-                    parameters: vec![],
-                    example: json!({
-                        "type": "disconnect"
-                    }),
-                },
-            ]
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                ActionDefinition {
-                    name: "list_resources".to_string(),
-                    description: "List resources in response to server event".to_string(),
-                    parameters: vec![],
-                    example: json!({
-                        "type": "list_resources"
-                    }),
-                },
-                ActionDefinition {
-                    name: "call_tool".to_string(),
-                    description: "Call a tool in response to server event".to_string(),
-                    parameters: vec![
-                        Parameter {
-                            name: "name".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "Tool name".to_string(),
-                            required: true,
-                        },
-                        Parameter {
-                            name: "arguments".to_string(),
-                            type_hint: "object".to_string(),
-                            description: "Tool arguments".to_string(),
-                            required: false,
-                        },
-                    ],
-                    example: json!({
-                        "type": "call_tool",
-                        "name": "search",
-                        "arguments": {
-                            "query": "test"
-                        }
-                    }),
-                },
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "MCP"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            vec![
-                EventType {
-                    id: "mcp_client_connected".to_string(),
-                    description: "Triggered when MCP client completes initialization".to_string(),
-                    actions: vec![],
-                    parameters: vec![],
-                },
-                EventType {
-                    id: "mcp_response_received".to_string(),
-                    description: "Triggered when MCP client receives a response".to_string(),
-                    actions: vec![],
-                    parameters: vec![],
-                },
-            ]
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>TCP>HTTP>MCP"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["mcp", "mcp client", "connect to mcp", "model context protocol"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Experimental)
-                .implementation("Custom JSON-RPC 2.0 client over HTTP")
-                .llm_control("Full control over MCP operations (tools, resources, prompts)")
-                .e2e_testing("Local MCP server or public MCP endpoint")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "MCP (Model Context Protocol) client for accessing LLM context servers"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Connect to http://localhost:8000 via MCP and list available tools"
-        }
-        fn group_name(&self) -> &'static str {
-            "RPC & API"
-        }
+                    description: "Resource URI (e.g., file:///README.md)".to_string(),
+                    required: true,
+                }],
+                example: json!({
+                    "type": "read_resource",
+                    "uri": "file:///README.md"
+                }),
+            },
+            ActionDefinition {
+                name: "list_tools".to_string(),
+                description: "List available tools from MCP server".to_string(),
+                parameters: vec![],
+                example: json!({
+                    "type": "list_tools"
+                }),
+            },
+            ActionDefinition {
+                name: "call_tool".to_string(),
+                description: "Call a tool on the MCP server".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "name".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Tool name".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "arguments".to_string(),
+                        type_hint: "object".to_string(),
+                        description: "Tool arguments".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({
+                    "type": "call_tool",
+                    "name": "calculate",
+                    "arguments": {
+                        "expression": "2+2"
+                    }
+                }),
+            },
+            ActionDefinition {
+                name: "list_prompts".to_string(),
+                description: "List available prompts from MCP server".to_string(),
+                parameters: vec![],
+                example: json!({
+                    "type": "list_prompts"
+                }),
+            },
+            ActionDefinition {
+                name: "get_prompt".to_string(),
+                description: "Get a prompt from MCP server".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "name".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Prompt name".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "arguments".to_string(),
+                        type_hint: "object".to_string(),
+                        description: "Prompt arguments".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({
+                    "type": "get_prompt",
+                    "name": "code-review",
+                    "arguments": {}
+                }),
+            },
+            ActionDefinition {
+                name: "disconnect".to_string(),
+                description: "Disconnect from the MCP server".to_string(),
+                parameters: vec![],
+                example: json!({
+                    "type": "disconnect"
+                }),
+            },
+        ]
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            ActionDefinition {
+                name: "list_resources".to_string(),
+                description: "List resources in response to server event".to_string(),
+                parameters: vec![],
+                example: json!({
+                    "type": "list_resources"
+                }),
+            },
+            ActionDefinition {
+                name: "call_tool".to_string(),
+                description: "Call a tool in response to server event".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "name".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Tool name".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "arguments".to_string(),
+                        type_hint: "object".to_string(),
+                        description: "Tool arguments".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({
+                    "type": "call_tool",
+                    "name": "search",
+                    "arguments": {
+                        "query": "test"
+                    }
+                }),
+            },
+        ]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "MCP"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        vec![
+            EventType {
+                id: "mcp_client_connected".to_string(),
+                description: "Triggered when MCP client completes initialization".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+            EventType {
+                id: "mcp_response_received".to_string(),
+                description: "Triggered when MCP client receives a response".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+        ]
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>HTTP>MCP"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec![
+            "mcp",
+            "mcp client",
+            "connect to mcp",
+            "model context protocol",
+        ]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("Custom JSON-RPC 2.0 client over HTTP")
+            .llm_control("Full control over MCP operations (tools, resources, prompts)")
+            .e2e_testing("Local MCP server or public MCP endpoint")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "MCP (Model Context Protocol) client for accessing LLM context servers"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Connect to http://localhost:8000 via MCP and list available tools"
+    }
+    fn group_name(&self) -> &'static str {
+        "RPC & API"
+    }
 }
 
 // Implement Client trait (client-specific functionality)
 impl Client for McpClientProtocol {
-        fn connect(
-            &self,
-            ctx: crate::protocol::ConnectContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::client::mcp::McpClient;
-                McpClient::connect_with_llm_actions(
-                    ctx.remote_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.client_id,
-                )
-                .await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "list_resources" => {
-                    Ok(ClientActionResult::Custom {
-                        name: "mcp_list_resources".to_string(),
-                        data: json!({}),
-                    })
-                }
-                "read_resource" => {
-                    let uri = action
-                        .get("uri")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'uri' field")?
-                        .to_string();
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "mcp_read_resource".to_string(),
-                        data: json!({
-                            "uri": uri
-                        }),
-                    })
-                }
-                "list_tools" => {
-                    Ok(ClientActionResult::Custom {
-                        name: "mcp_list_tools".to_string(),
-                        data: json!({}),
-                    })
-                }
-                "call_tool" => {
-                    let name = action
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'name' field")?
-                        .to_string();
-    
-                    let arguments = action
-                        .get("arguments")
-                        .and_then(|v| v.as_object())
-                        .cloned();
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "mcp_call_tool".to_string(),
-                        data: json!({
-                            "name": name,
-                            "arguments": arguments
-                        }),
-                    })
-                }
-                "list_prompts" => {
-                    Ok(ClientActionResult::Custom {
-                        name: "mcp_list_prompts".to_string(),
-                        data: json!({}),
-                    })
-                }
-                "get_prompt" => {
-                    let name = action
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'name' field")?
-                        .to_string();
-    
-                    let arguments = action
-                        .get("arguments")
-                        .and_then(|v| v.as_object())
-                        .cloned();
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "mcp_get_prompt".to_string(),
-                        data: json!({
-                            "name": name,
-                            "arguments": arguments
-                        }),
-                    })
-                }
-                "disconnect" => Ok(ClientActionResult::Disconnect),
-                _ => Err(anyhow::anyhow!("Unknown MCP client action: {}", action_type)),
-            }
-        }
-}
+    fn connect(
+        &self,
+        ctx: crate::protocol::ConnectContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::client::mcp::McpClient;
+            McpClient::connect_with_llm_actions(
+                ctx.remote_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.client_id,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
 
+        match action_type {
+            "list_resources" => Ok(ClientActionResult::Custom {
+                name: "mcp_list_resources".to_string(),
+                data: json!({}),
+            }),
+            "read_resource" => {
+                let uri = action
+                    .get("uri")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'uri' field")?
+                    .to_string();
+
+                Ok(ClientActionResult::Custom {
+                    name: "mcp_read_resource".to_string(),
+                    data: json!({
+                        "uri": uri
+                    }),
+                })
+            }
+            "list_tools" => Ok(ClientActionResult::Custom {
+                name: "mcp_list_tools".to_string(),
+                data: json!({}),
+            }),
+            "call_tool" => {
+                let name = action
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'name' field")?
+                    .to_string();
+
+                let arguments = action.get("arguments").and_then(|v| v.as_object()).cloned();
+
+                Ok(ClientActionResult::Custom {
+                    name: "mcp_call_tool".to_string(),
+                    data: json!({
+                        "name": name,
+                        "arguments": arguments
+                    }),
+                })
+            }
+            "list_prompts" => Ok(ClientActionResult::Custom {
+                name: "mcp_list_prompts".to_string(),
+                data: json!({}),
+            }),
+            "get_prompt" => {
+                let name = action
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'name' field")?
+                    .to_string();
+
+                let arguments = action.get("arguments").and_then(|v| v.as_object()).cloned();
+
+                Ok(ClientActionResult::Custom {
+                    name: "mcp_get_prompt".to_string(),
+                    data: json!({
+                        "name": name,
+                        "arguments": arguments
+                    }),
+                })
+            }
+            "disconnect" => Ok(ClientActionResult::Disconnect),
+            _ => Err(anyhow::anyhow!(
+                "Unknown MCP client action: {}",
+                action_type
+            )),
+        }
+    }
+}

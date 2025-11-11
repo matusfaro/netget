@@ -76,10 +76,7 @@ impl UsbMouseServer {
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         info!("USB Mouse server listening on {}", local_addr);
-        let _ = status_tx.send(format!(
-            "USB Mouse server listening on {}",
-            local_addr
-        ));
+        let _ = status_tx.send(format!("USB Mouse server listening on {}", local_addr));
 
         let connections = Arc::new(Mutex::new(HashMap::new()));
         let protocol = Arc::new(crate::server::usb::mouse::UsbMouseProtocol::new());
@@ -89,7 +86,8 @@ impl UsbMouseServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
                         info!(
                             "USB/IP connection {} from {} (USB mouse device)",

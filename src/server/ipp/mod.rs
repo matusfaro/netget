@@ -20,12 +20,12 @@ use hyper_util::rt::TokioIo;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
 
-use crate::server::connection::ConnectionId;
-use crate::server::IppProtocol;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
+use crate::server::connection::ConnectionId;
+use crate::server::IppProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 
 /// IPP server that delegates request handling to LLM
 pub struct IppServer;
@@ -40,7 +40,8 @@ impl IppServer {
         _send_first: bool,
         server_id: crate::state::ServerId,
     ) -> anyhow::Result<SocketAddr> {
-        let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let listener =
+            crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         console_info!(status_tx, "IPP server listening on {}", local_addr);
 
@@ -51,13 +52,18 @@ impl IppServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
                         info!("IPP connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!("[INFO] IPP connection from {}", remote_addr));
+                        let _ =
+                            status_tx.send(format!("[INFO] IPP connection from {}", remote_addr));
 
                         // Add connection to ServerInstance
-                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -72,7 +78,9 @@ impl IppServer {
                             status_changed_at: now,
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
-                        app_state.add_connection_to_server(server_id, conn_state).await;
+                        app_state
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let llm_client_clone = llm_client.clone();
@@ -106,13 +114,18 @@ impl IppServer {
                             });
 
                             // Serve HTTP/1 on this connection (IPP uses HTTP)
-                            if let Err(err) = http1::Builder::new().serve_connection(io, service).await {
+                            if let Err(err) =
+                                http1::Builder::new().serve_connection(io, service).await
+                            {
                                 error!("Error serving IPP connection: {:?}", err);
                             }
 
                             // Mark connection as closed
-                            app_state_clone.close_connection_on_server(server_id, connection_id).await;
-                            let _ = status_tx_clone.send(format!("[INFO] IPP connection {} closed", connection_id));
+                            app_state_clone
+                                .close_connection_on_server(server_id, connection_id)
+                                .await;
+                            let _ = status_tx_clone
+                                .send(format!("[INFO] IPP connection {} closed", connection_id));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
@@ -167,7 +180,9 @@ async fn handle_ipp_request_with_llm(
     );
     let _ = status_tx.send(format!(
         "[DEBUG] IPP {} {} ({} bytes)",
-        method, uri, body_bytes.len()
+        method,
+        uri,
+        body_bytes.len()
     ));
 
     // Parse IPP request if body is present
@@ -207,12 +222,9 @@ async fn handle_ipp_request_with_llm(
                 match result {
                     ActionResult::Custom { name, data } => {
                         if name == "ipp_response" {
-                            let status = data.get("status")
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(200) as u16;
-                            let body_hex = data.get("body")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("");
+                            let status =
+                                data.get("status").and_then(|v| v.as_u64()).unwrap_or(200) as u16;
+                            let body_hex = data.get("body").and_then(|v| v.as_str()).unwrap_or("");
                             let body = hex::decode(body_hex).unwrap_or_default();
 
                             debug!("IPP response: status={}", status);

@@ -1,7 +1,10 @@
 # ARP Client Implementation
 
 ## Overview
-Layer 2 Address Resolution Protocol (ARP) client that sends ARP requests and monitors ARP traffic using libpcap and pnet. Allows the LLM to send ARP queries (who-has), gratuitous ARP announcements, and analyze ARP responses for network reconnaissance and testing.
+
+Layer 2 Address Resolution Protocol (ARP) client that sends ARP requests and monitors ARP traffic using libpcap and
+pnet. Allows the LLM to send ARP queries (who-has), gratuitous ARP announcements, and analyze ARP responses for network
+reconnaissance and testing.
 
 **Status**: Experimental (Layer 2 Client Protocol)
 **Layer**: OSI Layer 2 (Data Link)
@@ -11,25 +14,27 @@ Layer 2 Address Resolution Protocol (ARP) client that sends ARP requests and mon
 ## Library Choices
 
 ### Core Libraries
+
 - **pcap v2.2** - Rust bindings to libpcap
-  - Low-level packet capture at data link layer
-  - Promiscuous mode support (capture all ARP traffic on segment)
-  - BPF filter automatically set to "arp" for efficiency
-  - Blocking API (wrapped in tokio::task::spawn_blocking)
-  - Packet injection via `sendpacket()` for ARP requests/replies
+    - Low-level packet capture at data link layer
+    - Promiscuous mode support (capture all ARP traffic on segment)
+    - BPF filter automatically set to "arp" for efficiency
+    - Blocking API (wrapped in tokio::task::spawn_blocking)
+    - Packet injection via `sendpacket()` for ARP requests/replies
 
 - **pnet v0.35** - Packet parsing and construction
-  - `pnet::packet::arp` - ARP packet parsing and building
-  - `pnet::packet::ethernet` - Ethernet frame construction
-  - Typed API for ARP operations (Request, Reply)
-  - MAC address and IPv4 address handling
+    - `pnet::packet::arp` - ARP packet parsing and building
+    - `pnet::packet::ethernet` - Ethernet frame construction
+    - Typed API for ARP operations (Request, Reply)
+    - MAC address and IPv4 address handling
 
 - **libpcap** (system library, required dependency)
-  - Industry-standard packet capture library (used by tcpdump, Wireshark)
-  - Cross-platform (Linux, macOS, Windows with WinPcap)
-  - Requires elevated privileges (root/admin) for promiscuous mode and injection
+    - Industry-standard packet capture library (used by tcpdump, Wireshark)
+    - Cross-platform (Linux, macOS, Windows with WinPcap)
+    - Requires elevated privileges (root/admin) for promiscuous mode and injection
 
 **Rationale**:
+
 - libpcap is the standard for low-level packet capture
 - pnet provides structured ARP packet handling (vs raw hex parsing)
 - Combination allows both capture and injection with minimal code
@@ -38,9 +43,11 @@ Layer 2 Address Resolution Protocol (ARP) client that sends ARP requests and mon
 ## Architecture Decisions
 
 ### 1. Blocking I/O with Tokio Bridge
+
 pcap has blocking API, Tokio is async:
 
 **Solution**:
+
 - Spawn packet capture in `tokio::task::spawn_blocking()`
 - Blocking task runs pcap capture loop with ARP filter
 - For each ARP packet received, spawn async task via `runtime.spawn()` for LLM processing
@@ -50,7 +57,9 @@ pcap has blocking API, Tokio is async:
 **Tradeoff**: Extra task spawning overhead, but necessary for pcap API compatibility.
 
 ### 2. Full ARP Packet Injection
+
 ARP client can both capture and inject packets:
+
 - LLM receives ARP packet events (requests or replies from other hosts)
 - LLM can send `send_arp_request` action (who-has query)
 - LLM can send `send_arp_reply` action (gratuitous ARP or response)
@@ -59,38 +68,46 @@ ARP client can both capture and inject packets:
 - Frame injected via pcap's `sendpacket()`
 
 **Use Cases**:
+
 1. Network reconnaissance (send who-has queries for IP ranges)
 2. Gratuitous ARP announcements (announce own MAC for an IP)
 3. ARP monitoring (passive capture of ARP traffic)
 4. ARP testing (test how hosts respond to ARP packets)
 
 ### 3. Structured Packet Parsing
+
 ARP packets parsed with pnet (not raw hex):
+
 - Ethernet frame parsed for source/destination MAC
 - ARP packet parsed for operation, addresses
 - LLM receives structured JSON with fields:
-  - `operation`: "REQUEST" or "REPLY"
-  - `sender_mac`: "aa:bb:cc:dd:ee:ff"
-  - `sender_ip`: "192.168.1.100"
-  - `target_mac`: "00:00:00:00:00:00"
-  - `target_ip`: "192.168.1.1"
+    - `operation`: "REQUEST" or "REPLY"
+    - `sender_mac`: "aa:bb:cc:dd:ee:ff"
+    - `sender_ip`: "192.168.1.100"
+    - `target_mac`: "00:00:00:00:00:00"
+    - `target_ip`: "192.168.1.1"
 
 **Rationale**: ARP structure is well-defined (RFC 826). Structured parsing is more reliable than LLM hex parsing.
 
 ### 4. Interface Selection
+
 Client requires network interface as startup parameter:
+
 - Example: "eth0", "en0", "wlan0"
 - Specified in `remote_addr` field when opening client
 - Server uses `Device::list()` to find interface by name
 - Fails if interface doesn't exist or lacks permissions
 
 **Common Interfaces**:
+
 - Linux: eth0, eth1, wlan0, lo
 - macOS: en0, en1, lo0
 - Windows: "\Device\NPF_{GUID}"
 
 ### 5. Automatic ARP Filtering
+
 BPF filter automatically set to "arp":
+
 - Kernel-level filtering (efficient, no user-space overhead)
 - Only ARP packets (EtherType 0x0806) passed to LLM
 - Reduces noise from other Layer 2 traffic
@@ -98,7 +115,9 @@ BPF filter automatically set to "arp":
 **Manual Override**: User can't override filter - it's always "arp" for this protocol.
 
 ### 6. Promiscuous Mode
+
 Capture is always in **promiscuous mode**:
+
 - Captures all ARP traffic on network segment (not just ARP for this host)
 - Requires elevated privileges
 - Essential for network monitoring and reconnaissance
@@ -107,7 +126,9 @@ Capture is always in **promiscuous mode**:
 **Security**: Only works on same network segment (same switch/hub). Can't capture ARP on other segments.
 
 ### 7. State Machine for LLM Processing
+
 Uses standard client state machine (Idle → Processing → Accumulating):
+
 - **Idle**: Ready to process next packet
 - **Processing**: LLM is analyzing current packet
 - **Accumulating**: LLM still processing, queue incoming packets
@@ -115,7 +136,9 @@ Uses standard client state machine (Idle → Processing → Accumulating):
 **Rationale**: Prevents concurrent LLM calls on same client, ensures ordered processing.
 
 ### 8. Dual Logging
+
 All operations use **dual logging**:
+
 - **DEBUG**: ARP summary (operation, sender, target)
 - **TRACE**: Full packet hex dump
 - **INFO**: LLM messages and high-level analysis
@@ -125,22 +148,26 @@ All operations use **dual logging**:
 ## LLM Integration
 
 ### Action-Based Request Model
+
 The LLM controls ARP client with actions:
 
 **Events**:
+
 - `arp_client_started` - Client successfully started on interface
-  - Parameters: `interface`
+    - Parameters: `interface`
 - `arp_response_received` - ARP packet captured from interface
-  - Parameters: `operation`, `sender_mac`, `sender_ip`, `target_mac`, `target_ip`
+    - Parameters: `operation`, `sender_mac`, `sender_ip`, `target_mac`, `target_ip`
 
 **Available Actions (Async - User-triggered)**:
+
 - `send_arp_request` - Send ARP request (who-has query)
-  - Parameters: `sender_mac`, `sender_ip`, `target_ip`
+    - Parameters: `sender_mac`, `sender_ip`, `target_ip`
 - `send_arp_reply` - Send ARP reply (gratuitous ARP)
-  - Parameters: `sender_mac`, `sender_ip`, `target_mac`, `target_ip`
+    - Parameters: `sender_mac`, `sender_ip`, `target_mac`, `target_ip`
 - `stop_capture` - Stop ARP capture and close client
 
 **Available Actions (Sync - Response to events)**:
+
 - `send_arp_request` - Send ARP request in response to received packet
 - `send_arp_reply` - Send ARP reply in response to received packet
 - `wait_for_more` - Continue monitoring for ARP packets
@@ -148,6 +175,7 @@ The LLM controls ARP client with actions:
 ### Example LLM Workflows
 
 **Send ARP Request (Who-Has Query)**:
+
 ```json
 {
   "actions": [
@@ -162,6 +190,7 @@ The LLM controls ARP client with actions:
 ```
 
 **Send Gratuitous ARP**:
+
 ```json
 {
   "actions": [
@@ -177,6 +206,7 @@ The LLM controls ARP client with actions:
 ```
 
 **Monitor ARP and Respond to Specific IP**:
+
 ```json
 {
   "actions": [
@@ -192,6 +222,7 @@ The LLM controls ARP client with actions:
 ```
 
 **Continue Monitoring (Wait for More)**:
+
 ```json
 {
   "actions": [
@@ -205,12 +236,15 @@ The LLM controls ARP client with actions:
 ## Connection Management
 
 ### No Traditional Connection
+
 ARP is stateless at the protocol level:
+
 - No handshake, no session
 - Each ARP packet is independent event
 - Client remains active until explicitly stopped
 
 ### Client Lifecycle
+
 1. User opens ARP client → Specify interface (e.g., "eth0")
 2. Client starts packet capture on interface → Status: Connected
 3. LLM receives `arp_client_started` event → Can send initial ARP requests
@@ -219,6 +253,7 @@ ARP is stateless at the protocol level:
 6. User closes client or LLM sends `stop_capture` → Status: Disconnected
 
 ### Packet Processing Flow
+
 1. pcap captures ARP packet from interface (BPF filter="arp")
 2. Parse Ethernet frame, extract ARP packet
 3. Parse ARP packet (operation, sender/target MAC/IP)
@@ -231,6 +266,7 @@ ARP is stateless at the protocol level:
 10. Loop continues for next ARP packet
 
 ### Concurrent Packet Processing
+
 - Each ARP packet spawned in separate tokio task (if state is Idle)
 - State machine prevents concurrent LLM calls for same client
 - Packets received during Processing are queued (Accumulating state)
@@ -239,9 +275,11 @@ ARP is stateless at the protocol level:
 ## Known Limitations
 
 ### 1. Requires Root/Admin Privileges
+
 **Why**: Promiscuous mode and packet injection require raw socket access
 
 **Workaround**:
+
 - Linux: Run as root or use `sudo setcap cap_net_raw+ep /path/to/netget`
 - macOS: Run as root or use `sudo`
 - Windows: Run as Administrator
@@ -249,6 +287,7 @@ ARP is stateless at the protocol level:
 **Test Impact**: E2E tests must run with privileges.
 
 ### 2. Same Segment Only
+
 - ARP is Layer 2 protocol (doesn't cross routers)
 - Only works on local network segment
 - Can't send/receive ARP from different subnets
@@ -257,6 +296,7 @@ ARP is stateless at the protocol level:
 **Use Case Limitation**: Reconnaissance limited to local segment.
 
 ### 3. No ARP Cache Access
+
 - Client doesn't read or manipulate host's ARP cache
 - Can send ARP requests, but can't see OS ARP cache entries
 - Responses captured from wire, not from local cache
@@ -264,6 +304,7 @@ ARP is stateless at the protocol level:
 **Workaround**: Use system tools like `arp -a` or `ip neigh` for cache inspection.
 
 ### 4. MAC Address Validation
+
 - Client validates MAC address format before building packet
 - LLM must provide valid MAC (6 octets, colon-separated hex)
 - Invalid MAC causes packet build to fail with error
@@ -271,6 +312,7 @@ ARP is stateless at the protocol level:
 **Safety**: Parser validates format before building packet.
 
 ### 5. IPv4 Only
+
 - ARP is IPv4-specific (maps IPv4 to Ethernet MAC)
 - IPv6 uses NDP (Neighbor Discovery Protocol), not ARP
 - Client only handles IPv4 ARP packets
@@ -278,6 +320,7 @@ ARP is stateless at the protocol level:
 **Future Enhancement**: Add NDP client support for IPv6.
 
 ### 6. Capture Loop Blocks Tokio Thread
+
 - pcap capture loop is blocking
 - Runs in `spawn_blocking()` which uses separate thread pool
 - May exhaust blocking thread pool under extremely high load
@@ -285,6 +328,7 @@ ARP is stateless at the protocol level:
 **Rationale**: pcap API is inherently blocking - no async alternative.
 
 ### 7. Performance Impact of LLM Processing
+
 - Each ARP packet triggers LLM call (~2-5s)
 - High ARP traffic may queue packets
 - Typically low volume: ARP cached, only sent when needed
@@ -294,6 +338,7 @@ ARP is stateless at the protocol level:
 ## Example Prompts
 
 ### ARP Network Scanner
+
 ```
 Open ARP client on eth0
 Send ARP requests for all IPs in 192.168.1.0/24
@@ -301,6 +346,7 @@ Log which IPs respond and their MAC addresses
 ```
 
 ### Gratuitous ARP Announcer
+
 ```
 Open ARP client on en0
 Send gratuitous ARP announcing MAC aa:bb:cc:dd:ee:ff for IP 192.168.1.100
@@ -308,6 +354,7 @@ This announces our presence on the network
 ```
 
 ### ARP Traffic Monitor
+
 ```
 Open ARP client on eth0
 Monitor all ARP traffic on the network
@@ -316,6 +363,7 @@ Don't send any ARP packets, just observe
 ```
 
 ### ARP Reconnaissance
+
 ```
 Open ARP client on wlan0
 Send who-has queries for 192.168.1.1, 192.168.1.10, 192.168.1.100
@@ -325,6 +373,7 @@ Log which IPs are alive based on ARP replies
 ## Performance Characteristics
 
 ### Latency
+
 - ARP capture: <1ms (kernel-level BPF filter)
 - Packet parsing: <1ms (pnet)
 - LLM processing: 2-5s (typical)
@@ -334,6 +383,7 @@ Log which IPs are alive based on ARP replies
 **Impact**: On busy networks (many ARP packets), some may queue.
 
 ### Throughput
+
 - **Typical** (<1 ARP/sec): All packets processed in real-time
 - **High** (1-10 ARP/sec): Packets queue but all eventually processed
 - **Extreme** (>10 ARP/sec): May drop packets (rare - ARP is cached)
@@ -341,12 +391,14 @@ Log which IPs are alive based on ARP replies
 **Best Use Case**: ARP is naturally low-volume due to caching.
 
 ### Concurrency
+
 - Each ARP packet processed in separate task (if state is Idle)
 - Ollama lock serializes LLM calls
 - pcap capture runs in dedicated blocking thread
 - No CPU bottleneck (LLM API is bottleneck)
 
 ### Memory
+
 - Each ARP packet: 42 bytes (14 eth + 28 arp)
 - Minimal memory overhead (<5MB total)
 - No buffering or caching beyond state machine
@@ -354,23 +406,28 @@ Log which IPs are alive based on ARP replies
 ## Security Considerations
 
 ### Privilege Escalation
+
 - Requires root/admin for promiscuous mode and injection
 - Security risk: running untrusted code with elevated privileges
 - **Mitigation**: NetGet itself is open-source and auditable
 
 ### ARP Spoofing Capability
+
 - Client can send fake ARP packets (by design)
 - Could be used maliciously to intercept traffic or disrupt networks
 - **Intended Use**: Testing, education, network diagnostics only
 - **Ethics**: Only use on networks you own or have permission to test
 
 ### Network Disruption
+
 - Sending invalid or duplicate ARP packets can disrupt network connectivity
 - Hosts may cache incorrect MAC addresses
 - **Mitigation**: Use on isolated test networks
 
 ### Legitimate Use Cases
+
 ARP client is designed for:
+
 - Network diagnostics (check if host is reachable at Layer 2)
 - ARP table debugging
 - Network testing and education
@@ -379,36 +436,42 @@ ARP client is designed for:
 ## Use Cases
 
 ### 1. Network Reconnaissance
+
 - Discover live hosts on local segment
 - Map IP-to-MAC address mappings
 - Identify network topology
 - Detect rogue devices
 
 ### 2. ARP Testing
+
 - Test ARP behavior of devices
 - Verify ARP cache timeout
 - Test gratuitous ARP handling
 - Debug ARP issues
 
 ### 3. Network Monitoring
+
 - Monitor ARP traffic patterns
 - Detect ARP spoofing attacks (unexpected replies)
 - Track IP/MAC changes
 - Identify network events
 
 ### 4. Educational
+
 - Learn ARP protocol mechanics
 - Understand Layer 2 addressing
 - Experiment with network protocols
 - Study ARP behavior in controlled environment
 
 ### 5. Network Diagnostics
+
 - Check Layer 2 reachability
 - Verify MAC address assignments
 - Test switch/router ARP proxy behavior
 - Debug connectivity issues
 
 ## References
+
 - [RFC 826 - Address Resolution Protocol](https://datatracker.ietf.org/doc/html/rfc826)
 - [libpcap Documentation](https://www.tcpdump.org/manpages/pcap.3pcap.html)
 - [pcap crate Documentation](https://docs.rs/pcap/latest/pcap/)

@@ -45,14 +45,14 @@ use crate::server::McpProtocol;
 use crate::state::app_state::AppState;
 #[cfg(feature = "mcp")]
 use crate::state::server::{ConnectionStatus, ProtocolConnectionInfo, ServerId};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 #[cfg(feature = "mcp")]
 use actions::{
-    MCP_INITIALIZE_EVENT, MCP_RESOURCES_LIST_EVENT, MCP_RESOURCES_READ_EVENT,
-    MCP_TOOLS_LIST_EVENT, MCP_TOOLS_CALL_EVENT, MCP_PROMPTS_LIST_EVENT, MCP_PROMPTS_GET_EVENT,
+    MCP_INITIALIZE_EVENT, MCP_PROMPTS_GET_EVENT, MCP_PROMPTS_LIST_EVENT, MCP_RESOURCES_LIST_EVENT,
+    MCP_RESOURCES_READ_EVENT, MCP_TOOLS_CALL_EVENT, MCP_TOOLS_LIST_EVENT,
 };
 #[cfg(feature = "mcp")]
 use session::McpSession;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// MCP server shared state
 #[derive(Clone)]
@@ -127,8 +127,10 @@ async fn handle_jsonrpc(
     AxumState(state): AxumState<McpServerState>,
     Json(payload): Json<Value>,
 ) -> Response {
-    trace!("MCP received JSON-RPC request: {}",
-        serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string()));
+    trace!(
+        "MCP received JSON-RPC request: {}",
+        serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string())
+    );
 
     let _ = state.status_tx.send(format!(
         "[TRACE] MCP received: {}",
@@ -159,9 +161,13 @@ async fn handle_jsonrpc(
                 "ping" => handle_ping(),
                 "resources/list" => handle_resources_list(&state, &payload).await,
                 "resources/read" => handle_resources_read(&state, req.params, &payload).await,
-                "resources/subscribe" => handle_resources_subscribe(&state, req.params, &payload).await,
+                "resources/subscribe" => {
+                    handle_resources_subscribe(&state, req.params, &payload).await
+                }
                 "resources/unsubscribe" => handle_resources_unsubscribe(&state, req.params).await,
-                "resources/templates/list" => handle_resources_templates_list(&state, &payload).await,
+                "resources/templates/list" => {
+                    handle_resources_templates_list(&state, &payload).await
+                }
                 "tools/list" => handle_tools_list(&state, &payload).await,
                 "tools/call" => handle_tools_call(&state, req.params, &payload).await,
                 "prompts/list" => handle_prompts_list(&state, &payload).await,
@@ -173,16 +179,17 @@ async fn handle_jsonrpc(
 
             let response = match result {
                 Ok(value) => {
-                    trace!("MCP response success: {}",
-                        serde_json::to_string_pretty(&value).unwrap_or_default());
+                    trace!(
+                        "MCP response success: {}",
+                        serde_json::to_string_pretty(&value).unwrap_or_default()
+                    );
                     JsonRpcResponse::success(request_id, value)
                 }
                 Err(e) => {
                     error!("MCP error: code={}, message={}", e.code, e.message);
-                    let _ = state.status_tx.send(format!(
-                        "[ERROR] MCP error: {}",
-                        e.message
-                    ));
+                    let _ = state
+                        .status_tx
+                        .send(format!("[ERROR] MCP error: {}", e.message));
                     JsonRpcResponse::error(request_id, e)
                 }
             };
@@ -232,47 +239,61 @@ async fn handle_initialize(
         .unwrap_or_else(|| "unknown".to_string());
 
     debug!("MCP client: {}", client_info);
-    let _ = state.status_tx.send(format!("→ MCP client initializing: {}", client_info));
+    let _ = state
+        .status_tx
+        .send(format!("→ MCP client initializing: {}", client_info));
 
     // Create connection for tracking
     let connection_id = ConnectionId::new(state.app_state.get_next_unified_id().await);
     let session_id = uuid::Uuid::new_v4().to_string();
 
     // Track in app_state
-    state.app_state.add_connection_to_server(
-        state.server_id,
-        crate::state::ConnectionState {
-            id: connection_id,
-            remote_addr: state.local_addr, // HTTP doesn't have clear remote addr
-            local_addr: state.local_addr,
-            bytes_sent: 0,
-            bytes_received: 0,
-            packets_sent: 0,
-            packets_received: 0,
-            last_activity: std::time::Instant::now(),
-            status: ConnectionStatus::Active,
-            status_changed_at: std::time::Instant::now(),
-            protocol_info: ProtocolConnectionInfo::empty(),
-        },
-    ).await;
+    state
+        .app_state
+        .add_connection_to_server(
+            state.server_id,
+            crate::state::ConnectionState {
+                id: connection_id,
+                remote_addr: state.local_addr, // HTTP doesn't have clear remote addr
+                local_addr: state.local_addr,
+                bytes_sent: 0,
+                bytes_received: 0,
+                packets_sent: 0,
+                packets_received: 0,
+                last_activity: std::time::Instant::now(),
+                status: ConnectionStatus::Active,
+                status_changed_at: std::time::Instant::now(),
+                protocol_info: ProtocolConnectionInfo::empty(),
+            },
+        )
+        .await;
 
     // Create session
     let session = McpSession::new(session_id.clone(), connection_id);
-    state.sessions.lock().await.insert(session_id, Arc::new(Mutex::new(session)));
+    state
+        .sessions
+        .lock()
+        .await
+        .insert(session_id, Arc::new(Mutex::new(session)));
 
     // Create event for LLM
-    let event = Event::new(&MCP_INITIALIZE_EVENT, serde_json::json!({
-        "method": "initialize",
-        "client_info": client_info,
-        "protocol_version": params.as_ref().and_then(|p| p.get("protocolVersion")).and_then(|v| v.as_str()).unwrap_or("unknown"),
-        "capabilities": params.as_ref().and_then(|p| p.get("capabilities")),
-    }));
+    let event = Event::new(
+        &MCP_INITIALIZE_EVENT,
+        serde_json::json!({
+            "method": "initialize",
+            "client_info": client_info,
+            "protocol_version": params.as_ref().and_then(|p| p.get("protocolVersion")).and_then(|v| v.as_str()).unwrap_or("unknown"),
+            "capabilities": params.as_ref().and_then(|p| p.get("capabilities")),
+        }),
+    );
 
     // Get protocol actions
     let protocol = Arc::new(McpProtocol::new());
 
     debug!("MCP calling LLM for initialize request");
-    let _ = state.status_tx.send("[DEBUG] MCP calling LLM for initialize request".to_string());
+    let _ = state
+        .status_tx
+        .send("[DEBUG] MCP calling LLM for initialize request".to_string());
 
     // Call LLM with action system
     let execution_result = match call_llm(
@@ -282,11 +303,15 @@ async fn handle_initialize(
         Some(connection_id),
         &event,
         protocol.as_ref(),
-    ).await {
+    )
+    .await
+    {
         Ok(result) => result,
         Err(e) => {
             error!("MCP LLM call failed: {}", e);
-            let _ = state.status_tx.send(format!("[ERROR] MCP LLM call failed: {}", e));
+            let _ = state
+                .status_tx
+                .send(format!("[ERROR] MCP LLM call failed: {}", e));
             return Err(JsonRpcError {
                 code: ErrorCode::InternalError as i32,
                 message: "Internal server error".to_string(),
@@ -301,8 +326,14 @@ async fn handle_initialize(
         let _ = state.status_tx.send(format!("[INFO] {}", message));
     }
 
-    debug!("MCP got {} protocol results", execution_result.protocol_results.len());
-    let _ = state.status_tx.send(format!("[DEBUG] MCP got {} protocol results", execution_result.protocol_results.len()));
+    debug!(
+        "MCP got {} protocol results",
+        execution_result.protocol_results.len()
+    );
+    let _ = state.status_tx.send(format!(
+        "[DEBUG] MCP got {} protocol results",
+        execution_result.protocol_results.len()
+    ));
 
     // Process action results
     for protocol_result in &execution_result.protocol_results {
@@ -344,12 +375,17 @@ async fn handle_resources_list(
     _full_request: &Value,
 ) -> Result<Value, JsonRpcError> {
     debug!("MCP resources/list");
-    let _ = state.status_tx.send("[DEBUG] MCP resources/list request".to_string());
+    let _ = state
+        .status_tx
+        .send("[DEBUG] MCP resources/list request".to_string());
 
     // Create event for LLM
-    let event = Event::new(&MCP_RESOURCES_LIST_EVENT, serde_json::json!({
-        "method": "resources/list",
-    }));
+    let event = Event::new(
+        &MCP_RESOURCES_LIST_EVENT,
+        serde_json::json!({
+            "method": "resources/list",
+        }),
+    );
 
     // Get protocol actions
     let protocol = Arc::new(McpProtocol::new());
@@ -362,11 +398,15 @@ async fn handle_resources_list(
         None,
         &event,
         protocol.as_ref(),
-    ).await {
+    )
+    .await
+    {
         Ok(result) => result,
         Err(e) => {
             error!("MCP LLM call failed: {}", e);
-            let _ = state.status_tx.send(format!("[ERROR] MCP LLM call failed: {}", e));
+            let _ = state
+                .status_tx
+                .send(format!("[ERROR] MCP LLM call failed: {}", e));
             return Err(JsonRpcError {
                 code: ErrorCode::InternalError as i32,
                 message: "Internal server error".to_string(),
@@ -405,13 +445,18 @@ async fn handle_resources_read(
         .ok_or_else(|| JsonRpcError::new(ErrorCode::InvalidParams))?;
 
     debug!("MCP resources/read: uri={}", uri);
-    let _ = state.status_tx.send(format!("[DEBUG] MCP resources/read: {}", uri));
+    let _ = state
+        .status_tx
+        .send(format!("[DEBUG] MCP resources/read: {}", uri));
 
     // Create event for LLM
-    let event = Event::new(&MCP_RESOURCES_READ_EVENT, serde_json::json!({
-        "method": "resources/read",
-        "uri": uri,
-    }));
+    let event = Event::new(
+        &MCP_RESOURCES_READ_EVENT,
+        serde_json::json!({
+            "method": "resources/read",
+            "uri": uri,
+        }),
+    );
 
     // Get protocol actions
     let protocol = Arc::new(McpProtocol::new());
@@ -424,11 +469,15 @@ async fn handle_resources_read(
         None,
         &event,
         protocol.as_ref(),
-    ).await {
+    )
+    .await
+    {
         Ok(result) => result,
         Err(e) => {
             error!("MCP LLM call failed: {}", e);
-            let _ = state.status_tx.send(format!("[ERROR] MCP LLM call failed: {}", e));
+            let _ = state
+                .status_tx
+                .send(format!("[ERROR] MCP LLM call failed: {}", e));
             return Err(JsonRpcError {
                 code: ErrorCode::InternalError as i32,
                 message: "Internal server error".to_string(),
@@ -512,12 +561,17 @@ async fn handle_tools_list(
     _full_request: &Value,
 ) -> Result<Value, JsonRpcError> {
     debug!("MCP tools/list");
-    let _ = state.status_tx.send("[DEBUG] MCP tools/list request".to_string());
+    let _ = state
+        .status_tx
+        .send("[DEBUG] MCP tools/list request".to_string());
 
     // Create event for LLM
-    let event = Event::new(&MCP_TOOLS_LIST_EVENT, serde_json::json!({
-        "method": "tools/list",
-    }));
+    let event = Event::new(
+        &MCP_TOOLS_LIST_EVENT,
+        serde_json::json!({
+            "method": "tools/list",
+        }),
+    );
 
     // Get protocol actions
     let protocol = Arc::new(McpProtocol::new());
@@ -530,11 +584,15 @@ async fn handle_tools_list(
         None,
         &event,
         protocol.as_ref(),
-    ).await {
+    )
+    .await
+    {
         Ok(result) => result,
         Err(e) => {
             error!("MCP LLM call failed: {}", e);
-            let _ = state.status_tx.send(format!("[ERROR] MCP LLM call failed: {}", e));
+            let _ = state
+                .status_tx
+                .send(format!("[ERROR] MCP LLM call failed: {}", e));
             return Err(JsonRpcError {
                 code: ErrorCode::InternalError as i32,
                 message: "Internal server error".to_string(),
@@ -572,19 +630,22 @@ async fn handle_tools_call(
         .and_then(|n| n.as_str())
         .ok_or_else(|| JsonRpcError::new(ErrorCode::InvalidParams))?;
 
-    let tool_arguments = params
-        .as_ref()
-        .and_then(|p| p.get("arguments"));
+    let tool_arguments = params.as_ref().and_then(|p| p.get("arguments"));
 
     debug!("MCP tools/call: name={}", tool_name);
-    let _ = state.status_tx.send(format!("[DEBUG] MCP tools/call: {}", tool_name));
+    let _ = state
+        .status_tx
+        .send(format!("[DEBUG] MCP tools/call: {}", tool_name));
 
     // Create event for LLM
-    let event = Event::new(&MCP_TOOLS_CALL_EVENT, serde_json::json!({
-        "method": "tools/call",
-        "name": tool_name,
-        "arguments": tool_arguments,
-    }));
+    let event = Event::new(
+        &MCP_TOOLS_CALL_EVENT,
+        serde_json::json!({
+            "method": "tools/call",
+            "name": tool_name,
+            "arguments": tool_arguments,
+        }),
+    );
 
     // Get protocol actions
     let protocol = Arc::new(McpProtocol::new());
@@ -597,11 +658,15 @@ async fn handle_tools_call(
         None,
         &event,
         protocol.as_ref(),
-    ).await {
+    )
+    .await
+    {
         Ok(result) => result,
         Err(e) => {
             error!("MCP LLM call failed: {}", e);
-            let _ = state.status_tx.send(format!("[ERROR] MCP LLM call failed: {}", e));
+            let _ = state
+                .status_tx
+                .send(format!("[ERROR] MCP LLM call failed: {}", e));
             return Err(JsonRpcError {
                 code: ErrorCode::InternalError as i32,
                 message: "Internal server error".to_string(),
@@ -636,12 +701,17 @@ async fn handle_prompts_list(
     _full_request: &Value,
 ) -> Result<Value, JsonRpcError> {
     debug!("MCP prompts/list");
-    let _ = state.status_tx.send("[DEBUG] MCP prompts/list request".to_string());
+    let _ = state
+        .status_tx
+        .send("[DEBUG] MCP prompts/list request".to_string());
 
     // Create event for LLM
-    let event = Event::new(&MCP_PROMPTS_LIST_EVENT, serde_json::json!({
-        "method": "prompts/list",
-    }));
+    let event = Event::new(
+        &MCP_PROMPTS_LIST_EVENT,
+        serde_json::json!({
+            "method": "prompts/list",
+        }),
+    );
 
     // Get protocol actions
     let protocol = Arc::new(McpProtocol::new());
@@ -654,11 +724,15 @@ async fn handle_prompts_list(
         None,
         &event,
         protocol.as_ref(),
-    ).await {
+    )
+    .await
+    {
         Ok(result) => result,
         Err(e) => {
             error!("MCP LLM call failed: {}", e);
-            let _ = state.status_tx.send(format!("[ERROR] MCP LLM call failed: {}", e));
+            let _ = state
+                .status_tx
+                .send(format!("[ERROR] MCP LLM call failed: {}", e));
             return Err(JsonRpcError {
                 code: ErrorCode::InternalError as i32,
                 message: "Internal server error".to_string(),
@@ -696,19 +770,22 @@ async fn handle_prompts_get(
         .and_then(|n| n.as_str())
         .ok_or_else(|| JsonRpcError::new(ErrorCode::InvalidParams))?;
 
-    let prompt_arguments = params
-        .as_ref()
-        .and_then(|p| p.get("arguments"));
+    let prompt_arguments = params.as_ref().and_then(|p| p.get("arguments"));
 
     debug!("MCP prompts/get: name={}", prompt_name);
-    let _ = state.status_tx.send(format!("[DEBUG] MCP prompts/get: {}", prompt_name));
+    let _ = state
+        .status_tx
+        .send(format!("[DEBUG] MCP prompts/get: {}", prompt_name));
 
     // Create event for LLM
-    let event = Event::new(&MCP_PROMPTS_GET_EVENT, serde_json::json!({
-        "method": "prompts/get",
-        "name": prompt_name,
-        "arguments": prompt_arguments,
-    }));
+    let event = Event::new(
+        &MCP_PROMPTS_GET_EVENT,
+        serde_json::json!({
+            "method": "prompts/get",
+            "name": prompt_name,
+            "arguments": prompt_arguments,
+        }),
+    );
 
     // Get protocol actions
     let protocol = Arc::new(McpProtocol::new());
@@ -721,11 +798,15 @@ async fn handle_prompts_get(
         None,
         &event,
         protocol.as_ref(),
-    ).await {
+    )
+    .await
+    {
         Ok(result) => result,
         Err(e) => {
             error!("MCP LLM call failed: {}", e);
-            let _ = state.status_tx.send(format!("[ERROR] MCP LLM call failed: {}", e));
+            let _ = state
+                .status_tx
+                .send(format!("[ERROR] MCP LLM call failed: {}", e));
             return Err(JsonRpcError {
                 code: ErrorCode::InternalError as i32,
                 message: "Internal server error".to_string(),
@@ -766,7 +847,9 @@ async fn handle_logging_set_level(
         .unwrap_or("info");
 
     debug!("MCP logging/setLevel: level={}", level);
-    let _ = state.status_tx.send(format!("[INFO] MCP log level set to: {}", level));
+    let _ = state
+        .status_tx
+        .send(format!("[INFO] MCP log level set to: {}", level));
 
     Ok(serde_json::json!({}))
 }
@@ -794,7 +877,9 @@ async fn handle_completion(
 #[cfg(feature = "mcp")]
 async fn handle_initialized(state: &McpServerState) {
     info!("MCP client initialized");
-    let _ = state.status_tx.send("[INFO] MCP client initialized".to_string());
+    let _ = state
+        .status_tx
+        .send("[INFO] MCP client initialized".to_string());
 }
 
 /// Handle cancelled notification
@@ -802,7 +887,9 @@ async fn handle_initialized(state: &McpServerState) {
 async fn handle_cancelled(state: &McpServerState, params: Option<Value>) {
     if let Some(req_id) = params.as_ref().and_then(|p| p.get("requestId")) {
         debug!("MCP operation cancelled: {:?}", req_id);
-        let _ = state.status_tx.send(format!("[DEBUG] MCP cancelled: {:?}", req_id));
+        let _ = state
+            .status_tx
+            .send(format!("[DEBUG] MCP cancelled: {:?}", req_id));
     }
 }
 

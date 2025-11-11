@@ -2,11 +2,14 @@
 
 ## Overview
 
-The Kafka client implementation provides LLM-controlled access to Apache Kafka broker clusters. The LLM can produce messages to topics (producer mode) or consume messages from topics (consumer mode), with full control over message routing, consumer groups, and offset management.
+The Kafka client implementation provides LLM-controlled access to Apache Kafka broker clusters. The LLM can produce
+messages to topics (producer mode) or consume messages from topics (consumer mode), with full control over message
+routing, consumer groups, and offset management.
 
 ## Implementation Details
 
 ### Library Choice
+
 - **rdkafka** - Rust wrapper for librdkafka (the official C/C++ Kafka client)
 - High-performance, production-ready Kafka protocol implementation
 - Supports all Kafka features: producer, consumer, consumer groups, offset management
@@ -41,11 +44,13 @@ The Kafka client implementation provides LLM-controlled access to Apache Kafka b
 ### Client Modes
 
 #### Producer Mode
+
 - Send messages to Kafka topics
 - Async delivery with partition and offset confirmation
 - LLM controls: topic, payload, key (for partitioning)
 
 #### Consumer Mode
+
 - Receive messages from subscribed topics
 - Consumer group coordination
 - Manual offset commit control
@@ -54,34 +59,39 @@ The Kafka client implementation provides LLM-controlled access to Apache Kafka b
 ### LLM Control
 
 **Startup Parameters** (required):
+
 - `mode` - "producer" or "consumer" (required)
 - `client_id` - Kafka client identifier (optional, default: "netget-kafka-client")
 - `topics` - Array of topics to subscribe to (consumer mode only, optional)
 - `group_id` - Consumer group ID (consumer mode only, optional, default: "netget-consumer-group")
 
 **Async Actions** (user-triggered):
+
 - `produce_message` - Produce message to topic (producer mode)
-  - Parameters: topic (string), payload (string), key (string, optional)
+    - Parameters: topic (string), payload (string), key (string, optional)
 - `subscribe_topics` - Subscribe to topics (consumer mode)
-  - Parameters: topics (array of strings)
+    - Parameters: topics (array of strings)
 - `commit_offset` - Commit current consumer offset (consumer mode)
 - `disconnect` - Close Kafka connection
 
 **Sync Actions** (in response to Kafka events):
+
 - `produce_message` - Produce message in response to received message
 - `commit_offset` - Commit offset after processing message
 
 **Events:**
+
 - `kafka_connected` - Fired when connection established
-  - Data: brokers, client_mode
+    - Data: brokers, client_mode
 - `kafka_message_received` - Fired when consumer receives message
-  - Data: topic, partition, offset, key, payload, timestamp
+    - Data: topic, partition, offset, key, payload, timestamp
 - `kafka_message_delivered` - Fired when producer delivers message
-  - Data: topic, partition, offset
+    - Data: topic, partition, offset
 
 ### Message Format
 
 Messages in Kafka are structured with:
+
 - **Topic** - Logical channel for messages
 - **Partition** - Ordered sequence within topic
 - **Offset** - Unique ID for message in partition
@@ -159,6 +169,7 @@ status_tx.send("[CLIENT] Kafka producer connected");      // → TUI
 **User**: "Connect to Kafka at localhost:9092 as producer and send a message to 'events' topic"
 
 **Startup Parameters**:
+
 ```json
 {
   "mode": "producer",
@@ -167,6 +178,7 @@ status_tx.send("[CLIENT] Kafka producer connected");      // → TUI
 ```
 
 **LLM Action**:
+
 ```json
 {
   "type": "produce_message",
@@ -181,6 +193,7 @@ status_tx.send("[CLIENT] Kafka producer connected");      // → TUI
 **User**: "Connect to Kafka at localhost:9092 as consumer, subscribe to 'events', and log each message"
 
 **Startup Parameters**:
+
 ```json
 {
   "mode": "consumer",
@@ -191,6 +204,7 @@ status_tx.send("[CLIENT] Kafka producer connected");      // → TUI
 ```
 
 **LLM receives messages automatically**:
+
 ```json
 {
   "event_type": "kafka_message_received",
@@ -204,6 +218,7 @@ status_tx.send("[CLIENT] Kafka producer connected");      // → TUI
 ```
 
 **LLM Action (after processing)**:
+
 ```json
 {
   "type": "commit_offset"
@@ -215,6 +230,7 @@ status_tx.send("[CLIENT] Kafka producer connected");      // → TUI
 **User**: "Subscribe to topics 'logs' and 'metrics'"
 
 **LLM Action**:
+
 ```json
 {
   "type": "subscribe_topics",
@@ -229,6 +245,7 @@ status_tx.send("[CLIENT] Kafka producer connected");      // → TUI
 **Setup**: Open consumer for 'input', producer for 'output'
 
 **Consumer receives**:
+
 ```json
 {
   "event_type": "kafka_message_received",
@@ -240,6 +257,7 @@ status_tx.send("[CLIENT] Kafka producer connected");      // → TUI
 ```
 
 **LLM produces to output** (requires separate producer client):
+
 ```json
 {
   "type": "produce_message",

@@ -15,7 +15,7 @@ mod mcp_client_tests {
         // Start an MCP server listening on an available port
         let server_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via MCP. \
-             Provide a tool called 'calculate' that evaluates math expressions."
+             Provide a tool called 'calculate' that evaluates math expressions.",
         );
 
         let mut server = start_netget_server(server_config).await?;
@@ -59,7 +59,7 @@ mod mcp_client_tests {
         let server_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via MCP. \
              Provide a tool called 'calculate' that evaluates the expression parameter. \
-             When the tool is called, return the result as text."
+             When the tool is called, return the result as text.",
         );
 
         let mut server = start_netget_server(server_config).await?;
@@ -102,7 +102,7 @@ mod mcp_client_tests {
         // Start an MCP server with a resource
         let server_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via MCP. \
-             Provide a resource at URI 'file:///README.md' with content 'Test resource content'."
+             Provide a resource at URI 'file:///README.md' with content 'Test resource content'.",
         );
 
         let mut server = start_netget_server(server_config).await?;

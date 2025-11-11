@@ -11,11 +11,11 @@ use tracing::{debug, error, info, trace};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
-use actions::STUN_BINDING_REQUEST_EVENT;
-use crate::server::StunProtocol;
 use crate::protocol::Event;
+use crate::server::StunProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use actions::STUN_BINDING_REQUEST_EVENT;
 
 /// STUN server that handles binding requests
 pub struct StunServer;
@@ -43,10 +43,14 @@ impl StunServer {
                 match socket.recv_from(&mut buffer).await {
                     Ok((n, peer_addr)) => {
                         let data = buffer[..n].to_vec();
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
 
                         // Add connection to ServerInstance (STUN "connection" = transaction)
-                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -61,7 +65,9 @@ impl StunServer {
                             status_changed_at: now,
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
-                        app_state.add_connection_to_server(server_id, conn_state).await;
+                        app_state
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         // DEBUG: Log summary
@@ -79,15 +85,21 @@ impl StunServer {
 
                         tokio::spawn(async move {
                             // Parse STUN message to extract transaction ID and message type
-                            let (transaction_id, message_type, is_valid) = Self::parse_stun_header(&data);
+                            let (transaction_id, message_type, is_valid) =
+                                Self::parse_stun_header(&data);
 
                             if !is_valid {
                                 debug!("STUN invalid message from {}", peer_addr);
-                                let _ = status_clone.send(format!("[DEBUG] STUN invalid message from {}", peer_addr));
+                                let _ = status_clone.send(format!(
+                                    "[DEBUG] STUN invalid message from {}",
+                                    peer_addr
+                                ));
                                 return;
                             }
 
-                            let transaction_id_hex = transaction_id.map(|tid| hex::encode(tid)).unwrap_or_default();
+                            let transaction_id_hex = transaction_id
+                                .map(|tid| hex::encode(tid))
+                                .unwrap_or_default();
 
                             // Create STUN binding request event
                             let event_data = serde_json::json!({
@@ -101,16 +113,21 @@ impl StunServer {
                             let event = Event::new(&STUN_BINDING_REQUEST_EVENT, event_data);
 
                             debug!("STUN calling LLM for binding request from {}", peer_addr);
-                            let _ = status_clone.send(format!("[DEBUG] STUN calling LLM for binding request from {}", peer_addr));
+                            let _ = status_clone.send(format!(
+                                "[DEBUG] STUN calling LLM for binding request from {}",
+                                peer_addr
+                            ));
 
                             match call_llm(
                                 &llm_clone,
                                 &state_clone,
                                 server_id,
-                                None,  // STUN uses UDP, no persistent connection
+                                None, // STUN uses UDP, no persistent connection
                                 &event,
                                 protocol_clone.as_ref(),
-                            ).await {
+                            )
+                            .await
+                            {
                                 Ok(execution_result) => {
                                     // Display messages from LLM
                                     for message in &execution_result.messages {
@@ -118,30 +135,63 @@ impl StunServer {
                                         let _ = status_clone.send(format!("[INFO] {}", message));
                                     }
 
-                                    debug!("STUN parsed {} actions", execution_result.raw_actions.len());
-                                    let _ = status_clone.send(format!("[DEBUG] STUN parsed {} actions", execution_result.raw_actions.len()));
+                                    debug!(
+                                        "STUN parsed {} actions",
+                                        execution_result.raw_actions.len()
+                                    );
+                                    let _ = status_clone.send(format!(
+                                        "[DEBUG] STUN parsed {} actions",
+                                        execution_result.raw_actions.len()
+                                    ));
 
                                     // Process protocol results
-                                    debug!("STUN got {} protocol results", execution_result.protocol_results.len());
-                                    let _ = status_clone.send(format!("[DEBUG] STUN got {} protocol results", execution_result.protocol_results.len()));
+                                    debug!(
+                                        "STUN got {} protocol results",
+                                        execution_result.protocol_results.len()
+                                    );
+                                    let _ = status_clone.send(format!(
+                                        "[DEBUG] STUN got {} protocol results",
+                                        execution_result.protocol_results.len()
+                                    ));
 
                                     for protocol_result in execution_result.protocol_results {
-                                        if let Some(output_data) = protocol_result.get_all_output().first() {
-                                            let _ = socket_clone.send_to(output_data, peer_addr).await;
+                                        if let Some(output_data) =
+                                            protocol_result.get_all_output().first()
+                                        {
+                                            let _ =
+                                                socket_clone.send_to(output_data, peer_addr).await;
 
                                             // DEBUG: Log summary
-                                            debug!("STUN sent {} bytes to {}", output_data.len(), peer_addr);
-                                            let _ = status_clone.send(format!("[DEBUG] STUN sent {} bytes to {}", output_data.len(), peer_addr));
+                                            debug!(
+                                                "STUN sent {} bytes to {}",
+                                                output_data.len(),
+                                                peer_addr
+                                            );
+                                            let _ = status_clone.send(format!(
+                                                "[DEBUG] STUN sent {} bytes to {}",
+                                                output_data.len(),
+                                                peer_addr
+                                            ));
 
                                             // TRACE: Log full payload
                                             let hex_str = hex::encode(output_data);
                                             trace!("STUN sent (hex): {}", hex_str);
-                                            let _ = status_clone.send(format!("[TRACE] STUN sent (hex): {}", hex_str));
+                                            let _ = status_clone.send(format!(
+                                                "[TRACE] STUN sent (hex): {}",
+                                                hex_str
+                                            ));
 
-                                            let _ = status_clone.send(format!("→ STUN response to {} ({} bytes)", peer_addr, output_data.len()));
+                                            let _ = status_clone.send(format!(
+                                                "→ STUN response to {} ({} bytes)",
+                                                peer_addr,
+                                                output_data.len()
+                                            ));
                                         } else {
                                             debug!("STUN protocol result has no output data");
-                                            let _ = status_clone.send("[DEBUG] STUN protocol result has no output data".to_string());
+                                            let _ = status_clone.send(
+                                                "[DEBUG] STUN protocol result has no output data"
+                                                    .to_string(),
+                                            );
                                         }
                                     }
                                 }
@@ -185,8 +235,8 @@ impl StunServer {
         // M = method (14 bits), C = class (2 bits)
         let class = ((message_type_raw & 0x0110) >> 4) | ((message_type_raw & 0x0100) >> 7);
         let method = (message_type_raw & 0x000F)
-                   | ((message_type_raw & 0x00E0) >> 1)
-                   | ((message_type_raw & 0x3E00) >> 2);
+            | ((message_type_raw & 0x00E0) >> 1)
+            | ((message_type_raw & 0x3E00) >> 2);
 
         let message_type = match (class, method) {
             (0, 1) => "BindingRequest",

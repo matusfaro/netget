@@ -4,8 +4,8 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
-use crate::server::connection::ConnectionId;
 use crate::protocol::EventType;
+use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
@@ -38,8 +38,8 @@ impl RedisProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for RedisProtocol {
-        fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
-            vec![
+    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        vec![
                 crate::llm::actions::ParameterDefinition {
                     name: "send_first".to_string(),
                     type_hint: "boolean".to_string(),
@@ -48,100 +48,101 @@ impl Protocol for RedisProtocol {
                     example: json!(false),
                 },
             ]
-        }
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            vec![list_redis_connections_action()]
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                redis_simple_string_action(),
-                redis_bulk_string_action(),
-                redis_array_action(),
-                redis_integer_action(),
-                redis_error_action(),
-                redis_null_action(),
-                close_this_connection_action(),
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "Redis"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            get_redis_event_types()
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>TCP>Redis"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["redis"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Experimental)
-                .implementation("redis-protocol v5.2 (RESP2 parsing)")
-                .llm_control("All Redis commands (GET, SET, INCR, etc.)")
-                .e2e_testing("redis-rs client")
-                .notes("RESP2 only (no RESP3)")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "Redis in-memory data store"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Start a Redis server on port 6379"
-        }
-        fn group_name(&self) -> &'static str {
-            "Database"
-        }
+    }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        vec![list_redis_connections_action()]
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            redis_simple_string_action(),
+            redis_bulk_string_action(),
+            redis_array_action(),
+            redis_integer_action(),
+            redis_error_action(),
+            redis_null_action(),
+            close_this_connection_action(),
+        ]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "Redis"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_redis_event_types()
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>Redis"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["redis"]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("redis-protocol v5.2 (RESP2 parsing)")
+            .llm_control("All Redis commands (GET, SET, INCR, etc.)")
+            .e2e_testing("redis-rs client")
+            .notes("RESP2 only (no RESP3)")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "Redis in-memory data store"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Start a Redis server on port 6379"
+    }
+    fn group_name(&self) -> &'static str {
+        "Database"
+    }
 }
 
 // Implement Server trait (server-specific functionality)
 impl Server for RedisProtocol {
-        fn spawn(
-            &self,
-            ctx: crate::protocol::SpawnContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::server::redis::RedisServer;
-                let send_first = ctx.startup_params
-                    .as_ref()
-                    .and_then(|p| p.get_optional_bool("send_first"))
-                    .unwrap_or(false);
-    
-                RedisServer::spawn_with_llm_actions(
-                    ctx.listen_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    send_first,
-                    ctx.server_id,
-                ).await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "redis_simple_string" => self.execute_redis_simple_string(action),
-                "redis_bulk_string" => self.execute_redis_bulk_string(action),
-                "redis_array" => self.execute_redis_array(action),
-                "redis_integer" => self.execute_redis_integer(action),
-                "redis_error" => self.execute_redis_error(action),
-                "redis_null" => self.execute_redis_null(action),
-                "close_this_connection" => Ok(ActionResult::CloseConnection),
-                "list_redis_connections" => self.execute_list_redis_connections(action),
-                _ => Err(anyhow::anyhow!("Unknown Redis action: {}", action_type)),
-            }
-        }
-}
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::redis::RedisServer;
+            let send_first = ctx
+                .startup_params
+                .as_ref()
+                .and_then(|p| p.get_optional_bool("send_first"))
+                .unwrap_or(false);
 
+            RedisServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                send_first,
+                ctx.server_id,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
+
+        match action_type {
+            "redis_simple_string" => self.execute_redis_simple_string(action),
+            "redis_bulk_string" => self.execute_redis_bulk_string(action),
+            "redis_array" => self.execute_redis_array(action),
+            "redis_integer" => self.execute_redis_integer(action),
+            "redis_error" => self.execute_redis_error(action),
+            "redis_null" => self.execute_redis_null(action),
+            "close_this_connection" => Ok(ActionResult::CloseConnection),
+            "list_redis_connections" => self.execute_list_redis_connections(action),
+            _ => Err(anyhow::anyhow!("Unknown Redis action: {}", action_type)),
+        }
+    }
+}
 
 impl RedisProtocol {
     fn execute_redis_simple_string(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -398,13 +399,17 @@ pub fn list_redis_connections_action() -> ActionDefinition {
 // Redis Action Constants
 // ============================================================================
 
-pub static REDIS_SIMPLE_STRING_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| redis_simple_string_action());
-pub static REDIS_BULK_STRING_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| redis_bulk_string_action());
+pub static REDIS_SIMPLE_STRING_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| redis_simple_string_action());
+pub static REDIS_BULK_STRING_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| redis_bulk_string_action());
 pub static REDIS_ARRAY_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| redis_array_action());
-pub static REDIS_INTEGER_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| redis_integer_action());
+pub static REDIS_INTEGER_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| redis_integer_action());
 pub static REDIS_ERROR_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| redis_error_action());
 pub static REDIS_NULL_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| redis_null_action());
-pub static REDIS_CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| close_this_connection_action());
+pub static REDIS_CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| close_this_connection_action());
 
 // ============================================================================
 // Redis Event Type Constants
@@ -412,32 +417,25 @@ pub static REDIS_CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> = LazyLock:
 
 /// Redis command event - triggered when client sends a command
 pub static REDIS_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "redis_command",
-        "Redis command received from client"
-    )
-    .with_parameters(vec![
-        Parameter {
+    EventType::new("redis_command", "Redis command received from client")
+        .with_parameters(vec![Parameter {
             name: "command".to_string(),
             type_hint: "string".to_string(),
             description: "The Redis command string sent by the client".to_string(),
             required: true,
-        },
-    ])
-    .with_actions(vec![
-        REDIS_SIMPLE_STRING_ACTION.clone(),
-        REDIS_BULK_STRING_ACTION.clone(),
-        REDIS_ARRAY_ACTION.clone(),
-        REDIS_INTEGER_ACTION.clone(),
-        REDIS_ERROR_ACTION.clone(),
-        REDIS_NULL_ACTION.clone(),
-        REDIS_CLOSE_CONNECTION_ACTION.clone(),
-    ])
+        }])
+        .with_actions(vec![
+            REDIS_SIMPLE_STRING_ACTION.clone(),
+            REDIS_BULK_STRING_ACTION.clone(),
+            REDIS_ARRAY_ACTION.clone(),
+            REDIS_INTEGER_ACTION.clone(),
+            REDIS_ERROR_ACTION.clone(),
+            REDIS_NULL_ACTION.clone(),
+            REDIS_CLOSE_CONNECTION_ACTION.clone(),
+        ])
 });
 
 /// Get Redis event types
 pub fn get_redis_event_types() -> Vec<EventType> {
-    vec![
-        REDIS_COMMAND_EVENT.clone(),
-    ]
+    vec![REDIS_COMMAND_EVENT.clone()]
 }

@@ -1,25 +1,25 @@
 //! NFS server implementation using nfsserve
 pub mod actions;
 
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
 
 #[cfg(feature = "nfs")]
-use nfsserve::vfs::{NFSFileSystem, DirEntry, ReadDirResult};
-#[cfg(feature = "nfs")]
-use nfsserve::nfs::{fattr3, fileid3, filename3, nfspath3, nfsstat3, nfstime3, ftype3, sattr3};
-#[cfg(feature = "nfs")]
 use async_trait::async_trait;
+#[cfg(feature = "nfs")]
+use nfsserve::nfs::{fattr3, fileid3, filename3, ftype3, nfspath3, nfsstat3, nfstime3, sattr3};
+#[cfg(feature = "nfs")]
+use nfsserve::vfs::{DirEntry, NFSFileSystem, ReadDirResult};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
-use actions::NFS_OPERATION_EVENT;
-use crate::server::NfsProtocol;
 use crate::protocol::Event;
+use crate::server::NfsProtocol;
 use crate::state::app_state::AppState;
+use actions::NFS_OPERATION_EVENT;
 
 /// NFS server that provides LLM-controlled file system
 pub struct NfsServer;
@@ -119,28 +119,40 @@ impl LlmNfsFileSystem {
     }
 
     /// Consult the LLM for NFS operations
-    async fn consult_llm(&self, operation: &str, params: serde_json::Value) -> Result<Vec<serde_json::Value>> {
+    async fn consult_llm(
+        &self,
+        operation: &str,
+        params: serde_json::Value,
+    ) -> Result<Vec<serde_json::Value>> {
         debug!("Consulting LLM for NFS {} operation", operation);
-        let _ = self.status_tx.send(format!("[DEBUG] NFS {}: {:?}", operation, params));
+        let _ = self
+            .status_tx
+            .send(format!("[DEBUG] NFS {}: {:?}", operation, params));
 
         // Create NFS operation event
-        let event = Event::new(&NFS_OPERATION_EVENT, serde_json::json!({
-            "operation": operation,
-            "params": params
-        }));
+        let event = Event::new(
+            &NFS_OPERATION_EVENT,
+            serde_json::json!({
+                "operation": operation,
+                "params": params
+            }),
+        );
 
         trace!("Calling LLM for NFS {} operation", operation);
-        let _ = self.status_tx.send(format!("[TRACE] Calling LLM for NFS {}", operation));
+        let _ = self
+            .status_tx
+            .send(format!("[TRACE] Calling LLM for NFS {}", operation));
 
         // Call LLM with Event-based approach
         let execution_result = call_llm(
             &self.llm_client,
             &self.app_state,
             self.server_id,
-            None,  // NFS doesn't use connection-specific context
+            None, // NFS doesn't use connection-specific context
             &event,
             self.protocol.as_ref(),
-        ).await?;
+        )
+        .await?;
 
         // Display messages from LLM
         for message in &execution_result.messages {
@@ -148,7 +160,11 @@ impl LlmNfsFileSystem {
             let _ = self.status_tx.send(format!("[INFO] {}", message));
         }
 
-        debug!("LLM returned {} actions for NFS {}", execution_result.raw_actions.len(), operation);
+        debug!(
+            "LLM returned {} actions for NFS {}",
+            execution_result.raw_actions.len(),
+            operation
+        );
 
         // Return raw actions for manual processing
         Ok(execution_result.raw_actions)
@@ -184,25 +200,21 @@ impl LlmNfsFileSystem {
 
     /// Build fattr3 from LLM response
     fn build_fattr3(&self, response: &serde_json::Value) -> Result<fattr3> {
-        let file_type = response.get("file_type")
+        let file_type = response
+            .get("file_type")
             .and_then(|v| v.as_str())
             .unwrap_or("regular");
 
-        let mode = response.get("mode")
+        let mode = response
+            .get("mode")
             .and_then(|v| v.as_u64())
             .unwrap_or(0o644) as u32;
 
-        let size = response.get("size")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
+        let size = response.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
 
-        let uid = response.get("uid")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1000) as u32;
+        let uid = response.get("uid").and_then(|v| v.as_u64()).unwrap_or(1000) as u32;
 
-        let gid = response.get("gid")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1000) as u32;
+        let gid = response.get("gid").and_then(|v| v.as_u64()).unwrap_or(1000) as u32;
 
         let atime = self.parse_nfstime(response.get("atime").and_then(|v| v.as_u64()));
         let mtime = self.parse_nfstime(response.get("mtime").and_then(|v| v.as_u64()));
@@ -216,11 +228,12 @@ impl LlmNfsFileSystem {
             gid,
             size,
             used: size,
-            rdev: nfsserve::nfs::specdata3 { specdata1: 0, specdata2: 0 },
+            rdev: nfsserve::nfs::specdata3 {
+                specdata1: 0,
+                specdata2: 0,
+            },
             fsid: 0,
-            fileid: response.get("fileid")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0),
+            fileid: response.get("fileid").and_then(|v| v.as_u64()).unwrap_or(0),
             atime,
             mtime,
             ctime,
@@ -319,7 +332,7 @@ impl NFSFileSystem for LlmNfsFileSystem {
     }
 
     async fn setattr(&self, id: fileid3, setattr: sattr3) -> Result<fattr3, nfsstat3> {
-        use nfsserve::nfs::{set_mode3, set_uid3, set_gid3, set_size3};
+        use nfsserve::nfs::{set_gid3, set_mode3, set_size3, set_uid3};
 
         // Convert NFS optional enums to Option for JSON serialization
         let mode_val = match setattr.mode {
@@ -381,7 +394,12 @@ impl NFSFileSystem for LlmNfsFileSystem {
         }
     }
 
-    async fn read(&self, id: fileid3, offset: u64, count: u32) -> Result<(Vec<u8>, bool), nfsstat3> {
+    async fn read(
+        &self,
+        id: fileid3,
+        offset: u64,
+        count: u32,
+    ) -> Result<(Vec<u8>, bool), nfsstat3> {
         let params = serde_json::json!({
             "fileid": id,
             "offset": offset,
@@ -399,17 +417,21 @@ impl NFSFileSystem for LlmNfsFileSystem {
                             return Err(nfsstat3::NFS3ERR_ACCES);
                         }
 
-                        let data = action.get("data")
+                        let data = action
+                            .get("data")
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .as_bytes()
                             .to_vec();
 
-                        let eof = action.get("eof")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(true);
+                        let eof = action.get("eof").and_then(|v| v.as_bool()).unwrap_or(true);
 
-                        debug!("NFS read {} bytes from fileid {}, eof={}", data.len(), id, eof);
+                        debug!(
+                            "NFS read {} bytes from fileid {}, eof={}",
+                            data.len(),
+                            id,
+                            eof
+                        );
                         return Ok((data, eof));
                     }
                 }
@@ -466,8 +488,13 @@ impl NFSFileSystem for LlmNfsFileSystem {
         }
     }
 
-    async fn create(&self, dirid: fileid3, filename: &filename3, attr: sattr3) -> Result<(fileid3, fattr3), nfsstat3> {
-        use nfsserve::nfs::{set_mode3, set_uid3, set_gid3};
+    async fn create(
+        &self,
+        dirid: fileid3,
+        filename: &filename3,
+        attr: sattr3,
+    ) -> Result<(fileid3, fattr3), nfsstat3> {
+        use nfsserve::nfs::{set_gid3, set_mode3, set_uid3};
 
         let filename_str = String::from_utf8_lossy(filename).to_string();
         let mode_val = match attr.mode {
@@ -502,14 +529,15 @@ impl NFSFileSystem for LlmNfsFileSystem {
                             return Err(nfsstat3::NFS3ERR_ACCES);
                         }
 
-                        let fileid = action.get("fileid")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0);
+                        let fileid = action.get("fileid").and_then(|v| v.as_u64()).unwrap_or(0);
 
                         match self.build_fattr3(&action) {
                             Ok(mut attrs) => {
                                 attrs.fileid = fileid;
-                                debug!("NFS create succeeded: {} with fileid {}", filename_str, fileid);
+                                debug!(
+                                    "NFS create succeeded: {} with fileid {}",
+                                    filename_str, fileid
+                                );
                                 return Ok((fileid, attrs));
                             }
                             Err(e) => {
@@ -529,7 +557,11 @@ impl NFSFileSystem for LlmNfsFileSystem {
         }
     }
 
-    async fn create_exclusive(&self, dirid: fileid3, filename: &filename3) -> Result<fileid3, nfsstat3> {
+    async fn create_exclusive(
+        &self,
+        dirid: fileid3,
+        filename: &filename3,
+    ) -> Result<fileid3, nfsstat3> {
         // Create exclusive is like create but fails if file exists
         let filename_str = String::from_utf8_lossy(filename).to_string();
         let params = serde_json::json!({
@@ -550,7 +582,10 @@ impl NFSFileSystem for LlmNfsFileSystem {
                         }
 
                         if let Some(fileid) = action.get("fileid").and_then(|v| v.as_u64()) {
-                            debug!("NFS create_exclusive succeeded: {} with fileid {}", filename_str, fileid);
+                            debug!(
+                                "NFS create_exclusive succeeded: {} with fileid {}",
+                                filename_str, fileid
+                            );
                             return Ok(fileid);
                         }
                     }
@@ -565,7 +600,11 @@ impl NFSFileSystem for LlmNfsFileSystem {
         }
     }
 
-    async fn mkdir(&self, dirid: fileid3, dirname: &filename3) -> Result<(fileid3, fattr3), nfsstat3> {
+    async fn mkdir(
+        &self,
+        dirid: fileid3,
+        dirname: &filename3,
+    ) -> Result<(fileid3, fattr3), nfsstat3> {
         let dirname_str = String::from_utf8_lossy(dirname).to_string();
         let params = serde_json::json!({
             "dirid": dirid,
@@ -583,15 +622,16 @@ impl NFSFileSystem for LlmNfsFileSystem {
                             return Err(nfsstat3::NFS3ERR_ACCES);
                         }
 
-                        let fileid = action.get("dirid")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0);
+                        let fileid = action.get("dirid").and_then(|v| v.as_u64()).unwrap_or(0);
 
                         match self.build_fattr3(&action) {
                             Ok(mut attrs) => {
                                 attrs.fileid = fileid;
                                 attrs.ftype = ftype3::NF3DIR; // Ensure it's a directory
-                                debug!("NFS mkdir succeeded: {} with dirid {}", dirname_str, fileid);
+                                debug!(
+                                    "NFS mkdir succeeded: {} with dirid {}",
+                                    dirname_str, fileid
+                                );
                                 return Ok((fileid, attrs));
                             }
                             Err(e) => {
@@ -643,7 +683,13 @@ impl NFSFileSystem for LlmNfsFileSystem {
         }
     }
 
-    async fn rename(&self, from_dirid: fileid3, from_filename: &filename3, to_dirid: fileid3, to_filename: &filename3) -> Result<(), nfsstat3> {
+    async fn rename(
+        &self,
+        from_dirid: fileid3,
+        from_filename: &filename3,
+        to_dirid: fileid3,
+        to_filename: &filename3,
+    ) -> Result<(), nfsstat3> {
         let from_name = String::from_utf8_lossy(from_filename).to_string();
         let to_name = String::from_utf8_lossy(to_filename).to_string();
         let params = serde_json::json!({
@@ -678,7 +724,12 @@ impl NFSFileSystem for LlmNfsFileSystem {
         }
     }
 
-    async fn readdir(&self, dirid: fileid3, start_after: fileid3, max_entries: usize) -> Result<ReadDirResult, nfsstat3> {
+    async fn readdir(
+        &self,
+        dirid: fileid3,
+        start_after: fileid3,
+        max_entries: usize,
+    ) -> Result<ReadDirResult, nfsstat3> {
         let params = serde_json::json!({
             "dirid": dirid,
             "start_after": start_after,
@@ -696,45 +747,49 @@ impl NFSFileSystem for LlmNfsFileSystem {
                             return Err(nfsstat3::NFS3ERR_NOTDIR);
                         }
 
-                        let entries_json = action.get("entries")
+                        let entries_json = action
+                            .get("entries")
                             .and_then(|v| v.as_array())
                             .cloned()
                             .unwrap_or_default();
 
                         let mut entries = Vec::new();
                         for entry in entries_json {
-                            let fileid = entry.get("fileid")
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(0);
+                            let fileid = entry.get("fileid").and_then(|v| v.as_u64()).unwrap_or(0);
 
-                            let name = entry.get("name")
+                            let name = entry
+                                .get("name")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("")
                                 .as_bytes()
                                 .to_vec();
 
                             // Build attributes, use defaults if LLM didn't provide them
-                            let mut attr = match entry.get("attr").and_then(|v| self.build_fattr3(v).ok()) {
-                                Some(a) => a,
-                                None => {
-                                    // Provide minimal default attributes
-                                    fattr3 {
-                                        ftype: ftype3::NF3REG,
-                                        mode: 0o644,
-                                        nlink: 1,
-                                        uid: 1000,
-                                        gid: 1000,
-                                        size: 0,
-                                        used: 0,
-                                        rdev: nfsserve::nfs::specdata3 { specdata1: 0, specdata2: 0 },
-                                        fsid: 0,
-                                        fileid,
-                                        atime: self.parse_nfstime(None),
-                                        mtime: self.parse_nfstime(None),
-                                        ctime: self.parse_nfstime(None),
+                            let mut attr =
+                                match entry.get("attr").and_then(|v| self.build_fattr3(v).ok()) {
+                                    Some(a) => a,
+                                    None => {
+                                        // Provide minimal default attributes
+                                        fattr3 {
+                                            ftype: ftype3::NF3REG,
+                                            mode: 0o644,
+                                            nlink: 1,
+                                            uid: 1000,
+                                            gid: 1000,
+                                            size: 0,
+                                            used: 0,
+                                            rdev: nfsserve::nfs::specdata3 {
+                                                specdata1: 0,
+                                                specdata2: 0,
+                                            },
+                                            fsid: 0,
+                                            fileid,
+                                            atime: self.parse_nfstime(None),
+                                            mtime: self.parse_nfstime(None),
+                                            ctime: self.parse_nfstime(None),
+                                        }
                                     }
-                                }
-                            };
+                                };
                             attr.fileid = fileid; // Ensure fileid matches
 
                             entries.push(DirEntry {
@@ -744,11 +799,13 @@ impl NFSFileSystem for LlmNfsFileSystem {
                             });
                         }
 
-                        let end = action.get("end")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(true);
+                        let end = action.get("end").and_then(|v| v.as_bool()).unwrap_or(true);
 
-                        debug!("NFS readdir returned {} entries, end={}", entries.len(), end);
+                        debug!(
+                            "NFS readdir returned {} entries, end={}",
+                            entries.len(),
+                            end
+                        );
                         return Ok(ReadDirResult { entries, end });
                     }
                 }
@@ -762,7 +819,13 @@ impl NFSFileSystem for LlmNfsFileSystem {
         }
     }
 
-    async fn symlink(&self, dirid: fileid3, linkname: &filename3, symlink: &nfspath3, attr: &sattr3) -> Result<(fileid3, fattr3), nfsstat3> {
+    async fn symlink(
+        &self,
+        dirid: fileid3,
+        linkname: &filename3,
+        symlink: &nfspath3,
+        attr: &sattr3,
+    ) -> Result<(fileid3, fattr3), nfsstat3> {
         use nfsserve::nfs::set_mode3;
 
         let linkname_str = String::from_utf8_lossy(linkname).to_string();
@@ -790,9 +853,7 @@ impl NFSFileSystem for LlmNfsFileSystem {
                             return Err(nfsstat3::NFS3ERR_ACCES);
                         }
 
-                        let fileid = action.get("fileid")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0);
+                        let fileid = action.get("fileid").and_then(|v| v.as_u64()).unwrap_or(0);
 
                         match self.build_fattr3(&action) {
                             Ok(mut attrs) => {
@@ -835,13 +896,18 @@ impl NFSFileSystem for LlmNfsFileSystem {
                             return Err(nfsstat3::NFS3ERR_INVAL);
                         }
 
-                        let target_bytes = action.get("data")
+                        let target_bytes = action
+                            .get("data")
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .as_bytes()
                             .to_vec();
 
-                        debug!("NFS readlink for fileid {}: {}", id, String::from_utf8_lossy(&target_bytes));
+                        debug!(
+                            "NFS readlink for fileid {}: {}",
+                            id,
+                            String::from_utf8_lossy(&target_bytes)
+                        );
                         return Ok(nfsserve::nfs::nfsstring(target_bytes));
                     }
                 }

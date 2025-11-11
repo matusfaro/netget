@@ -5,7 +5,7 @@
 
 #[cfg(all(test, feature = "ldap", feature = "ldap"))]
 mod e2e_ldap {
-    use crate::server::helpers::{start_netget_server, ServerConfig, E2EResult};
+    use crate::server::helpers::{start_netget_server, E2EResult, ServerConfig};
     use ldap3::{LdapConnAsync, Scope, SearchEntry};
     use std::time::Duration;
     use tokio::time::sleep;
@@ -31,7 +31,9 @@ mod e2e_ldap {
 
         // Attempt bind
         println!("  [TEST] Attempting bind as cn=admin,dc=example,dc=com");
-        let bind_result = ldap.simple_bind("cn=admin,dc=example,dc=com", "secret").await?;
+        let bind_result = ldap
+            .simple_bind("cn=admin,dc=example,dc=com", "secret")
+            .await?;
 
         // Check result code (0 = success)
         assert_eq!(bind_result.rc, 0, "Bind should succeed");
@@ -67,7 +69,9 @@ mod e2e_ldap {
 
         // Attempt bind with wrong password
         println!("  [TEST] Attempting bind with incorrect password");
-        let bind_result = ldap.simple_bind("cn=admin,dc=example,dc=com", "wrongpassword").await;
+        let bind_result = ldap
+            .simple_bind("cn=admin,dc=example,dc=com", "wrongpassword")
+            .await;
 
         // Should fail - either error or non-zero result code
         match bind_result {
@@ -76,7 +80,10 @@ mod e2e_ldap {
             }
             Ok(result) => {
                 assert_ne!(result.rc, 0, "Bind should fail with wrong password");
-                println!("  [TEST] ✓ Bind correctly denied (result code: {})", result.rc);
+                println!(
+                    "  [TEST] ✓ Bind correctly denied (result code: {})",
+                    result.rc
+                );
             }
         }
 
@@ -107,12 +114,22 @@ mod e2e_ldap {
 
         // Bind first
         println!("  [TEST] Binding as cn=admin,dc=example,dc=com");
-        let bind_result = ldap.simple_bind("cn=admin,dc=example,dc=com", "secret").await?;
+        let bind_result = ldap
+            .simple_bind("cn=admin,dc=example,dc=com", "secret")
+            .await?;
         assert_eq!(bind_result.rc, 0, "Bind should succeed");
 
         // Perform search
         println!("  [TEST] Searching base DN dc=example,dc=com");
-        let (rs, _res) = ldap.search("dc=example,dc=com", Scope::Subtree, "(objectClass=*)", vec!["cn", "mail"]).await?.success()?;
+        let (rs, _res) = ldap
+            .search(
+                "dc=example,dc=com",
+                Scope::Subtree,
+                "(objectClass=*)",
+                vec!["cn", "mail"],
+            )
+            .await?
+            .success()?;
 
         // Check results
         println!("  [TEST] Found {} entries", rs.len());
@@ -160,7 +177,15 @@ mod e2e_ldap {
 
         // Perform filtered search
         println!("  [TEST] Searching with filter (cn=john)");
-        let (rs, _res) = ldap.search("dc=example,dc=com", Scope::Subtree, "(cn=john)", vec!["cn", "sn", "mail"]).await?.success()?;
+        let (rs, _res) = ldap
+            .search(
+                "dc=example,dc=com",
+                Scope::Subtree,
+                "(cn=john)",
+                vec!["cn", "sn", "mail"],
+            )
+            .await?
+            .success()?;
 
         // Check results
         println!("  [TEST] Found {} entries", rs.len());
@@ -206,19 +231,26 @@ mod e2e_ldap {
 
         // Bind as admin
         println!("  [TEST] Binding as admin");
-        let bind_result = ldap.simple_bind("cn=admin,dc=example,dc=com", "admin123").await?;
+        let bind_result = ldap
+            .simple_bind("cn=admin,dc=example,dc=com", "admin123")
+            .await?;
         assert_eq!(bind_result.rc, 0, "Bind should succeed");
 
         // Add a new entry
         println!("  [TEST] Adding new entry cn=testuser,dc=example,dc=com");
-        let add_result = ldap.add(
-            "cn=testuser,dc=example,dc=com",
-            vec![
-                ("objectClass", std::collections::HashSet::from(["person", "top"])),
-                ("cn", std::collections::HashSet::from(["testuser"])),
-                ("sn", std::collections::HashSet::from(["User"])),
-            ],
-        ).await?;
+        let add_result = ldap
+            .add(
+                "cn=testuser,dc=example,dc=com",
+                vec![
+                    (
+                        "objectClass",
+                        std::collections::HashSet::from(["person", "top"]),
+                    ),
+                    ("cn", std::collections::HashSet::from(["testuser"])),
+                    ("sn", std::collections::HashSet::from(["User"])),
+                ],
+            )
+            .await?;
 
         // Check result - may succeed or fail depending on LLM response
         println!("  [TEST] Add operation result code: {}", add_result.rc);
@@ -254,19 +286,25 @@ mod e2e_ldap {
 
         // Bind as admin
         println!("  [TEST] Binding as admin");
-        let bind_result = ldap.simple_bind("cn=admin,dc=example,dc=com", "secret").await?;
+        let bind_result = ldap
+            .simple_bind("cn=admin,dc=example,dc=com", "secret")
+            .await?;
         assert_eq!(bind_result.rc, 0, "Bind should succeed");
 
         // Modify an entry
         use ldap3::Mod;
         println!("  [TEST] Modifying entry cn=testuser,dc=example,dc=com");
-        let mods = vec![
-            Mod::Replace("mail", std::collections::HashSet::from(["newemail@example.com"])),
-        ];
+        let mods = vec![Mod::Replace(
+            "mail",
+            std::collections::HashSet::from(["newemail@example.com"]),
+        )];
         let modify_result = ldap.modify("cn=testuser,dc=example,dc=com", mods).await?;
 
         // Check result
-        println!("  [TEST] Modify operation result code: {}", modify_result.rc);
+        println!(
+            "  [TEST] Modify operation result code: {}",
+            modify_result.rc
+        );
         println!("  [TEST] ✓ Modify operation completed");
 
         // Unbind
@@ -299,7 +337,9 @@ mod e2e_ldap {
 
         // Bind as admin
         println!("  [TEST] Binding as admin");
-        let bind_result = ldap.simple_bind("cn=admin,dc=example,dc=com", "secret").await?;
+        let bind_result = ldap
+            .simple_bind("cn=admin,dc=example,dc=com", "secret")
+            .await?;
         assert_eq!(bind_result.rc, 0, "Bind should succeed");
 
         // Delete an entry
@@ -307,7 +347,10 @@ mod e2e_ldap {
         let delete_result = ldap.delete("cn=testuser,dc=example,dc=com").await?;
 
         // Check result
-        println!("  [TEST] Delete operation result code: {}", delete_result.rc);
+        println!(
+            "  [TEST] Delete operation result code: {}",
+            delete_result.rc
+        );
         println!("  [TEST] ✓ Delete operation completed");
 
         // Unbind

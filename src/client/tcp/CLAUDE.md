@@ -2,11 +2,13 @@
 
 ## Overview
 
-The TCP client implementation provides LLM-controlled outbound TCP connections. The LLM can connect to TCP servers, send raw bytes, and interpret responses.
+The TCP client implementation provides LLM-controlled outbound TCP connections. The LLM can connect to TCP servers, send
+raw bytes, and interpret responses.
 
 ## Implementation Details
 
 ### Library Choice
+
 - **tokio::net::TcpStream** - Async TCP client
 - Direct socket I/O with hex encoding for LLM interaction
 - Split stream pattern for concurrent read/write
@@ -35,11 +37,13 @@ The TCP client implementation provides LLM-controlled outbound TCP connections. 
 ### Connection State Machine
 
 **States:**
+
 1. **Idle** - No LLM processing happening
 2. **Processing** - LLM is being called, new data queued
 3. **Accumulating** - LLM still processing, accumulating more data
 
 **Transitions:**
+
 - Idle → Processing: Data received, call LLM
 - Processing → Accumulating: More data arrives during LLM call
 - Accumulating → Accumulating: More data while LLM processing
@@ -48,20 +52,24 @@ The TCP client implementation provides LLM-controlled outbound TCP connections. 
 ### LLM Control
 
 **Async Actions** (user-triggered):
+
 - `send_tcp_data` - Send hex-encoded bytes to server
 - `disconnect` - Close connection
 
 **Sync Actions** (in response to received data):
+
 - `send_tcp_data` - Send bytes as response
 - `wait_for_more` - Don't respond yet, accumulate data
 
 **Events:**
+
 - `tcp_connected` - Fired when connection established
 - `tcp_data_received` - Fired when data received from server
 
 ### Data Encoding
 
 **Critical**: Data is hex-encoded for LLM interaction:
+
 - Received: `{"data_hex": "48656c6c6f", "data_length": 5}`
 - Sent: `{"type": "send_tcp_data", "data_hex": "776f726c64"}`
 

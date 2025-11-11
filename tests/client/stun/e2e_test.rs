@@ -47,7 +47,7 @@ mod stun_client_tests {
     async fn test_stun_client_alternative_server() -> E2EResult<()> {
         // Connect to alternative Google STUN server
         let client_config = NetGetConfig::new(
-            "Connect to stun1.l.google.com:19302 via STUN and query my external address."
+            "Connect to stun1.l.google.com:19302 via STUN and query my external address.",
         );
 
         let mut client = start_netget_client(client_config).await?;

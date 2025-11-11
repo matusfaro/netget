@@ -7,7 +7,7 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, ServerConfig, E2EResult};
+use super::super::super::helpers::{self, E2EResult, ServerConfig};
 use rsntp::SntpClient;
 use std::net::UdpSocket;
 use std::time::Duration;
@@ -20,9 +20,8 @@ async fn test_ntp_basic_query() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via ntp. Respond to NTP time requests with the current system time. Use stratum 2";
 
     // Start the server with debug logging
-    let server = helpers::start_netget_server(
-        ServerConfig::new(prompt).with_log_level("debug")
-    ).await?;
+    let server =
+        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("debug")).await?;
     println!("NTP server started on port {}", server.port);
 
     // Wait for NTP server to fully initialize (needs LLM call)
@@ -81,11 +80,9 @@ async fn test_ntp_time_sync() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via ntp. Act as a stratum 1 NTP server. Respond with accurate current time in NTP format";
 
     // Start the server
-    let server = helpers::start_netget_server(
-        ServerConfig::new(prompt).with_log_level("debug")
-    ).await?;
+    let server =
+        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("debug")).await?;
     println!("NTP server started on port {}", server.port);
-
 
     // VALIDATION: Use rsntp to synchronize time
     let client = SntpClient::new();
@@ -134,11 +131,9 @@ async fn test_ntp_stratum_levels() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via ntp. Act as a stratum 3 NTP server. Include reference identifier 'LOCL'";
 
     // Start the server
-    let server = helpers::start_netget_server(
-        ServerConfig::new(prompt).with_log_level("debug")
-    ).await?;
+    let server =
+        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("debug")).await?;
     println!("NTP server started on port {}", server.port);
-
 
     // VALIDATION: Send NTP request and check stratum
     let socket = UdpSocket::bind("0.0.0.0:0")?;
@@ -163,7 +158,10 @@ async fn test_ntp_stratum_levels() -> E2EResult<()> {
             }
         }
         Err(e) => {
-            println!("Note: NTP stratum query may not be fully implemented: {}", e);
+            println!(
+                "Note: NTP stratum query may not be fully implemented: {}",
+                e
+            );
         }
     }
 

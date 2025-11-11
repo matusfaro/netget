@@ -18,7 +18,7 @@ mod mdns_client_tests {
     async fn test_mdns_client_initialization() -> E2EResult<()> {
         // Start mDNS client with instruction to browse for HTTP services
         let client_config = NetGetConfig::new(
-            "Initialize mDNS client and browse for HTTP services (_http._tcp.local)."
+            "Initialize mDNS client and browse for HTTP services (_http._tcp.local).",
         );
 
         let mut client = start_netget_client(client_config).await?;
@@ -50,7 +50,7 @@ mod mdns_client_tests {
         // Start mDNS client
         let client_config = NetGetConfig::new(
             "Initialize mDNS client and browse for any services (_services._dns-sd._udp.local). \
-             Wait 10 seconds to collect service discovery responses, then report findings."
+             Wait 10 seconds to collect service discovery responses, then report findings.",
         );
 
         let mut client = start_netget_client(client_config).await?;
@@ -88,7 +88,7 @@ mod mdns_client_tests {
         // Start mDNS client with instruction to resolve a local hostname
         // Using localhost.local which should be resolvable on most systems
         let client_config = NetGetConfig::new(
-            "Initialize mDNS client and resolve 'localhost.local' to an IP address."
+            "Initialize mDNS client and resolve 'localhost.local' to an IP address.",
         );
 
         let mut client = start_netget_client(client_config).await?;

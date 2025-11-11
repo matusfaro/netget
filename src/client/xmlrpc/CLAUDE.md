@@ -9,6 +9,7 @@ XML-RPC client implementation for calling remote procedure calls over HTTP using
 ### xmlrpc crate (v0.15.1)
 
 **Why xmlrpc:**
+
 - Mature, actively maintained library
 - Simple API for method calls: `Request::new("method").arg(param1).arg(param2)`
 - Built on reqwest for HTTP transport
@@ -16,6 +17,7 @@ XML-RPC client implementation for calling remote procedure calls over HTTP using
 - Synchronous API (wrapped in tokio::task::spawn_blocking for async compatibility)
 
 **Alternatives considered:**
+
 - `dxr_client`: More modern (Dec 2024), but repository archived and moved to Codeberg
 - `xml-rpc`: Less mature alternative
 
@@ -53,6 +55,7 @@ LLM decides next action (another call, disconnect, etc.)
 ### Data Conversion
 
 **JSON → XML-RPC Value:**
+
 - `null` → `String("")` (XML-RPC has no null in spec, though extensions exist)
 - `bool` → `Bool`
 - `number` (integer) → `Int` (i32) or `Int64` (i64)
@@ -62,6 +65,7 @@ LLM decides next action (another call, disconnect, etc.)
 - `object` → `Struct`
 
 **XML-RPC Value → JSON:**
+
 - `Int`, `Int64` → `number`
 - `Bool` → `bool`
 - `String` → `string`
@@ -77,17 +81,20 @@ LLM decides next action (another call, disconnect, etc.)
 ### Async Actions (User-triggered)
 
 **call_xmlrpc_method**
+
 - Method name: Any string
 - Parameters: Array of mixed types (LLM constructs parameter list)
 - Example: `{"type": "call_xmlrpc_method", "method_name": "system.listMethods", "params": []}`
 
 **disconnect**
+
 - No parameters
 - Stops client monitoring task
 
 ### Sync Actions (Network event responses)
 
 **call_xmlrpc_method**
+
 - Same as async version
 - Triggered after receiving a response
 - Allows chained method calls
@@ -95,11 +102,13 @@ LLM decides next action (another call, disconnect, etc.)
 ### Events
 
 **xmlrpc_connected**
+
 - Triggered on initialization
 - Provides server URL
 - LLM can make initial method call
 
 **xmlrpc_response_received**
+
 - Triggered after each method call
 - Provides method_name and result (or fault)
 - LLM analyzes response and decides next action
@@ -109,6 +118,7 @@ LLM decides next action (another call, disconnect, etc.)
 ### Blocking API Wrapper
 
 xmlrpc crate is synchronous, so we use:
+
 ```rust
 tokio::task::spawn_blocking(move || {
     request.call_url(&server_url)
@@ -120,6 +130,7 @@ This runs the blocking HTTP call on a dedicated thread pool without blocking the
 ### Error Handling
 
 XML-RPC supports structured faults:
+
 ```xml
 <methodResponse>
   <fault>
@@ -140,6 +151,7 @@ XML-RPC supports structured faults:
 ```
 
 LLM receives fault as:
+
 ```json
 {
   "method_name": "foo",
@@ -155,15 +167,16 @@ LLM receives fault as:
 1. **Synchronous HTTP**: Each method call blocks a thread from the tokio blocking pool
 2. **No streaming**: Cannot handle long-running methods with progress updates
 3. **Type limitations**:
-   - Null handling varies (converted to empty string for compatibility)
-   - Binary data must use Base64 encoding
-   - No native support for complex types beyond struct/array
+    - Null handling varies (converted to empty string for compatibility)
+    - Binary data must use Base64 encoding
+    - No native support for complex types beyond struct/array
 4. **No authentication**: xmlrpc crate doesn't provide built-in HTTP auth (would need custom transport)
 5. **No TLS configuration**: Uses reqwest defaults (could add custom transport for cert validation control)
 
 ## Common Use Cases
 
 ### System Introspection
+
 ```json
 {
   "type": "call_xmlrpc_method",
@@ -173,6 +186,7 @@ LLM receives fault as:
 ```
 
 ### Simple Calculator
+
 ```json
 {
   "type": "call_xmlrpc_method",
@@ -182,6 +196,7 @@ LLM receives fault as:
 ```
 
 ### Complex Parameters
+
 ```json
 {
   "type": "call_xmlrpc_method",
@@ -203,10 +218,12 @@ LLM receives fault as:
 ## Testing Servers
 
 **Public XML-RPC test servers:**
+
 - http://betty.userland.com/RPC2 (historical test server)
 - http://phpxmlrpc.sourceforge.net/server.php (validator)
 
 **LLM can test with:**
+
 - `system.listMethods` - List available methods
 - `system.methodSignature` - Get method signature
 - `system.methodHelp` - Get method documentation

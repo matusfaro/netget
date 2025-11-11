@@ -253,4 +253,3 @@ impl Default for TemplateDataBuilder {
         Self::new()
     }
 }
-

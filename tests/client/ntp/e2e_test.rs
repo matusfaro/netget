@@ -15,7 +15,7 @@ mod ntp_client_tests {
     async fn test_ntp_client_query_time_server() -> E2EResult<()> {
         // Use Google's public NTP server
         let client_config = NetGetConfig::new(
-            "Query time.google.com:123 for current time and show the server time."
+            "Query time.google.com:123 for current time and show the server time.",
         );
 
         let mut client = start_netget_client(client_config).await?;
@@ -43,9 +43,8 @@ mod ntp_client_tests {
     #[tokio::test]
     async fn test_ntp_client_stratum_analysis() -> E2EResult<()> {
         // Use pool.ntp.org which should return stratum 2-3
-        let client_config = NetGetConfig::new(
-            "Query pool.ntp.org:123 and report the stratum level."
-        );
+        let client_config =
+            NetGetConfig::new("Query pool.ntp.org:123 and report the stratum level.");
 
         let mut client = start_netget_client(client_config).await?;
 
@@ -68,9 +67,7 @@ mod ntp_client_tests {
     #[tokio::test]
     async fn test_ntp_client_single_query_model() -> E2EResult<()> {
         // Request time from NTP server
-        let client_config = NetGetConfig::new(
-            "Query time.google.com:123 for the current time."
-        );
+        let client_config = NetGetConfig::new("Query time.google.com:123 for the current time.");
 
         let mut client = start_netget_client(client_config).await?;
 

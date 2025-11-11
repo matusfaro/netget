@@ -5,7 +5,7 @@
 
 #![cfg(feature = "openai")]
 
-use crate::server::helpers::{self, ServerConfig, E2EResult};
+use crate::server::helpers::{self, E2EResult, ServerConfig};
 use serde_json::Value;
 use std::time::Duration;
 
@@ -31,8 +31,10 @@ async fn test_openai_list_models() -> E2EResult<()> {
         Duration::from_secs(15),
         client
             .get(format!("http://127.0.0.1:{}/v1/models", server.port))
-            .send()
-    ).await {
+            .send(),
+    )
+    .await
+    {
         Ok(Ok(resp)) => {
             println!("✓ Received HTTP response: {}", resp.status());
             resp
@@ -54,11 +56,16 @@ async fn test_openai_list_models() -> E2EResult<()> {
     println!("Response JSON: {}", serde_json::to_string_pretty(&json)?);
 
     // Validate OpenAI models list format
-    assert_eq!(json.get("object").and_then(|v| v.as_str()), Some("list"),
-               "Expected 'object' field to be 'list'");
+    assert_eq!(
+        json.get("object").and_then(|v| v.as_str()),
+        Some("list"),
+        "Expected 'object' field to be 'list'"
+    );
 
-    assert!(json.get("data").and_then(|v| v.as_array()).is_some(),
-            "Expected 'data' field to be an array");
+    assert!(
+        json.get("data").and_then(|v| v.as_array()).is_some(),
+        "Expected 'data' field to be an array"
+    );
 
     let models = json["data"].as_array().unwrap();
     println!("✓ Found {} models", models.len());
@@ -66,9 +73,15 @@ async fn test_openai_list_models() -> E2EResult<()> {
     // Verify at least one model exists
     if !models.is_empty() {
         let first_model = &models[0];
-        assert!(first_model.get("id").is_some(), "Model should have 'id' field");
-        assert_eq!(first_model.get("object").and_then(|v| v.as_str()), Some("model"),
-                   "Model object should have 'object'='model'");
+        assert!(
+            first_model.get("id").is_some(),
+            "Model should have 'id' field"
+        );
+        assert_eq!(
+            first_model.get("object").and_then(|v| v.as_str()),
+            Some("model"),
+            "Model object should have 'object'='model'"
+        );
         println!("✓ First model: {}", first_model.get("id").unwrap());
     }
 
@@ -103,16 +116,24 @@ async fn test_openai_chat_completion() -> E2EResult<()> {
         "max_tokens": 50
     });
 
-    println!("Request body: {}", serde_json::to_string_pretty(&request_body)?);
+    println!(
+        "Request body: {}",
+        serde_json::to_string_pretty(&request_body)?
+    );
 
     let response = match tokio::time::timeout(
         Duration::from_secs(30), // Longer timeout for LLM generation
         client
-            .post(format!("http://127.0.0.1:{}/v1/chat/completions", server.port))
+            .post(format!(
+                "http://127.0.0.1:{}/v1/chat/completions",
+                server.port
+            ))
             .header("Content-Type", "application/json")
             .json(&request_body)
-            .send()
-    ).await {
+            .send(),
+    )
+    .await
+    {
         Ok(Ok(resp)) => {
             println!("✓ Received HTTP response: {}", resp.status());
             resp
@@ -134,35 +155,54 @@ async fn test_openai_chat_completion() -> E2EResult<()> {
     println!("Response JSON: {}", serde_json::to_string_pretty(&json)?);
 
     // Validate OpenAI chat completion format
-    assert_eq!(json.get("object").and_then(|v| v.as_str()), Some("chat.completion"),
-               "Expected 'object' field to be 'chat.completion'");
+    assert_eq!(
+        json.get("object").and_then(|v| v.as_str()),
+        Some("chat.completion"),
+        "Expected 'object' field to be 'chat.completion'"
+    );
 
-    assert!(json.get("id").and_then(|v| v.as_str()).is_some(),
-            "Expected 'id' field to exist");
+    assert!(
+        json.get("id").and_then(|v| v.as_str()).is_some(),
+        "Expected 'id' field to exist"
+    );
 
-    assert!(json.get("created").and_then(|v| v.as_u64()).is_some(),
-            "Expected 'created' timestamp field");
+    assert!(
+        json.get("created").and_then(|v| v.as_u64()).is_some(),
+        "Expected 'created' timestamp field"
+    );
 
-    assert!(json.get("model").and_then(|v| v.as_str()).is_some(),
-            "Expected 'model' field");
+    assert!(
+        json.get("model").and_then(|v| v.as_str()).is_some(),
+        "Expected 'model' field"
+    );
 
     // Validate choices array
-    let choices = json.get("choices")
+    let choices = json
+        .get("choices")
         .and_then(|v| v.as_array())
         .expect("Expected 'choices' array");
 
     assert!(!choices.is_empty(), "Expected at least one choice");
 
     let first_choice = &choices[0];
-    assert_eq!(first_choice.get("index").and_then(|v| v.as_u64()), Some(0),
-               "First choice should have index 0");
+    assert_eq!(
+        first_choice.get("index").and_then(|v| v.as_u64()),
+        Some(0),
+        "First choice should have index 0"
+    );
 
     // Validate message structure
-    let message = first_choice.get("message").expect("Expected 'message' object");
-    assert_eq!(message.get("role").and_then(|v| v.as_str()), Some("assistant"),
-               "Message role should be 'assistant'");
+    let message = first_choice
+        .get("message")
+        .expect("Expected 'message' object");
+    assert_eq!(
+        message.get("role").and_then(|v| v.as_str()),
+        Some("assistant"),
+        "Message role should be 'assistant'"
+    );
 
-    let content = message.get("content")
+    let content = message
+        .get("content")
         .and_then(|v| v.as_str())
         .expect("Expected message content");
 
@@ -170,14 +210,25 @@ async fn test_openai_chat_completion() -> E2EResult<()> {
     assert!(!content.is_empty(), "Response content should not be empty");
 
     // Validate finish_reason
-    assert!(first_choice.get("finish_reason").is_some(),
-            "Expected 'finish_reason' field");
+    assert!(
+        first_choice.get("finish_reason").is_some(),
+        "Expected 'finish_reason' field"
+    );
 
     // Validate usage object
     let usage = json.get("usage").expect("Expected 'usage' object");
-    assert!(usage.get("prompt_tokens").is_some(), "Expected 'prompt_tokens'");
-    assert!(usage.get("completion_tokens").is_some(), "Expected 'completion_tokens'");
-    assert!(usage.get("total_tokens").is_some(), "Expected 'total_tokens'");
+    assert!(
+        usage.get("prompt_tokens").is_some(),
+        "Expected 'prompt_tokens'"
+    );
+    assert!(
+        usage.get("completion_tokens").is_some(),
+        "Expected 'completion_tokens'"
+    );
+    assert!(
+        usage.get("total_tokens").is_some(),
+        "Expected 'total_tokens'"
+    );
 
     println!("✓ OpenAI Chat Completion test completed\n");
     Ok(())
@@ -202,8 +253,10 @@ async fn test_openai_invalid_endpoint() -> E2EResult<()> {
         Duration::from_secs(10),
         client
             .get(format!("http://127.0.0.1:{}/v1/invalid", server.port))
-            .send()
-    ).await {
+            .send(),
+    )
+    .await
+    {
         Ok(Ok(resp)) => {
             println!("✓ Received HTTP response: {}", resp.status());
             resp
@@ -224,10 +277,16 @@ async fn test_openai_invalid_endpoint() -> E2EResult<()> {
     let json: Value = response.json().await?;
     println!("Error response: {}", serde_json::to_string_pretty(&json)?);
 
-    assert!(json.get("error").is_some(), "Expected 'error' object in response");
+    assert!(
+        json.get("error").is_some(),
+        "Expected 'error' object in response"
+    );
 
     let error = json.get("error").unwrap();
-    assert!(error.get("message").is_some(), "Expected error 'message' field");
+    assert!(
+        error.get("message").is_some(),
+        "Expected error 'message' field"
+    );
     assert!(error.get("type").is_some(), "Expected error 'type' field");
 
     println!("✓ OpenAI Invalid Endpoint test completed\n");
@@ -257,10 +316,7 @@ async fn test_openai_with_rust_client() -> E2EResult<()> {
 
     // Test 1: List models
     println!("Testing list_models with OpenAI client...");
-    let models_result = tokio::time::timeout(
-        Duration::from_secs(15),
-        client.models().list()
-    ).await;
+    let models_result = tokio::time::timeout(Duration::from_secs(15), client.models().list()).await;
 
     let models = match models_result {
         Ok(Ok(response)) => {
@@ -306,17 +362,15 @@ async fn test_openai_with_rust_client() -> E2EResult<()> {
             async_openai::types::ChatCompletionRequestMessage::User(
                 async_openai::types::ChatCompletionRequestUserMessageArgs::default()
                     .content("Say 'Hello from OpenAI Rust client!' and nothing else.")
-                    .build()?
-            )
+                    .build()?,
+            ),
         ])
         .temperature(0.7)
         .max_tokens(50_u32)
         .build()?;
 
-    let completion_result = tokio::time::timeout(
-        Duration::from_secs(30),
-        client.chat().create(request)
-    ).await;
+    let completion_result =
+        tokio::time::timeout(Duration::from_secs(30), client.chat().create(request)).await;
 
     let response = match completion_result {
         Ok(Ok(resp)) => {
@@ -339,11 +393,17 @@ async fn test_openai_with_rust_client() -> E2EResult<()> {
     println!("  - Model: {}", response.model);
     println!("  - Object: {}", response.object);
 
-    assert_eq!(response.object, "chat.completion", "Object should be 'chat.completion'");
+    assert_eq!(
+        response.object, "chat.completion",
+        "Object should be 'chat.completion'"
+    );
     assert!(!response.id.is_empty(), "Response ID should not be empty");
     assert!(!response.model.is_empty(), "Model should not be empty");
 
-    assert!(!response.choices.is_empty(), "Should have at least one choice");
+    assert!(
+        !response.choices.is_empty(),
+        "Should have at least one choice"
+    );
     let first_choice = &response.choices[0];
 
     println!("  - Choice index: {}", first_choice.index);
@@ -351,23 +411,34 @@ async fn test_openai_with_rust_client() -> E2EResult<()> {
 
     // Validate message structure
     let message = &first_choice.message;
-    assert_eq!(message.role, async_openai::types::Role::Assistant,
-               "Message role should be Assistant");
+    assert_eq!(
+        message.role,
+        async_openai::types::Role::Assistant,
+        "Message role should be Assistant"
+    );
 
     if let Some(content_text) = &message.content {
         println!("  - Assistant response: {}", content_text);
-        assert!(!content_text.is_empty(), "Response content should not be empty");
+        assert!(
+            !content_text.is_empty(),
+            "Response content should not be empty"
+        );
     } else {
         return Err("Expected content in assistant message".into());
     }
 
     println!("  - Finish reason: {:?}", first_choice.finish_reason);
-    assert!(first_choice.finish_reason.is_some(), "Should have finish_reason");
+    assert!(
+        first_choice.finish_reason.is_some(),
+        "Should have finish_reason"
+    );
 
     // Validate usage
     if let Some(usage) = &response.usage {
-        println!("  - Usage: {} prompt + {} completion = {} total tokens",
-                 usage.prompt_tokens, usage.completion_tokens, usage.total_tokens);
+        println!(
+            "  - Usage: {} prompt + {} completion = {} total tokens",
+            usage.prompt_tokens, usage.completion_tokens, usage.total_tokens
+        );
     }
 
     println!("\n✓ OpenAI Rust Client test completed - Full compatibility verified!\n");

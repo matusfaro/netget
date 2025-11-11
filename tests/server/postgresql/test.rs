@@ -18,7 +18,7 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, ServerConfig, E2EResult};
+use super::super::super::helpers::{self, E2EResult, ServerConfig};
 use std::time::Duration;
 use tokio_postgres::NoTls;
 
@@ -36,7 +36,6 @@ async fn test_postgresql_simple_query() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-
     // VALIDATION: Connect and execute query using tokio-postgres
     println!("Connecting to PostgreSQL server...");
 
@@ -45,8 +44,10 @@ async fn test_postgresql_simple_query() -> E2EResult<()> {
 
     let (client, _connection) = match tokio::time::timeout(
         Duration::from_secs(60),
-        tokio_postgres::connect(&connection_string, NoTls)
-    ).await {
+        tokio_postgres::connect(&connection_string, NoTls),
+    )
+    .await
+    {
         Ok(Ok((client, connection))) => {
             println!("✓ PostgreSQL connected");
             // Spawn connection handler
@@ -69,10 +70,9 @@ async fn test_postgresql_simple_query() -> E2EResult<()> {
 
     // Execute simple query
     println!("Executing SELECT 1...");
-    let row = match tokio::time::timeout(
-        Duration::from_secs(60),
-        client.query_one("SELECT 1", &[])
-    ).await {
+    let row = match tokio::time::timeout(Duration::from_secs(60), client.query_one("SELECT 1", &[]))
+        .await
+    {
         Ok(Ok(row)) => row,
         Ok(Err(e)) => {
             println!("✗ Query error: {}", e);
@@ -105,7 +105,6 @@ async fn test_postgresql_multi_row_query() -> E2EResult<()> {
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
-
 
     println!("Connecting to PostgreSQL server...");
     let connection_string = format!("host=127.0.0.1 port={} user=postgres", server.port);
@@ -146,7 +145,6 @@ async fn test_postgresql_create_table() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-
     println!("Connecting to PostgreSQL server...");
     let connection_string = format!("host=127.0.0.1 port={} user=postgres", server.port);
     let (client, connection) = tokio_postgres::connect(&connection_string, NoTls).await?;
@@ -160,7 +158,10 @@ async fn test_postgresql_create_table() -> E2EResult<()> {
     println!("✓ PostgreSQL connected");
 
     println!("Executing CREATE TABLE...");
-    match client.execute("CREATE TABLE test (id INT PRIMARY KEY)", &[]).await {
+    match client
+        .execute("CREATE TABLE test (id INT PRIMARY KEY)", &[])
+        .await
+    {
         Ok(_) => println!("✓ CREATE TABLE executed successfully"),
         Err(e) => {
             println!("CREATE TABLE returned: {}", e);
@@ -183,7 +184,6 @@ async fn test_postgresql_error_response() -> E2EResult<()> {
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
-
 
     println!("Connecting to PostgreSQL server...");
     let connection_string = format!("host=127.0.0.1 port={} user=postgres", server.port);

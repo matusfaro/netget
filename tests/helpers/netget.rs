@@ -1,11 +1,11 @@
 // Core NetGet startup and parsing functionality
 
+use netget::protocol::server_registry;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::time::timeout;
-use netget::protocol::server_registry;
 
 use super::common::*;
 
@@ -238,7 +238,8 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
     let output_lines_clone = output_lines.clone();
 
     // Wait for startup and parse both servers and clients
-    let (servers, clients) = wait_for_netget_startup_with_capture(&mut reader, output_lines_clone.clone()).await?;
+    let (servers, clients) =
+        wait_for_netget_startup_with_capture(&mut reader, output_lines_clone.clone()).await?;
 
     // IMPORTANT: Continue reading stdout in background to prevent pipe buffer from filling
     // Without this, the server will crash with "Broken pipe" when stdout buffer fills
@@ -281,7 +282,10 @@ fn parse_server_startup(line: &str) -> Option<(String, String, u16)> {
     // Extract server ID from "server #N"
     if let Some(idx_start) = line.find("server #") {
         let after_hash = &line[idx_start + 8..];
-        let id_str: String = after_hash.chars().take_while(|c| c.is_ascii_digit()).collect();
+        let id_str: String = after_hash
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
         if !id_str.is_empty() {
             server_id = id_str;
         }
@@ -293,7 +297,8 @@ fn parse_server_startup(line: &str) -> Option<(String, String, u16)> {
             if start_paren < end_paren {
                 let stack_str = &line[start_paren + 1..end_paren];
                 // Parse using the protocol registry
-                if let Some(parsed_protocol) = server_registry::registry().parse_from_str(stack_str) {
+                if let Some(parsed_protocol) = server_registry::registry().parse_from_str(stack_str)
+                {
                     stack = parsed_protocol;
                 }
             }
@@ -305,7 +310,8 @@ fn parse_server_startup(line: &str) -> Option<(String, String, u16)> {
         let addr_part = &line[addr_start + 3..];
         if let Some(colon_pos) = addr_part.find(':') {
             let port_part = &addr_part[colon_pos + 1..];
-            let port_str: String = port_part.chars()
+            let port_str: String = port_part
+                .chars()
                 .take_while(|c| c.is_ascii_digit())
                 .collect();
             if let Ok(p) = port_str.parse::<u16>() {
@@ -335,7 +341,10 @@ fn parse_client_startup(line: &str) -> Option<(String, String, String)> {
     // Extract client ID from "client #N"
     if let Some(idx_start) = line.find("client #") {
         let after_hash = &line[idx_start + 8..];
-        let id_str: String = after_hash.chars().take_while(|c| c.is_ascii_digit()).collect();
+        let id_str: String = after_hash
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
         if !id_str.is_empty() {
             client_id = id_str;
         }
@@ -375,7 +384,10 @@ fn parse_client_connected(line: &str) -> Option<(String, String)> {
     // Extract client ID from "client #N"
     if let Some(idx_start) = line.find("client #") {
         let after_hash = &line[idx_start + 8..];
-        let id_str: String = after_hash.chars().take_while(|c| c.is_ascii_digit()).collect();
+        let id_str: String = after_hash
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
         if !id_str.is_empty() {
             client_id = id_str;
         }
@@ -403,8 +415,10 @@ async fn wait_for_netget_startup_with_capture(
 ) -> E2EResult<(Vec<NetGetServer>, Vec<NetGetClient>)> {
     let wait_future = async {
         let mut servers = Vec::new();
-        let mut clients: std::collections::HashMap<String, NetGetClient> = std::collections::HashMap::new();
-        let mut server_confirmations: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut clients: std::collections::HashMap<String, NetGetClient> =
+            std::collections::HashMap::new();
+        let mut server_confirmations: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
         let mut had_any_startup = false;
 
         while let Some(line) = reader.next_line().await? {
@@ -413,7 +427,10 @@ async fn wait_for_netget_startup_with_capture(
 
             // Parse server startup
             if let Some((id, stack, port)) = parse_server_startup(&line) {
-                println!("[DEBUG] Parsed server startup: id={}, stack={}, port={}", id, stack, port);
+                println!(
+                    "[DEBUG] Parsed server startup: id={}, stack={}, port={}",
+                    id, stack, port
+                );
                 servers.push(NetGetServer {
                     id: id.clone(),
                     port,
@@ -424,19 +441,28 @@ async fn wait_for_netget_startup_with_capture(
 
             // Parse client startup
             if let Some((id, protocol, remote_addr)) = parse_client_startup(&line) {
-                println!("[DEBUG] Parsed client startup: id={}, protocol={}, remote_addr={}", id, protocol, remote_addr);
-                clients.insert(id.clone(), NetGetClient {
-                    id,
-                    protocol,
-                    remote_addr,
-                    local_addr: None,
-                });
+                println!(
+                    "[DEBUG] Parsed client startup: id={}, protocol={}, remote_addr={}",
+                    id, protocol, remote_addr
+                );
+                clients.insert(
+                    id.clone(),
+                    NetGetClient {
+                        id,
+                        protocol,
+                        remote_addr,
+                        local_addr: None,
+                    },
+                );
                 had_any_startup = true;
             }
 
             // Parse client connected confirmation
             if let Some((id, local_addr)) = parse_client_connected(&line) {
-                println!("[DEBUG] Parsed client connected: id={}, local_addr={}", id, local_addr);
+                println!(
+                    "[DEBUG] Parsed client connected: id={}, local_addr={}",
+                    id, local_addr
+                );
                 if let Some(client) = clients.get_mut(&id) {
                     client.local_addr = Some(local_addr);
                 }
@@ -469,7 +495,10 @@ async fn wait_for_netget_startup_with_capture(
             if had_any_startup {
                 // Simple heuristic: if we have startup messages and see confirmation messages,
                 // or if the TUI prompt appears, we're probably done
-                if line.contains("netget>") || line.contains("Ready") || !server_confirmations.is_empty() {
+                if line.contains("netget>")
+                    || line.contains("Ready")
+                    || !server_confirmations.is_empty()
+                {
                     // Give a short time to capture any remaining startup messages
                     tokio::time::sleep(Duration::from_millis(200)).await;
                     break;
@@ -484,7 +513,11 @@ async fn wait_for_netget_startup_with_capture(
         let final_servers = servers;
         let final_clients: Vec<NetGetClient> = clients.into_values().collect();
 
-        println!("[DEBUG] Startup complete. Servers: {}, Clients: {}", final_servers.len(), final_clients.len());
+        println!(
+            "[DEBUG] Startup complete. Servers: {}, Clients: {}",
+            final_servers.len(),
+            final_clients.len()
+        );
 
         Ok((final_servers, final_clients))
     };

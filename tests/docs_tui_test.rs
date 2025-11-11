@@ -17,8 +17,8 @@ const SNAPSHOT_DIR: &str = "tests/docs_tui/snapshots";
 fn test_docs_list_all_protocols() {
     // Run netget with /docs command
     let mut child = Command::new("./target/release/netget")
-        .env("COLUMNS", "120")  // Set terminal width
-        .env("LINES", "50")      // Set terminal height
+        .env("COLUMNS", "120") // Set terminal width
+        .env("LINES", "50") // Set terminal height
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -64,8 +64,8 @@ fn test_docs_list_all_protocols() {
 fn test_docs_bgp_protocol() {
     // Run netget with /docs bgp command
     let mut child = Command::new("./target/release/netget")
-        .env("COLUMNS", "120")  // Set terminal width
-        .env("LINES", "80")      // Set terminal height (larger for detailed view)
+        .env("COLUMNS", "120") // Set terminal width
+        .env("LINES", "80") // Set terminal height (larger for detailed view)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -101,7 +101,11 @@ fn test_docs_bgp_protocol() {
     snapshot_util::assert_snapshot("docs_bgp_detailed", SNAPSHOT_DIR, &docs_output);
 
     // Sanity checks - check for colorized elements (ANSI codes)
-    assert!(docs_output.contains("Protocol:") || docs_output.contains("BGP") || docs_output.contains("Bgp"));
+    assert!(
+        docs_output.contains("Protocol:")
+            || docs_output.contains("BGP")
+            || docs_output.contains("Bgp")
+    );
     assert!(docs_output.contains("Stack:") || docs_output.contains("ETH>IP>TCP>BGP"));
     assert!(docs_output.contains("Status:") || docs_output.contains("Alpha"));
 
@@ -114,8 +118,8 @@ fn test_docs_bgp_protocol() {
 fn test_docs_ssh_protocol() {
     // Run netget with /docs ssh command
     let mut child = Command::new("./target/release/netget")
-        .env("COLUMNS", "120")  // Set terminal width
-        .env("LINES", "80")      // Set terminal height
+        .env("COLUMNS", "120") // Set terminal width
+        .env("LINES", "80") // Set terminal height
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -163,9 +167,12 @@ fn extract_docs_section(full_output: &str, _command: &str) -> String {
     let mut start_idx = 0;
     for (i, line) in lines.iter().enumerate() {
         // Look for box drawing chars, section headers, or protocol names
-        if line.contains("╭") || line.contains("━━━") ||
-           line.contains("Protocol:") || line.contains("Available Protocols") ||
-           line.contains("# ") {
+        if line.contains("╭")
+            || line.contains("━━━")
+            || line.contains("Protocol:")
+            || line.contains("Available Protocols")
+            || line.contains("# ")
+        {
             start_idx = i;
             break;
         }
@@ -184,9 +191,13 @@ fn extract_docs_section(full_output: &str, _command: &str) -> String {
     if start_idx == 0 {
         // Skip past the startup INFO logs
         for (i, line) in lines.iter().enumerate() {
-            if !line.contains("INFO") && !line.contains("Starting NetGet") &&
-               !line.contains("Python:") && !line.contains("Node.js:") &&
-               !line.contains("Go:") && !line.trim().is_empty() {
+            if !line.contains("INFO")
+                && !line.contains("Starting NetGet")
+                && !line.contains("Python:")
+                && !line.contains("Node.js:")
+                && !line.contains("Go:")
+                && !line.trim().is_empty()
+            {
                 start_idx = i;
                 break;
             }
@@ -226,12 +237,10 @@ fn wait_with_timeout(
 
     if exited {
         // Get the output by consuming child
-        child
-            .wait_with_output()
-            .map_err(|e| {
-                // This is a fatal error - can't return child since it's consumed
-                panic!("Failed to get output from completed process: {}", e)
-            })
+        child.wait_with_output().map_err(|e| {
+            // This is a fatal error - can't return child since it's consumed
+            panic!("Failed to get output from completed process: {}", e)
+        })
     } else {
         Err((child, "Process did not complete within timeout".to_string()))
     }

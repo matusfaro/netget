@@ -2,7 +2,8 @@
 
 ## Overview
 
-Full-featured WireGuard VPN client for connecting to WireGuard VPN servers. This client creates a TUN interface, establishes an encrypted tunnel, and routes traffic through the VPN connection.
+Full-featured WireGuard VPN client for connecting to WireGuard VPN servers. This client creates a TUN interface,
+establishes an encrypted tunnel, and routes traffic through the VPN connection.
 
 **Status**: Experimental (newly implemented)
 **Protocol Spec**: [WireGuard White Paper](https://www.wireguard.com/papers/wireguard.pdf)
@@ -13,6 +14,7 @@ Full-featured WireGuard VPN client for connecting to WireGuard VPN servers. This
 ### defguard_wireguard_rs v0.7
 
 **Why chosen**:
+
 - Multi-platform unified API (Linux kernel, macOS userspace, Windows kernel, FreeBSD kernel)
 - Production-ready Rust library with active maintenance
 - Handles all crypto (Curve25519, ChaCha20Poly1305, BLAKE2s)
@@ -20,6 +22,7 @@ Full-featured WireGuard VPN client for connecting to WireGuard VPN servers. This
 - Built-in connection monitoring and statistics
 
 **What it provides**:
+
 - `WGApi` - Platform-specific WireGuard API (Kernel on Linux/FreeBSD/Windows, Userspace on macOS)
 - `Key` - Curve25519 keypair generation and management
 - `Peer` - Server configuration with endpoint, allowed IPs, keepalive
@@ -27,6 +30,7 @@ Full-featured WireGuard VPN client for connecting to WireGuard VPN servers. This
 - `read_interface_data()` - Connection status and handshake statistics
 
 **Why not alternatives**:
+
 - `boringtun` - Userspace only, more complex integration
 - Manual crypto - WireGuard crypto is complex, library handles it correctly
 - Native CLI (`wg`, `wg-quick`) - Violates NetGet architecture (external dependencies)
@@ -36,6 +40,7 @@ Full-featured WireGuard VPN client for connecting to WireGuard VPN servers. This
 ### TUN Interface Creation
 
 Platform-specific interface naming:
+
 - **Linux/FreeBSD**: `netget_wg_client{client_id}` (kernel WireGuard)
 - **macOS**: `utun20` (wireguard-go userspace)
 - **Windows**: `netget_wg_client{client_id}` (kernel WireGuard)
@@ -45,6 +50,7 @@ Client assigns itself a VPN IP address (e.g., `10.20.30.2/32`) as specified in s
 ### Monitoring Loop
 
 Spawns async task that polls `read_interface_data()` every 5 seconds:
+
 - Detects successful handshake (connection established)
 - Detects handshake timeout (connection lost)
 - Updates connection stats (bytes sent/received, last handshake time)
@@ -54,6 +60,7 @@ Spawns async task that polls `read_interface_data()` every 5 seconds:
 ### Command Channel Pattern
 
 WireGuard uses a command channel for action execution:
+
 - Actions like `get_connection_status` and `disconnect` send commands via channel
 - Monitoring loop receives and processes commands
 - Responses are sent back via oneshot channels
@@ -64,6 +71,7 @@ This pattern differs from TCP/HTTP clients which execute actions directly in the
 ### Keypair Management
 
 Client generates Curve25519 keypair on startup (or uses provided key):
+
 ```rust
 let private_key = Key::generate();
 let public_key = private_key.public_key();
@@ -78,7 +86,7 @@ Public key displayed to user for configuration on server side. Server authentica
 Available anytime from user input:
 
 1. **get_connection_status**: Query current VPN connection status
-   - Returns: connection state, handshake time, bytes transferred, endpoint
+    - Returns: connection state, handshake time, bytes transferred, endpoint
 2. **disconnect**: Disconnect from VPN server
 3. **get_client_info**: View client configuration (public key, address, allowed IPs)
 
@@ -89,11 +97,11 @@ None - WireGuard operates at connection level, not request/response.
 ### Event Types
 
 - `wireguard_connected`: Successful handshake with server
-  - Triggered when first handshake succeeds
-  - LLM can respond with status queries or configuration
+    - Triggered when first handshake succeeds
+    - LLM can respond with status queries or configuration
 - `wireguard_disconnected`: Lost connection to server
-  - Triggered when handshake timeout (3 minutes)
-  - LLM can decide to reconnect or log
+    - Triggered when handshake timeout (3 minutes)
+    - LLM can decide to reconnect or log
 
 ## Connection Management
 
@@ -109,16 +117,19 @@ None - WireGuard operates at connection level, not request/response.
 ### Handshake Monitoring
 
 Handshake is considered valid if:
+
 - `peer.last_handshake` is Some
 - Last handshake was within 180 seconds (3 minutes)
 
 Monitoring loop tracks handshake state transitions:
+
 - `not_connected` → `connected`: Handshake succeeded
 - `connected` → `not_connected`: Handshake timeout
 
 ### Command Execution
 
 Commands are sent through global channel storage:
+
 ```rust
 // Send command
 send_command(client_id, WireguardCommand::GetStatus(response_tx)).await?;
@@ -139,6 +150,7 @@ match cmd {
 ### Cleanup
 
 Disconnection removes TUN interface:
+
 ```rust
 wgapi.remove_interface()?;
 ```
@@ -213,6 +225,7 @@ netget> Connect to WireGuard VPN at 1.2.3.4:51820 with server public key xTIBA5r
 ```
 
 LLM parses parameters and starts client:
+
 ```json
 {
   "actions": [
@@ -233,6 +246,7 @@ LLM parses parameters and starts client:
 ```
 
 Client output:
+
 ```
 [CLIENT] WireGuard client 0 public key: abc123...
 [CLIENT] Created interface: netget_wg_client0
@@ -248,6 +262,7 @@ netget> Check VPN connection status
 ```
 
 LLM calls `get_connection_status` action:
+
 ```json
 {
   "actions": [
@@ -267,6 +282,7 @@ netget> Disconnect from VPN
 ```
 
 LLM calls `disconnect` action:
+
 ```json
 {
   "actions": [
@@ -289,6 +305,7 @@ netget> Authorize WireGuard peer with public key abc123... and assign IP 10.20.3
 ```
 
 Or using `wg` command:
+
 ```bash
 sudo wg set netget_wg0 peer abc123... allowed-ips 10.20.30.2/32
 ```
@@ -299,9 +316,11 @@ sudo wg set netget_wg0 peer abc123... allowed-ips 10.20.30.2/32
 
 **Good News**: WireGuard on macOS requires **NO system dependencies**.
 
-The `defguard_wireguard_rs` library uses the userspace `wireguard-go` implementation on macOS, which is included in the Rust library itself. No native libraries, kernel modules, or special tools are required.
+The `defguard_wireguard_rs` library uses the userspace `wireguard-go` implementation on macOS, which is included in the
+Rust library itself. No native libraries, kernel modules, or special tools are required.
 
 **To build WireGuard client on macOS**:
+
 ```bash
 # No special setup needed - just build it
 ./cargo-isolated.sh build --no-default-features --features wireguard
@@ -314,11 +333,13 @@ netget
 ### Linux Setup
 
 **Requirements**:
+
 - Kernel 5.6+ with WireGuard support, OR
 - WireGuard kernel module installed
 - `CAP_NET_ADMIN` capability or root privileges
 
 **Installation**:
+
 ```bash
 # Debian/Ubuntu
 sudo apt-get install wireguard-tools linux-headers-$(uname -r)
@@ -336,10 +357,12 @@ sudo pacman -S wireguard-tools linux-headers
 ### Windows Setup
 
 **Requirements**:
+
 - Windows 10 1809+ or Windows 11
 - WireGuard Driver installed (included with official WireGuard app)
 
 **Installation**:
+
 ```powershell
 # Download and install official WireGuard
 # https://www.wireguard.com/install/
@@ -350,15 +373,18 @@ choco install wireguard
 ### Troubleshooting Platform-Specific Issues
 
 **macOS - "Operation not permitted" error**:
+
 - Ensure you're running the latest version of macOS
 - Check System Preferences > Security & Privacy
 - The userspace implementation should not require elevation
 
 **Linux - "ioctl(SIOCDEVPRIVATE)..." error**:
+
 - Kernel module not loaded: `modprobe wireguard`
 - Missing CAP_NET_ADMIN: Run with `sudo` or grant capability
 
 **Linux - "Interface not found"**:
+
 - Ensure WireGuard tools are installed: `which wg`
 - Check if module is loaded: `lsmod | grep wireguard`
 

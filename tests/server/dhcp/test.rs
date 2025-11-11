@@ -7,8 +7,8 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, ServerConfig, E2EResult};
-use std::net::{Ipv4Addr, UdpSocket};
+use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use std::net::UdpSocket;
 use std::time::Duration;
 
 /// Create a basic DHCP DISCOVER message
@@ -16,10 +16,10 @@ fn create_dhcp_discover(transaction_id: u32) -> Vec<u8> {
     let mut packet = vec![0u8; 300];
 
     // DHCP message structure (simplified)
-    packet[0] = 1;  // op: BOOTREQUEST
-    packet[1] = 1;  // htype: Ethernet
-    packet[2] = 6;  // hlen: MAC address length
-    packet[3] = 0;  // hops
+    packet[0] = 1; // op: BOOTREQUEST
+    packet[1] = 1; // htype: Ethernet
+    packet[2] = 6; // hlen: MAC address length
+    packet[3] = 0; // hops
 
     // Transaction ID (4 bytes)
     packet[4..8].copy_from_slice(&transaction_id.to_be_bytes());
@@ -55,9 +55,9 @@ fn create_dhcp_discover(transaction_id: u32) -> Vec<u8> {
     let mut offset = 240;
 
     // Option 53: DHCP Message Type = DISCOVER (1)
-    packet[offset] = 53;      // option code
-    packet[offset + 1] = 1;   // length
-    packet[offset + 2] = 1;   // DISCOVER
+    packet[offset] = 53; // option code
+    packet[offset + 1] = 1; // length
+    packet[offset + 2] = 1; // DISCOVER
     offset += 3;
 
     // Option 255: End
@@ -112,9 +112,8 @@ async fn test_dhcp_discover_offer() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via dhcp. When receiving DHCP DISCOVER messages, respond with DHCP OFFER. Offer IP addresses in the 192.168.1.0/24 range starting from 192.168.1.100";
 
     // Start the server with debug logging
-    let server = helpers::start_netget_server(
-        ServerConfig::new(prompt).with_log_level("debug")
-    ).await?;
+    let server =
+        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("debug")).await?;
     println!("DHCP server started on port {}", server.port);
 
     // Wait for DHCP server to fully initialize (needs LLM call)
@@ -165,11 +164,9 @@ async fn test_dhcp_request_ack() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via dhcp. Handle DHCP DISCOVER and REQUEST messages. Assign IP addresses from 192.168.1.100 onwards. Respond with OFFER to DISCOVER and ACK to REQUEST";
 
     // Start the server
-    let server = helpers::start_netget_server(
-        ServerConfig::new(prompt).with_log_level("debug")
-    ).await?;
+    let server =
+        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("debug")).await?;
     println!("DHCP server started on port {}", server.port);
-
 
     // VALIDATION: Send DHCP REQUEST (simplified - usually follows DISCOVER/OFFER)
     let socket = UdpSocket::bind("0.0.0.0:0")?;
@@ -180,9 +177,9 @@ async fn test_dhcp_request_ack() -> E2EResult<()> {
     let mut request_packet = create_dhcp_discover(0x87654321);
     // Change message type from DISCOVER (1) to REQUEST (3)
     // Find option 53 and change it
-    for i in 240..request_packet.len()-2 {
-        if request_packet[i] == 53 && request_packet[i+1] == 1 {
-            request_packet[i+2] = 3; // REQUEST
+    for i in 240..request_packet.len() - 2 {
+        if request_packet[i] == 53 && request_packet[i + 1] == 1 {
+            request_packet[i + 2] = 3; // REQUEST
             break;
         }
     }
@@ -222,11 +219,9 @@ async fn test_dhcp_lease_options() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via dhcp. Respond to DHCP requests with: IP address 192.168.1.100, subnet mask 255.255.255.0, gateway 192.168.1.1, DNS server 8.8.8.8, lease time 86400 seconds";
 
     // Start the server
-    let server = helpers::start_netget_server(
-        ServerConfig::new(prompt).with_log_level("debug")
-    ).await?;
+    let server =
+        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("debug")).await?;
     println!("DHCP server started on port {}", server.port);
-
 
     // VALIDATION: Send DHCP DISCOVER and check for options in response
     let socket = UdpSocket::bind("0.0.0.0:0")?;
@@ -248,7 +243,10 @@ async fn test_dhcp_lease_options() -> E2EResult<()> {
             println!("  ✓ DHCP server responded with lease information");
         }
         Err(e) => {
-            println!("Note: DHCP with options may not be fully implemented yet: {}", e);
+            println!(
+                "Note: DHCP with options may not be fully implemented yet: {}",
+                e
+            );
         }
     }
 

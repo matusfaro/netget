@@ -16,8 +16,8 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 use actions::TorrentPeerProtocol;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// BitTorrent Peer Wire Protocol server
 pub struct TorrentPeerServer;
@@ -33,8 +33,14 @@ impl TorrentPeerServer {
     ) -> Result<SocketAddr> {
         let listener = TcpListener::bind(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("BitTorrent Peer server (action-based) listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] BitTorrent Peer server listening on {}", local_addr));
+        info!(
+            "BitTorrent Peer server (action-based) listening on {}",
+            local_addr
+        );
+        let _ = status_tx.send(format!(
+            "[INFO] BitTorrent Peer server listening on {}",
+            local_addr
+        ));
 
         let protocol = Arc::new(TorrentPeerProtocol::new());
 
@@ -42,21 +48,28 @@ impl TorrentPeerServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, peer_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
                         let status_clone = status_tx.clone();
                         let protocol_clone = protocol.clone();
 
                         debug!("BitTorrent Peer accepted connection from {}", peer_addr);
-                        let _ = status_clone.send(format!("[DEBUG] BitTorrent Peer accepted connection from {}", peer_addr));
+                        let _ = status_clone.send(format!(
+                            "[DEBUG] BitTorrent Peer accepted connection from {}",
+                            peer_addr
+                        ));
 
                         // Split stream for read/write
                         let (read_half, write_half) = tokio::io::split(stream);
                         let write_half = Arc::new(tokio::sync::Mutex::new(write_half));
 
                         // Add connection to ServerInstance
-                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -71,7 +84,9 @@ impl TorrentPeerServer {
                             status_changed_at: now,
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
-                        state_clone.add_connection_to_server(server_id, conn_state).await;
+                        state_clone
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
                         let _ = status_clone.send("__UPDATE_UI__".to_string());
 
                         tokio::spawn(async move {
@@ -86,7 +101,9 @@ impl TorrentPeerServer {
                                 status_clone,
                                 server_id,
                                 protocol_clone,
-                            ).await {
+                            )
+                            .await
+                            {
                                 error!("BitTorrent Peer connection error: {}", e);
                             }
                         });
@@ -122,13 +139,19 @@ impl TorrentPeerServer {
             let n = read_half.read(&mut buffer).await?;
             if n == 0 {
                 debug!("BitTorrent Peer connection closed by peer");
-                let _ = status_tx.send("[DEBUG] BitTorrent Peer connection closed by peer".to_string());
+                let _ =
+                    status_tx.send("[DEBUG] BitTorrent Peer connection closed by peer".to_string());
                 break;
             }
 
             let data = buffer[..n].to_vec();
 
-            console_debug!(status_tx, "BitTorrent Peer received {} bytes from {}", n, peer_addr);
+            console_debug!(
+                status_tx,
+                "BitTorrent Peer received {} bytes from {}",
+                n,
+                peer_addr
+            );
 
             // TRACE: Log full payload
             let hex_str = hex::encode(&data);
@@ -139,7 +162,12 @@ impl TorrentPeerServer {
                 // Parse handshake
                 match Self::parse_handshake(&data) {
                     Ok((info_hash, peer_id)) => {
-                        console_debug!(status_tx, "BitTorrent Peer handshake: info_hash={}, peer_id={}", info_hash, peer_id);
+                        console_debug!(
+                            status_tx,
+                            "BitTorrent Peer handshake: info_hash={}, peer_id={}",
+                            info_hash,
+                            peer_id
+                        );
 
                         handshake_complete = true;
 
@@ -153,7 +181,8 @@ impl TorrentPeerServer {
                         );
 
                         debug!("BitTorrent Peer calling LLM for handshake");
-                        let _ = status_tx.send("[DEBUG] BitTorrent Peer calling LLM for handshake".to_string());
+                        let _ = status_tx
+                            .send("[DEBUG] BitTorrent Peer calling LLM for handshake".to_string());
 
                         // Call LLM
                         match call_llm(
@@ -163,18 +192,22 @@ impl TorrentPeerServer {
                             Some(connection_id),
                             &event,
                             protocol.as_ref(),
-                        ).await {
+                        )
+                        .await
+                        {
                             Ok(execution_result) => {
                                 Self::process_llm_response(
                                     execution_result,
                                     &write_half,
                                     peer_addr,
                                     &status_tx,
-                                ).await?;
+                                )
+                                .await?;
                             }
                             Err(e) => {
                                 error!("BitTorrent Peer LLM call failed: {}", e);
-                                let _ = status_tx.send(format!("✗ BitTorrent Peer LLM error: {}", e));
+                                let _ =
+                                    status_tx.send(format!("✗ BitTorrent Peer LLM error: {}", e));
                             }
                         }
                     }
@@ -198,7 +231,11 @@ impl TorrentPeerServer {
                         };
                         let event = Event::new(event_type, message_data);
 
-                        console_debug!(status_tx, "BitTorrent Peer calling LLM for {} message", message_type);
+                        console_debug!(
+                            status_tx,
+                            "BitTorrent Peer calling LLM for {} message",
+                            message_type
+                        );
 
                         // Call LLM
                         match call_llm(
@@ -208,18 +245,22 @@ impl TorrentPeerServer {
                             Some(connection_id),
                             &event,
                             protocol.as_ref(),
-                        ).await {
+                        )
+                        .await
+                        {
                             Ok(execution_result) => {
                                 Self::process_llm_response(
                                     execution_result,
                                     &write_half,
                                     peer_addr,
                                     &status_tx,
-                                ).await?;
+                                )
+                                .await?;
                             }
                             Err(e) => {
                                 error!("BitTorrent Peer LLM call failed: {}", e);
-                                let _ = status_tx.send(format!("✗ BitTorrent Peer LLM error: {}", e));
+                                let _ =
+                                    status_tx.send(format!("✗ BitTorrent Peer LLM error: {}", e));
                             }
                         }
                     }
@@ -246,7 +287,11 @@ impl TorrentPeerServer {
             console_info!(status_tx, "{}", message);
         }
 
-        console_debug!(status_tx, "BitTorrent Peer got {} protocol results", execution_result.protocol_results.len());
+        console_debug!(
+            status_tx,
+            "BitTorrent Peer got {} protocol results",
+            execution_result.protocol_results.len()
+        );
 
         // Send responses
         for protocol_result in execution_result.protocol_results {
@@ -254,7 +299,12 @@ impl TorrentPeerServer {
                 let mut write = write_half.lock().await;
                 write.write_all(output_data).await?;
 
-                console_debug!(status_tx, "BitTorrent Peer sent {} bytes to {}", output_data.len(), peer_addr);
+                console_debug!(
+                    status_tx,
+                    "BitTorrent Peer sent {} bytes to {}",
+                    output_data.len(),
+                    peer_addr
+                );
 
                 // TRACE: Log full response
                 let hex_str = hex::encode(output_data);
@@ -319,7 +369,8 @@ impl TorrentPeerServer {
             3 => ("not_interested", serde_json::json!({})),
             4 => {
                 if payload.len() >= 4 {
-                    let piece_index = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
+                    let piece_index =
+                        u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
                     ("have", serde_json::json!({"piece_index": piece_index}))
                 } else {
                     ("have", serde_json::json!({}))
@@ -327,39 +378,62 @@ impl TorrentPeerServer {
             }
             5 => {
                 // Bitfield message
-                ("bitfield", serde_json::json!({"bitfield": hex::encode(payload)}))
+                (
+                    "bitfield",
+                    serde_json::json!({"bitfield": hex::encode(payload)}),
+                )
             }
             6 => {
                 if payload.len() >= 12 {
-                    let index = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
-                    let begin = u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]);
-                    let length = u32::from_be_bytes([payload[8], payload[9], payload[10], payload[11]]);
-                    ("request", serde_json::json!({"index": index, "begin": begin, "length": length}))
+                    let index =
+                        u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
+                    let begin =
+                        u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]);
+                    let length =
+                        u32::from_be_bytes([payload[8], payload[9], payload[10], payload[11]]);
+                    (
+                        "request",
+                        serde_json::json!({"index": index, "begin": begin, "length": length}),
+                    )
                 } else {
                     ("request", serde_json::json!({}))
                 }
             }
             7 => {
                 if payload.len() >= 8 {
-                    let index = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
-                    let begin = u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]);
+                    let index =
+                        u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
+                    let begin =
+                        u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]);
                     let block = hex::encode(&payload[8..]);
-                    ("piece", serde_json::json!({"index": index, "begin": begin, "block_hex": block}))
+                    (
+                        "piece",
+                        serde_json::json!({"index": index, "begin": begin, "block_hex": block}),
+                    )
                 } else {
                     ("piece", serde_json::json!({}))
                 }
             }
             8 => {
                 if payload.len() >= 12 {
-                    let index = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
-                    let begin = u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]);
-                    let length = u32::from_be_bytes([payload[8], payload[9], payload[10], payload[11]]);
-                    ("cancel", serde_json::json!({"index": index, "begin": begin, "length": length}))
+                    let index =
+                        u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
+                    let begin =
+                        u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]);
+                    let length =
+                        u32::from_be_bytes([payload[8], payload[9], payload[10], payload[11]]);
+                    (
+                        "cancel",
+                        serde_json::json!({"index": index, "begin": begin, "length": length}),
+                    )
                 } else {
                     ("cancel", serde_json::json!({}))
                 }
             }
-            _ => ("unknown", serde_json::json!({"id": message_id, "payload_hex": hex::encode(payload)})),
+            _ => (
+                "unknown",
+                serde_json::json!({"id": message_id, "payload_hex": hex::encode(payload)}),
+            ),
         };
 
         Ok((message_type.to_string(), message_data))

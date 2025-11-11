@@ -22,13 +22,13 @@ nc -l 9000
 ## Tests
 
 1. **test_tcp_client_connect_and_send** (2 LLM calls)
-   - Connect to nc server on localhost:9000
-   - Verify connection status
-   - Send data via LLM action
+    - Connect to nc server on localhost:9000
+    - Verify connection status
+    - Send data via LLM action
 
 2. **test_tcp_client_disconnect** (1 LLM call)
-   - Connect and gracefully disconnect
-   - Verify status transitions
+    - Connect and gracefully disconnect
+    - Verify status transitions
 
 ## Runtime
 

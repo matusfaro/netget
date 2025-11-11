@@ -114,7 +114,7 @@ mod openid_connect_client_tests {
     async fn test_oidc_client_invalid_provider() -> E2EResult<()> {
         // Try to connect to an invalid provider
         let client_config = NetGetConfig::new(
-            "Connect to http://invalid-oidc-provider.local as OpenID Connect client"
+            "Connect to http://invalid-oidc-provider.local as OpenID Connect client",
         );
 
         let mut client = start_netget_client(client_config).await?;
@@ -143,7 +143,7 @@ mod openid_connect_client_tests {
     #[tokio::test]
     async fn test_oidc_client_disconnect() -> E2EResult<()> {
         let client_config = NetGetConfig::new(
-            "Connect to https://accounts.google.com as OpenID Connect client. Then disconnect."
+            "Connect to https://accounts.google.com as OpenID Connect client. Then disconnect.",
         );
 
         let mut client = start_netget_client(client_config).await?;
@@ -155,7 +155,9 @@ mod openid_connect_client_tests {
         // (The exact behavior depends on whether LLM executes disconnect action)
         let output = client.get_output().await;
         assert!(
-            output.contains("OpenID") || output.contains("connect") || output.contains("disconnect"),
+            output.contains("OpenID")
+                || output.contains("connect")
+                || output.contains("disconnect"),
             "Client should show OIDC connection activity. Output: {:?}",
             output
         );

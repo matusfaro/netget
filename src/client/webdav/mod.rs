@@ -9,13 +9,13 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
+use crate::client::webdav::actions::WEBDAV_CLIENT_RESPONSE_RECEIVED_EVENT;
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::webdav::actions::WEBDAV_CLIENT_RESPONSE_RECEIVED_EVENT;
 
 /// WebDAV client that makes requests to remote WebDAV servers
 pub struct WebdavClient;
@@ -32,7 +32,10 @@ impl WebdavClient {
         // For WebDAV, "connection" is logical, not a persistent TCP connection
         // We'll create an HTTP client and store it in protocol_data
 
-        info!("WebDAV client {} initialized for {}", client_id, remote_addr);
+        info!(
+            "WebDAV client {} initialized for {}",
+            client_id, remote_addr
+        );
 
         // Build reqwest client with basic auth support if credentials provided
         let _http_client = reqwest::Client::builder()
@@ -41,26 +44,31 @@ impl WebdavClient {
             .context("Failed to build HTTP client")?;
 
         // Store client in protocol_data
-        app_state.with_client_mut(client_id, |client| {
-            client.set_protocol_field(
-                "http_client".to_string(),
-                serde_json::json!("initialized"),
-            );
-            client.set_protocol_field(
-                "base_url".to_string(),
-                serde_json::json!(remote_addr),
-            );
-        }).await;
+        app_state
+            .with_client_mut(client_id, |client| {
+                client.set_protocol_field(
+                    "http_client".to_string(),
+                    serde_json::json!("initialized"),
+                );
+                client.set_protocol_field("base_url".to_string(), serde_json::json!(remote_addr));
+            })
+            .await;
 
         // Update status
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] WebDAV client {} ready for {}", client_id, remote_addr));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] WebDAV client {} ready for {}",
+            client_id, remote_addr
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Send initial connected event to LLM
         tokio::spawn(async move {
             if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                let protocol = Arc::new(crate::client::webdav::actions::WebdavClientProtocol::new());
+                let protocol =
+                    Arc::new(crate::client::webdav::actions::WebdavClientProtocol::new());
                 let event = Event::new(
                     &crate::client::webdav::actions::WEBDAV_CLIENT_CONNECTED_EVENT,
                     serde_json::json!({
@@ -70,7 +78,10 @@ impl WebdavClient {
                     }),
                 );
 
-                let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                let memory = app_state
+                    .get_memory_for_client(client_id)
+                    .await
+                    .unwrap_or_default();
 
                 match call_llm_for_client(
                     &_llm_client,
@@ -81,8 +92,13 @@ impl WebdavClient {
                     Some(&event),
                     protocol.as_ref(),
                     &status_tx,
-                ).await {
-                    Ok(ClientLlmResult { actions, memory_updates }) => {
+                )
+                .await
+                {
+                    Ok(ClientLlmResult {
+                        actions,
+                        memory_updates,
+                    }) => {
                         // Update memory
                         if let Some(mem) = memory_updates {
                             app_state.set_memory_for_client(client_id, mem).await;
@@ -98,7 +114,9 @@ impl WebdavClient {
                                 &status_tx,
                                 client_id,
                                 &instruction,
-                            ).await {
+                            )
+                            .await
+                            {
                                 error!("Failed to execute WebDAV action: {}", e);
                             }
                         }
@@ -130,12 +148,14 @@ impl WebdavClient {
 
         match result {
             ClientActionResult::Custom { name, data } if name == "webdav_request" => {
-                let method = data.get("method")
+                let method = data
+                    .get("method")
                     .and_then(|v| v.as_str())
                     .context("Missing 'method' in webdav_request")?
                     .to_string();
 
-                let path = data.get("path")
+                let path = data
+                    .get("path")
                     .and_then(|v| v.as_str())
                     .context("Missing 'path' in webdav_request")?
                     .to_string();
@@ -151,9 +171,14 @@ impl WebdavClient {
                 // Add Destination header for COPY/MOVE
                 if let Some(destination) = data.get("destination").and_then(|v| v.as_str()) {
                     // Get base URL and construct full destination URL
-                    let base_url = app_state.with_client_mut(client_id, |c|
-                        c.get_protocol_field("base_url").and_then(|v| v.as_str().map(|s| s.to_string()))
-                    ).await.flatten().unwrap_or_default();
+                    let base_url = app_state
+                        .with_client_mut(client_id, |c| {
+                            c.get_protocol_field("base_url")
+                                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                        })
+                        .await
+                        .flatten()
+                        .unwrap_or_default();
 
                     let dest_url = if destination.starts_with("http") {
                         destination.to_string()
@@ -165,14 +190,20 @@ impl WebdavClient {
 
                 // Add Overwrite header for COPY/MOVE
                 if let Some(overwrite) = data.get("overwrite").and_then(|v| v.as_bool()) {
-                    headers.push(("Overwrite".to_string(), if overwrite { "T" } else { "F" }.to_string()));
+                    headers.push((
+                        "Overwrite".to_string(),
+                        if overwrite { "T" } else { "F" }.to_string(),
+                    ));
                 }
 
                 // Add Content-Type for PUT
                 if let Some(content_type) = data.get("content_type").and_then(|v| v.as_str()) {
                     headers.push(("Content-Type".to_string(), content_type.to_string()));
                 } else if method == "PUT" {
-                    headers.push(("Content-Type".to_string(), "application/octet-stream".to_string()));
+                    headers.push((
+                        "Content-Type".to_string(),
+                        "application/octet-stream".to_string(),
+                    ));
                 } else if method == "PROPFIND" {
                     headers.push(("Content-Type".to_string(), "application/xml".to_string()));
                 }
@@ -180,7 +211,8 @@ impl WebdavClient {
                 // Build request body
                 let body = if method == "PROPFIND" {
                     // Build PROPFIND XML body
-                    let properties = data.get("properties")
+                    let properties = data
+                        .get("properties")
                         .and_then(|v| v.as_array())
                         .map(|arr| {
                             arr.iter()
@@ -190,7 +222,9 @@ impl WebdavClient {
                     Some(Self::build_propfind_body(properties))
                 } else if method == "PUT" {
                     // Use content from action
-                    data.get("content").and_then(|v| v.as_str()).map(|s| s.to_string())
+                    data.get("content")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
                 } else {
                     None
                 };
@@ -205,12 +239,16 @@ impl WebdavClient {
                     Arc::clone(app_state),
                     llm_client.clone(),
                     status_tx.clone(),
-                ).await?;
+                )
+                .await?;
             }
             ClientActionResult::Disconnect => {
                 info!("WebDAV client {} disconnecting", client_id);
-                app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                let _ = status_tx.send(format!("[CLIENT] WebDAV client {} disconnected", client_id));
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                let _ =
+                    status_tx.send(format!("[CLIENT] WebDAV client {} disconnected", client_id));
                 let _ = status_tx.send("__UPDATE_UI__".to_string());
             }
             _ => {
@@ -233,11 +271,16 @@ impl WebdavClient {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         // Get base URL from client
-        let base_url = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("base_url")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }).await.flatten().context("No base URL found")?;
+        let base_url = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("base_url")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .await
+            .flatten()
+            .context("No base URL found")?;
 
         let url = if path.starts_with("http://") || path.starts_with("https://") {
             path.clone()
@@ -245,7 +288,10 @@ impl WebdavClient {
             format!("{}{}", base_url, path)
         };
 
-        info!("WebDAV client {} making request: {} {}", client_id, method, url);
+        info!(
+            "WebDAV client {} making request: {} {}",
+            client_id, method, url
+        );
 
         // Build request with custom method support for WebDAV
         let http_client = reqwest::Client::builder()
@@ -301,11 +347,15 @@ impl WebdavClient {
                 // Get body
                 let body_text = response.text().await.unwrap_or_default();
 
-                info!("WebDAV client {} received response: {} ({})", client_id, status_code, status);
+                info!(
+                    "WebDAV client {} received response: {} ({})",
+                    client_id, status_code, status
+                );
 
                 // Call LLM with response
                 if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                    let protocol = Arc::new(crate::client::webdav::actions::WebdavClientProtocol::new());
+                    let protocol =
+                        Arc::new(crate::client::webdav::actions::WebdavClientProtocol::new());
                     let event = Event::new(
                         &WEBDAV_CLIENT_RESPONSE_RECEIVED_EVENT,
                         serde_json::json!({
@@ -317,7 +367,10 @@ impl WebdavClient {
                         }),
                     );
 
-                    let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                    let memory = app_state
+                        .get_memory_for_client(client_id)
+                        .await
+                        .unwrap_or_default();
 
                     match call_llm_for_client(
                         &llm_client,
@@ -328,8 +381,13 @@ impl WebdavClient {
                         Some(&event),
                         protocol.as_ref(),
                         &status_tx,
-                    ).await {
-                        Ok(ClientLlmResult { actions: _, memory_updates }) => {
+                    )
+                    .await
+                    {
+                        Ok(ClientLlmResult {
+                            actions: _,
+                            memory_updates,
+                        }) => {
                             // Update memory
                             if let Some(mem) = memory_updates {
                                 app_state.set_memory_for_client(client_id, mem).await;

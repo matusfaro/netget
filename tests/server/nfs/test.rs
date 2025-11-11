@@ -20,8 +20,7 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, ServerConfig, E2EResult};
-use std::time::Duration;
+use super::super::super::helpers::{self, E2EResult, ServerConfig};
 
 #[tokio::test]
 async fn test_nfs_server_start() -> E2EResult<()> {
@@ -35,7 +34,11 @@ async fn test_nfs_server_start() -> E2EResult<()> {
     println!("NFS server started on port {}", server.port);
 
     // Verify it's an NFS server
-    assert_eq!(server.stack, "NFS", "Expected NFS server but got {}", server.stack);
+    assert_eq!(
+        server.stack, "NFS",
+        "Expected NFS server but got {}",
+        server.stack
+    );
     assert!(server.is_running(), "Server should be running");
 
     println!("✓ NFS server initialized successfully");
@@ -74,14 +77,14 @@ async fn test_nfs_tcp_connection() -> E2EResult<()> {
                 Ok(0) => {
                     // EOF - connection closed immediately
                     println!("⚠ Connection closed by server");
-                },
+                }
                 Ok(_) => {
                     println!("✓ Received data from server");
-                },
+                }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     // WouldBlock - connection is open but no data
                     println!("✓ Connection is open and waiting");
-                },
+                }
                 Err(_) => {
                     println!("⚠ Read error on connection");
                 }
@@ -104,7 +107,8 @@ async fn test_nfs_multiple_connections() -> E2EResult<()> {
     println!("\n=== E2E Test: NFS Multiple Connections ===");
 
     // PROMPT: NFS server with multiple client support
-    let prompt = "listen on port {AVAILABLE_PORT} using nfs stack. Support multiple concurrent NFS clients";
+    let prompt =
+        "listen on port {AVAILABLE_PORT} using nfs stack. Support multiple concurrent NFS clients";
 
     // Start the NFS server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
@@ -146,7 +150,8 @@ async fn test_nfs_connection_lifecycle() -> E2EResult<()> {
     println!("\n=== E2E Test: NFS Connection Lifecycle ===");
 
     // PROMPT: NFS server for lifecycle testing
-    let prompt = "listen on port {AVAILABLE_PORT} using nfs stack. Handle connection lifecycle events";
+    let prompt =
+        "listen on port {AVAILABLE_PORT} using nfs stack. Handle connection lifecycle events";
 
     // Start the NFS server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;

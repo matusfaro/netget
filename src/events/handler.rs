@@ -95,7 +95,9 @@ impl EventHandler {
                 // Test web search approval prompt by triggering a search to DuckDuckGo
                 use crate::llm::actions::tools::{execute_tool, ToolAction};
 
-                ui.add_llm_message("[INFO] Testing web search approval with DuckDuckGo...".to_string());
+                ui.add_llm_message(
+                    "[INFO] Testing web search approval with DuckDuckGo...".to_string(),
+                );
 
                 // Get web search mode and approval channel
                 let web_search_mode = self.state.get_web_search_mode().await;
@@ -107,7 +109,13 @@ impl EventHandler {
                 };
 
                 // Execute the tool (this will trigger approval prompt if in ASK mode)
-                let result = execute_tool(&action, approval_tx.as_ref(), web_search_mode, Some(&self.state)).await;
+                let result = execute_tool(
+                    &action,
+                    approval_tx.as_ref(),
+                    web_search_mode,
+                    Some(&self.state),
+                )
+                .await;
 
                 // Display the result
                 if result.success {
@@ -122,7 +130,9 @@ impl EventHandler {
             UserCommand::SetFooterStatus { message } => {
                 // This command is only supported in rolling TUI mode
                 if message.is_some() {
-                    ui.add_llm_message("Footer status command is only supported in rolling TUI mode".to_string());
+                    ui.add_llm_message(
+                        "Footer status command is only supported in rolling TUI mode".to_string(),
+                    );
                 }
                 Ok(false)
             }
@@ -161,22 +171,30 @@ impl EventHandler {
             }
             UserCommand::ShowWebSearch => {
                 // This command is only supported in rolling TUI mode
-                ui.add_llm_message("Web search command is only supported in rolling TUI mode".to_string());
+                ui.add_llm_message(
+                    "Web search command is only supported in rolling TUI mode".to_string(),
+                );
                 Ok(false)
             }
             UserCommand::SetWebSearch { mode: _ } => {
                 // This command is only supported in rolling TUI mode
-                ui.add_llm_message("Web search command is only supported in rolling TUI mode".to_string());
+                ui.add_llm_message(
+                    "Web search command is only supported in rolling TUI mode".to_string(),
+                );
                 Ok(false)
             }
             UserCommand::ShowEventHandler => {
                 // This command is only supported in rolling TUI mode
-                ui.add_llm_message("Event handler command is only supported in rolling TUI mode".to_string());
+                ui.add_llm_message(
+                    "Event handler command is only supported in rolling TUI mode".to_string(),
+                );
                 Ok(false)
             }
             UserCommand::SetEventHandler { mode: _ } => {
                 // This command is only supported in rolling TUI mode
-                ui.add_llm_message("Event handler command is only supported in rolling TUI mode".to_string());
+                ui.add_llm_message(
+                    "Event handler command is only supported in rolling TUI mode".to_string(),
+                );
                 Ok(false)
             }
             UserCommand::ShowDocs { protocol } => {
@@ -220,7 +238,10 @@ impl EventHandler {
 
         // If model was auto-selected (wasn't set before), notify via status_tx
         if current_model.is_none() {
-            let _ = status_tx.send(format!("⚠  Auto-selected model: {} (no model was configured)", model));
+            let _ = status_tx.send(format!(
+                "⚠  Auto-selected model: {} (no model was configured)",
+                model
+            ));
         }
 
         // Create LLM client with status channel for trace logs
@@ -247,7 +268,12 @@ impl EventHandler {
         // Initially disable open_server and open_client - they will be enabled after read_base_stack_docs is called in the conversation loop
         let is_open_server_enabled = false;
         let is_open_client_enabled = false;
-        let mut available_actions = get_user_input_common_actions(selected_mode, &scripting_env, is_open_server_enabled, is_open_client_enabled);
+        let mut available_actions = get_user_input_common_actions(
+            selected_mode,
+            &scripting_env,
+            is_open_server_enabled,
+            is_open_client_enabled,
+        );
         available_actions.extend(get_all_tool_actions(web_search_mode));
         available_actions.extend(protocol_async_actions);
 
@@ -261,18 +287,15 @@ impl EventHandler {
         // Get or create persistent conversation state
         let conversation_state = self.state.get_or_create_user_conversation_state().await;
 
-        let mut conversation = ConversationHandler::new(
-            system_prompt,
-            std::sync::Arc::new(llm_with_status),
-            model,
-        )
-        .with_status_tx(status_tx.clone())
-        .with_tracking(
-            self.state.clone(),
-            crate::state::app_state::ConversationSource::User,
-            truncated_input,
-        )
-        .with_conversation_state(conversation_state);
+        let mut conversation =
+            ConversationHandler::new(system_prompt, std::sync::Arc::new(llm_with_status), model)
+                .with_status_tx(status_tx.clone())
+                .with_tracking(
+                    self.state.clone(),
+                    crate::state::app_state::ConversationSource::User,
+                    truncated_input,
+                )
+                .with_conversation_state(conversation_state);
 
         // Add user input as a separate user message
         conversation.add_user_message(input.clone());
@@ -312,14 +335,20 @@ impl EventHandler {
                                     | CommonAction::CloseConnectionById { .. }
                             );
 
-                            match self.execute_server_management_action(common_action, &status_tx).await {
+                            match self
+                                .execute_server_management_action(common_action, &status_tx)
+                                .await
+                            {
                                 Ok(_) => {
                                     // Action executed successfully
                                     if modifies_state {
                                         state_changed = true;
                                     }
                                 }
-                                Err(e) if e.is_retryable() && execution_attempts < MAX_EXECUTION_RETRIES => {
+                                Err(e)
+                                    if e.is_retryable()
+                                        && execution_attempts < MAX_EXECUTION_RETRIES =>
+                                {
                                     // Retryable error (e.g., port conflict) - prepare to retry
                                     should_retry = true;
                                     retry_error = Some(e);
@@ -327,7 +356,8 @@ impl EventHandler {
                                 }
                                 Err(e) => {
                                     // Non-retryable error or max retries exceeded
-                                    let _ = status_tx.send(format!("[ERROR] Error executing action: {e}"));
+                                    let _ = status_tx
+                                        .send(format!("[ERROR] Error executing action: {e}"));
                                 }
                             }
                         }
@@ -336,7 +366,9 @@ impl EventHandler {
                     // Update conversation state if server state changed
                     if state_changed && !should_retry {
                         conversation.update_current_state(&self.state, None).await;
-                        let _ = status_tx.send("[DEBUG] Updated conversation state after server changes".to_string());
+                        let _ = status_tx.send(
+                            "[DEBUG] Updated conversation state after server changes".to_string(),
+                        );
                     }
 
                     // If we should retry, add error to conversation and retry
@@ -359,9 +391,8 @@ impl EventHandler {
                     }
 
                     // Then execute all other actions (including append_to_log)
-                    let protocol_ref: Option<&dyn Server> = protocol
-                        .as_ref()
-                        .map(|p| p.as_ref() as &dyn Server);
+                    let protocol_ref: Option<&dyn Server> =
+                        protocol.as_ref().map(|p| p.as_ref() as &dyn Server);
 
                     match execute_actions(action_values.clone(), &self.state, protocol_ref).await {
                         Ok(result) => {
@@ -371,7 +402,8 @@ impl EventHandler {
                             }
                         }
                         Err(e) => {
-                            let _ = status_tx.send(format!("[ERROR] Failed to execute actions: {e}"));
+                            let _ =
+                                status_tx.send(format!("[ERROR] Failed to execute actions: {e}"));
                         }
                     }
 
@@ -439,11 +471,16 @@ impl EventHandler {
                 if let Some(handlers_json) = event_handlers {
                     match Self::parse_event_handlers(handlers_json) {
                         Ok(config) => {
-                            self.state.set_event_handler_config(server_id, Some(config)).await;
-                            let _ = status_tx.send("[INFO] Event handler configuration applied to server".to_string());
+                            self.state
+                                .set_event_handler_config(server_id, Some(config))
+                                .await;
+                            let _ = status_tx.send(
+                                "[INFO] Event handler configuration applied to server".to_string(),
+                            );
                         }
                         Err(e) => {
-                            let _ = status_tx.send(format!("[WARN] Failed to parse event handlers: {}", e));
+                            let _ = status_tx
+                                .send(format!("[WARN] Failed to parse event handlers: {}", e));
                         }
                     }
                 }
@@ -457,7 +494,14 @@ impl EventHandler {
 
                 // Spawn the server directly (no more message passing!)
                 // Propagate port conflict errors for retry, but continue for other errors
-                match server_startup::start_server_by_id(&self.state, server_id, &self.llm, status_tx).await {
+                match server_startup::start_server_by_id(
+                    &self.state,
+                    server_id,
+                    &self.llm,
+                    status_tx,
+                )
+                .await
+                {
                     Ok(_) => {
                         // Server started successfully
                     }
@@ -468,7 +512,9 @@ impl EventHandler {
                     Err(e) => {
                         // Fatal error - log, update status to Error, and remove server immediately
                         let error_msg = e.to_string();
-                        self.state.update_server_status(server_id, ServerStatus::Error(error_msg.clone())).await;
+                        self.state
+                            .update_server_status(server_id, ServerStatus::Error(error_msg.clone()))
+                            .await;
                         let _ = status_tx.send(format!(
                             "[ERROR] Failed to start server #{}: {}",
                             server_id.as_u32(),
@@ -520,7 +566,11 @@ impl EventHandler {
 
                         let _ = status_tx.send(format!(
                             "[TASK] Created {} task '{}' (ID: {}) for server #{}",
-                            if task_def.recurring { "recurring" } else { "one-shot" },
+                            if task_def.recurring {
+                                "recurring"
+                            } else {
+                                "one-shot"
+                            },
                             task_def.task_id,
                             task_id,
                             server_id.as_u32()
@@ -538,8 +588,7 @@ impl EventHandler {
                 self.state
                     .update_server_status(sid, ServerStatus::Stopped)
                     .await;
-                let _ =
-                    status_tx.send(format!("[SERVER] Stopped server #{}", sid.as_u32()));
+                let _ = status_tx.send(format!("[SERVER] Stopped server #{}", sid.as_u32()));
 
                 // Clean up tasks associated with this server
                 self.state.cleanup_server_tasks(sid).await;
@@ -810,11 +859,16 @@ impl EventHandler {
                 if let Some(handlers_json) = event_handlers {
                     match Self::parse_event_handlers(handlers_json) {
                         Ok(config) => {
-                            self.state.set_client_event_handler_config(client_id, Some(config)).await;
-                            let _ = status_tx.send("[INFO] Event handler configuration applied to client".to_string());
+                            self.state
+                                .set_client_event_handler_config(client_id, Some(config))
+                                .await;
+                            let _ = status_tx.send(
+                                "[INFO] Event handler configuration applied to client".to_string(),
+                            );
                         }
                         Err(e) => {
-                            let _ = status_tx.send(format!("[WARN] Failed to parse event handlers: {}", e));
+                            let _ = status_tx
+                                .send(format!("[WARN] Failed to parse event handlers: {}", e));
                         }
                     }
                 }
@@ -939,7 +993,8 @@ impl EventHandler {
                     self.state
                         .update_client_status(client_id, ClientStatus::Disconnected)
                         .await;
-                    let _ = status_tx.send(format!("[CLIENT] Closed client #{}", client_id.as_u32()));
+                    let _ =
+                        status_tx.send(format!("[CLIENT] Closed client #{}", client_id.as_u32()));
 
                     // Clean up tasks associated with this client
                     self.state.cleanup_client_tasks(client_id).await;
@@ -960,7 +1015,9 @@ impl EventHandler {
                 let mut found = false;
                 for server in all_servers {
                     if server.connections.contains_key(&conn_id) {
-                        self.state.close_connection_on_server(server.id, conn_id).await;
+                        self.state
+                            .close_connection_on_server(server.id, conn_id)
+                            .await;
                         let _ = status_tx.send(format!(
                             "[CONNECTION] Closed connection #{} on server #{}",
                             connection_id,
@@ -972,10 +1029,8 @@ impl EventHandler {
                 }
 
                 if !found {
-                    let _ = status_tx.send(format!(
-                        "[ERROR] Connection #{} not found",
-                        connection_id
-                    ));
+                    let _ =
+                        status_tx.send(format!("[ERROR] Connection #{} not found", connection_id));
                 }
 
                 let _ = status_tx.send("__UPDATE_UI__".to_string());
@@ -987,7 +1042,8 @@ impl EventHandler {
                 let llm_client = self.llm.clone();
                 let status_tx_clone = status_tx.clone();
 
-                let _ = status_tx.send(format!("[CLIENT] Reconnecting client #{}...", cid.as_u32()));
+                let _ =
+                    status_tx.send(format!("[CLIENT] Reconnecting client #{}...", cid.as_u32()));
 
                 match crate::cli::client_startup::start_client_by_id(
                     &self.state,
@@ -998,7 +1054,8 @@ impl EventHandler {
                 .await
                 {
                     Ok(_) => {
-                        let _ = status_tx.send(format!("[CLIENT] Client #{} reconnected", cid.as_u32()));
+                        let _ = status_tx
+                            .send(format!("[CLIENT] Client #{} reconnected", cid.as_u32()));
                     }
                     Err(e) => {
                         let _ = status_tx.send(format!(
@@ -1036,14 +1093,18 @@ impl EventHandler {
     }
 
     /// Parse event handlers from JSON array into EventHandlerConfig
-    fn parse_event_handlers(handlers_json: Vec<serde_json::Value>) -> Result<crate::scripting::EventHandlerConfig> {
+    fn parse_event_handlers(
+        handlers_json: Vec<serde_json::Value>,
+    ) -> Result<crate::scripting::EventHandlerConfig> {
         use crate::scripting::{EventHandler, EventHandlerConfig, EventHandlerType, EventPattern};
 
         let mut config = EventHandlerConfig::new();
 
         for handler_json in handlers_json {
             // Parse event_pattern field
-            let event_pattern = if let Some(pattern_str) = handler_json.get("event_pattern").and_then(|v| v.as_str()) {
+            let event_pattern = if let Some(pattern_str) =
+                handler_json.get("event_pattern").and_then(|v| v.as_str())
+            {
                 EventPattern::from(pattern_str)
             } else {
                 // Default to wildcard if not specified
@@ -1051,28 +1112,39 @@ impl EventHandler {
             };
 
             // Parse handler field
-            let handler_type_json = handler_json.get("handler")
-                .ok_or_else(|| anyhow::anyhow!("Missing 'handler' field in event handler configuration"))?;
+            let handler_type_json = handler_json.get("handler").ok_or_else(|| {
+                anyhow::anyhow!("Missing 'handler' field in event handler configuration")
+            })?;
 
-            let handler_type_str = handler_type_json.get("type")
+            let handler_type_str = handler_type_json
+                .get("type")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow::anyhow!("Missing 'type' field in handler configuration"))?;
 
             let handler_type = match handler_type_str {
                 "llm" => EventHandlerType::Llm,
                 "script" => {
-                    let language = handler_type_json.get("language")
+                    let language = handler_type_json
+                        .get("language")
                         .and_then(|v| v.as_str())
-                        .ok_or_else(|| anyhow::anyhow!("Missing 'language' field for script handler"))?;
-                    let code = handler_type_json.get("code")
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("Missing 'language' field for script handler")
+                        })?;
+                    let code = handler_type_json
+                        .get("code")
                         .and_then(|v| v.as_str())
-                        .ok_or_else(|| anyhow::anyhow!("Missing 'code' field for script handler"))?;
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("Missing 'code' field for script handler")
+                        })?;
                     EventHandlerType::script(language, code)
                 }
                 "static" => {
-                    let actions = handler_type_json.get("actions")
+                    let actions = handler_type_json
+                        .get("actions")
                         .and_then(|v| v.as_array())
-                        .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'actions' field for static handler"))?;
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("Missing or invalid 'actions' field for static handler")
+                        })?;
                     EventHandlerType::static_response(actions.clone())
                 }
                 _ => anyhow::bail!("Unknown handler type: {}", handler_type_str),
@@ -1091,15 +1163,17 @@ impl EventHandler {
     }
 
     async fn handle_stop_all(&mut self, ui: &mut App) -> Result<()> {
-        use crate::state::server::ServerStatus;
         use crate::state::client::ClientStatus;
+        use crate::state::server::ServerStatus;
 
         ui.add_llm_message("Stopping all servers, connections, and clients...".to_string());
 
         // Stop all servers
         let server_ids: Vec<_> = self.state.get_all_server_ids().await;
         for server_id in server_ids {
-            self.state.update_server_status(server_id, ServerStatus::Stopped).await;
+            self.state
+                .update_server_status(server_id, ServerStatus::Stopped)
+                .await;
             self.state.cleanup_server_tasks(server_id).await;
             ui.add_llm_message(format!("[SERVER] Stopped server #{}", server_id.as_u32()));
         }
@@ -1107,7 +1181,9 @@ impl EventHandler {
         // Stop all clients
         let client_ids: Vec<_> = self.state.get_all_client_ids().await;
         for client_id in client_ids {
-            self.state.update_client_status(client_id, ClientStatus::Disconnected).await;
+            self.state
+                .update_client_status(client_id, ClientStatus::Disconnected)
+                .await;
             self.state.cleanup_client_tasks(client_id).await;
             ui.add_llm_message(format!("[CLIENT] Stopped client #{}", client_id.as_u32()));
         }
@@ -1117,9 +1193,9 @@ impl EventHandler {
     }
 
     async fn handle_stop_by_id(&mut self, id: u32, ui: &mut App) -> Result<()> {
-        use crate::state::server::{ServerId, ServerStatus};
-        use crate::state::client::{ClientId, ClientStatus};
         use crate::server::connection::ConnectionId;
+        use crate::state::client::{ClientId, ClientStatus};
+        use crate::state::server::{ServerId, ServerStatus};
 
         // Try to find what type of entity this ID corresponds to
         let mut found = false;
@@ -1127,7 +1203,9 @@ impl EventHandler {
         // Check if it's a server
         let server_id = ServerId::new(id);
         if self.state.get_server(server_id).await.is_some() {
-            self.state.update_server_status(server_id, ServerStatus::Stopped).await;
+            self.state
+                .update_server_status(server_id, ServerStatus::Stopped)
+                .await;
             self.state.cleanup_server_tasks(server_id).await;
             ui.add_llm_message(format!("[SERVER] Stopped server #{}", id));
             found = true;
@@ -1136,7 +1214,9 @@ impl EventHandler {
         // Check if it's a client
         let client_id = ClientId::new(id);
         if self.state.get_client(client_id).await.is_some() {
-            self.state.update_client_status(client_id, ClientStatus::Disconnected).await;
+            self.state
+                .update_client_status(client_id, ClientStatus::Disconnected)
+                .await;
             self.state.cleanup_client_tasks(client_id).await;
             ui.add_llm_message(format!("[CLIENT] Stopped client #{}", id));
             found = true;
@@ -1147,15 +1227,24 @@ impl EventHandler {
         let all_servers = self.state.get_all_servers().await;
         for server in all_servers {
             if server.connections.contains_key(&connection_id) {
-                self.state.close_connection_on_server(server.id, connection_id).await;
-                ui.add_llm_message(format!("[CONNECTION] Closed connection #{} on server #{}", id, server.id.as_u32()));
+                self.state
+                    .close_connection_on_server(server.id, connection_id)
+                    .await;
+                ui.add_llm_message(format!(
+                    "[CONNECTION] Closed connection #{} on server #{}",
+                    id,
+                    server.id.as_u32()
+                ));
                 found = true;
                 break;
             }
         }
 
         if !found {
-            ui.add_llm_message(format!("No server, client, or connection found with ID #{}", id));
+            ui.add_llm_message(format!(
+                "No server, client, or connection found with ID #{}",
+                id
+            ));
         }
 
         Ok(())
@@ -1184,7 +1273,11 @@ impl EventHandler {
     }
 
     async fn handle_show_model(&mut self, ui: &mut App) -> Result<()> {
-        let current_model = self.state.get_ollama_model().await.unwrap_or_else(|| "None".to_string());
+        let current_model = self
+            .state
+            .get_ollama_model()
+            .await
+            .unwrap_or_else(|| "None".to_string());
 
         ui.add_llm_message(format!("Current model: {current_model}"));
         ui.add_llm_message("".to_string());
@@ -1291,12 +1384,19 @@ impl EventHandler {
         ui.add_llm_message("System Information:".to_string());
         ui.add_llm_message(format!("  OS: {}", std::env::consts::OS));
         ui.add_llm_message(format!("  Architecture: {}", std::env::consts::ARCH));
-        ui.add_llm_message(format!("  Rust Version: {}", env!("CARGO_PKG_RUST_VERSION", "unknown")));
+        ui.add_llm_message(format!(
+            "  Rust Version: {}",
+            env!("CARGO_PKG_RUST_VERSION", "unknown")
+        ));
         ui.add_llm_message(format!("  NetGet Version: {}", env!("CARGO_PKG_VERSION")));
         ui.add_llm_message("".to_string());
 
         // LLM configuration
-        let model = self.state.get_ollama_model().await.unwrap_or_else(|| "None".to_string());
+        let model = self
+            .state
+            .get_ollama_model()
+            .await
+            .unwrap_or_else(|| "None".to_string());
         let web_search_mode = self.state.get_web_search_mode().await;
         let scripting_mode = self.state.get_selected_scripting_mode().await;
 
@@ -1319,19 +1419,44 @@ impl EventHandler {
 
         // System capabilities summary
         ui.add_llm_message("System Capabilities:".to_string());
-        ui.add_llm_message(format!("  Root Access: {}", if caps.is_root { "Yes" } else { "No" }));
-        ui.add_llm_message(format!("  Privileged Ports (<1024): {}", if caps.can_bind_privileged_ports { "Yes" } else { "No" }));
-        ui.add_llm_message(format!("  Raw Socket Access (pcap): {}", if caps.has_raw_socket_access { "Yes" } else { "No" }));
+        ui.add_llm_message(format!(
+            "  Root Access: {}",
+            if caps.is_root { "Yes" } else { "No" }
+        ));
+        ui.add_llm_message(format!(
+            "  Privileged Ports (<1024): {}",
+            if caps.can_bind_privileged_ports {
+                "Yes"
+            } else {
+                "No"
+            }
+        ));
+        ui.add_llm_message(format!(
+            "  Raw Socket Access (pcap): {}",
+            if caps.has_raw_socket_access {
+                "Yes"
+            } else {
+                "No"
+            }
+        ));
         ui.add_llm_message("".to_string());
 
         // Summary
         let total_server_protocols = server_available.len() + server_excluded.len();
         let total_client_protocols = client_available.len() + client_excluded.len();
 
-        ui.add_llm_message(format!("Server Protocols: {} available, {} excluded (total {})",
-            server_available.len(), server_excluded.len(), total_server_protocols));
-        ui.add_llm_message(format!("Client Protocols: {} available, {} excluded (total {})",
-            client_available.len(), client_excluded.len(), total_client_protocols));
+        ui.add_llm_message(format!(
+            "Server Protocols: {} available, {} excluded (total {})",
+            server_available.len(),
+            server_excluded.len(),
+            total_server_protocols
+        ));
+        ui.add_llm_message(format!(
+            "Client Protocols: {} available, {} excluded (total {})",
+            client_available.len(),
+            client_excluded.len(),
+            total_client_protocols
+        ));
         ui.add_llm_message("".to_string());
 
         // Show excluded protocols if any
@@ -1378,9 +1503,9 @@ impl EventHandler {
     }
 
     async fn handle_save(&mut self, name: String, id: Option<u32>, ui: &mut App) -> Result<()> {
-        use crate::utils::save_load;
-        use crate::state::server::ServerId;
         use crate::state::client::ClientId;
+        use crate::state::server::ServerId;
+        use crate::utils::save_load;
 
         let path = if let Some(id_val) = id {
             // Save specific server or client by ID
@@ -1389,11 +1514,18 @@ impl EventHandler {
             if self.state.get_server(server_id).await.is_some() {
                 match save_load::save_server(&self.state, server_id, &name).await {
                     Ok(path) => {
-                        ui.add_llm_message(format!("[SAVE] Saved server #{} to: {}", id_val, path.display()));
+                        ui.add_llm_message(format!(
+                            "[SAVE] Saved server #{} to: {}",
+                            id_val,
+                            path.display()
+                        ));
                         path
                     }
                     Err(e) => {
-                        ui.add_llm_message(format!("[ERROR] Failed to save server #{}: {}", id_val, e));
+                        ui.add_llm_message(format!(
+                            "[ERROR] Failed to save server #{}: {}",
+                            id_val, e
+                        ));
                         return Ok(());
                     }
                 }
@@ -1403,16 +1535,26 @@ impl EventHandler {
                 if self.state.get_client(client_id).await.is_some() {
                     match save_load::save_client(&self.state, client_id, &name).await {
                         Ok(path) => {
-                            ui.add_llm_message(format!("[SAVE] Saved client #{} to: {}", id_val, path.display()));
+                            ui.add_llm_message(format!(
+                                "[SAVE] Saved client #{} to: {}",
+                                id_val,
+                                path.display()
+                            ));
                             path
                         }
                         Err(e) => {
-                            ui.add_llm_message(format!("[ERROR] Failed to save client #{}: {}", id_val, e));
+                            ui.add_llm_message(format!(
+                                "[ERROR] Failed to save client #{}: {}",
+                                id_val, e
+                            ));
                             return Ok(());
                         }
                     }
                 } else {
-                    ui.add_llm_message(format!("[ERROR] No server or client found with ID #{}", id_val));
+                    ui.add_llm_message(format!(
+                        "[ERROR] No server or client found with ID #{}",
+                        id_val
+                    ));
                     return Ok(());
                 }
             }
@@ -1437,7 +1579,10 @@ impl EventHandler {
             }
         };
 
-        ui.add_llm_message(format!("[INFO] Use '/load {}' to restore this configuration", path.display()));
+        ui.add_llm_message(format!(
+            "[INFO] Use '/load {}' to restore this configuration",
+            path.display()
+        ));
         Ok(())
     }
 
@@ -1458,16 +1603,30 @@ impl EventHandler {
             return Ok(());
         }
 
-        ui.add_llm_message(format!("[LOAD] Loading {} action(s) from: {}", actions.len(), save_load::normalize_filename(&name)));
+        ui.add_llm_message(format!(
+            "[LOAD] Loading {} action(s) from: {}",
+            actions.len(),
+            save_load::normalize_filename(&name)
+        ));
 
         // Execute each action
         for (i, action) in actions.iter().enumerate() {
             // Try to parse as common action
-            if let Ok(common_action) = crate::llm::actions::common::CommonAction::from_json(action) {
+            if let Ok(common_action) = crate::llm::actions::common::CommonAction::from_json(action)
+            {
                 use crate::llm::actions::common::CommonAction;
 
                 match common_action {
-                    CommonAction::OpenServer { port, base_stack, send_first, initial_memory, instruction, startup_params, event_handlers, scheduled_tasks } => {
+                    CommonAction::OpenServer {
+                        port,
+                        base_stack,
+                        send_first,
+                        initial_memory,
+                        instruction,
+                        startup_params,
+                        event_handlers,
+                        scheduled_tasks,
+                    } => {
                         // Execute open_server action via server startup
                         match server_startup::start_server_from_action(
                             &self.state,
@@ -1479,7 +1638,9 @@ impl EventHandler {
                             startup_params,
                             event_handlers,
                             scheduled_tasks,
-                        ).await {
+                        )
+                        .await
+                        {
                             Ok(server_id) => {
                                 ui.add_llm_message(format!(
                                     "[LOAD] Opened server #{} on port {} ({})",
@@ -1497,7 +1658,15 @@ impl EventHandler {
                             }
                         }
                     }
-                    CommonAction::OpenClient { protocol, remote_addr, instruction, startup_params, initial_memory, event_handlers, scheduled_tasks } => {
+                    CommonAction::OpenClient {
+                        protocol,
+                        remote_addr,
+                        instruction,
+                        startup_params,
+                        initial_memory,
+                        event_handlers,
+                        scheduled_tasks,
+                    } => {
                         // Execute open_client action via client startup
                         use crate::cli::client_startup;
 
@@ -1511,7 +1680,9 @@ impl EventHandler {
                             event_handlers,
                             scheduled_tasks,
                             self.llm.clone(),
-                        ).await {
+                        )
+                        .await
+                        {
                             Ok(client_id) => {
                                 ui.add_llm_message(format!(
                                     "[LOAD] Opened client #{} to {} ({})",
@@ -1537,10 +1708,7 @@ impl EventHandler {
                     }
                 }
             } else {
-                ui.add_llm_message(format!(
-                    "[WARN] Skipping invalid action (action {})",
-                    i + 1
-                ));
+                ui.add_llm_message(format!("[WARN] Skipping invalid action (action {})", i + 1));
             }
         }
 

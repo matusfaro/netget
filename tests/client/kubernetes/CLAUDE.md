@@ -2,7 +2,8 @@
 
 ## Test Strategy
 
-Unit tests for Kubernetes client protocol registration and action definitions. Full integration tests require a running Kubernetes cluster (minikube or kind).
+Unit tests for Kubernetes client protocol registration and action definitions. Full integration tests require a running
+Kubernetes cluster (minikube or kind).
 
 ## LLM Call Budget
 
@@ -10,6 +11,7 @@ Unit tests for Kubernetes client protocol registration and action definitions. F
 **Actual:** 0 calls (unit tests only)
 
 Full E2E tests would use:
+
 - 1 call: Client initialization
 - 2 calls: List pods operation
 - 3 calls: Get pod logs operation
@@ -65,39 +67,39 @@ kind delete cluster
 ### Unit Tests (no cluster required)
 
 1. **test_kubernetes_protocol_registered** (0 LLM calls)
-   - Verify protocol is in CLIENT_REGISTRY
-   - Check protocol name, stack name, keywords
-   - Runtime: < 1 second
+    - Verify protocol is in CLIENT_REGISTRY
+    - Check protocol name, stack name, keywords
+    - Runtime: < 1 second
 
 2. **test_kubernetes_client_actions** (0 LLM calls)
-   - Verify all async actions are defined
-   - Check action names (k8s_list_pods, k8s_get_pod, etc.)
-   - Runtime: < 1 second
+    - Verify all async actions are defined
+    - Check action names (k8s_list_pods, k8s_get_pod, etc.)
+    - Runtime: < 1 second
 
 3. **test_kubernetes_action_execution** (0 LLM calls)
-   - Test action JSON parsing
-   - Verify execute_action returns correct results
-   - Runtime: < 1 second
+    - Test action JSON parsing
+    - Verify execute_action returns correct results
+    - Runtime: < 1 second
 
 ### Integration Tests (cluster required, marked #[ignore])
 
 4. **test_kubernetes_client_connect** (1 LLM call)
-   - Connect to cluster via kubeconfig
-   - Verify client initialization
-   - Runtime: ~5 seconds
+    - Connect to cluster via kubeconfig
+    - Verify client initialization
+    - Runtime: ~5 seconds
 
 5. **test_kubernetes_list_pods** (2 LLM calls)
-   - Initialize client
-   - Execute k8s_list_pods action
-   - Verify pod list response
-   - Runtime: ~10 seconds
+    - Initialize client
+    - Execute k8s_list_pods action
+    - Verify pod list response
+    - Runtime: ~10 seconds
 
 6. **test_kubernetes_get_logs** (3 LLM calls)
-   - Initialize client
-   - List pods to find target
-   - Get logs from a pod
-   - Verify log data response
-   - Runtime: ~15 seconds
+    - Initialize client
+    - List pods to find target
+    - Get logs from a pod
+    - Verify log data response
+    - Runtime: ~15 seconds
 
 ## Runtime
 

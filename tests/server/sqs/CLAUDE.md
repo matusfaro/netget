@@ -2,7 +2,8 @@
 
 ## Test Overview
 
-The SQS E2E tests validate the AWS SQS-compatible message queue server implementation using the official `aws-sdk-sqs` Rust client. Tests are designed to be efficient, minimizing LLM calls through comprehensive prompts and scripting mode.
+The SQS E2E tests validate the AWS SQS-compatible message queue server implementation using the official `aws-sdk-sqs`
+Rust client. Tests are designed to be efficient, minimizing LLM calls through comprehensive prompts and scripting mode.
 
 **Protocol**: AWS SQS (Simple Queue Service) HTTP/JSON API
 **Client Library**: `aws-sdk-sqs` v1.86 (official AWS SDK for Rust)
@@ -17,14 +18,17 @@ The SQS E2E tests validate the AWS SQS-compatible message queue server implement
 
 Following NetGet testing best practices:
 
-1. **Reuse Server Instances**: Each test creates one comprehensive server with a detailed prompt covering multiple test scenarios
+1. **Reuse Server Instances**: Each test creates one comprehensive server with a detailed prompt covering multiple test
+   scenarios
 2. **Scripting Mode**: Enabled for repetitive operations (SendMessage) to reduce LLM calls from ~15 to ~5-8
-3. **Comprehensive Prompts**: Single prompt describes all expected behaviors rather than separate servers for each test case
+3. **Comprehensive Prompts**: Single prompt describes all expected behaviors rather than separate servers for each test
+   case
 4. **Minimal Server Setups**: 3 server setups for entire suite (vs. 10+ if each test case had separate server)
 
 ### LLM Call Budget Breakdown
 
 **Test 1: Basic Queue Operations** (~5 LLM calls)
+
 - 1 server startup (with scripting for SendMessage)
 - 1 CreateQueue request
 - 3 SendMessage requests (handled by script = 0 additional LLM calls)
@@ -33,6 +37,7 @@ Following NetGet testing best practices:
 - 1 GetQueueAttributes request
 
 **Test 2: Message Visibility** (~3-4 LLM calls)
+
 - 1 server startup
 - 1 CreateQueue request
 - 1 SendMessage request
@@ -40,6 +45,7 @@ Following NetGet testing best practices:
 - 1 DeleteMessage request
 
 **Test 3: Error Handling** (~2 LLM calls)
+
 - 1 server startup
 - 1 SendMessage to non-existent queue (error response)
 
@@ -52,11 +58,13 @@ Following NetGet testing best practices:
 ### Enabled for SendMessage
 
 SendMessage is a perfect candidate for scripting:
+
 - **Predictable**: Always returns MessageId + MD5
 - **Repetitive**: Test sends multiple messages
 - **Simple state**: Just needs to track messages in queue
 
 Script handles:
+
 - Generating unique message IDs (`msg-<timestamp>-<random>`)
 - Computing/returning MD5 checksums
 - Storing message in queue structure
@@ -65,6 +73,7 @@ Script handles:
 ### Not Scripted
 
 Operations requiring complex state inspection remain LLM-controlled:
+
 - **ReceiveMessage**: Needs to check visibility timeouts, in-flight messages
 - **DeleteMessage**: Needs to validate receipt handles
 - **CreateQueue**: Initial queue setup and configuration
@@ -143,6 +152,7 @@ let client = Client::new(&sdk_config);
 **Purpose**: Validate core SQS functionality in a single comprehensive test
 
 **Operations Tested**:
+
 - CreateQueue with queue name validation
 - SendMessage (3 messages) with MD5 calculation
 - ReceiveMessage with max message limit
@@ -150,6 +160,7 @@ let client = Client::new(&sdk_config);
 - GetQueueAttributes for queue metadata
 
 **Assertions**:
+
 - Queue URL contains queue name
 - Each SendMessage returns MessageId and MD5
 - ReceiveMessage returns messages (up to max)
@@ -157,6 +168,7 @@ let client = Client::new(&sdk_config);
 - GetQueueAttributes returns queue configuration
 
 **Expected Behavior**:
+
 - Messages persist across operations
 - Messages appear in ReceiveMessage after SendMessage
 - Messages can be deleted using receipt handle from ReceiveMessage
@@ -166,6 +178,7 @@ let client = Client::new(&sdk_config);
 **Purpose**: Test visibility timeout and message lifecycle
 
 **Operations Tested**:
+
 - CreateQueue with visibility timeout configuration
 - SendMessage to add message to queue
 - ReceiveMessage marks message in-flight
@@ -173,17 +186,20 @@ let client = Client::new(&sdk_config);
 - DeleteMessage removes message permanently
 
 **Assertions**:
+
 - First ReceiveMessage returns 1 message
 - Message has receipt handle
 - Second ReceiveMessage respects visibility (may be flaky depending on LLM)
 - DeleteMessage succeeds
 
 **Expected Behavior**:
+
 - Messages marked in-flight are not returned by ReceiveMessage
 - Receipt handles are unique per receive operation
 - Deleted messages never appear again
 
 **Known Flakiness**:
+
 - Visibility timeout enforcement depends on LLM understanding
 - Second ReceiveMessage check may be inconsistent
 
@@ -192,25 +208,30 @@ let client = Client::new(&sdk_config);
 **Purpose**: Validate proper error responses
 
 **Operations Tested**:
+
 - SendMessage to non-existent queue
 - Verify 400 error response
 
 **Assertions**:
+
 - Request to non-existent queue returns error
 - Error indicates queue does not exist
 
 **Expected Behavior**:
+
 - Operations on non-existent queues return QueueDoesNotExist error
 - No automatic queue creation
 
 ## Expected Runtime
 
 **Total Suite**: ~25-35 seconds
+
 - Test 1 (Basic Operations): ~12-15 seconds (1 setup + 5 operations)
 - Test 2 (Visibility): ~8-10 seconds (1 setup + 3 operations)
 - Test 3 (Error Handling): ~5-7 seconds (1 setup + 1 operation)
 
 **Factors Affecting Runtime**:
+
 - LLM response time (largest factor)
 - Network latency to Ollama
 - Script generation time
@@ -221,6 +242,7 @@ let client = Client::new(&sdk_config);
 **Expected**: < 5% failure rate
 
 **Common Failure Modes**:
+
 1. **LLM misunderstands queue state**: Message appears/disappears unexpectedly
 2. **Visibility timeout confusion**: LLM returns in-flight messages
 3. **Receipt handle mismatch**: LLM generates invalid handles
@@ -228,6 +250,7 @@ let client = Client::new(&sdk_config);
 5. **JSON formatting**: Malformed response bodies
 
 **Mitigation**:
+
 - Clear, explicit prompts with format examples
 - Detailed queue state tracking instructions
 - Visibility timeout explanation in prompt
@@ -238,17 +261,17 @@ let client = Client::new(&sdk_config);
 ### Test-Specific Issues
 
 1. **Visibility Timeout Test Flakiness**:
-   - LLM may not correctly track visibility timeout
-   - Second ReceiveMessage may return message that should be in-flight
-   - **Workaround**: Assertion commented or made lenient
+    - LLM may not correctly track visibility timeout
+    - Second ReceiveMessage may return message that should be in-flight
+    - **Workaround**: Assertion commented or made lenient
 
 2. **Message Ordering**:
-   - Standard queues don't guarantee FIFO
-   - Tests don't assume specific order
+    - Standard queues don't guarantee FIFO
+    - Tests don't assume specific order
 
 3. **MD5 Calculation**:
-   - LLM may use simplified MD5 or placeholder value
-   - Tests only verify MD5 field is present, not accuracy
+    - LLM may use simplified MD5 or placeholder value
+    - Tests only verify MD5 field is present, not accuracy
 
 ### Infrastructure Issues
 
@@ -303,6 +326,7 @@ test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 ### Updating LLM Call Budget
 
 If adding new tests:
+
 1. Document LLM calls for new test
 2. Update budget breakdown
 3. Ensure total remains < 15 calls
@@ -311,6 +335,7 @@ If adding new tests:
 ### Improving Test Efficiency
 
 Current optimization opportunities:
+
 1. **Batch Operations**: Add SendMessageBatch test (1 LLM call vs 3)
 2. **Combined Error Tests**: Test multiple error scenarios in one server
 3. **Attribute Variations**: Test different queue attributes in same test
@@ -318,6 +343,7 @@ Current optimization opportunities:
 ## Comparison to DynamoDB Tests
 
 ### Similarities
+
 - Both use AWS SDK clients
 - Both minimize LLM calls through consolidation
 - Both test HTTP/JSON API protocols
@@ -325,22 +351,24 @@ Current optimization opportunities:
 
 ### Differences
 
-| Aspect | DynamoDB | SQS |
-|--------|----------|-----|
-| **State** | Stateless | Stateful (queue persistence) |
+| Aspect         | DynamoDB                | SQS                               |
+|----------------|-------------------------|-----------------------------------|
+| **State**      | Stateless               | Stateful (queue persistence)      |
 | **Operations** | CRUD (GetItem, PutItem) | Queue ops (Send, Receive, Delete) |
-| **Complexity** | Simple key-value | Message lifecycle with timeouts |
-| **Scripting** | PutItem, GetItem | SendMessage |
-| **Flakiness** | Very stable | Visibility timeout can be flaky |
-| **LLM Budget** | ~8-10 calls | ~10-11 calls |
+| **Complexity** | Simple key-value        | Message lifecycle with timeouts   |
+| **Scripting**  | PutItem, GetItem        | SendMessage                       |
+| **Flakiness**  | Very stable             | Visibility timeout can be flaky   |
+| **LLM Budget** | ~8-10 calls             | ~10-11 calls                      |
 
-**Key Difference**: SQS requires more complex state tracking (visibility timeouts, receipt handles), making it slightly more prone to LLM confusion but still within acceptable failure rate.
+**Key Difference**: SQS requires more complex state tracking (visibility timeouts, receipt handles), making it slightly
+more prone to LLM confusion but still within acceptable failure rate.
 
 ## Debugging Failed Tests
 
 ### 1. Check Server Output
 
 Server output shows LLM prompts and responses:
+
 ```bash
 # Look for SQS event and action traces
 [TRACE] SQS request: {"operation":"SendMessage",...}
@@ -350,6 +378,7 @@ Server output shows LLM prompts and responses:
 ### 2. Verify Queue State
 
 Check if LLM is tracking messages:
+
 - Look for "remember messages" in prompt
 - Verify LLM acknowledges message storage
 - Check if receipt handles are being generated
@@ -357,6 +386,7 @@ Check if LLM is tracking messages:
 ### 3. Validate JSON Responses
 
 Malformed JSON is a common issue:
+
 - Missing MessageId or MD5
 - Incorrect error format
 - Missing receipt handles
@@ -364,6 +394,7 @@ Malformed JSON is a common issue:
 ### 4. Test Locally with Manual Client
 
 Use `aws` CLI or boto3 to manually test:
+
 ```bash
 # Start NetGet SQS server
 netget "Start SQS server on port 9324..."

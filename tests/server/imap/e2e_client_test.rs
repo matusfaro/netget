@@ -11,15 +11,15 @@
 #[cfg(all(test, feature = "imap", feature = "imap"))]
 mod e2e_imap_client {
     use crate::server::helpers::*;
-    use async_imap::types::Mailbox;
-    use async_imap::Session;
-    use async_native_tls::{TlsConnector, TlsStream};
-    use futures::StreamExt; // For collecting Streams
+    use futures::StreamExt;
+    // For collecting Streams
     use tokio::net::TcpStream;
-    use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+    use tokio_util::compat::TokioAsyncReadCompatExt;
 
     /// Helper to create an IMAP client connected to the server
-    async fn connect_imap_client(port: u16) -> E2EResult<async_imap::Client<tokio_util::compat::Compat<TcpStream>>> {
+    async fn connect_imap_client(
+        port: u16,
+    ) -> E2EResult<async_imap::Client<tokio_util::compat::Compat<TcpStream>>> {
         let addr = format!("127.0.0.1:{}", port);
         let tcp_stream = TcpStream::connect(&addr).await?;
         // Convert from tokio::io to futures::io using compat layer
@@ -54,7 +54,10 @@ mod e2e_imap_client {
         println!("  [TEST] ✓ Login successful");
 
         // Logout
-        session.logout().await.map_err(|e| format!("Logout failed: {}", e))?;
+        session
+            .logout()
+            .await
+            .map_err(|e| format!("Logout failed: {}", e))?;
         println!("  [TEST] ✓ Logout successful");
 
         server.stop().await?;
@@ -117,8 +120,11 @@ mod e2e_imap_client {
         println!("  [TEST] ✓ Logged in");
 
         // List mailboxes - collect Stream into Vec
-        let mailboxes: Vec<_> = session.list(Some(""), Some("*")).await?
-            .collect::<Vec<_>>().await;
+        let mailboxes: Vec<_> = session
+            .list(Some(""), Some("*"))
+            .await?
+            .collect::<Vec<_>>()
+            .await;
         println!("  [TEST] Found {} mailboxes", mailboxes.len());
 
         // Verify we got at least INBOX - handle Result values
@@ -129,7 +135,10 @@ mod e2e_imap_client {
             .collect();
 
         println!("  [TEST] Mailboxes: {:?}", mailbox_names);
-        assert!(!mailbox_names.is_empty(), "Should have at least one mailbox");
+        assert!(
+            !mailbox_names.is_empty(),
+            "Should have at least one mailbox"
+        );
         println!("  [TEST] ✓ LIST command successful");
 
         session.logout().await?;
@@ -204,8 +213,11 @@ mod e2e_imap_client {
         println!("  [TEST] ✓ Selected INBOX");
 
         // Fetch message 1 - collect Stream into Vec
-        let messages: Vec<_> = session.fetch("1", "RFC822").await?
-            .collect::<Vec<_>>().await;
+        let messages: Vec<_> = session
+            .fetch("1", "RFC822")
+            .await?
+            .collect::<Vec<_>>()
+            .await;
         println!("  [TEST] Fetched {} message(s)", messages.len());
 
         assert!(!messages.is_empty(), "Should fetch at least one message");
@@ -215,8 +227,10 @@ mod e2e_imap_client {
             println!("  [TEST]   Message UID: {:?}", msg.uid);
             if let Some(body) = msg.body() {
                 let body_str = String::from_utf8_lossy(body);
-                println!("  [TEST]   Body preview: {}...",
-                    body_str.chars().take(50).collect::<String>());
+                println!(
+                    "  [TEST]   Body preview: {}...",
+                    body_str.chars().take(50).collect::<String>()
+                );
             }
         }
         println!("  [TEST] ✓ FETCH command successful");
@@ -258,7 +272,10 @@ mod e2e_imap_client {
         println!("  [TEST]   Message IDs: {:?}", message_ids);
 
         // Verify we got results
-        assert!(!message_ids.is_empty(), "Search should return at least one message");
+        assert!(
+            !message_ids.is_empty(),
+            "Search should return at least one message"
+        );
         println!("  [TEST] ✓ SEARCH command successful");
 
         session.logout().await?;
@@ -294,8 +311,10 @@ mod e2e_imap_client {
         println!("  [TEST] Retrieved capabilities from server");
 
         // Verify IMAP4rev1 is supported
-        assert!(caps.has_str("IMAP4rev1") || caps.has_str("IMAP4REV1"),
-                "Server should support IMAP4rev1");
+        assert!(
+            caps.has_str("IMAP4rev1") || caps.has_str("IMAP4REV1"),
+            "Server should support IMAP4rev1"
+        );
         println!("  [TEST] ✓ CAPABILITY command successful");
 
         session.logout().await?;
@@ -368,8 +387,10 @@ mod e2e_imap_client {
         println!("  [TEST]   UNSEEN: {:?}", status.unseen);
 
         // Verify we got status info - exists is always present (u32)
-        assert!(status.exists > 0 || status.unseen.is_some(),
-                "Should have at least one status attribute");
+        assert!(
+            status.exists > 0 || status.unseen.is_some(),
+            "Should have at least one status attribute"
+        );
         println!("  [TEST] ✓ STATUS command successful");
 
         session.logout().await?;
@@ -396,7 +417,8 @@ mod e2e_imap_client {
         let handles: Vec<_> = (0..3)
             .map(|i| {
                 tokio::spawn(async move {
-                    let client = connect_imap_client(port).await
+                    let client = connect_imap_client(port)
+                        .await
                         .map_err(|e| format!("Connect failed: {}", e))?;
 
                     let mut session = match client.login(&format!("user{}", i), "password").await {
@@ -405,12 +427,18 @@ mod e2e_imap_client {
                     };
 
                     // Each client selects INBOX
-                    let mailbox = session.select("INBOX").await
+                    let mailbox = session
+                        .select("INBOX")
+                        .await
                         .map_err(|e| format!("Select failed: {}", e))?;
-                    println!("  [TEST] Client {} selected INBOX with {} messages",
-                            i, mailbox.exists);
+                    println!(
+                        "  [TEST] Client {} selected INBOX with {} messages",
+                        i, mailbox.exists
+                    );
 
-                    session.logout().await
+                    session
+                        .logout()
+                        .await
                         .map_err(|e| format!("Logout failed: {}", e))?;
                     Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
                 })

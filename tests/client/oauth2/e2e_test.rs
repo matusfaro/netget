@@ -12,12 +12,7 @@ use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
 
 #[cfg(feature = "mcp")]
-use axum::{
-    extract::Form,
-    response::Json,
-    routing::post,
-    Router,
-};
+use axum::{extract::Form, response::Json, routing::post, Router};
 
 /// Helper to create a test OAuth2 client instance
 fn create_oauth2_client_instance(
@@ -223,7 +218,10 @@ async fn test_oauth2_token_refresh() {
 
                 // The token might be refreshed or same depending on LLM behavior
                 let new_token = extract_access_token(&app_state, client_id).await;
-                assert!(new_token.is_some(), "Token should still be present after refresh");
+                assert!(
+                    new_token.is_some(),
+                    "Token should still be present after refresh"
+                );
             }
             Err(e) => {
                 println!("Test skipped - Ollama not available: {}", e);
@@ -273,13 +271,19 @@ async fn test_oauth2_error_handling() {
                     .map(|c| c.status.clone());
 
                 assert!(
-                    matches!(client_status, Some(ClientStatus::Connected) | Some(ClientStatus::Error(_))),
+                    matches!(
+                        client_status,
+                        Some(ClientStatus::Connected) | Some(ClientStatus::Error(_))
+                    ),
                     "Client should be connected or in error state"
                 );
 
                 // No token should be stored after error
                 let token = extract_access_token(&app_state, client_id).await;
-                assert!(token.is_none(), "No token should be stored after auth error");
+                assert!(
+                    token.is_none(),
+                    "No token should be stored after auth error"
+                );
             }
             Err(e) => {
                 println!("Test skipped - Ollama not available: {}", e);
@@ -309,9 +313,7 @@ async fn start_mock_oauth_server() -> String {
             .await
             .expect("Failed to bind");
 
-        axum::serve(listener, app)
-            .await
-            .expect("Server failed");
+        axum::serve(listener, app).await.expect("Server failed");
     });
 
     // Give server time to start
@@ -337,9 +339,7 @@ async fn start_mock_oauth_server_with_errors() -> String {
             .await
             .expect("Failed to bind");
 
-        axum::serve(listener, app)
-            .await
-            .expect("Server failed");
+        axum::serve(listener, app).await.expect("Server failed");
     });
 
     sleep(Duration::from_millis(100)).await;

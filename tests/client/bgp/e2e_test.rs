@@ -110,7 +110,7 @@ mod bgp_client_tests {
     async fn test_bgp_client_custom_params() -> E2EResult<()> {
         // Start BGP server
         let server_config = NetGetConfig::new(
-            "Start BGP server on port {AVAILABLE_PORT} with AS 64512. Accept BGP connections."
+            "Start BGP server on port {AVAILABLE_PORT} with AS 64512. Accept BGP connections.",
         );
 
         let mut server = start_netget_server(server_config).await?;

@@ -18,12 +18,12 @@ use hyper_util::rt::TokioIo;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
 
-use crate::server::connection::ConnectionId;
-use crate::server::ElasticsearchProtocol;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
+use crate::server::connection::ConnectionId;
+use crate::server::ElasticsearchProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 
 /// Elasticsearch server that delegates search/index operations to LLM
 pub struct ElasticsearchServer;
@@ -38,9 +38,14 @@ impl ElasticsearchServer {
         _send_first: bool,
         server_id: crate::state::ServerId,
     ) -> anyhow::Result<SocketAddr> {
-        let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let listener =
+            crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        console_info!(status_tx, "Elasticsearch server listening on {}", local_addr);
+        console_info!(
+            status_tx,
+            "Elasticsearch server listening on {}",
+            local_addr
+        );
 
         let protocol = Arc::new(ElasticsearchProtocol::new());
 
@@ -49,13 +54,23 @@ impl ElasticsearchServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        info!("Elasticsearch connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!("[INFO] Elasticsearch connection from {}", remote_addr));
+                        info!(
+                            "Elasticsearch connection {} from {}",
+                            connection_id, remote_addr
+                        );
+                        let _ = status_tx.send(format!(
+                            "[INFO] Elasticsearch connection from {}",
+                            remote_addr
+                        ));
 
                         // Add connection to ServerInstance
-                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -70,7 +85,9 @@ impl ElasticsearchServer {
                             status_changed_at: now,
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
-                        app_state.add_connection_to_server(server_id, conn_state).await;
+                        app_state
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let llm_client_clone = llm_client.clone();
@@ -104,18 +121,29 @@ impl ElasticsearchServer {
                             });
 
                             // Serve HTTP/1 on this connection
-                            if let Err(err) = http1::Builder::new().serve_connection(io, service).await {
+                            if let Err(err) =
+                                http1::Builder::new().serve_connection(io, service).await
+                            {
                                 error!("Error serving Elasticsearch connection: {:?}", err);
                             }
 
                             // Mark connection as closed
-                            app_state_clone.close_connection_on_server(server_id, connection_id).await;
-                            let _ = status_tx_clone.send(format!("[INFO] Elasticsearch connection {} closed", connection_id));
+                            app_state_clone
+                                .close_connection_on_server(server_id, connection_id)
+                                .await;
+                            let _ = status_tx_clone.send(format!(
+                                "[INFO] Elasticsearch connection {} closed",
+                                connection_id
+                            ));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "Failed to accept Elasticsearch connection: {}", e);
+                        console_error!(
+                            status_tx,
+                            "Failed to accept Elasticsearch connection: {}",
+                            e
+                        );
                         break;
                     }
                 }
@@ -145,7 +173,11 @@ async fn handle_elasticsearch_request_with_llm(
     let body_bytes = match req.into_body().collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
-            console_error!(status_tx, "Failed to read Elasticsearch request body: {}", e);
+            console_error!(
+                status_tx,
+                "Failed to read Elasticsearch request body: {}",
+                e
+            );
             Bytes::new()
         }
     };
@@ -160,7 +192,9 @@ async fn handle_elasticsearch_request_with_llm(
     );
     let _ = status_tx.send(format!(
         "[DEBUG] Elasticsearch {} {} ({} bytes)",
-        method, path, body_bytes.len()
+        method,
+        path,
+        body_bytes.len()
     ));
 
     // Detect operation type from path and method
@@ -200,17 +234,16 @@ async fn handle_elasticsearch_request_with_llm(
                 match result {
                     ActionResult::Custom { name, data } => {
                         if name == "elasticsearch_response" {
-                            let status = data.get("status")
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(200) as u16;
-                            let body = data.get("body")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("{}");
+                            let status =
+                                data.get("status").and_then(|v| v.as_u64()).unwrap_or(200) as u16;
+                            let body = data.get("body").and_then(|v| v.as_str()).unwrap_or("{}");
 
                             debug!("Elasticsearch response: status={}", status);
-                            let _ = status_tx.send(format!("[DEBUG] Elasticsearch → {} response", status));
+                            let _ = status_tx
+                                .send(format!("[DEBUG] Elasticsearch → {} response", status));
                             trace!("Elasticsearch response body: {}", body);
-                            let _ = status_tx.send(format!("[TRACE] Elasticsearch response: {}", body));
+                            let _ =
+                                status_tx.send(format!("[TRACE] Elasticsearch response: {}", body));
 
                             return Ok(Response::builder()
                                 .status(status)
@@ -230,7 +263,8 @@ async fn handle_elasticsearch_request_with_llm(
             debug!("No Elasticsearch response from LLM, returning 200 OK with default response");
             let default_response = serde_json::json!({
                 "acknowledged": true
-            }).to_string();
+            })
+            .to_string();
 
             Ok(Response::builder()
                 .status(200)
@@ -252,7 +286,8 @@ async fn handle_elasticsearch_request_with_llm(
                     "reason": format!("LLM processing error: {}", e)
                 },
                 "status": 500
-            }).to_string();
+            })
+            .to_string();
 
             Ok(Response::builder()
                 .status(500)
@@ -265,7 +300,10 @@ async fn handle_elasticsearch_request_with_llm(
 }
 
 /// Detect Elasticsearch operation from HTTP method and path
-fn detect_elasticsearch_operation(method: &str, path: &str) -> (String, Option<String>, Option<String>) {
+fn detect_elasticsearch_operation(
+    method: &str,
+    path: &str,
+) -> (String, Option<String>, Option<String>) {
     let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
 
     match (method, parts.as_slice()) {
@@ -274,26 +312,44 @@ fn detect_elasticsearch_operation(method: &str, path: &str) -> (String, Option<S
 
         // Search operations
         ("GET" | "POST", ["_search"]) => ("search".to_string(), None, None),
-        ("GET" | "POST", [index, "_search"]) => ("search".to_string(), Some(index.to_string()), None),
+        ("GET" | "POST", [index, "_search"]) => {
+            ("search".to_string(), Some(index.to_string()), None)
+        }
 
         // Document operations
-        ("POST", [index, "_doc"]) | ("PUT", [index, "_doc"]) =>
-            ("index".to_string(), Some(index.to_string()), None),
-        ("POST" | "PUT", [index, "_doc", id]) | ("PUT", [index, "_create", id]) =>
-            ("index".to_string(), Some(index.to_string()), Some(id.to_string())),
-        ("GET", [index, "_doc", id]) =>
-            ("get".to_string(), Some(index.to_string()), Some(id.to_string())),
-        ("DELETE", [index, "_doc", id]) =>
-            ("delete".to_string(), Some(index.to_string()), Some(id.to_string())),
+        ("POST", [index, "_doc"]) | ("PUT", [index, "_doc"]) => {
+            ("index".to_string(), Some(index.to_string()), None)
+        }
+        ("POST" | "PUT", [index, "_doc", id]) | ("PUT", [index, "_create", id]) => (
+            "index".to_string(),
+            Some(index.to_string()),
+            Some(id.to_string()),
+        ),
+        ("GET", [index, "_doc", id]) => (
+            "get".to_string(),
+            Some(index.to_string()),
+            Some(id.to_string()),
+        ),
+        ("DELETE", [index, "_doc", id]) => (
+            "delete".to_string(),
+            Some(index.to_string()),
+            Some(id.to_string()),
+        ),
 
         // Bulk operations
         ("POST" | "PUT", ["_bulk"]) => ("bulk".to_string(), None, None),
         ("POST" | "PUT", [index, "_bulk"]) => ("bulk".to_string(), Some(index.to_string()), None),
 
         // Index management
-        ("PUT", [index]) if !index.starts_with('_') => ("create_index".to_string(), Some(index.to_string()), None),
-        ("DELETE", [index]) if !index.starts_with('_') => ("delete_index".to_string(), Some(index.to_string()), None),
-        ("GET", [index]) if !index.starts_with('_') => ("index_info".to_string(), Some(index.to_string()), None),
+        ("PUT", [index]) if !index.starts_with('_') => {
+            ("create_index".to_string(), Some(index.to_string()), None)
+        }
+        ("DELETE", [index]) if !index.starts_with('_') => {
+            ("delete_index".to_string(), Some(index.to_string()), None)
+        }
+        ("GET", [index]) if !index.starts_with('_') => {
+            ("index_info".to_string(), Some(index.to_string()), None)
+        }
 
         // Cluster operations
         ("GET", ["_cluster", "health"]) => ("cluster_health".to_string(), None, None),

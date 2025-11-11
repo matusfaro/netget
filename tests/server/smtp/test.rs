@@ -7,22 +7,22 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, ServerConfig, E2EResult};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use super::super::super::helpers::{self, E2EResult, ServerConfig};
 use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 #[tokio::test]
 async fn test_smtp_greeting() -> E2EResult<()> {
     println!("\n=== E2E Test: SMTP Greeting (220) ===");
 
     // PROMPT: Tell the LLM to send SMTP greeting
-    let prompt = "listen on port {AVAILABLE_PORT} via smtp. When a client connects, send SMTP greeting: \
+    let prompt =
+        "listen on port {AVAILABLE_PORT} via smtp. When a client connects, send SMTP greeting: \
         '220 mail.example.com ESMTP Service Ready'";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
-
 
     // VALIDATION: Connect and expect 220 greeting
     println!("Connecting to SMTP server...");
@@ -73,7 +73,6 @@ async fn test_smtp_ehlo() -> E2EResult<()> {
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
-
 
     // VALIDATION: Send EHLO and verify response
     let stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
@@ -142,7 +141,6 @@ async fn test_smtp_mail_transaction() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-
     // VALIDATION: Perform full SMTP transaction
     let stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
     println!("✓ TCP connected");
@@ -165,7 +163,9 @@ async fn test_smtp_mail_transaction() -> E2EResult<()> {
 
     // Send MAIL FROM
     println!("Sending: MAIL FROM:<sender@test.com>");
-    write_half.write_all(b"MAIL FROM:<sender@test.com>\r\n").await?;
+    write_half
+        .write_all(b"MAIL FROM:<sender@test.com>\r\n")
+        .await?;
     write_half.flush().await?;
     line.clear();
     match tokio::time::timeout(Duration::from_secs(10), reader.read_line(&mut line)).await {
@@ -180,7 +180,9 @@ async fn test_smtp_mail_transaction() -> E2EResult<()> {
 
     // Send RCPT TO
     println!("Sending: RCPT TO:<recipient@test.com>");
-    write_half.write_all(b"RCPT TO:<recipient@test.com>\r\n").await?;
+    write_half
+        .write_all(b"RCPT TO:<recipient@test.com>\r\n")
+        .await?;
     write_half.flush().await?;
     line.clear();
     match tokio::time::timeout(Duration::from_secs(10), reader.read_line(&mut line)).await {
@@ -226,7 +228,6 @@ async fn test_smtp_quit() -> E2EResult<()> {
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
-
 
     // VALIDATION: Send QUIT and verify response
     let stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
@@ -279,7 +280,6 @@ async fn test_smtp_error_handling() -> E2EResult<()> {
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
-
 
     // VALIDATION: Send invalid command
     let stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;

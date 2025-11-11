@@ -6,7 +6,9 @@
 #[cfg(feature = "usb-msc")]
 use super::disk::DiskImage;
 #[cfg(feature = "usb-msc")]
-use crate::server::usb::descriptors::{scsi_opcode, scsi_sense_key, CommandBlockWrapper, CommandStatusWrapper};
+use crate::server::usb::descriptors::{
+    scsi_opcode, scsi_sense_key, CommandBlockWrapper, CommandStatusWrapper,
+};
 #[cfg(feature = "usb-msc")]
 use anyhow::Result;
 #[cfg(feature = "usb-msc")]
@@ -63,7 +65,10 @@ impl UsbMscHandler {
         self.sense_key = key;
         self.sense_asc = asc;
         self.sense_ascq = ascq;
-        debug!("SCSI sense set: key={:#04x}, asc={:#04x}, ascq={:#04x}", key, asc, ascq);
+        debug!(
+            "SCSI sense set: key={:#04x}, asc={:#04x}, ascq={:#04x}",
+            key, asc, ascq
+        );
     }
 
     /// Clear sense data
@@ -360,7 +365,10 @@ impl usbip::UsbInterfaceHandler for UsbMscHandler {
                         "Unsupported MSC control request: type={:#04x}, request={:#04x}",
                         setup.request_type, setup.request
                     );
-                    Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Unsupported control request"))
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "Unsupported control request",
+                    ))
                 }
             }
         } else if endpoint.address & 0x80 == 0 {
@@ -377,10 +385,7 @@ impl usbip::UsbInterfaceHandler for UsbMscHandler {
 
                         debug!(
                             "BOT: Received CBW (tag={:#010x}, lun={}, flags={:#04x}, length={})",
-                            tag,
-                            lun,
-                            flags,
-                            data_transfer_length
+                            tag, lun, flags, data_transfer_length
                         );
                         self.last_tag = tag;
 
@@ -403,12 +408,17 @@ impl usbip::UsbInterfaceHandler for UsbMscHandler {
                     }
                     None => {
                         error!("Failed to parse CBW: invalid format");
-                        Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid CBW format"))
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "Invalid CBW format",
+                        ))
                     }
                 }
             } else {
                 // This is write data for a WRITE(10) command
-                if let Err(e) = tokio::runtime::Handle::current().block_on(self.handle_write_data(data)) {
+                if let Err(e) =
+                    tokio::runtime::Handle::current().block_on(self.handle_write_data(data))
+                {
                     error!("Failed to handle write data: {}", e);
                 }
                 self.csw_pending = true; // Send CSW after write data
@@ -424,8 +434,9 @@ impl usbip::UsbInterfaceHandler for UsbMscHandler {
                 Ok(data)
             } else if self.csw_pending {
                 // Send CSW (Command Status Wrapper)
-                let _cbw = self.current_cbw.as_ref()
-                    .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "No CBW for CSW"))?;
+                let _cbw = self.current_cbw.as_ref().ok_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, "No CBW for CSW")
+                })?;
                 let csw = CommandStatusWrapper::new(
                     self.last_tag,
                     0, // data_residue (assume all data transferred)

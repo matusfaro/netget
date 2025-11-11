@@ -10,13 +10,13 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tracing::{error, info, trace};
 
+use crate::client::ntp::actions::NTP_CLIENT_RESPONSE_RECEIVED_EVENT;
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::ntp::actions::NTP_CLIENT_RESPONSE_RECEIVED_EVENT;
 
 /// NTP client that queries NTP servers
 pub struct NtpClient;
@@ -42,10 +42,15 @@ impl NtpClient {
 
         let local_addr = socket.local_addr()?;
 
-        info!("NTP client {} connected to {} (local: {})", client_id, remote_sock_addr, local_addr);
+        info!(
+            "NTP client {} connected to {} (local: {})",
+            client_id, remote_sock_addr, local_addr
+        );
 
         // Update client state
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
         let _ = status_tx.send(format!("[CLIENT] NTP client {} connected", client_id));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
@@ -65,12 +70,17 @@ impl NtpClient {
                     &app_state,
                     client_id.to_string(),
                     &instruction,
-                    "",  // No memory initially
-                    None,  // No event for initial call
+                    "",   // No memory initially
+                    None, // No event for initial call
                     protocol.as_ref(),
                     &status_tx,
-                ).await {
-                    Ok(ClientLlmResult { actions, memory_updates: _ }) => {
+                )
+                .await
+                {
+                    Ok(ClientLlmResult {
+                        actions,
+                        memory_updates: _,
+                    }) => {
                         // Execute initial actions
                         for action in actions {
                             use crate::llm::actions::client_trait::Client;
@@ -154,7 +164,9 @@ impl NtpClient {
             }
 
             // Mark as disconnected after query completes
-            app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
+            app_state
+                .update_client_status(client_id, ClientStatus::Disconnected)
+                .await;
             let _ = status_tx.send("__UPDATE_UI__".to_string());
         });
 
@@ -166,7 +178,7 @@ impl NtpClient {
         let mut packet = vec![0u8; 48];
 
         // Set LI = 0, VN = 3, Mode = 3 (client)
-        packet[0] = 0x1b;  // 00 011 011 = LI=0, VN=3, Mode=3
+        packet[0] = 0x1b; // 00 011 011 = LI=0, VN=3, Mode=3
 
         // Set transmit timestamp to current time
         use std::time::{SystemTime, UNIX_EPOCH};
@@ -218,7 +230,8 @@ impl NtpClient {
 
         // Extract transmit timestamp (bytes 40-47)
         let transmit_seconds = u32::from_be_bytes([data[40], data[41], data[42], data[43]]) as u64;
-        let _transmit_fraction = u32::from_be_bytes([data[44], data[45], data[46], data[47]]) as u64;
+        let _transmit_fraction =
+            u32::from_be_bytes([data[44], data[45], data[46], data[47]]) as u64;
         let transmit_timestamp = if transmit_seconds > 2_208_988_800 {
             transmit_seconds - 2_208_988_800
         } else {

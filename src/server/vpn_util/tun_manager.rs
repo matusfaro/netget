@@ -67,7 +67,10 @@ impl TunManager {
             error!("Failed to create TUN device: {}", e);
             io::Error::new(
                 io::ErrorKind::PermissionDenied,
-                format!("TUN device creation failed: {}. Are you running as root?", e),
+                format!(
+                    "TUN device creation failed: {}. Are you running as root?",
+                    e
+                ),
             )
         })?;
 
@@ -129,4 +132,3 @@ impl Drop for TunManager {
         debug!("Closing TUN device: {}", self.name);
     }
 }
-

@@ -102,9 +102,8 @@ mod tests {
 
         // 3. Connect to relay with TLS
         // Use aws-lc-rs crypto provider
-        let crypto_provider = std::sync::Arc::new(
-            tokio_rustls::rustls::crypto::aws_lc_rs::default_provider(),
-        );
+        let crypto_provider =
+            std::sync::Arc::new(tokio_rustls::rustls::crypto::aws_lc_rs::default_provider());
 
         let tls_config = ClientConfig::builder_with_provider(crypto_provider)
             .with_safe_default_protocol_versions()

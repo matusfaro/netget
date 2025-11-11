@@ -1,21 +1,22 @@
 # NetGet End-to-End Tests
 
-This directory contains comprehensive end-to-end tests for all NetGet protocols. Tests spawn the actual NetGet binary and validate responses using real protocol client libraries.
+This directory contains comprehensive end-to-end tests for all NetGet protocols. Tests spawn the actual NetGet binary
+and validate responses using real protocol client libraries.
 
 ## Test Files
 
-| File | Tests | Client Library | Requires Root |
-|------|-------|----------------|---------------|
-| `e2e_tcp_test.rs` | 3 | suppaftp, raw TCP | No |
-| `e2e_http_test.rs` | 6 | reqwest | No |
-| `e2e_udp_test.rs` | 1 | raw UDP | No |
-| `e2e_dns_test.rs` | 4 | hickory-client | No |
-| `e2e_dhcp_test.rs` | 3 | manual DHCP packets | No |
-| `e2e_ntp_test.rs` | 4 | rsntp | No |
-| `e2e_snmp_test.rs` | 4 | snmp library, snmpget | No |
-| `e2e_ssh_test.rs` | 4 | ssh2 | No |
-| `e2e_irc_test.rs` | 5 | raw IRC protocol | No |
-| `e2e_datalink_test.rs` | 2 | pcap, arping | **YES** |
+| File                   | Tests | Client Library        | Requires Root |
+|------------------------|-------|-----------------------|---------------|
+| `e2e_tcp_test.rs`      | 3     | suppaftp, raw TCP     | No            |
+| `e2e_http_test.rs`     | 6     | reqwest               | No            |
+| `e2e_udp_test.rs`      | 1     | raw UDP               | No            |
+| `e2e_dns_test.rs`      | 4     | hickory-client        | No            |
+| `e2e_dhcp_test.rs`     | 3     | manual DHCP packets   | No            |
+| `e2e_ntp_test.rs`      | 4     | rsntp                 | No            |
+| `e2e_snmp_test.rs`     | 4     | snmp library, snmpget | No            |
+| `e2e_ssh_test.rs`      | 4     | ssh2                  | No            |
+| `e2e_irc_test.rs`      | 5     | raw IRC protocol      | No            |
+| `e2e_datalink_test.rs` | 2     | pcap, arping          | **YES**       |
 
 **Total:** 10 test files, 36 tests
 
@@ -65,10 +66,12 @@ sudo -E ./cargo-isolated.sh test --test e2e_datalink_test --features <protocol>
 ```
 
 **Pros:**
+
 - Simple, works on all platforms
 - Full packet capture access
 
 **Cons:**
+
 - Requires password entry
 - Runs cargo with root (security risk)
 - May create root-owned files in target/
@@ -93,12 +96,14 @@ sudo dseditgroup -o edit -a $USER -t user access_bpf
 ```
 
 **Pros:**
+
 - No sudo needed for test execution
 - Group membership persists across reboots
 - No need to re-apply after rebuilds
 - Works on both macOS and Linux with Wireshark
 
 **Cons:**
+
 - Requires Wireshark to be installed
 - Requires logout/login after adding to group (one-time)
 
@@ -121,11 +126,13 @@ sudo setcap cap_net_raw,cap_net_admin=eip "$TEST_BIN"
 ```
 
 **Pros:**
+
 - No sudo needed for test execution
 - Least privilege principle (only packet access, not full root)
 - More secure than full sudo
 
 **Cons:**
+
 - Linux only
 - Capability needs to be re-applied after each rebuild
 - Requires initial sudo to set capabilities
@@ -166,6 +173,7 @@ echo "✓ Privileged tests completed"
 ```
 
 Make it executable:
+
 ```bash
 chmod +x run_privileged_tests.sh
 ./run_privileged_tests.sh
@@ -244,6 +252,7 @@ All e2e tests follow the same pattern:
 4. **Cleanup**: Stop server
 
 Example:
+
 ```rust
 #[tokio::test]
 async fn test_dns_a_record_query() -> E2EResult<()> {
@@ -268,23 +277,28 @@ async fn test_dns_a_record_query() -> E2EResult<()> {
 ## Troubleshooting
 
 ### Tests timeout
+
 - Ensure Ollama is running: `ollama serve`
 - Check model is available: `ollama list`
 - Increase timeout in test if LLM is slow
 
 ### Permission denied (DataLink tests)
+
 - Use one of the privileged test approaches above
 - Ensure you have admin/root access on the system
 
 ### Port already in use
+
 - Tests use dynamic port allocation (port 0)
 - If still failing, check for zombie processes: `pkill netget`
 
 ### Test fails with "binary not found"
+
 - Build the release binary first: `./cargo-isolated.sh build --release`
 - Check it exists: `ls -la target/release/netget`
 
 ### Capability persists after rebuild (Linux)
+
 - Capabilities are removed when binary is modified
 - Re-run `setcap` command after each `./cargo-isolated.sh build`
 - Use the automation script to handle this automatically

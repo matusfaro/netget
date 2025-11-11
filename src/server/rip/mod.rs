@@ -11,11 +11,11 @@ use tracing::{debug, error, info, trace};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
-use actions::RIP_REQUEST_EVENT;
-use crate::server::RipProtocol;
 use crate::protocol::Event;
+use crate::server::RipProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use actions::RIP_REQUEST_EVENT;
 
 /// RIP server that forwards routing requests to LLM
 pub struct RipServer;
@@ -44,10 +44,14 @@ impl RipServer {
                 match socket.recv_from(&mut buffer).await {
                     Ok((n, peer_addr)) => {
                         let data = buffer[..n].to_vec();
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
 
                         // Add connection to ServerInstance (RIP "connection" = recent peer)
-                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -62,12 +66,19 @@ impl RipServer {
                             status_changed_at: now,
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
-                        app_state.add_connection_to_server(server_id, conn_state).await;
+                        app_state
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         // Parse RIP packet to determine message type
                         if n < 4 {
-                            console_debug!(status_tx, "RIP received invalid packet (too short: {} bytes) from {}", n, peer_addr);
+                            console_debug!(
+                                status_tx,
+                                "RIP received invalid packet (too short: {} bytes) from {}",
+                                n,
+                                peer_addr
+                            );
                             continue;
                         }
 
@@ -109,21 +120,34 @@ impl RipServer {
                                 let offset = 4 + (i * 20);
                                 if offset + 20 <= data.len() {
                                     let afi = u16::from_be_bytes([data[offset], data[offset + 1]]);
-                                    let route_tag = u16::from_be_bytes([data[offset + 2], data[offset + 3]]);
+                                    let route_tag =
+                                        u16::from_be_bytes([data[offset + 2], data[offset + 3]]);
                                     let ip = format!(
                                         "{}.{}.{}.{}",
-                                        data[offset + 4], data[offset + 5], data[offset + 6], data[offset + 7]
+                                        data[offset + 4],
+                                        data[offset + 5],
+                                        data[offset + 6],
+                                        data[offset + 7]
                                     );
                                     let subnet_mask = format!(
                                         "{}.{}.{}.{}",
-                                        data[offset + 8], data[offset + 9], data[offset + 10], data[offset + 11]
+                                        data[offset + 8],
+                                        data[offset + 9],
+                                        data[offset + 10],
+                                        data[offset + 11]
                                     );
                                     let next_hop = format!(
                                         "{}.{}.{}.{}",
-                                        data[offset + 12], data[offset + 13], data[offset + 14], data[offset + 15]
+                                        data[offset + 12],
+                                        data[offset + 13],
+                                        data[offset + 14],
+                                        data[offset + 15]
                                     );
                                     let metric = u32::from_be_bytes([
-                                        data[offset + 16], data[offset + 17], data[offset + 18], data[offset + 19]
+                                        data[offset + 16],
+                                        data[offset + 17],
+                                        data[offset + 18],
+                                        data[offset + 19],
                                     ]);
 
                                     routes.push(serde_json::json!({
@@ -150,16 +174,21 @@ impl RipServer {
                             let event = Event::new(&RIP_REQUEST_EVENT, event_data);
 
                             debug!("RIP calling LLM for {} from {}", message_type, peer_addr);
-                            let _ = status_clone.send(format!("[DEBUG] RIP calling LLM for {} from {}", message_type, peer_addr));
+                            let _ = status_clone.send(format!(
+                                "[DEBUG] RIP calling LLM for {} from {}",
+                                message_type, peer_addr
+                            ));
 
                             match call_llm(
                                 &llm_clone,
                                 &state_clone,
                                 server_id,
-                                None,  // RIP uses UDP, no persistent connection
+                                None, // RIP uses UDP, no persistent connection
                                 &event,
                                 protocol_clone.as_ref(),
-                            ).await {
+                            )
+                            .await
+                            {
                                 Ok(execution_result) => {
                                     // Display messages from LLM
                                     for message in &execution_result.messages {
@@ -167,30 +196,63 @@ impl RipServer {
                                         let _ = status_clone.send(format!("[INFO] {}", message));
                                     }
 
-                                    debug!("RIP parsed {} actions", execution_result.raw_actions.len());
-                                    let _ = status_clone.send(format!("[DEBUG] RIP parsed {} actions", execution_result.raw_actions.len()));
+                                    debug!(
+                                        "RIP parsed {} actions",
+                                        execution_result.raw_actions.len()
+                                    );
+                                    let _ = status_clone.send(format!(
+                                        "[DEBUG] RIP parsed {} actions",
+                                        execution_result.raw_actions.len()
+                                    ));
 
                                     // Process protocol results
-                                    debug!("RIP got {} protocol results", execution_result.protocol_results.len());
-                                    let _ = status_clone.send(format!("[DEBUG] RIP got {} protocol results", execution_result.protocol_results.len()));
+                                    debug!(
+                                        "RIP got {} protocol results",
+                                        execution_result.protocol_results.len()
+                                    );
+                                    let _ = status_clone.send(format!(
+                                        "[DEBUG] RIP got {} protocol results",
+                                        execution_result.protocol_results.len()
+                                    ));
 
                                     for protocol_result in execution_result.protocol_results {
-                                        if let Some(output_data) = protocol_result.get_all_output().first() {
-                                            let _ = socket_clone.send_to(output_data, peer_addr).await;
+                                        if let Some(output_data) =
+                                            protocol_result.get_all_output().first()
+                                        {
+                                            let _ =
+                                                socket_clone.send_to(output_data, peer_addr).await;
 
                                             // DEBUG: Log summary
-                                            debug!("RIP sent {} bytes to {}", output_data.len(), peer_addr);
-                                            let _ = status_clone.send(format!("[DEBUG] RIP sent {} bytes to {}", output_data.len(), peer_addr));
+                                            debug!(
+                                                "RIP sent {} bytes to {}",
+                                                output_data.len(),
+                                                peer_addr
+                                            );
+                                            let _ = status_clone.send(format!(
+                                                "[DEBUG] RIP sent {} bytes to {}",
+                                                output_data.len(),
+                                                peer_addr
+                                            ));
 
                                             // TRACE: Log full payload (hex)
                                             let hex_str = hex::encode(output_data);
                                             trace!("RIP sent (hex): {}", hex_str);
-                                            let _ = status_clone.send(format!("[TRACE] RIP sent (hex): {}", hex_str));
+                                            let _ = status_clone.send(format!(
+                                                "[TRACE] RIP sent (hex): {}",
+                                                hex_str
+                                            ));
 
-                                            let _ = status_clone.send(format!("→ RIP response to {} ({} bytes)", peer_addr, output_data.len()));
+                                            let _ = status_clone.send(format!(
+                                                "→ RIP response to {} ({} bytes)",
+                                                peer_addr,
+                                                output_data.len()
+                                            ));
                                         } else {
                                             debug!("RIP protocol result has no output data");
-                                            let _ = status_clone.send("[DEBUG] RIP protocol result has no output data".to_string());
+                                            let _ = status_clone.send(
+                                                "[DEBUG] RIP protocol result has no output data"
+                                                    .to_string(),
+                                            );
                                         }
                                     }
                                 }

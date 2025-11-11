@@ -31,7 +31,9 @@ impl TcpValidator {
         let mut stream = self.connect().await?;
 
         // Send data
-        stream.write_all(data).await
+        stream
+            .write_all(data)
+            .await
             .context("Failed to send data")?;
 
         // Read response (with timeout)
@@ -48,8 +50,7 @@ impl TcpValidator {
     /// Send text and receive text response
     pub async fn send_receive_text(&self, text: &str) -> Result<String> {
         let response = self.send_receive(text.as_bytes()).await?;
-        String::from_utf8(response)
-            .context("Response is not valid UTF-8")
+        String::from_utf8(response).context("Response is not valid UTF-8")
     }
 
     /// Assert that sending data gets expected response
@@ -57,11 +58,7 @@ impl TcpValidator {
         let actual = self.send_receive_text(send).await?;
 
         if actual != expected {
-            anyhow::bail!(
-                "Expected response '{}', got '{}'",
-                expected,
-                actual
-            );
+            anyhow::bail!("Expected response '{}', got '{}'", expected, actual);
         }
 
         Ok(())
@@ -96,7 +93,10 @@ impl TcpValidator {
             tokio::time::sleep(Duration::from_millis(500)).await;
 
             if i % 5 == 0 && i > 0 {
-                println!("Still waiting for TCP server to be ready... (attempt {})", i);
+                println!(
+                    "Still waiting for TCP server to be ready... (attempt {})",
+                    i
+                );
             }
         }
 
@@ -115,7 +115,9 @@ impl TcpValidator {
 
         for msg in messages {
             // Send message
-            stream.write_all(msg.as_bytes()).await
+            stream
+                .write_all(msg.as_bytes())
+                .await
                 .context("Failed to send message")?;
 
             // Read response
@@ -126,8 +128,7 @@ impl TcpValidator {
                 .context("Failed to read response")?;
 
             buffer.truncate(n);
-            let response = String::from_utf8(buffer)
-                .context("Response is not valid UTF-8")?;
+            let response = String::from_utf8(buffer).context("Response is not valid UTF-8")?;
             responses.push(response);
         }
 

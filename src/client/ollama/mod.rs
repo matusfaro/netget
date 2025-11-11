@@ -9,13 +9,13 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
+use crate::client::ollama::actions::OLLAMA_CLIENT_RESPONSE_RECEIVED_EVENT;
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::{Event, StartupParams};
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::ollama::actions::OLLAMA_CLIENT_RESPONSE_RECEIVED_EVENT;
 
 /// Ollama client that connects to the Ollama API
 pub struct OllamaClientImpl;
@@ -30,19 +30,27 @@ impl OllamaClientImpl {
         client_id: ClientId,
         _startup_params: Option<StartupParams>,
     ) -> Result<SocketAddr> {
-        info!("Ollama client {} initializing with API endpoint: {}", client_id, remote_addr);
+        info!(
+            "Ollama client {} initializing with API endpoint: {}",
+            client_id, remote_addr
+        );
 
         // Store only endpoint in protocol_data (no model storage - LLM must provide model on every call)
-        app_state.with_client_mut(client_id, |client| {
-            client.set_protocol_field(
-                "api_endpoint".to_string(),
-                serde_json::json!(remote_addr),
-            );
-        }).await;
+        app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .set_protocol_field("api_endpoint".to_string(), serde_json::json!(remote_addr));
+            })
+            .await;
 
         // Update status
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] Ollama client {} ready (endpoint: {})", client_id, remote_addr));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] Ollama client {} ready (endpoint: {})",
+            client_id, remote_addr
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // For Ollama client, spawn a background task that monitors for client removal
@@ -73,13 +81,21 @@ impl OllamaClientImpl {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         // Get API endpoint from client (model must be provided by LLM on every call)
-        let api_endpoint = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("api_endpoint")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }).await.flatten().context("No API endpoint found")?;
+        let api_endpoint = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("api_endpoint")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .await
+            .flatten()
+            .context("No API endpoint found")?;
 
-        info!("Ollama client {} making generate request with model: {}", client_id, model);
+        info!(
+            "Ollama client {} making generate request with model: {}",
+            client_id, model
+        );
 
         // Build Ollama client with custom endpoint
         let client = reqwest::Client::new();
@@ -92,17 +108,14 @@ impl OllamaClientImpl {
         });
 
         // Make request
-        match client.post(&url)
-            .json(&request_body)
-            .send()
-            .await
-        {
+        match client.post(&url).json(&request_body).send().await {
             Ok(response) => {
                 let status_code = response.status();
                 let response_json: serde_json::Value = response.json().await?;
 
                 if status_code.is_success() {
-                    let response_text = response_json.get("response")
+                    let response_text = response_json
+                        .get("response")
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
@@ -110,8 +123,10 @@ impl OllamaClientImpl {
                     info!("Ollama client {} received generate response", client_id);
 
                     // Call LLM with response
-                    if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                        let protocol = Arc::new(crate::client::ollama::actions::OllamaClientProtocol::new());
+                    if let Some(instruction) = app_state.get_instruction_for_client(client_id).await
+                    {
+                        let protocol =
+                            Arc::new(crate::client::ollama::actions::OllamaClientProtocol::new());
                         let event = Event::new(
                             &OLLAMA_CLIENT_RESPONSE_RECEIVED_EVENT,
                             serde_json::json!({
@@ -121,7 +136,10 @@ impl OllamaClientImpl {
                             }),
                         );
 
-                        let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                        let memory = app_state
+                            .get_memory_for_client(client_id)
+                            .await
+                            .unwrap_or_default();
 
                         match call_llm_for_client(
                             &llm_client,
@@ -132,8 +150,13 @@ impl OllamaClientImpl {
                             Some(&event),
                             protocol.as_ref(),
                             &status_tx,
-                        ).await {
-                            Ok(ClientLlmResult { actions: _, memory_updates }) => {
+                        )
+                        .await
+                        {
+                            Ok(ClientLlmResult {
+                                actions: _,
+                                memory_updates,
+                            }) => {
                                 // Update memory
                                 if let Some(mem) = memory_updates {
                                     app_state.set_memory_for_client(client_id, mem).await;
@@ -147,7 +170,8 @@ impl OllamaClientImpl {
 
                     Ok(())
                 } else {
-                    let error_msg = response_json.get("error")
+                    let error_msg = response_json
+                        .get("error")
                         .and_then(|v| v.as_str())
                         .unwrap_or("Unknown error")
                         .to_string();
@@ -173,13 +197,21 @@ impl OllamaClientImpl {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         // Get API endpoint from client (model must be provided by LLM on every call)
-        let api_endpoint = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("api_endpoint")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }).await.flatten().context("No API endpoint found")?;
+        let api_endpoint = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("api_endpoint")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .await
+            .flatten()
+            .context("No API endpoint found")?;
 
-        info!("Ollama client {} making chat request with model: {}", client_id, model);
+        info!(
+            "Ollama client {} making chat request with model: {}",
+            client_id, model
+        );
 
         // Build Ollama client with custom endpoint
         let client = reqwest::Client::new();
@@ -192,17 +224,14 @@ impl OllamaClientImpl {
         });
 
         // Make request
-        match client.post(&url)
-            .json(&request_body)
-            .send()
-            .await
-        {
+        match client.post(&url).json(&request_body).send().await {
             Ok(response) => {
                 let status_code = response.status();
                 let response_json: serde_json::Value = response.json().await?;
 
                 if status_code.is_success() {
-                    let message_content = response_json.get("message")
+                    let message_content = response_json
+                        .get("message")
                         .and_then(|m| m.get("content"))
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
@@ -211,8 +240,10 @@ impl OllamaClientImpl {
                     info!("Ollama client {} received chat response", client_id);
 
                     // Call LLM with response
-                    if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                        let protocol = Arc::new(crate::client::ollama::actions::OllamaClientProtocol::new());
+                    if let Some(instruction) = app_state.get_instruction_for_client(client_id).await
+                    {
+                        let protocol =
+                            Arc::new(crate::client::ollama::actions::OllamaClientProtocol::new());
                         let event = Event::new(
                             &OLLAMA_CLIENT_RESPONSE_RECEIVED_EVENT,
                             serde_json::json!({
@@ -222,7 +253,10 @@ impl OllamaClientImpl {
                             }),
                         );
 
-                        let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                        let memory = app_state
+                            .get_memory_for_client(client_id)
+                            .await
+                            .unwrap_or_default();
 
                         match call_llm_for_client(
                             &llm_client,
@@ -233,8 +267,13 @@ impl OllamaClientImpl {
                             Some(&event),
                             protocol.as_ref(),
                             &status_tx,
-                        ).await {
-                            Ok(ClientLlmResult { actions: _, memory_updates }) => {
+                        )
+                        .await
+                        {
+                            Ok(ClientLlmResult {
+                                actions: _,
+                                memory_updates,
+                            }) => {
                                 // Update memory
                                 if let Some(mem) = memory_updates {
                                     app_state.set_memory_for_client(client_id, mem).await;
@@ -248,7 +287,8 @@ impl OllamaClientImpl {
 
                     Ok(())
                 } else {
-                    let error_msg = response_json.get("error")
+                    let error_msg = response_json
+                        .get("error")
                         .and_then(|v| v.as_str())
                         .unwrap_or("Unknown error")
                         .to_string();
@@ -272,11 +312,16 @@ impl OllamaClientImpl {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         // Get API configuration from client
-        let api_endpoint = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("api_endpoint")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }).await.flatten().context("No API endpoint found")?;
+        let api_endpoint = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("api_endpoint")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .await
+            .flatten()
+            .context("No API endpoint found")?;
 
         info!("Ollama client {} listing models", client_id);
 
@@ -291,7 +336,8 @@ impl OllamaClientImpl {
                 let response_json: serde_json::Value = response.json().await?;
 
                 if status_code.is_success() {
-                    let models = response_json.get("models")
+                    let models = response_json
+                        .get("models")
                         .and_then(|v| v.as_array())
                         .map(|arr| {
                             arr.iter()
@@ -303,8 +349,10 @@ impl OllamaClientImpl {
                     info!("Ollama client {} found {} models", client_id, models.len());
 
                     // Call LLM with response
-                    if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                        let protocol = Arc::new(crate::client::ollama::actions::OllamaClientProtocol::new());
+                    if let Some(instruction) = app_state.get_instruction_for_client(client_id).await
+                    {
+                        let protocol =
+                            Arc::new(crate::client::ollama::actions::OllamaClientProtocol::new());
                         let event = Event::new(
                             &OLLAMA_CLIENT_RESPONSE_RECEIVED_EVENT,
                             serde_json::json!({
@@ -314,7 +362,10 @@ impl OllamaClientImpl {
                             }),
                         );
 
-                        let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                        let memory = app_state
+                            .get_memory_for_client(client_id)
+                            .await
+                            .unwrap_or_default();
 
                         match call_llm_for_client(
                             &llm_client,
@@ -325,8 +376,13 @@ impl OllamaClientImpl {
                             Some(&event),
                             protocol.as_ref(),
                             &status_tx,
-                        ).await {
-                            Ok(ClientLlmResult { actions: _, memory_updates }) => {
+                        )
+                        .await
+                        {
+                            Ok(ClientLlmResult {
+                                actions: _,
+                                memory_updates,
+                            }) => {
                                 // Update memory
                                 if let Some(mem) = memory_updates {
                                     app_state.set_memory_for_client(client_id, mem).await;
@@ -340,7 +396,8 @@ impl OllamaClientImpl {
 
                     Ok(())
                 } else {
-                    let error_msg = response_json.get("error")
+                    let error_msg = response_json
+                        .get("error")
                         .and_then(|v| v.as_str())
                         .unwrap_or("Unknown error")
                         .to_string();
@@ -366,13 +423,21 @@ impl OllamaClientImpl {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         // Get API endpoint from client (model must be provided by LLM on every call)
-        let api_endpoint = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("api_endpoint")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }).await.flatten().context("No API endpoint found")?;
+        let api_endpoint = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("api_endpoint")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .await
+            .flatten()
+            .context("No API endpoint found")?;
 
-        info!("Ollama client {} making embeddings request with model: {}", client_id, model);
+        info!(
+            "Ollama client {} making embeddings request with model: {}",
+            client_id, model
+        );
 
         // Build Ollama client with custom endpoint
         let client = reqwest::Client::new();
@@ -384,26 +449,28 @@ impl OllamaClientImpl {
         });
 
         // Make request
-        match client.post(&url)
-            .json(&request_body)
-            .send()
-            .await
-        {
+        match client.post(&url).json(&request_body).send().await {
             Ok(response) => {
                 let status_code = response.status();
                 let response_json: serde_json::Value = response.json().await?;
 
                 if status_code.is_success() {
-                    let embedding = response_json.get("embedding")
+                    let embedding = response_json
+                        .get("embedding")
                         .and_then(|v| v.as_array())
                         .map(|arr| arr.len())
                         .unwrap_or(0);
 
-                    info!("Ollama client {} received embeddings ({} dimensions)", client_id, embedding);
+                    info!(
+                        "Ollama client {} received embeddings ({} dimensions)",
+                        client_id, embedding
+                    );
 
                     // Call LLM with response
-                    if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                        let protocol = Arc::new(crate::client::ollama::actions::OllamaClientProtocol::new());
+                    if let Some(instruction) = app_state.get_instruction_for_client(client_id).await
+                    {
+                        let protocol =
+                            Arc::new(crate::client::ollama::actions::OllamaClientProtocol::new());
                         let event = Event::new(
                             &OLLAMA_CLIENT_RESPONSE_RECEIVED_EVENT,
                             serde_json::json!({
@@ -414,7 +481,10 @@ impl OllamaClientImpl {
                             }),
                         );
 
-                        let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                        let memory = app_state
+                            .get_memory_for_client(client_id)
+                            .await
+                            .unwrap_or_default();
 
                         match call_llm_for_client(
                             &llm_client,
@@ -425,8 +495,13 @@ impl OllamaClientImpl {
                             Some(&event),
                             protocol.as_ref(),
                             &status_tx,
-                        ).await {
-                            Ok(ClientLlmResult { actions: _, memory_updates }) => {
+                        )
+                        .await
+                        {
+                            Ok(ClientLlmResult {
+                                actions: _,
+                                memory_updates,
+                            }) => {
                                 // Update memory
                                 if let Some(mem) = memory_updates {
                                     app_state.set_memory_for_client(client_id, mem).await;
@@ -440,7 +515,8 @@ impl OllamaClientImpl {
 
                     Ok(())
                 } else {
-                    let error_msg = response_json.get("error")
+                    let error_msg = response_json
+                        .get("error")
                         .and_then(|v| v.as_str())
                         .unwrap_or("Unknown error")
                         .to_string();
@@ -449,7 +525,10 @@ impl OllamaClientImpl {
                 }
             }
             Err(e) => {
-                error!("Ollama client {} embeddings request failed: {}", client_id, e);
+                error!(
+                    "Ollama client {} embeddings request failed: {}",
+                    client_id, e
+                );
                 let _ = status_tx.send(format!("[ERROR] Ollama embeddings request failed: {}", e));
                 Err(e.into())
             }

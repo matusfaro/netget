@@ -166,7 +166,12 @@ impl PeerManager {
 
     /// Get peer by session ID
     pub async fn get_peer_by_session(&self, session_id: u64) -> Option<Peer> {
-        let addr = self.session_to_addr.read().await.get(&session_id).copied()?;
+        let addr = self
+            .session_to_addr
+            .read()
+            .await
+            .get(&session_id)
+            .copied()?;
         self.get_peer(&addr).await
     }
 

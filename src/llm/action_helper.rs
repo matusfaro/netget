@@ -148,15 +148,16 @@ pub async fn call_llm_with_actions(
     )
     .with_tracking(
         state.clone(),
-        crate::state::app_state::ConversationSource::Network { server_id, connection_id },
+        crate::state::app_state::ConversationSource::Network {
+            server_id,
+            connection_id,
+        },
         truncated_desc,
     );
 
     // Add event trigger as a user message
-    let event_trigger = PromptBuilder::build_event_trigger_message(
-        event_description,
-        context_json.clone(),
-    );
+    let event_trigger =
+        PromptBuilder::build_event_trigger_message(event_description, context_json.clone());
     conversation.add_user_message(event_trigger);
 
     // Get web search mode and approval channel
@@ -165,11 +166,7 @@ pub async fn call_llm_with_actions(
 
     // Generate actions with tool calling and retry
     let action_values = conversation
-        .generate_with_tools_and_retry(
-            approval_tx,
-            web_search_mode,
-            all_actions.clone(),
-        )
+        .generate_with_tools_and_retry(approval_tx, web_search_mode, all_actions.clone())
         .await
         .context("LLM generate with tools failed")?;
 
@@ -215,7 +212,7 @@ pub async fn call_llm_with_protocol(
         serde_json::json!({}), // Empty context
         Some(protocol),
         Vec::new(), // No custom actions
-        None, // No custom event data
+        None,       // No custom event data
     )
     .await
 }
@@ -343,15 +340,16 @@ pub async fn call_llm(
     )
     .with_tracking(
         state.clone(),
-        crate::state::app_state::ConversationSource::Network { server_id, connection_id },
+        crate::state::app_state::ConversationSource::Network {
+            server_id,
+            connection_id,
+        },
         truncated_desc,
     );
 
     // Add event trigger as a user message
-    let event_trigger = PromptBuilder::build_event_trigger_message(
-        &event_description,
-        event.data.clone(),
-    );
+    let event_trigger =
+        PromptBuilder::build_event_trigger_message(&event_description, event.data.clone());
     conversation.add_user_message(event_trigger);
 
     // Generate response with retry (no tool calling for network events)
@@ -369,13 +367,9 @@ pub async fn call_llm(
     }
 
     // Execute actions
-    let result = execute_actions(
-        actions,
-        state,
-        Some(protocol),
-    )
-    .await
-    .context("Failed to execute actions")?;
+    let result = execute_actions(actions, state, Some(protocol))
+        .await
+        .context("Failed to execute actions")?;
 
     debug!(
         "LLM call completed: {} messages, {} protocol results",
@@ -412,7 +406,8 @@ pub async fn call_llm_for_client(
     let all_actions = protocol.get_async_actions(state);
 
     // Build simple prompt for client
-    let system_prompt = format!(
+    let system_prompt =
+        format!(
         "You are controlling a network client ({}). Your instruction: {}\n\nAvailable actions:\n{}",
         protocol.protocol_name(),
         instruction,
@@ -421,7 +416,11 @@ pub async fn call_llm_for_client(
 
     // Build user message
     let user_message = if let Some(ev) = event {
-        format!("Event: {}\nData: {}", ev.id(), serde_json::to_string_pretty(&ev.data).unwrap_or_default())
+        format!(
+            "Event: {}\nData: {}",
+            ev.id(),
+            serde_json::to_string_pretty(&ev.data).unwrap_or_default()
+        )
     } else {
         "Waiting for instructions".to_string()
     };
@@ -441,7 +440,10 @@ pub async fn call_llm_for_client(
 
     // If model was auto-selected (wasn't set before), notify via status_tx
     if current_model.is_none() {
-        let _ = status_tx.send(format!("⚠  Auto-selected model: {} (no model was configured)", model));
+        let _ = status_tx.send(format!(
+            "⚠  Auto-selected model: {} (no model was configured)",
+            model
+        ));
     }
 
     // Create conversation with correct parameter order
@@ -457,7 +459,11 @@ pub async fn call_llm_for_client(
 
     // Generate response with actions (no web approval or tools for clients)
     let actions = conversation
-        .generate_with_tools_and_retry(None, crate::state::app_state::WebSearchMode::Off, all_actions)
+        .generate_with_tools_and_retry(
+            None,
+            crate::state::app_state::WebSearchMode::Off,
+            all_actions,
+        )
         .await?;
 
     // For now, memory updates are not extracted from client responses

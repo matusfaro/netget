@@ -20,6 +20,7 @@ Use TCP socket client to send WHOIS queries and validate responses.
 ## Runtime
 
 **Estimated**: ~30-45 seconds
+
 - Server startup: ~5-10s
 - Each test case: ~5-8s per LLM call
 - Cleanup: minimal
@@ -27,32 +28,40 @@ Use TCP socket client to send WHOIS queries and validate responses.
 ## Test Plan
 
 ### Test 1: Basic Domain Query
+
 **Setup**: Server with instruction to respond with fake data
 **Action**: Send `example.com\r\n`
 **Validation**:
+
 - Response contains "Domain Name: example.com"
 - Response contains registrar information
 - Response contains nameservers
 
 ### Test 2: Error Response
+
 **Setup**: Same server
 **Action**: Send `nonexistent-domain-xyz123.com\r\n`
 **Validation**:
+
 - Response contains "Error" or "not found"
 - Connection remains open or closes gracefully
 
 ### Test 3: Multiple Queries on Same Connection
+
 **Setup**: Server that keeps connections open
 **Action**: Send multiple queries sequentially
 **Validation**:
+
 - All queries receive responses
 - Connection stays open between queries
 - Stats track multiple packets
 
 ### Test 4: Connection Close
+
 **Setup**: Server instructed to close after first response
 **Action**: Send query
 **Validation**:
+
 - Receive response
 - Connection closes (EOF)
 - Connection status updated to Closed

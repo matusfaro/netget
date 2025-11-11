@@ -168,4 +168,3 @@ fn has_raw_socket_capability() -> bool {
         is_running_as_root()
     }
 }
-

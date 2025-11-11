@@ -8,14 +8,16 @@ use bytes::Bytes;
 use http::Request;
 use http_body_util::BodyExt;
 use prost::Message as ProstMessage;
-use prost_reflect::{DescriptorPool, DynamicMessage, MessageDescriptor, ReflectMessage, Value as ProtoValue, MapKey};
+use prost_reflect::{
+    DescriptorPool, DynamicMessage, MapKey, MessageDescriptor, ReflectMessage, Value as ProtoValue,
+};
 use prost_types::FileDescriptorSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tonic::transport::{Channel, Endpoint};
 use tower::{Service, ServiceExt};
-use tracing::{error, info, debug};
+use tracing::{debug, error, info};
 
 use crate::client::grpc::actions::{
     GRPC_CLIENT_CONNECTED_EVENT, GRPC_CLIENT_ERROR_EVENT, GRPC_CLIENT_RESPONSE_RECEIVED_EVENT,
@@ -69,7 +71,8 @@ impl GrpcClient {
             .unwrap_or(false);
 
         // Load protobuf schema
-        let descriptor_pool = load_schema(&proto_schema).await
+        let descriptor_pool = load_schema(&proto_schema)
+            .await
             .context("Failed to load protobuf schema")?;
 
         // List available services
@@ -78,7 +81,10 @@ impl GrpcClient {
             .map(|s| s.full_name().to_string())
             .collect();
 
-        info!("gRPC client {} loaded schema with services: {:?}", client_id, services);
+        info!(
+            "gRPC client {} loaded schema with services: {:?}",
+            client_id, services
+        );
 
         // Build gRPC channel
         let uri = if use_tls {
@@ -108,10 +114,8 @@ impl GrpcClient {
                     "grpc_client".to_string(),
                     serde_json::json!("initialized"),
                 );
-                client.set_protocol_field(
-                    "server_addr".to_string(),
-                    serde_json::json!(remote_addr),
-                );
+                client
+                    .set_protocol_field("server_addr".to_string(), serde_json::json!(remote_addr));
             })
             .await;
 
@@ -209,7 +213,7 @@ impl GrpcClient {
 
 /// Load protobuf schema from various formats
 async fn load_schema(schema_input: &str) -> Result<DescriptorPool> {
-    use base64::{Engine as _, engine::general_purpose};
+    use base64::{engine::general_purpose, Engine as _};
 
     // Try to decode as base64 FileDescriptorSet
     if let Ok(bytes) = general_purpose::STANDARD.decode(schema_input) {
@@ -261,11 +265,10 @@ async fn compile_proto_text(proto_text: &str) -> Result<DescriptorPool> {
         ));
     }
 
-    let fds = FileDescriptorSet::decode(&output.stdout[..])
-        .context("Failed to decode protoc output")?;
+    let fds =
+        FileDescriptorSet::decode(&output.stdout[..]).context("Failed to decode protoc output")?;
 
-    DescriptorPool::from_file_descriptor_set(fds)
-        .context("Failed to create descriptor pool")
+    DescriptorPool::from_file_descriptor_set(fds).context("Failed to create descriptor pool")
 }
 
 /// Execute a gRPC client action
@@ -375,7 +378,13 @@ async fn make_grpc_call(
     // Encode request
     let request_bytes = request_msg.encode_to_vec();
 
-    info!("gRPC client {} sending {}-byte request to {}/{}", client_id, request_bytes.len(), service, method);
+    info!(
+        "gRPC client {} sending {}-byte request to {}/{}",
+        client_id,
+        request_bytes.len(),
+        service,
+        method
+    );
 
     // Build gRPC request path
     let path = format!("/{}/{}", service, method);
@@ -416,8 +425,12 @@ async fn make_grpc_call(
     // Create body using UnsyncBoxBody which is compatible with tonic
     use http_body_util::combinators::UnsyncBoxBody;
     let full_body = http_body_util::Full::new(Bytes::from(grpc_message));
-    let body = UnsyncBoxBody::new(full_body.map_err(|_: std::convert::Infallible| tonic::Status::internal("infallible error")));
-    let http_request = request_builder.body(body)
+    let body = UnsyncBoxBody::new(
+        full_body
+            .map_err(|_: std::convert::Infallible| tonic::Status::internal("infallible error")),
+    );
+    let http_request = request_builder
+        .body(body)
         .context("Failed to build HTTP request")?;
 
     // Make the call using the channel
@@ -438,7 +451,10 @@ async fn make_grpc_call(
             // Convert to JSON
             let response_json = dynamic_message_to_json(&response_msg)?;
 
-            info!("gRPC client {} received response for {}/{}", client_id, service, method);
+            info!(
+                "gRPC client {} received response for {}/{}",
+                client_id, service, method
+            );
 
             // Call LLM with response
             if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -482,12 +498,7 @@ async fn make_grpc_call(
                             let grpc_data = grpc_client_data.clone();
                             let proto = protocol.clone();
                             if let Err(e) = Box::pin(execute_grpc_action(
-                                client_id,
-                                action,
-                                grpc_data,
-                                app_state,
-                                llm_client,
-                                status_tx,
+                                client_id, action, grpc_data, app_state, llm_client, status_tx,
                                 &proto,
                             ))
                             .await
@@ -583,7 +594,9 @@ async fn call_grpc_unary(
 
     // Read response body
     let body = response.into_body();
-    let body_bytes = body.collect().await
+    let body_bytes = body
+        .collect()
+        .await
         .context("Failed to read response body")?
         .to_bytes();
 
@@ -634,11 +647,9 @@ fn json_to_proto_value(
         Kind::Uint32 | Kind::Fixed32 => Ok(ProtoValue::U32(json.as_u64().unwrap_or(0) as u32)),
         Kind::Uint64 | Kind::Fixed64 => Ok(ProtoValue::U64(json.as_u64().unwrap_or(0))),
         Kind::Bool => Ok(ProtoValue::Bool(json.as_bool().unwrap_or(false))),
-        Kind::String => Ok(ProtoValue::String(
-            json.as_str().unwrap_or("").to_string(),
-        )),
+        Kind::String => Ok(ProtoValue::String(json.as_str().unwrap_or("").to_string())),
         Kind::Bytes => {
-            use base64::{Engine as _, engine::general_purpose};
+            use base64::{engine::general_purpose, Engine as _};
             let s = json.as_str().unwrap_or("");
             let bytes = general_purpose::STANDARD.decode(s).unwrap_or_default();
             Ok(ProtoValue::Bytes(bytes.into()))
@@ -680,7 +691,7 @@ fn dynamic_message_to_json(msg: &DynamicMessage) -> Result<serde_json::Value> {
 
 /// Convert protobuf value to JSON
 fn proto_value_to_json(value: &ProtoValue) -> Result<serde_json::Value> {
-    use base64::{Engine as _, engine::general_purpose};
+    use base64::{engine::general_purpose, Engine as _};
 
     Ok(match value {
         ProtoValue::Bool(b) => serde_json::Value::Bool(*b),

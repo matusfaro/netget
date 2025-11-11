@@ -101,7 +101,10 @@ impl RssClient {
             let state = app_state.clients.get_connection_state(client_id)?;
             match state {
                 ClientConnectionState::Processing => {
-                    debug!("RSS client {} already processing, ignoring fetch", client_id);
+                    debug!(
+                        "RSS client {} already processing, ignoring fetch",
+                        client_id
+                    );
                     return Ok(());
                 }
                 ClientConnectionState::Idle => {
@@ -112,7 +115,10 @@ impl RssClient {
                 }
                 ClientConnectionState::Accumulating => {
                     // Should not happen for RSS client (request/response)
-                    debug!("RSS client {} in accumulating state, ignoring fetch", client_id);
+                    debug!(
+                        "RSS client {} in accumulating state, ignoring fetch",
+                        client_id
+                    );
                     return Ok(());
                 }
             }
@@ -130,15 +136,9 @@ impl RssClient {
             .context("Failed to fetch RSS feed")?;
 
         if !response.status().is_success() {
-            error!(
-                "RSS fetch failed with status: {}",
-                response.status()
-            );
+            error!("RSS fetch failed with status: {}", response.status());
             status_tx
-                .send(format!(
-                    "[RSS CLIENT] Fetch failed: {}",
-                    response.status()
-                ))
+                .send(format!("[RSS CLIENT] Fetch failed: {}", response.status()))
                 .await
                 .ok();
 
@@ -152,11 +152,13 @@ impl RssClient {
             ));
         }
 
-        let body = response.text().await.context("Failed to read response body")?;
+        let body = response
+            .text()
+            .await
+            .context("Failed to read response body")?;
 
         // Parse RSS XML
-        let channel = Channel::read_from(body.as_bytes())
-            .context("Failed to parse RSS feed")?;
+        let channel = Channel::read_from(body.as_bytes()).context("Failed to parse RSS feed")?;
 
         info!(
             "RSS feed parsed: {} items from '{}'",

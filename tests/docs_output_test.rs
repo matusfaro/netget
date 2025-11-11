@@ -54,7 +54,7 @@ fn test_docs_ssh_protocol_output() {
     snapshot_util::assert_snapshot("ssh_protocol", SNAPSHOT_DIR, &output);
 
     // Check for ANSI formatting
-    assert!(output.contains("\x1b["));  // Some ANSI code
+    assert!(output.contains("\x1b[")); // Some ANSI code
 
     // Check structure
     assert!(output.contains("SSH") || output.contains("Ssh"));
@@ -69,8 +69,8 @@ fn test_docs_tcp_protocol_output() {
     snapshot_util::assert_snapshot("tcp_protocol", SNAPSHOT_DIR, &output);
 
     // Check for color codes and structure
-    assert!(output.contains("╭") || output.contains("─"));  // Box drawing
-    assert!(output.contains("\x1b["));  // ANSI codes
+    assert!(output.contains("╭") || output.contains("─")); // Box drawing
+    assert!(output.contains("\x1b[")); // ANSI codes
     assert!(output.contains("Stack:"));
 }
 
@@ -83,5 +83,5 @@ fn test_docs_unknown_protocol() {
 
     // Should have colored error message
     assert!(error_msg.contains("Unknown protocol") || error_msg.contains("nonexistent_protocol"));
-    assert!(error_msg.contains("\x1b[31m"));  // Red color code
+    assert!(error_msg.contains("\x1b[31m")); // Red color code
 }

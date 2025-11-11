@@ -5,7 +5,7 @@
 
 #![cfg(all(test, feature = "smb", feature = "smb"))]
 
-use crate::server::helpers::{start_netget_server, ServerConfig, E2EResult};
+use crate::server::helpers::{start_netget_server, E2EResult, ServerConfig};
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -150,7 +150,10 @@ async fn test_smb_llm_allows_guest_auth() -> E2EResult<()> {
     // Check LLM allowed authentication
     if let Some(status) = parse_smb2_status(&response) {
         println!("  [TEST] Status: 0x{:08X}", status);
-        assert_eq!(status, 0, "LLM should have allowed authentication (status 0)");
+        assert_eq!(
+            status, 0,
+            "LLM should have allowed authentication (status 0)"
+        );
         println!("  [TEST] ✓ LLM correctly allowed guest authentication");
     } else {
         panic!("Failed to parse SMB2 response");
@@ -158,9 +161,9 @@ async fn test_smb_llm_allows_guest_auth() -> E2EResult<()> {
 
     // Check server output mentions authentication
     let output = server.get_output().await;
-    let has_auth_message = output.iter().any(|line| {
-        line.contains("auth") || line.contains("session")
-    });
+    let has_auth_message = output
+        .iter()
+        .any(|line| line.contains("auth") || line.contains("session"));
 
     if has_auth_message {
         println!("  [TEST] ✓ Server logged authentication event");
@@ -225,9 +228,9 @@ async fn test_smb_llm_denies_user() -> E2EResult<()> {
 
     // Check server output for denial
     let output = server.get_output().await;
-    let mentioned_auth = output.iter().any(|line| {
-        line.contains("denied") || line.contains("auth")
-    });
+    let mentioned_auth = output
+        .iter()
+        .any(|line| line.contains("denied") || line.contains("auth"));
 
     if mentioned_auth {
         println!("  [TEST] ✓ Server logged authentication decision");
@@ -258,9 +261,9 @@ async fn test_smb_llm_file_creation() -> E2EResult<()> {
     let output = server.get_output().await;
 
     // Look for signs the server is ready and LLM is processing
-    let server_ready = output.iter().any(|line| {
-        line.contains("listening") || line.contains("SMB server")
-    });
+    let server_ready = output
+        .iter()
+        .any(|line| line.contains("listening") || line.contains("SMB server"));
 
     if server_ready {
         println!("  [TEST] ✓ SMB server with LLM started successfully");
@@ -290,9 +293,9 @@ async fn test_smb_llm_file_content() -> E2EResult<()> {
 
     // Verify server started with correct configuration
     let output = server.get_output().await;
-    let server_started = output.iter().any(|line| {
-        line.contains("SMB server") || line.contains("listening")
-    });
+    let server_started = output
+        .iter()
+        .any(|line| line.contains("SMB server") || line.contains("listening"));
 
     assert!(server_started, "Server should have started");
     println!("  [TEST] ✓ SMB server started with LLM-controlled file content");
@@ -321,9 +324,9 @@ async fn test_smb_llm_directory_listing() -> E2EResult<()> {
 
     // Verify LLM integration is working
     let output = server.get_output().await;
-    let llm_active = output.iter().any(|line| {
-        line.contains("SMB") || line.contains("server")
-    });
+    let llm_active = output
+        .iter()
+        .any(|line| line.contains("SMB") || line.contains("server"));
 
     assert!(llm_active, "Server should be running");
     println!("  [TEST] ✓ SMB server with LLM started");
@@ -331,9 +334,9 @@ async fn test_smb_llm_directory_listing() -> E2EResult<()> {
     println!("  [TEST] ✓ LLM will respond with smb_list_directory action on QUERY_DIRECTORY");
 
     // The LLM would provide directory listings when client sends QUERY_DIRECTORY
-    let configured_correctly = output.iter().any(|line| {
-        line.contains("SMB") || line.contains("starting")
-    });
+    let configured_correctly = output
+        .iter()
+        .any(|line| line.contains("SMB") || line.contains("starting"));
 
     if configured_correctly {
         println!("  [TEST] ✓ LLM ready to serve directory listings");
@@ -375,9 +378,9 @@ async fn test_smb_llm_connection_tracking() -> E2EResult<()> {
 
     // Check that connection was tracked
     let output = server.get_output().await;
-    let connection_tracked = output.iter().any(|line| {
-        line.contains("connection") || line.contains("client") || line.contains("SMB")
-    });
+    let connection_tracked = output
+        .iter()
+        .any(|line| line.contains("connection") || line.contains("client") || line.contains("SMB"));
 
     if connection_tracked {
         println!("  [TEST] ✓ Connection tracking detected in output");
@@ -409,10 +412,7 @@ async fn test_smb_llm_receives_events() -> E2EResult<()> {
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     // Verify server is ready to process LLM events
-    assert!(
-        server.stack.contains("SMB"),
-        "Should use SMB stack"
-    );
+    assert!(server.stack.contains("SMB"), "Should use SMB stack");
 
     println!("  [TEST] ✓ SMB server started with {} stack", server.stack);
     println!("  [TEST] ✓ LLM ready to receive SMB events");

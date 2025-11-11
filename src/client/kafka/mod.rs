@@ -15,6 +15,10 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{error, info, trace};
 
+use crate::client::kafka::actions::{
+    KAFKA_CLIENT_CONNECTED_EVENT, KAFKA_CLIENT_MESSAGE_DELIVERED_EVENT,
+    KAFKA_CLIENT_MESSAGE_RECEIVED_EVENT,
+};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::actions::client_trait::Client;
 use crate::llm::ollama_client::OllamaClient;
@@ -22,10 +26,6 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::kafka::actions::{
-    KAFKA_CLIENT_CONNECTED_EVENT, KAFKA_CLIENT_MESSAGE_DELIVERED_EVENT,
-    KAFKA_CLIENT_MESSAGE_RECEIVED_EVENT,
-};
 
 /// Kafka client mode
 #[derive(Debug, Clone, PartialEq)]
@@ -55,13 +55,22 @@ impl KafkaClient {
         let mode = match mode_str.to_lowercase().as_str() {
             "producer" => KafkaClientMode::Producer,
             "consumer" => KafkaClientMode::Consumer,
-            _ => return Err(anyhow::anyhow!("Invalid mode: {}. Must be 'producer' or 'consumer'", mode_str)),
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Invalid mode: {}. Must be 'producer' or 'consumer'",
+                    mode_str
+                ))
+            }
         };
 
-        let client_id_str = params.get_optional_string("client_id")
+        let client_id_str = params
+            .get_optional_string("client_id")
             .unwrap_or_else(|| "netget-kafka-client".to_string());
 
-        info!("Kafka client {} connecting to {} as {:?}", client_id, remote_addr, mode);
+        info!(
+            "Kafka client {} connecting to {} as {:?}",
+            client_id, remote_addr, mode
+        );
 
         match mode {
             KafkaClientMode::Producer => {
@@ -76,10 +85,12 @@ impl KafkaClient {
                 .await
             }
             KafkaClientMode::Consumer => {
-                let group_id = params.get_optional_string("group_id")
+                let group_id = params
+                    .get_optional_string("group_id")
                     .unwrap_or_else(|| "netget-consumer-group".to_string());
 
-                let topics: Vec<String> = params.get_optional_array("topics")
+                let topics: Vec<String> = params
+                    .get_optional_array("topics")
                     .map(|arr| {
                         arr.iter()
                             .filter_map(|v| v.as_str().map(|s| s.to_string()))
@@ -122,15 +133,21 @@ impl KafkaClient {
         info!("Kafka producer {} connected to {}", client_id, brokers);
 
         // Update client status
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] Kafka producer {} connected to {}", client_id, brokers));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] Kafka producer {} connected to {}",
+            client_id, brokers
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Store producer in protocol data
         app_state
             .with_client_mut(client_id, |client_inst| {
                 client_inst.set_protocol_field("mode".to_string(), serde_json::json!("producer"));
-                client_inst.set_protocol_field("brokers".to_string(), serde_json::json!(brokers.clone()));
+                client_inst
+                    .set_protocol_field("brokers".to_string(), serde_json::json!(brokers.clone()));
             })
             .await;
 
@@ -145,9 +162,15 @@ impl KafkaClient {
                 }),
             );
 
-            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+            let memory = app_state
+                .get_memory_for_client(client_id)
+                .await
+                .unwrap_or_default();
 
-            if let Ok(ClientLlmResult { actions, memory_updates }) = call_llm_for_client(
+            if let Ok(ClientLlmResult {
+                actions,
+                memory_updates,
+            }) = call_llm_for_client(
                 &llm_client,
                 &app_state,
                 client_id.to_string(),
@@ -226,21 +249,33 @@ impl KafkaClient {
             consumer
                 .subscribe(&topic_refs)
                 .context("Failed to subscribe to topics")?;
-            info!("Kafka consumer {} subscribed to topics: {:?}", client_id, topics);
+            info!(
+                "Kafka consumer {} subscribed to topics: {:?}",
+                client_id, topics
+            );
         }
 
-        info!("Kafka consumer {} connected to {} (group: {})", client_id, brokers, group_id);
+        info!(
+            "Kafka consumer {} connected to {} (group: {})",
+            client_id, brokers, group_id
+        );
 
         // Update client status
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] Kafka consumer {} connected to {}", client_id, brokers));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] Kafka consumer {} connected to {}",
+            client_id, brokers
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Store consumer info in protocol data
         app_state
             .with_client_mut(client_id, |client_inst| {
                 client_inst.set_protocol_field("mode".to_string(), serde_json::json!("consumer"));
-                client_inst.set_protocol_field("brokers".to_string(), serde_json::json!(brokers.clone()));
+                client_inst
+                    .set_protocol_field("brokers".to_string(), serde_json::json!(brokers.clone()));
                 client_inst.set_protocol_field("group_id".to_string(), serde_json::json!(group_id));
             })
             .await;
@@ -256,9 +291,15 @@ impl KafkaClient {
                 }),
             );
 
-            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+            let memory = app_state
+                .get_memory_for_client(client_id)
+                .await
+                .unwrap_or_default();
 
-            if let Ok(ClientLlmResult { actions, memory_updates }) = call_llm_for_client(
+            if let Ok(ClientLlmResult {
+                actions,
+                memory_updates,
+            }) = call_llm_for_client(
                 &llm_client,
                 &app_state,
                 client_id.to_string(),
@@ -322,7 +363,9 @@ impl KafkaClient {
                         );
 
                         // Call LLM with message
-                        if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
+                        if let Some(instruction) =
+                            app_state.get_instruction_for_client(client_id).await
+                        {
                             let protocol = Arc::new(KafkaClientProtocol::new());
                             let event = Event::new(
                                 &KAFKA_CLIENT_MESSAGE_RECEIVED_EVENT,
@@ -336,7 +379,10 @@ impl KafkaClient {
                                 }),
                             );
 
-                            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                            let memory = app_state
+                                .get_memory_for_client(client_id)
+                                .await
+                                .unwrap_or_default();
 
                             match call_llm_for_client(
                                 &llm_client,
@@ -350,7 +396,10 @@ impl KafkaClient {
                             )
                             .await
                             {
-                                Ok(ClientLlmResult { actions, memory_updates }) => {
+                                Ok(ClientLlmResult {
+                                    actions,
+                                    memory_updates,
+                                }) => {
                                     // Update memory
                                     if let Some(mem) = memory_updates {
                                         app_state.set_memory_for_client(client_id, mem).await;
@@ -378,7 +427,9 @@ impl KafkaClient {
                     }
                     Err(e) => {
                         error!("Kafka consumer {} receive error: {}", client_id, e);
-                        app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
+                        app_state
+                            .update_client_status(client_id, ClientStatus::Error(e.to_string()))
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         break;
                     }
@@ -430,7 +481,9 @@ impl KafkaClient {
                             );
 
                             // Call LLM with delivery confirmation
-                            if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
+                            if let Some(instruction) =
+                                app_state.get_instruction_for_client(client_id).await
+                            {
                                 let event = Event::new(
                                     &KAFKA_CLIENT_MESSAGE_DELIVERED_EVENT,
                                     serde_json::json!({
@@ -440,19 +493,23 @@ impl KafkaClient {
                                     }),
                                 );
 
-                                let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                                let memory = app_state
+                                    .get_memory_for_client(client_id)
+                                    .await
+                                    .unwrap_or_default();
 
-                                if let Ok(ClientLlmResult { memory_updates, .. }) = call_llm_for_client(
-                                    llm_client,
-                                    app_state,
-                                    client_id.to_string(),
-                                    &instruction,
-                                    &memory,
-                                    Some(&event),
-                                    protocol.as_ref(),
-                                    status_tx,
-                                )
-                                .await
+                                if let Ok(ClientLlmResult { memory_updates, .. }) =
+                                    call_llm_for_client(
+                                        llm_client,
+                                        app_state,
+                                        client_id.to_string(),
+                                        &instruction,
+                                        &memory,
+                                        Some(&event),
+                                        protocol.as_ref(),
+                                        status_tx,
+                                    )
+                                    .await
                                 {
                                     if let Some(mem) = memory_updates {
                                         app_state.set_memory_for_client(client_id, mem).await;
@@ -461,14 +518,19 @@ impl KafkaClient {
                             }
                         }
                         Err((kafka_err, _)) => {
-                            error!("Kafka producer {} failed to send message: {}", client_id, kafka_err);
+                            error!(
+                                "Kafka producer {} failed to send message: {}",
+                                client_id, kafka_err
+                            );
                         }
                     }
                 }
             }
             Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
                 info!("Kafka producer {} disconnecting", client_id);
-                app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
             }
             _ => {}
         }
@@ -497,9 +559,15 @@ impl KafkaClient {
                     if !topics.is_empty() {
                         let topic_refs: Vec<&str> = topics.iter().map(|s| s.as_str()).collect();
                         if let Err(e) = consumer.subscribe(&topic_refs) {
-                            error!("Kafka consumer {} failed to subscribe to topics: {}", client_id, e);
+                            error!(
+                                "Kafka consumer {} failed to subscribe to topics: {}",
+                                client_id, e
+                            );
                         } else {
-                            info!("Kafka consumer {} subscribed to topics: {:?}", client_id, topics);
+                            info!(
+                                "Kafka consumer {} subscribed to topics: {:?}",
+                                client_id, topics
+                            );
                         }
                     }
                 }
@@ -507,15 +575,21 @@ impl KafkaClient {
             Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, .. })
                 if name == "kafka_commit" =>
             {
-                if let Err(e) = consumer.commit_consumer_state(rdkafka::consumer::CommitMode::Async) {
-                    error!("Kafka consumer {} failed to commit offset: {}", client_id, e);
+                if let Err(e) = consumer.commit_consumer_state(rdkafka::consumer::CommitMode::Async)
+                {
+                    error!(
+                        "Kafka consumer {} failed to commit offset: {}",
+                        client_id, e
+                    );
                 } else {
                     trace!("Kafka consumer {} committed offset", client_id);
                 }
             }
             Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
                 info!("Kafka consumer {} disconnecting", client_id);
-                app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
             }
             _ => {}
         }

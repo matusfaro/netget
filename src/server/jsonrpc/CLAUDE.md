@@ -2,7 +2,8 @@
 
 ## Overview
 
-JSON-RPC 2.0 server over HTTP POST where the LLM controls all RPC method execution and response generation. Supports single requests, batch requests, and notifications per the JSON-RPC 2.0 specification.
+JSON-RPC 2.0 server over HTTP POST where the LLM controls all RPC method execution and response generation. Supports
+single requests, batch requests, and notifications per the JSON-RPC 2.0 specification.
 
 ## Protocol Version
 
@@ -13,16 +14,18 @@ JSON-RPC 2.0 server over HTTP POST where the LLM controls all RPC method executi
 ## Library Choices
 
 ### Core Dependencies
+
 - **hyper** (v1) - HTTP/1.1 server implementation
-  - Chosen for: async/await support, efficient connection handling
-  - Used for: HTTP request/response processing
+    - Chosen for: async/await support, efficient connection handling
+    - Used for: HTTP request/response processing
 - **serde_json** - JSON serialization/deserialization
-  - Chosen for: Standard Rust JSON library
-  - Used for: Parsing JSON-RPC requests and building responses
+    - Chosen for: Standard Rust JSON library
+    - Used for: Parsing JSON-RPC requests and building responses
 - **tokio** - Async runtime
-  - Chosen for: Concurrent connection handling
+    - Chosen for: Concurrent connection handling
 
 ### Why No JSON-RPC Library?
+
 - JSON-RPC 2.0 specification is simple (request/response format)
 - Direct implementation provides full control over LLM integration
 - No suitable Rust library for *server-side* JSON-RPC 2.0 with LLM control
@@ -30,21 +33,26 @@ JSON-RPC 2.0 server over HTTP POST where the LLM controls all RPC method executi
 ## Architecture Decisions
 
 ### Request Types
+
 **Three JSON-RPC Message Types**:
+
 1. **Single Request** - Object with `jsonrpc`, `method`, `params`, `id`
-   - Expects response with matching `id`
+    - Expects response with matching `id`
 2. **Batch Request** - Array of request objects
-   - Returns array of responses (order not guaranteed per spec)
+    - Returns array of responses (order not guaranteed per spec)
 3. **Notification** - Request without `id` field (or `id: null`)
-   - No response expected (HTTP 204 No Content)
+    - No response expected (HTTP 204 No Content)
 
 ### LLM Control Points
+
 **Complete Method Control** - LLM implements all RPC methods:
+
 1. **Method Call**: Parse JSON-RPC request → send to LLM
 2. **LLM Decision**: Implement method logic or return error
 3. **Response Generation**: LLM returns JSON-RPC success or error
 
 **Action-Based Responses**:
+
 ```json
 {
   "actions": [
@@ -58,6 +66,7 @@ JSON-RPC 2.0 server over HTTP POST where the LLM controls all RPC method executi
 ```
 
 Or for errors:
+
 ```json
 {
   "actions": [
@@ -72,7 +81,9 @@ Or for errors:
 ```
 
 ### Error Code Handling
+
 **Standard JSON-RPC 2.0 Error Codes**:
+
 - `-32700` - Parse error (invalid JSON)
 - `-32600` - Invalid Request (malformed JSON-RPC)
 - `-32601` - Method not found
@@ -83,13 +94,16 @@ Or for errors:
 LLM can return any error code with custom message and optional `data` field.
 
 ### Connection Management
+
 - Each HTTP connection spawned as separate tokio task
 - Connections tracked in `ProtocolConnectionInfo::JsonRpc` with `recent_methods` Vec
 - HTTP/1.1 keep-alive handled by hyper
 - No session state (each request is independent)
 
 ### Batch Request Processing
+
 **Sequential Execution**:
+
 - Process each request in batch sequentially
 - Collect responses in array
 - Notifications in batch produce no response entry
@@ -98,6 +112,7 @@ LLM can return any error code with custom message and optional `data` field.
 ## State Management
 
 ### Per-Connection State
+
 ```rust
 ProtocolConnectionInfo::JsonRpc {
     recent_methods: Vec<String>,  // Track last 10 method calls
@@ -105,6 +120,7 @@ ProtocolConnectionInfo::JsonRpc {
 ```
 
 ### No Session State
+
 - Each JSON-RPC call is stateless
 - No method call history maintained across requests
 - Methods cannot access previous call results
@@ -112,6 +128,7 @@ ProtocolConnectionInfo::JsonRpc {
 ## Limitations
 
 ### Not Implemented
+
 - **Transport negotiation** - Only HTTP POST supported (no WebSocket, TCP, etc.)
 - **Authentication** - No API key or token validation
 - **Rate limiting** - No request throttling
@@ -119,12 +136,14 @@ ProtocolConnectionInfo::JsonRpc {
 - **JSON-RPC 1.0 compatibility** - Only version 2.0 supported
 
 ### Specification Deviations
+
 - **Response order** - Batch responses may not match request order
-  - Spec allows this, but some clients expect order preservation
+    - Spec allows this, but some clients expect order preservation
 - **Notification handling** - Returns 204 instead of 200 with empty body
-  - Both are acceptable per HTTP, but non-standard for JSON-RPC
+    - Both are acceptable per HTTP, but non-standard for JSON-RPC
 
 ### LLM Interpretation Challenges
+
 - **Error code selection** - LLM must choose appropriate error codes
 - **Type handling** - JSON types must match method expectations
 - **Batch complexity** - LLM sees each batch item individually
@@ -132,6 +151,7 @@ ProtocolConnectionInfo::JsonRpc {
 ## Example Prompts and Responses
 
 ### Startup
+
 ```
 open_server port 8080 base_stack jsonrpc. This is a JSON-RPC 2.0 server.
 
@@ -144,7 +164,9 @@ For unknown methods, return error code -32601 (Method not found).
 ```
 
 ### Network Event (Single Request)
+
 **Received**:
+
 ```json
 {
   "jsonrpc": "2.0",
@@ -155,6 +177,7 @@ For unknown methods, return error code -32601 (Method not found).
 ```
 
 **LLM Response**:
+
 ```json
 {
   "actions": [
@@ -172,6 +195,7 @@ For unknown methods, return error code -32601 (Method not found).
 ```
 
 **Client Receives**:
+
 ```json
 {
   "jsonrpc": "2.0",
@@ -181,7 +205,9 @@ For unknown methods, return error code -32601 (Method not found).
 ```
 
 ### Network Event (Notification)
+
 **Received**:
+
 ```json
 {
   "jsonrpc": "2.0",
@@ -191,6 +217,7 @@ For unknown methods, return error code -32601 (Method not found).
 ```
 
 **LLM Response**:
+
 ```json
 {
   "actions": [
@@ -205,7 +232,9 @@ For unknown methods, return error code -32601 (Method not found).
 **Client Receives**: HTTP 204 No Content (no body)
 
 ### Network Event (Batch Request)
+
 **Received**:
+
 ```json
 [
   {"jsonrpc": "2.0", "method": "add", "params": [1, 2], "id": 1},
@@ -217,6 +246,7 @@ For unknown methods, return error code -32601 (Method not found).
 **LLM Processes Each Individually** (3 separate LLM calls)
 
 **Client Receives**:
+
 ```json
 [
   {"jsonrpc": "2.0", "result": 3, "id": 1},
@@ -226,7 +256,9 @@ For unknown methods, return error code -32601 (Method not found).
 ```
 
 ### Error Response
+
 **Received**:
+
 ```json
 {
   "jsonrpc": "2.0",
@@ -237,6 +269,7 @@ For unknown methods, return error code -32601 (Method not found).
 ```
 
 **LLM Response**:
+
 ```json
 {
   "actions": [
@@ -252,6 +285,7 @@ For unknown methods, return error code -32601 (Method not found).
 ```
 
 **Client Receives**:
+
 ```json
 {
   "jsonrpc": "2.0",

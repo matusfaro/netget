@@ -11,24 +11,24 @@ use tracing::{error, info, trace};
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::APIBuilder;
-use webrtc::interceptor::registry::Registry;
 use webrtc::data_channel::data_channel_message::DataChannelMessage;
 use webrtc::data_channel::RTCDataChannel;
 use webrtc::ice_transport::ice_server::RTCIceServer;
+use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection;
 
+use crate::client::webrtc::actions::{
+    WEBRTC_CLIENT_CONNECTED_EVENT, WEBRTC_CLIENT_MESSAGE_RECEIVED_EVENT,
+};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::webrtc::actions::{
-    WEBRTC_CLIENT_CONNECTED_EVENT, WEBRTC_CLIENT_MESSAGE_RECEIVED_EVENT,
-};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -57,7 +57,10 @@ impl WebRtcClient {
         status_tx: mpsc::UnboundedSender<String>,
         client_id: ClientId,
     ) -> Result<SocketAddr> {
-        info!("WebRTC client {} initializing for {}", client_id, remote_addr);
+        info!(
+            "WebRTC client {} initializing for {}",
+            client_id, remote_addr
+        );
 
         // Create a MediaEngine
         let mut m = MediaEngine::default();
@@ -117,13 +120,16 @@ impl WebRtcClient {
 
             Box::pin(async move {
                 info!("WebRTC client {} data channel opened", client_id);
-                app_state.update_client_status(client_id, ClientStatus::Connected).await;
+                app_state
+                    .update_client_status(client_id, ClientStatus::Connected)
+                    .await;
                 let _ = status_tx.send(format!("[CLIENT] WebRTC client {} connected", client_id));
                 let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                 // Call LLM with connected event
                 if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                    let protocol = Arc::new(crate::client::webrtc::actions::WebRtcClientProtocol::new());
+                    let protocol =
+                        Arc::new(crate::client::webrtc::actions::WebRtcClientProtocol::new());
                     let event = Event::new(
                         &WEBRTC_CLIENT_CONNECTED_EVENT,
                         serde_json::json!({
@@ -142,8 +148,13 @@ impl WebRtcClient {
                         Some(&event),
                         protocol.as_ref(),
                         &status_tx,
-                    ).await {
-                        Ok(ClientLlmResult { actions: _, memory_updates }) => {
+                    )
+                    .await
+                    {
+                        Ok(ClientLlmResult {
+                            actions: _,
+                            memory_updates,
+                        }) => {
                             if let Some(mem) = memory_updates {
                                 client_data.lock().await.memory = mem;
                             }
@@ -264,19 +275,22 @@ impl WebRtcClient {
 
         // Handle connection state changes
         let status_tx_state = status_tx_clone.clone();
-        peer_connection.on_peer_connection_state_change(Box::new(move |state: RTCPeerConnectionState| {
-            let status_tx = status_tx_state.clone();
-            Box::pin(async move {
-                info!("WebRTC client {} connection state: {:?}", client_id, state);
-                match state {
-                    RTCPeerConnectionState::Failed | RTCPeerConnectionState::Closed => {
-                        let _ = status_tx.send(format!("[CLIENT] WebRTC client {} disconnected", client_id));
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        peer_connection.on_peer_connection_state_change(Box::new(
+            move |state: RTCPeerConnectionState| {
+                let status_tx = status_tx_state.clone();
+                Box::pin(async move {
+                    info!("WebRTC client {} connection state: {:?}", client_id, state);
+                    match state {
+                        RTCPeerConnectionState::Failed | RTCPeerConnectionState::Closed => {
+                            let _ = status_tx
+                                .send(format!("[CLIENT] WebRTC client {} disconnected", client_id));
+                            let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        }
+                        _ => {}
                     }
-                    _ => {}
-                }
-            })
-        }));
+                })
+            },
+        ));
 
         // Create offer
         let offer = peer_connection.create_offer(None).await?;
@@ -287,27 +301,40 @@ impl WebRtcClient {
         let _ = gather_complete.recv().await;
 
         // Get the local description with ICE candidates
-        let local_desc = peer_connection.local_description().await
+        let local_desc = peer_connection
+            .local_description()
+            .await
             .context("No local description available")?;
 
         // Store the SDP offer for the user to exchange with peer
         let offer_json = serde_json::to_string_pretty(&local_desc)?;
-        app_state.with_client_mut(client_id, |client| {
-            client.set_protocol_field("sdp_offer".to_string(), serde_json::json!(offer_json));
-        }).await;
+        app_state
+            .with_client_mut(client_id, |client| {
+                client.set_protocol_field("sdp_offer".to_string(), serde_json::json!(offer_json));
+            })
+            .await;
 
         info!("WebRTC client {} generated SDP offer", client_id);
-        let _ = status_tx.send(format!("[CLIENT] WebRTC client {} waiting for SDP answer", client_id));
+        let _ = status_tx.send(format!(
+            "[CLIENT] WebRTC client {} waiting for SDP answer",
+            client_id
+        ));
         let _ = status_tx.send(format!("SDP Offer (send to peer):\n{}", offer_json));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Store peer connection and data channel for later use
         let pc_ptr = Arc::into_raw(peer_connection) as usize;
         let dc_ptr = Arc::into_raw(data_channel) as usize;
-        app_state.with_client_mut(client_id, |client| {
-            client.set_protocol_field("peer_connection_ptr".to_string(), serde_json::json!(pc_ptr));
-            client.set_protocol_field("data_channel_ptr".to_string(), serde_json::json!(dc_ptr));
-        }).await;
+        app_state
+            .with_client_mut(client_id, |client| {
+                client.set_protocol_field(
+                    "peer_connection_ptr".to_string(),
+                    serde_json::json!(pc_ptr),
+                );
+                client
+                    .set_protocol_field("data_channel_ptr".to_string(), serde_json::json!(dc_ptr));
+            })
+            .await;
 
         // Spawn a task to monitor for answer
         tokio::spawn(async move {
@@ -344,11 +371,16 @@ impl WebRtcClient {
         info!("WebRTC client {} applying SDP answer", client_id);
 
         // Get peer connection pointer
-        let pc_ptr = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("peer_connection_ptr")
-                .and_then(|v| v.as_u64())
-                .map(|p| p as usize)
-        }).await.flatten().context("No peer connection found")?;
+        let pc_ptr = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("peer_connection_ptr")
+                    .and_then(|v| v.as_u64())
+                    .map(|p| p as usize)
+            })
+            .await
+            .flatten()
+            .context("No peer connection found")?;
 
         // Reconstruct Arc (temporarily)
         let peer_connection = unsafe { Arc::from_raw(pc_ptr as *const RTCPeerConnection) };
@@ -357,8 +389,8 @@ impl WebRtcClient {
         let _ = Arc::into_raw(peer_connection);
 
         // Parse answer
-        let answer: RTCSessionDescription = serde_json::from_str(&answer_json)
-            .context("Failed to parse SDP answer JSON")?;
+        let answer: RTCSessionDescription =
+            serde_json::from_str(&answer_json).context("Failed to parse SDP answer JSON")?;
 
         // Set remote description
         pc_clone.set_remote_description(answer).await?;

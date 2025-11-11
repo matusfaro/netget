@@ -2,7 +2,8 @@
 
 ## Overview
 
-The Elasticsearch client provides LLM-controlled access to Elasticsearch clusters via the Elasticsearch REST API over HTTP. It supports the core operations: indexing, searching, document retrieval, deletion, and bulk operations.
+The Elasticsearch client provides LLM-controlled access to Elasticsearch clusters via the Elasticsearch REST API over
+HTTP. It supports the core operations: indexing, searching, document retrieval, deletion, and bulk operations.
 
 ## Library Choices
 
@@ -11,14 +12,16 @@ The Elasticsearch client provides LLM-controlled access to Elasticsearch cluster
 - **Rationale**: Elasticsearch uses a REST API over HTTP/HTTPS, making a general HTTP client ideal
 - **Version**: 0.12+ with JSON support
 - **Benefits**:
-  - Async/await support via Tokio
-  - Built-in TLS support for HTTPS
-  - JSON serialization/deserialization
-  - Well-maintained and widely used
+    - Async/await support via Tokio
+    - Built-in TLS support for HTTPS
+    - JSON serialization/deserialization
+    - Well-maintained and widely used
 
 ### No Official Elasticsearch Crate
 
-The official `elasticsearch` Rust crate exists but adds unnecessary complexity for LLM-controlled operations. Instead, we directly use `reqwest` to make HTTP calls to the Elasticsearch REST API, giving the LLM full control over request construction.
+The official `elasticsearch` Rust crate exists but adds unnecessary complexity for LLM-controlled operations. Instead,
+we directly use `reqwest` to make HTTP calls to the Elasticsearch REST API, giving the LLM full control over request
+construction.
 
 ## Architecture
 
@@ -47,6 +50,7 @@ The LLM controls Elasticsearch operations through structured actions:
 ### State Management
 
 Client state stored in `protocol_data`:
+
 - `es_client`: Initialization marker
 - `cluster_url`: Base URL for Elasticsearch cluster
 - Optional: `username`, `password` for authentication
@@ -56,6 +60,7 @@ Client state stored in `protocol_data`:
 Each operation builds the appropriate HTTP request:
 
 **Index Document**: `POST /{index}/_doc/{id}` or `POST /{index}/_doc`
+
 ```json
 {
   "name": "John Doe",
@@ -64,6 +69,7 @@ Each operation builds the appropriate HTTP request:
 ```
 
 **Search**: `POST /{index}/_search`
+
 ```json
 {
   "query": {
@@ -79,6 +85,7 @@ Each operation builds the appropriate HTTP request:
 **Delete Document**: `DELETE /{index}/_doc/{id}`
 
 **Bulk Operations**: `POST /_bulk` with NDJSON format
+
 ```
 {"index":{"_index":"users","_id":"1"}}
 {"name":"Alice"}
@@ -90,22 +97,22 @@ Each operation builds the appropriate HTTP request:
 ### Async Actions (User-Triggered)
 
 1. **index_document**: Index a document
-   - Parameters: `index` (string), `id` (optional string), `document` (object)
-   - LLM constructs JSON document structure
+    - Parameters: `index` (string), `id` (optional string), `document` (object)
+    - LLM constructs JSON document structure
 
 2. **search**: Search documents
-   - Parameters: `index` (string), `query` (object)
-   - LLM constructs Elasticsearch Query DSL
+    - Parameters: `index` (string), `query` (object)
+    - LLM constructs Elasticsearch Query DSL
 
 3. **get_document**: Retrieve document by ID
-   - Parameters: `index` (string), `id` (string)
+    - Parameters: `index` (string), `id` (string)
 
 4. **delete_document**: Delete document by ID
-   - Parameters: `index` (string), `id` (string)
+    - Parameters: `index` (string), `id` (string)
 
 5. **bulk_operation**: Execute multiple operations
-   - Parameters: `operations` (array of operation objects)
-   - LLM constructs bulk operation sequence
+    - Parameters: `operations` (array of operation objects)
+    - LLM constructs bulk operation sequence
 
 6. **disconnect**: Close client
 
@@ -117,14 +124,14 @@ Each operation builds the appropriate HTTP request:
 ### Event Types
 
 1. **elasticsearch_connected**
-   - Triggered when client initializes
-   - Parameters: `cluster_url`
-   - LLM decides initial operation
+    - Triggered when client initializes
+    - Parameters: `cluster_url`
+    - LLM decides initial operation
 
 2. **elasticsearch_response_received**
-   - Triggered after each operation
-   - Parameters: `operation`, `status_code`, `response`
-   - LLM analyzes response and decides next action
+    - Triggered after each operation
+    - Parameters: `operation`, `status_code`, `response`
+    - LLM analyzes response and decides next action
 
 ## Logging Strategy
 
@@ -147,21 +154,25 @@ let _ = status_tx.send(format!("[CLIENT] Searching index {}", index));
 ## Example Prompts
 
 ### Basic Indexing
+
 ```
 "Connect to http://localhost:9200 and index a document in the 'users' index with fields name='John Doe' and age=30"
 ```
 
 ### Search Query
+
 ```
 "Search the 'logs' index for all documents with level='error' in the last hour"
 ```
 
 ### Bulk Operations
+
 ```
 "Index 3 documents into the 'products' index: laptop, phone, and tablet with their prices"
 ```
 
 ### Complex Query
+
 ```
 "Search 'articles' index for documents matching 'machine learning' in the title, filter by author='Smith', and sort by publish_date descending"
 ```
@@ -215,6 +226,7 @@ Current implementation uses `http://` by default. HTTPS requires client modifica
 ### Connection Errors
 
 If Elasticsearch cluster is unreachable:
+
 ```rust
 status_code: 0  // reqwest error, no HTTP response
 response: {"error": "Failed to send request"}
@@ -223,6 +235,7 @@ response: {"error": "Failed to send request"}
 ### Elasticsearch Errors
 
 Elasticsearch returns errors in standard format:
+
 ```json
 {
   "error": {
@@ -255,6 +268,7 @@ See `tests/client/elasticsearch/CLAUDE.md` for E2E test strategy.
 **Rating**: Medium (🟡)
 
 **Justification**:
+
 - HTTP-based API is straightforward
 - JSON request/response handling is simple
 - No complex protocol state machine

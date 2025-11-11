@@ -9,13 +9,13 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
+use crate::client::openai::actions::OPENAI_CLIENT_RESPONSE_RECEIVED_EVENT;
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::{Event, StartupParams};
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::openai::actions::OPENAI_CLIENT_RESPONSE_RECEIVED_EVENT;
 
 /// OpenAI client that connects to the OpenAI API
 pub struct OpenAiClient;
@@ -45,33 +45,35 @@ impl OpenAiClient {
             .as_ref()
             .and_then(|p| p.get_optional_string("organization"));
 
-        info!("OpenAI client {} initializing with API endpoint: {}", client_id, remote_addr);
+        info!(
+            "OpenAI client {} initializing with API endpoint: {}",
+            client_id, remote_addr
+        );
 
         // Store configuration in protocol_data
-        app_state.with_client_mut(client_id, |client| {
-            client.set_protocol_field(
-                "api_key".to_string(),
-                serde_json::json!(api_key),
-            );
-            client.set_protocol_field(
-                "default_model".to_string(),
-                serde_json::json!(default_model),
-            );
-            client.set_protocol_field(
-                "api_endpoint".to_string(),
-                serde_json::json!(remote_addr),
-            );
-            if let Some(org) = organization {
+        app_state
+            .with_client_mut(client_id, |client| {
+                client.set_protocol_field("api_key".to_string(), serde_json::json!(api_key));
                 client.set_protocol_field(
-                    "organization".to_string(),
-                    serde_json::json!(org),
+                    "default_model".to_string(),
+                    serde_json::json!(default_model),
                 );
-            }
-        }).await;
+                client
+                    .set_protocol_field("api_endpoint".to_string(), serde_json::json!(remote_addr));
+                if let Some(org) = organization {
+                    client.set_protocol_field("organization".to_string(), serde_json::json!(org));
+                }
+            })
+            .await;
 
         // Update status
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] OpenAI client {} ready (endpoint: {})", client_id, remote_addr));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] OpenAI client {} ready (endpoint: {})",
+            client_id, remote_addr
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // For OpenAI client, we'll spawn a background task that monitors for client removal
@@ -105,29 +107,38 @@ impl OpenAiClient {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         // Get API configuration from client
-        let (api_key, default_model, api_endpoint) = app_state.with_client_mut(client_id, |client| {
-            let key = client.get_protocol_field("api_key")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            let model = client.get_protocol_field("default_model")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            let endpoint = client.get_protocol_field("api_endpoint")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            (key, model, endpoint)
-        }).await.unwrap_or((None, None, None));
+        let (api_key, default_model, api_endpoint) = app_state
+            .with_client_mut(client_id, |client| {
+                let key = client
+                    .get_protocol_field("api_key")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let model = client
+                    .get_protocol_field("default_model")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let endpoint = client
+                    .get_protocol_field("api_endpoint")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                (key, model, endpoint)
+            })
+            .await
+            .unwrap_or((None, None, None));
 
         let api_key = api_key.context("No API key found")?;
-        let model_to_use = model.unwrap_or_else(|| default_model.unwrap_or_else(|| "gpt-3.5-turbo".to_string()));
+        let model_to_use =
+            model.unwrap_or_else(|| default_model.unwrap_or_else(|| "gpt-3.5-turbo".to_string()));
 
-        info!("OpenAI client {} making chat completion request with model: {}", client_id, model_to_use);
+        info!(
+            "OpenAI client {} making chat completion request with model: {}",
+            client_id, model_to_use
+        );
 
         // Build OpenAI client
-        use async_openai::{Client as OpenAiApiClient, types::*};
+        use async_openai::{types::*, Client as OpenAiApiClient};
 
-        let mut config = async_openai::config::OpenAIConfig::new()
-            .with_api_key(&api_key);
+        let mut config = async_openai::config::OpenAIConfig::new().with_api_key(&api_key);
 
         // Override API base if custom endpoint is provided
         if let Some(endpoint) = api_endpoint {
@@ -139,41 +150,44 @@ impl OpenAiClient {
         let openai_client = OpenAiApiClient::with_config(config);
 
         // Parse messages array
-        let messages_array = messages.as_array()
-            .context("Messages must be an array")?;
+        let messages_array = messages.as_array().context("Messages must be an array")?;
 
         let mut chat_messages = Vec::new();
         for msg in messages_array {
-            let role = msg.get("role")
+            let role = msg
+                .get("role")
                 .and_then(|v| v.as_str())
                 .context("Message role is required")?;
-            let content = msg.get("content")
+            let content = msg
+                .get("content")
                 .and_then(|v| v.as_str())
                 .context("Message content is required")?;
 
             let chat_message = match role {
-                "system" => ChatCompletionRequestMessage::System(
-                    ChatCompletionRequestSystemMessage {
-                        content: ChatCompletionRequestSystemMessageContent::Text(content.to_string()),
+                "system" => {
+                    ChatCompletionRequestMessage::System(ChatCompletionRequestSystemMessage {
+                        content: ChatCompletionRequestSystemMessageContent::Text(
+                            content.to_string(),
+                        ),
                         name: None,
-                    }
-                ),
-                "user" => ChatCompletionRequestMessage::User(
-                    ChatCompletionRequestUserMessage {
-                        content: ChatCompletionRequestUserMessageContent::Text(content.to_string()),
-                        name: None,
-                    }
-                ),
-                "assistant" => ChatCompletionRequestMessage::Assistant(
-                    ChatCompletionRequestAssistantMessage {
-                        content: Some(ChatCompletionRequestAssistantMessageContent::Text(content.to_string())),
+                    })
+                }
+                "user" => ChatCompletionRequestMessage::User(ChatCompletionRequestUserMessage {
+                    content: ChatCompletionRequestUserMessageContent::Text(content.to_string()),
+                    name: None,
+                }),
+                "assistant" => {
+                    ChatCompletionRequestMessage::Assistant(ChatCompletionRequestAssistantMessage {
+                        content: Some(ChatCompletionRequestAssistantMessageContent::Text(
+                            content.to_string(),
+                        )),
                         name: None,
                         tool_calls: None,
                         refusal: None,
                         #[allow(deprecated)]
                         function_call: None,
-                    }
-                ),
+                    })
+                }
                 _ => return Err(anyhow::anyhow!("Unknown message role: {}", role)),
             };
             chat_messages.push(chat_message);
@@ -198,30 +212,45 @@ impl OpenAiClient {
                 let mut tools = Vec::new();
                 for func in functions_array {
                     // Convert the function definition to OpenAI tool format
-                    if let Ok(tool) = serde_json::from_value::<async_openai::types::ChatCompletionTool>(func.clone()) {
+                    if let Ok(tool) = serde_json::from_value::<
+                        async_openai::types::ChatCompletionTool,
+                    >(func.clone())
+                    {
                         tools.push(tool);
                     } else {
-                        warn!("OpenAI client {}: Failed to parse function definition: {:?}", client_id, func);
+                        warn!(
+                            "OpenAI client {}: Failed to parse function definition: {:?}",
+                            client_id, func
+                        );
                     }
                 }
                 if !tools.is_empty() {
                     let tools_count = tools.len();
                     request.tools(tools);
-                    info!("OpenAI client {}: Added {} function(s) to request", client_id, tools_count);
+                    info!(
+                        "OpenAI client {}: Added {} function(s) to request",
+                        client_id, tools_count
+                    );
                 }
             }
         }
 
-        let request = request.build()
+        let request = request
+            .build()
             .context("Failed to build chat completion request")?;
 
         // Make request
         match openai_client.chat().create(request).await {
             Ok(response) => {
-                let choice = response.choices.first()
+                let choice = response
+                    .choices
+                    .first()
                     .context("No choices in OpenAI response")?;
 
-                let content = choice.message.content.as_ref()
+                let content = choice
+                    .message
+                    .content
+                    .as_ref()
                     .map(|s| s.to_string())
                     .unwrap_or_default();
 
@@ -233,27 +262,36 @@ impl OpenAiClient {
 
                 // Extract tool_calls if present
                 let tool_calls = choice.message.tool_calls.as_ref().map(|calls| {
-                    calls.iter().map(|call| {
-                        serde_json::json!({
-                            "id": call.id,
-                            "type": "function",
-                            "function": {
-                                "name": call.function.name,
-                                "arguments": call.function.arguments
-                            }
+                    calls
+                        .iter()
+                        .map(|call| {
+                            serde_json::json!({
+                                "id": call.id,
+                                "type": "function",
+                                "function": {
+                                    "name": call.function.name,
+                                    "arguments": call.function.arguments
+                                }
+                            })
                         })
-                    }).collect::<Vec<_>>()
+                        .collect::<Vec<_>>()
                 });
 
-                info!("OpenAI client {} received response ({} tokens{})",
+                info!(
+                    "OpenAI client {} received response ({} tokens{})",
                     client_id,
                     response.usage.as_ref().map(|u| u.total_tokens).unwrap_or(0),
-                    if tool_calls.is_some() { ", with tool calls" } else { "" }
+                    if tool_calls.is_some() {
+                        ", with tool calls"
+                    } else {
+                        ""
+                    }
                 );
 
                 // Call LLM with response
                 if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                    let protocol = Arc::new(crate::client::openai::actions::OpenAiClientProtocol::new());
+                    let protocol =
+                        Arc::new(crate::client::openai::actions::OpenAiClientProtocol::new());
                     let mut event_data = serde_json::json!({
                         "response_type": "chat_completion",
                         "content": content,
@@ -266,12 +304,12 @@ impl OpenAiClient {
                         event_data["tool_calls"] = serde_json::json!(calls);
                     }
 
-                    let event = Event::new(
-                        &OPENAI_CLIENT_RESPONSE_RECEIVED_EVENT,
-                        event_data,
-                    );
+                    let event = Event::new(&OPENAI_CLIENT_RESPONSE_RECEIVED_EVENT, event_data);
 
-                    let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                    let memory = app_state
+                        .get_memory_for_client(client_id)
+                        .await
+                        .unwrap_or_default();
 
                     match call_llm_for_client(
                         &llm_client,
@@ -282,8 +320,13 @@ impl OpenAiClient {
                         Some(&event),
                         protocol.as_ref(),
                         &status_tx,
-                    ).await {
-                        Ok(ClientLlmResult { actions: _, memory_updates }) => {
+                    )
+                    .await
+                    {
+                        Ok(ClientLlmResult {
+                            actions: _,
+                            memory_updates,
+                        }) => {
                             // Update memory
                             if let Some(mem) = memory_updates {
                                 app_state.set_memory_for_client(client_id, mem).await;
@@ -303,7 +346,8 @@ impl OpenAiClient {
 
                 // Send error event to LLM
                 if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                    let protocol = Arc::new(crate::client::openai::actions::OpenAiClientProtocol::new());
+                    let protocol =
+                        Arc::new(crate::client::openai::actions::OpenAiClientProtocol::new());
                     let event = Event::new(
                         &OPENAI_CLIENT_RESPONSE_RECEIVED_EVENT,
                         serde_json::json!({
@@ -312,7 +356,10 @@ impl OpenAiClient {
                         }),
                     );
 
-                    let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                    let memory = app_state
+                        .get_memory_for_client(client_id)
+                        .await
+                        .unwrap_or_default();
                     let _ = call_llm_for_client(
                         &llm_client,
                         &app_state,
@@ -322,7 +369,8 @@ impl OpenAiClient {
                         Some(&event),
                         protocol.as_ref(),
                         &status_tx,
-                    ).await;
+                    )
+                    .await;
                 }
 
                 Err(e.into())
@@ -340,26 +388,33 @@ impl OpenAiClient {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         // Get API configuration from client
-        let (api_key, api_endpoint) = app_state.with_client_mut(client_id, |client| {
-            let key = client.get_protocol_field("api_key")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            let endpoint = client.get_protocol_field("api_endpoint")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            (key, endpoint)
-        }).await.unwrap_or((None, None));
+        let (api_key, api_endpoint) = app_state
+            .with_client_mut(client_id, |client| {
+                let key = client
+                    .get_protocol_field("api_key")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let endpoint = client
+                    .get_protocol_field("api_endpoint")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                (key, endpoint)
+            })
+            .await
+            .unwrap_or((None, None));
 
         let api_key = api_key.context("No API key found")?;
         let model_to_use = model.unwrap_or_else(|| "text-embedding-ada-002".to_string());
 
-        info!("OpenAI client {} making embedding request with model: {}", client_id, model_to_use);
+        info!(
+            "OpenAI client {} making embedding request with model: {}",
+            client_id, model_to_use
+        );
 
         // Build OpenAI client
-        use async_openai::{Client as OpenAiApiClient, types::*};
+        use async_openai::{types::*, Client as OpenAiApiClient};
 
-        let mut config = async_openai::config::OpenAIConfig::new()
-            .with_api_key(&api_key);
+        let mut config = async_openai::config::OpenAIConfig::new().with_api_key(&api_key);
 
         if let Some(endpoint) = api_endpoint {
             if !endpoint.is_empty() && endpoint != "https://api.openai.com/v1" {
@@ -373,13 +428,16 @@ impl OpenAiClient {
         let input_value = if let Some(text) = input.as_str() {
             EmbeddingInput::String(text.to_string())
         } else if let Some(arr) = input.as_array() {
-            let strings: Vec<String> = arr.iter()
+            let strings: Vec<String> = arr
+                .iter()
                 .filter_map(|v| v.as_str())
                 .map(|s| s.to_string())
                 .collect();
             EmbeddingInput::StringArray(strings)
         } else {
-            return Err(anyhow::anyhow!("Input must be a string or array of strings"));
+            return Err(anyhow::anyhow!(
+                "Input must be a string or array of strings"
+            ));
         };
 
         // Build request
@@ -392,16 +450,16 @@ impl OpenAiClient {
         // Make request
         match openai_client.embeddings().create(request).await {
             Ok(response) => {
-                let embeddings: Vec<Vec<f32>> = response.data.iter()
-                    .map(|e| e.embedding.clone())
-                    .collect();
+                let embeddings: Vec<Vec<f32>> =
+                    response.data.iter().map(|e| e.embedding.clone()).collect();
 
                 let usage = serde_json::json!({
                     "prompt_tokens": response.usage.prompt_tokens,
                     "total_tokens": response.usage.total_tokens,
                 });
 
-                info!("OpenAI client {} received {} embeddings ({} tokens)",
+                info!(
+                    "OpenAI client {} received {} embeddings ({} tokens)",
                     client_id,
                     embeddings.len(),
                     response.usage.total_tokens
@@ -409,7 +467,8 @@ impl OpenAiClient {
 
                 // Call LLM with response
                 if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                    let protocol = Arc::new(crate::client::openai::actions::OpenAiClientProtocol::new());
+                    let protocol =
+                        Arc::new(crate::client::openai::actions::OpenAiClientProtocol::new());
                     let event = Event::new(
                         &OPENAI_CLIENT_RESPONSE_RECEIVED_EVENT,
                         serde_json::json!({
@@ -422,7 +481,10 @@ impl OpenAiClient {
                         }),
                     );
 
-                    let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                    let memory = app_state
+                        .get_memory_for_client(client_id)
+                        .await
+                        .unwrap_or_default();
 
                     match call_llm_for_client(
                         &llm_client,
@@ -433,8 +495,13 @@ impl OpenAiClient {
                         Some(&event),
                         protocol.as_ref(),
                         &status_tx,
-                    ).await {
-                        Ok(ClientLlmResult { actions: _, memory_updates }) => {
+                    )
+                    .await
+                    {
+                        Ok(ClientLlmResult {
+                            actions: _,
+                            memory_updates,
+                        }) => {
                             // Update memory
                             if let Some(mem) = memory_updates {
                                 app_state.set_memory_for_client(client_id, mem).await;
@@ -449,7 +516,10 @@ impl OpenAiClient {
                 Ok(())
             }
             Err(e) => {
-                error!("OpenAI client {} embedding request failed: {}", client_id, e);
+                error!(
+                    "OpenAI client {} embedding request failed: {}",
+                    client_id, e
+                );
                 let _ = status_tx.send(format!("[ERROR] OpenAI embedding request failed: {}", e));
                 Err(e.into())
             }

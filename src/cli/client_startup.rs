@@ -145,14 +145,16 @@ pub async fn start_client_from_action(
 
     // Set initial memory if provided
     if let Some(mem) = initial_memory {
-        state.with_client_mut(client_id, |c| {
-            c.memory = mem;
-        }).await;
+        state
+            .with_client_mut(client_id, |c| {
+                c.memory = mem;
+            })
+            .await;
     }
 
     // Configure event handlers if provided
     if let Some(handlers) = event_handlers {
-        use crate::scripting::{EventHandlerConfig, EventHandler};
+        use crate::scripting::{EventHandler, EventHandlerConfig};
 
         let event_handlers: Vec<EventHandler> = handlers
             .into_iter()
@@ -173,7 +175,7 @@ pub async fn start_client_from_action(
     // Create scheduled tasks if provided
     if let Some(tasks) = scheduled_tasks {
         for task_def in tasks {
-            use crate::state::task::{ScheduledTask, TaskScope, TaskType, TaskStatus, TaskId};
+            use crate::state::task::{ScheduledTask, TaskId, TaskScope, TaskStatus, TaskType};
             use std::time::{Duration, Instant};
 
             // Determine task type

@@ -2,7 +2,10 @@
 
 ## Overview
 
-AWS SQS (Simple Queue Service) compatible server implementing the AWS SQS HTTP/JSON API. The server handles SQS queue operations (SendMessage, ReceiveMessage, CreateQueue, etc.) with full LLM control over responses. This is a "virtual" message queue system where the LLM maintains queues and messages through conversation context rather than persistent storage.
+AWS SQS (Simple Queue Service) compatible server implementing the AWS SQS HTTP/JSON API. The server handles SQS queue
+operations (SendMessage, ReceiveMessage, CreateQueue, etc.) with full LLM control over responses. This is a "virtual"
+message queue system where the LLM maintains queues and messages through conversation context rather than persistent
+storage.
 
 **Port**: 9324 (standard SQS local port)
 **Protocol**: HTTP/1.1 with JSON payloads (AWS JSON protocol)
@@ -12,28 +15,33 @@ AWS SQS (Simple Queue Service) compatible server implementing the AWS SQS HTTP/J
 ## Library Choices
 
 **hyper** (v1.5):
+
 - HTTP/1.1 server implementation
 - Async connection handling with tokio
 - Service-based request routing
 - Handles HTTP framing, headers, body parsing
 
 **http-body-util**:
+
 - Body aggregation (`BodyExt::collect()`)
 - Full body type (`Full<Bytes>`)
 - Efficient byte handling
 
 **serde_json**:
+
 - JSON request/response parsing
 - SQS uses JSON for all API calls (AWS JSON protocol)
 - No binary protocol support (Query protocol not implemented)
 
 **Manual API Implementation**:
+
 - LLM controls all SQS operations through action system
 - No AWS SDK dependencies
 - Responses manually constructed as JSON
 - Request ID generation (timestamp-based)
 
 **Rationale**:
+
 - No suitable Rust SQS server library exists
 - Manual implementation provides full LLM control
 - Similar to DynamoDB implementation pattern (proven approach)
@@ -43,6 +51,7 @@ AWS SQS (Simple Queue Service) compatible server implementing the AWS SQS HTTP/J
 ## Architecture Decisions
 
 ### HTTP-Based Design
+
 - Each SQS request is a POST to the root endpoint
 - Operation specified in `x-amz-target` header (e.g., "AmazonSQS.SendMessage")
 - Request body is JSON with operation parameters
@@ -50,6 +59,7 @@ AWS SQS (Simple Queue Service) compatible server implementing the AWS SQS HTTP/J
 - Standard HTTP status codes (200, 400, 500)
 
 ### JSON Protocol Only
+
 - Uses AWS JSON protocol (`Content-Type: application/x-amz-json-1.0`)
 - 23% faster than legacy Query protocol
 - Simpler parsing and generation
@@ -57,6 +67,7 @@ AWS SQS (Simple Queue Service) compatible server implementing the AWS SQS HTTP/J
 - Legacy Query protocol (form-encoded) not implemented
 
 ### Stateful Operation
+
 - Unlike DynamoDB (stateless), SQS requires queue state across requests
 - LLM maintains "virtual" queues through conversation context
 - Messages persist in LLM memory between requests
@@ -64,6 +75,7 @@ AWS SQS (Simple Queue Service) compatible server implementing the AWS SQS HTTP/J
 - Receipt handles enable message deletion
 
 ### Request Processing Flow
+
 1. Accept TCP connection
 2. Parse HTTP request (method, URI, headers, body)
 3. Extract operation from `x-amz-target` header
@@ -71,21 +83,24 @@ AWS SQS (Simple Queue Service) compatible server implementing the AWS SQS HTTP/J
 5. Create `SQS_REQUEST_EVENT` with operation, queue_url, request_body
 6. Call LLM via `call_llm()` with event and protocol
 7. Process action result:
-   - `send_sqs_response`: Build HTTP response with status/body
+    - `send_sqs_response`: Build HTTP response with status/body
 8. If no action, return empty JSON `{}`
 9. Close connection (HTTP/1.1 without keep-alive)
 
 ### Operation Detection
+
 - Operations parsed from `x-amz-target` header
 - Format: `AmazonSQS.<Operation>`
-- Supported operations: SendMessage, ReceiveMessage, DeleteMessage, CreateQueue, DeleteQueue, GetQueueAttributes, PurgeQueue, ListQueues
+- Supported operations: SendMessage, ReceiveMessage, DeleteMessage, CreateQueue, DeleteQueue, GetQueueAttributes,
+  PurgeQueue, ListQueues
 - LLM decides how to respond to each operation
 
 ### Response Format
+
 - Status: 200 (success), 400 (client error), 500 (server error)
 - Headers:
-  - `Content-Type: application/x-amz-json-1.0`
-  - `x-amzn-RequestId: <hex-timestamp>`
+    - `Content-Type: application/x-amz-json-1.0`
+    - `x-amzn-RequestId: <hex-timestamp>`
 - Body: JSON object with operation-specific fields
 - Error format: `{"__type": "ErrorType", "message": "error message"}`
 
@@ -94,23 +109,27 @@ AWS SQS (Simple Queue Service) compatible server implementing the AWS SQS HTTP/J
 ### Action-Based Responses
 
 **Sync Actions** (network event context required):
+
 - `send_sqs_response`: Return HTTP response with status and body
 
 **Event Types**:
+
 - `SQS_REQUEST_EVENT`: Fired for every SQS operation
-  - Data: `{ "operation": "SendMessage", "queue_url": "http://...", "request_body": "{...}" }`
+    - Data: `{ "operation": "SendMessage", "queue_url": "http://...", "request_body": "{...}" }`
 
 ### Startup Parameters
 
 The LLM can configure the SQS server with these parameters via the `open_server` action:
 
 - **`default_visibility_timeout`** (number): Default visibility timeout in seconds (0-43200, default: 30)
-- **`default_message_retention`** (number): Default message retention period in seconds (60-1209600, default: 345600 = 4 days)
+- **`default_message_retention`** (number): Default message retention period in seconds (60-1209600, default: 345600 = 4
+  days)
 - **`max_receive_count`** (number): Maximum receives before message considered undeliverable (default: 10)
 
 ### Example LLM Prompts
 
 **CreateQueue operation**:
+
 ```
 For CreateQueue with QueueName "orders-queue", use send_sqs_response with:
 status_code=200
@@ -118,6 +137,7 @@ body='{"QueueUrl":"http://localhost:9324/queue/orders-queue"}'
 ```
 
 **SendMessage operation**:
+
 ```
 For SendMessage to orders-queue with body "Order #123", use send_sqs_response with:
 status_code=200
@@ -125,6 +145,7 @@ body='{"MessageId":"msg-1234567890","MD5OfMessageBody":"d41d8cd98f00b204e9800998
 ```
 
 **ReceiveMessage operation**:
+
 ```
 For ReceiveMessage from orders-queue, use send_sqs_response with:
 status_code=200
@@ -132,6 +153,7 @@ body='{"Messages":[{"MessageId":"msg-1234567890","ReceiptHandle":"receipt-xyz","
 ```
 
 **DeleteMessage operation**:
+
 ```
 For DeleteMessage with valid receipt handle, use send_sqs_response with:
 status_code=200
@@ -139,6 +161,7 @@ body='{}'
 ```
 
 **Error responses**:
+
 ```
 For invalid queue URL, use send_sqs_response with:
 status_code=400
@@ -148,6 +171,7 @@ body='{"__type":"QueueDoesNotExist","message":"The specified queue does not exis
 ## Connection Management
 
 ### Connection Lifecycle
+
 1. Server accepts TCP connection on port 9324
 2. Create `ConnectionId` for tracking
 3. Add connection to `ServerInstance` with `ProtocolConnectionInfo::Sqs`
@@ -156,6 +180,7 @@ body='{"__type":"QueueDoesNotExist","message":"The specified queue does not exis
 6. Connection closed after response sent
 
 ### State Tracking
+
 - Connection state stored in `ServerInstance.connections` HashMap
 - Protocol-specific: `recent_operations` Vec (operation, queue_url, time)
 - Tracks: remote_addr, local_addr, bytes_sent/received
@@ -163,6 +188,7 @@ body='{"__type":"QueueDoesNotExist","message":"The specified queue does not exis
 - HTTP/1.1 without keep-alive (new connection per request)
 
 ### Concurrency
+
 - Multiple connections handled concurrently
 - Each connection is independent
 - LLM maintains queue state through conversation memory
@@ -171,24 +197,28 @@ body='{"__type":"QueueDoesNotExist","message":"The specified queue does not exis
 ## State Management
 
 ### Virtual Queues
+
 - **Queue Creation**: LLM "creates" queue by remembering it in conversation
 - **Queue URL Format**: `http://localhost:<port>/queue/<QueueName>`
 - **Queue Attributes**: Visibility timeout, message retention, ARN
 - **Queue Deletion**: LLM "forgets" queue and all its messages
 
 ### Virtual Messages
+
 - **Message Storage**: LLM maintains message list for each queue
 - **Message ID Format**: `msg-<timestamp>-<random>`
 - **Message Attributes**: Body, attributes, sent timestamp, receive count
 - **Receipt Handle Format**: `receipt-<timestamp>-<message_id>`
 
 ### Visibility Timeout
+
 - **In-Flight Messages**: Messages become invisible after ReceiveMessage
 - **Timeout Tracking**: LLM tracks timestamp of receive operation
 - **Expiration**: After visibility timeout, message becomes available again
 - **Validation**: LLM checks timestamp when processing DeleteMessage
 
 ### Message Lifecycle
+
 1. **SendMessage**: Message added to queue with unique ID and MD5
 2. **ReceiveMessage**: Message marked in-flight with receipt handle and visibility timeout
 3. **DeleteMessage**: Message permanently removed using receipt handle
@@ -199,6 +229,7 @@ body='{"__type":"QueueDoesNotExist","message":"The specified queue does not exis
 The SQS server supports LLM-controlled authentication:
 
 ### Authentication Flow
+
 1. Client sends request with AWS Signature V4 headers
 2. Server parses signature headers (but does not validate)
 3. Signature details included in event context
@@ -206,11 +237,13 @@ The SQS server supports LLM-controlled authentication:
 5. LLM can return error response for invalid/missing signatures
 
 ### Signature Headers
+
 - `Authorization`: AWS4-HMAC-SHA256 signature
 - `X-Amz-Date`: Request timestamp
 - `X-Amz-Security-Token`: (optional) Session token
 
 ### LLM Decisions
+
 - **Accept all**: Honeypot mode, log but accept everything
 - **Reject invalid**: Validate signature format (not crypto)
 - **Selective auth**: Accept specific access keys, reject others
@@ -221,15 +254,18 @@ The SQS server supports LLM-controlled authentication:
 The SQS protocol is designed with scripting mode in mind to minimize LLM calls during testing:
 
 ### Scriptable Operations
+
 - **SendMessage**: Repetitive, predictable response (MessageId, MD5)
 - **GetQueueAttributes**: Simple response with queue stats
 
 ### Non-Scriptable Operations
+
 - **ReceiveMessage**: Requires queue state inspection
 - **DeleteMessage**: Requires receipt handle validation
 - **CreateQueue**: Initial queue setup
 
 ### Script Generation
+
 - On server startup, LLM generates Python/JavaScript script
 - Script handles SendMessage requests without calling LLM
 - Script can access queue state from LLM-provided context
@@ -238,6 +274,7 @@ The SQS protocol is designed with scripting mode in mind to minimize LLM calls d
 ## Limitations
 
 ### Protocol Features
+
 - **No persistent storage** - queues and messages only exist in LLM conversation context
 - **No authentication crypto** - AWS Signature V4 parsed but not cryptographically validated
 - **HTTP/1.1 only** - no HTTP/2 support
@@ -251,12 +288,14 @@ The SQS protocol is designed with scripting mode in mind to minimize LLM calls d
 - **No batch operations** - SendMessageBatch, DeleteMessageBatch not yet implemented
 
 ### Performance
+
 - Each request triggers LLM call (unless scripting enabled)
 - No query optimization
 - Full request/response in memory
 - Connection overhead per request
 
 ### Data Management
+
 - **Virtual data** - LLM maintains queues and messages through conversation
 - **No persistence** - data lost when LLM context is cleared
 - **Consistency** - depends on LLM memory
@@ -274,6 +313,7 @@ The SQS protocol is designed with scripting mode in mind to minimize LLM calls d
 ## Example Responses
 
 ### CreateQueue Success
+
 ```json
 {
   "actions": [
@@ -287,6 +327,7 @@ The SQS protocol is designed with scripting mode in mind to minimize LLM calls d
 ```
 
 ### SendMessage Success
+
 ```json
 {
   "actions": [
@@ -300,6 +341,7 @@ The SQS protocol is designed with scripting mode in mind to minimize LLM calls d
 ```
 
 ### ReceiveMessage Response
+
 ```json
 {
   "actions": [
@@ -313,6 +355,7 @@ The SQS protocol is designed with scripting mode in mind to minimize LLM calls d
 ```
 
 ### DeleteMessage Success
+
 ```json
 {
   "actions": [
@@ -326,6 +369,7 @@ The SQS protocol is designed with scripting mode in mind to minimize LLM calls d
 ```
 
 ### Error Response
+
 ```json
 {
   "actions": [
@@ -341,6 +385,7 @@ The SQS protocol is designed with scripting mode in mind to minimize LLM calls d
 ## Comparison to DynamoDB
 
 ### Similarities
+
 - HTTP-based protocol with JSON payloads
 - Operation specified in header (`x-amz-target`)
 - LLM maintains "virtual" data in conversation context
@@ -350,25 +395,27 @@ The SQS protocol is designed with scripting mode in mind to minimize LLM calls d
 
 ### Differences
 
-| Aspect | DynamoDB | SQS |
-|--------|----------|-----|
-| **State** | Stateless (each request independent) | Stateful (queue persistence required) |
-| **Data Lifecycle** | Items stored indefinitely | Messages expire after retention period |
-| **Operations** | CRUD (read/write operations) | Queue operations (send/receive/delete) |
-| **Concurrency** | Simple (no coordination) | Complex (visibility timeout, in-flight) |
-| **Temporal Behavior** | None | Visibility timeouts, message expiration |
-| **Header** | `DynamoDB_20120810.Operation` | `AmazonSQS.Operation` |
-| **Default Port** | 8000 | 9324 |
-| **Stack Name** | `ETH>IP>TCP>HTTP>DYNAMODB` | `ETH>IP>TCP>HTTP>SQS` |
+| Aspect                | DynamoDB                             | SQS                                     |
+|-----------------------|--------------------------------------|-----------------------------------------|
+| **State**             | Stateless (each request independent) | Stateful (queue persistence required)   |
+| **Data Lifecycle**    | Items stored indefinitely            | Messages expire after retention period  |
+| **Operations**        | CRUD (read/write operations)         | Queue operations (send/receive/delete)  |
+| **Concurrency**       | Simple (no coordination)             | Complex (visibility timeout, in-flight) |
+| **Temporal Behavior** | None                                 | Visibility timeouts, message expiration |
+| **Header**            | `DynamoDB_20120810.Operation`        | `AmazonSQS.Operation`                   |
+| **Default Port**      | 8000                                 | 9324                                    |
+| **Stack Name**        | `ETH>IP>TCP>HTTP>DYNAMODB`           | `ETH>IP>TCP>HTTP>SQS`                   |
 
 ### Key Architectural Difference: State Management
 
 **DynamoDB**: Each request is independent, no state between requests
+
 - GetItem: LLM "retrieves" from conversation memory
 - PutItem: LLM "stores" in conversation memory
 - No coordination needed
 
 **SQS**: Requires queue state across requests
+
 - SendMessage: Message added to queue
 - ReceiveMessage: Message marked in-flight with timeout
 - DeleteMessage: Message removed permanently

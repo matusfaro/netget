@@ -21,91 +21,91 @@ impl SamlSpProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for SamlSpProtocol {
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            Vec::new()
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                send_authn_request_action(),
-                process_assertion_action(),
-                send_metadata_action(),
-                send_error_response_action(),
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "SamlSp"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            get_saml_sp_event_types()
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>TCP>HTTP>SAML-SP"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec![
-                "saml sp",
-                "saml service provider",
-                "service provider",
-                "sp",
-                "saml-sp",
-            ]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Experimental)
-                .implementation("SAML 2.0 Service Provider with LLM-controlled authorization")
-                .llm_control("Authorization decisions, assertion validation, session management")
-                .e2e_testing("SAML IDP test server")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "SAML 2.0 Service Provider that validates SAML assertions and manages application sessions"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Start a SAML Service Provider on port 8081. Accept assertions from IDP and grant access to authenticated users"
-        }
-        fn group_name(&self) -> &'static str {
-            "Authentication"
-        }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        Vec::new()
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            send_authn_request_action(),
+            process_assertion_action(),
+            send_metadata_action(),
+            send_error_response_action(),
+        ]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "SamlSp"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_saml_sp_event_types()
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>HTTP>SAML-SP"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec![
+            "saml sp",
+            "saml service provider",
+            "service provider",
+            "sp",
+            "saml-sp",
+        ]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("SAML 2.0 Service Provider with LLM-controlled authorization")
+            .llm_control("Authorization decisions, assertion validation, session management")
+            .e2e_testing("SAML IDP test server")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "SAML 2.0 Service Provider that validates SAML assertions and manages application sessions"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Start a SAML Service Provider on port 8081. Accept assertions from IDP and grant access to authenticated users"
+    }
+    fn group_name(&self) -> &'static str {
+        "Authentication"
+    }
 }
 
 // Implement Server trait (server-specific functionality)
 impl Server for SamlSpProtocol {
-        fn spawn(
-            &self,
-            ctx: crate::protocol::SpawnContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::server::saml_sp::SamlSpServer;
-                SamlSpServer::spawn_with_llm_actions(
-                    ctx.listen_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.server_id,
-                ).await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "send_authn_request" => self.execute_send_authn_request(action),
-                "process_assertion" => self.execute_process_assertion(action),
-                "send_metadata" => self.execute_send_metadata(action),
-                "send_error_response" => self.execute_send_error_response(action),
-                _ => Err(anyhow::anyhow!("Unknown SAML SP action: {action_type}")),
-            }
-        }
-}
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::saml_sp::SamlSpServer;
+            SamlSpServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
 
+        match action_type {
+            "send_authn_request" => self.execute_send_authn_request(action),
+            "process_assertion" => self.execute_process_assertion(action),
+            "send_metadata" => self.execute_send_metadata(action),
+            "send_error_response" => self.execute_send_error_response(action),
+            _ => Err(anyhow::anyhow!("Unknown SAML SP action: {action_type}")),
+        }
+    }
+}
 
 impl SamlSpProtocol {
     /// Execute send_authn_request sync action
@@ -244,10 +244,20 @@ impl SamlSpProtocol {
 }
 
 /// Build SAML HTTP-POST form for AuthnRequest
-fn build_authn_post_form(request_xml: &str, idp_sso_url: &str, relay_state: Option<&str>) -> String {
-    let encoded_request = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, request_xml);
+fn build_authn_post_form(
+    request_xml: &str,
+    idp_sso_url: &str,
+    relay_state: Option<&str>,
+) -> String {
+    let encoded_request =
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, request_xml);
     let relay_state_field = relay_state
-        .map(|rs| format!(r#"<input type="hidden" name="RelayState" value="{}" />"#, rs))
+        .map(|rs| {
+            format!(
+                r#"<input type="hidden" name="RelayState" value="{}" />"#,
+                rs
+            )
+        })
         .unwrap_or_default();
 
     format!(
@@ -275,7 +285,8 @@ fn build_authn_post_form(request_xml: &str, idp_sso_url: &str, relay_state: Opti
 
 /// Build SAML HTTP-Redirect for AuthnRequest
 fn build_authn_redirect(request_xml: &str, idp_sso_url: &str, relay_state: Option<&str>) -> String {
-    let encoded_request = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, request_xml);
+    let encoded_request =
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, request_xml);
     let relay_param = relay_state
         .map(|rs| format!("&RelayState={}", urlencoding::encode(rs)))
         .unwrap_or_default();
@@ -329,7 +340,8 @@ fn send_authn_request_action() -> ActionDefinition {
             Parameter {
                 name: "binding".to_string(),
                 type_hint: "string".to_string(),
-                description: "Binding type: HTTP-Redirect or HTTP-POST (default: HTTP-Redirect)".to_string(),
+                description: "Binding type: HTTP-Redirect or HTTP-POST (default: HTTP-Redirect)"
+                    .to_string(),
                 required: false,
             },
         ],
@@ -374,7 +386,8 @@ fn process_assertion_action() -> ActionDefinition {
 fn send_metadata_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_metadata".to_string(),
-        description: "Send SP metadata XML describing ACS endpoint and signing certificates".to_string(),
+        description: "Send SP metadata XML describing ACS endpoint and signing certificates"
+            .to_string(),
         parameters: vec![Parameter {
             name: "metadata_xml".to_string(),
             type_hint: "string".to_string(),

@@ -11,6 +11,10 @@ use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace, warn};
 
+use crate::client::vnc::actions::{
+    VNC_CLIENT_CONNECTED_EVENT, VNC_CLIENT_FRAMEBUFFER_UPDATE_EVENT,
+    VNC_CLIENT_SERVER_CUT_TEXT_EVENT,
+};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::actions::client_trait::ClientActionResult;
 use crate::llm::ollama_client::OllamaClient;
@@ -18,11 +22,6 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::{Event, StartupParams};
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::vnc::actions::{
-    VNC_CLIENT_CONNECTED_EVENT,
-    VNC_CLIENT_FRAMEBUFFER_UPDATE_EVENT,
-    VNC_CLIENT_SERVER_CUT_TEXT_EVENT,
-};
 use serde_json::Value as JsonValue;
 
 /// Connection state for LLM processing
@@ -63,7 +62,10 @@ impl VncClient {
         let local_addr = stream.local_addr()?;
         let remote_sock_addr = stream.peer_addr()?;
 
-        info!("VNC client {} connecting to {} (local: {})", client_id, remote_sock_addr, local_addr);
+        info!(
+            "VNC client {} connecting to {} (local: {})",
+            client_id, remote_sock_addr, local_addr
+        );
 
         // Extract password if provided
         let password = startup_params
@@ -71,12 +73,18 @@ impl VncClient {
             .and_then(|p| p.get_optional_string("password"));
 
         // Perform VNC handshake
-        let (fb_width, fb_height, server_name) = Self::perform_handshake(&mut stream, password.as_deref()).await?;
+        let (fb_width, fb_height, server_name) =
+            Self::perform_handshake(&mut stream, password.as_deref()).await?;
 
-        info!("VNC client {} connected: {}x{} ({})", client_id, fb_width, fb_height, server_name);
+        info!(
+            "VNC client {} connected: {}x{} ({})",
+            client_id, fb_width, fb_height, server_name
+        );
 
         // Update client state
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
         let _ = status_tx.send(format!("[CLIENT] VNC client {} connected", client_id));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
@@ -103,11 +111,24 @@ impl VncClient {
                 Some(&event),
                 protocol.as_ref(),
                 &status_tx,
-            ).await {
-                Ok(ClientLlmResult { actions, memory_updates: _ }) => {
+            )
+            .await
+            {
+                Ok(ClientLlmResult {
+                    actions,
+                    memory_updates: _,
+                }) => {
                     // Execute initial actions
                     for action in actions {
-                        if let Err(e) = Self::execute_vnc_action(&mut stream, &protocol, action, fb_width, fb_height).await {
+                        if let Err(e) = Self::execute_vnc_action(
+                            &mut stream,
+                            &protocol,
+                            action,
+                            fb_width,
+                            fb_height,
+                        )
+                        .await
+                        {
                             error!("Failed to execute VNC action: {}", e);
                         }
                     }
@@ -138,7 +159,11 @@ impl VncClient {
                 match read_half.read_exact(&mut msg_type_buf).await {
                     Ok(_) => {
                         let msg_type = msg_type_buf[0];
-                        trace!("VNC client {} received message type: {}", client_id, msg_type);
+                        trace!(
+                            "VNC client {} received message type: {}",
+                            client_id,
+                            msg_type
+                        );
 
                         match msg_type {
                             0 => {
@@ -152,13 +177,17 @@ impl VncClient {
                                     &client_data,
                                     &protocol,
                                     &write_half_arc,
-                                ).await {
+                                )
+                                .await
+                                {
                                     error!("Failed to handle framebuffer update: {}", e);
                                 }
                             }
                             1 => {
                                 // SetColourMapEntries
-                                if let Err(e) = Self::handle_set_colour_map_entries(&mut read_half).await {
+                                if let Err(e) =
+                                    Self::handle_set_colour_map_entries(&mut read_half).await
+                                {
                                     error!("Failed to handle SetColourMapEntries: {}", e);
                                 }
                             }
@@ -177,19 +206,27 @@ impl VncClient {
                                     &client_data,
                                     &protocol,
                                     &write_half_arc,
-                                ).await {
+                                )
+                                .await
+                                {
                                     error!("Failed to handle server cut text: {}", e);
                                 }
                             }
                             _ => {
-                                warn!("VNC client {}: Unknown message type: {}", client_id, msg_type);
+                                warn!(
+                                    "VNC client {}: Unknown message type: {}",
+                                    client_id, msg_type
+                                );
                             }
                         }
                     }
                     Err(e) => {
                         info!("VNC client {} disconnected: {}", client_id, e);
-                        app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                        let _ = status_tx.send(format!("[CLIENT] VNC client {} disconnected", client_id));
+                        app_state
+                            .update_client_status(client_id, ClientStatus::Disconnected)
+                            .await;
+                        let _ = status_tx
+                            .send(format!("[CLIENT] VNC client {} disconnected", client_id));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         break;
                     }
@@ -230,7 +267,10 @@ impl VncClient {
             let len = u32::from_be_bytes(reason_len);
             let mut reason = vec![0u8; len as usize];
             stream.read_exact(&mut reason).await?;
-            bail!("VNC connection failed: {}", String::from_utf8_lossy(&reason));
+            bail!(
+                "VNC connection failed: {}",
+                String::from_utf8_lossy(&reason)
+            );
         }
 
         let mut security_types = vec![0u8; num_security_types[0] as usize];
@@ -247,7 +287,10 @@ impl VncClient {
             }
             2 // VNC authentication
         } else {
-            bail!("No supported security type (server offers: {:?})", security_types);
+            bail!(
+                "No supported security type (server offers: {:?})",
+                security_types
+            );
         };
 
         stream.write_all(&[chosen_security]).await?;
@@ -270,7 +313,10 @@ impl VncClient {
             let len = u32::from_be_bytes(reason_len);
             let mut reason = vec![0u8; len as usize];
             stream.read_exact(&mut reason).await?;
-            bail!("VNC authentication failed: {}", String::from_utf8_lossy(&reason));
+            bail!(
+                "VNC authentication failed: {}",
+                String::from_utf8_lossy(&reason)
+            );
         }
 
         // 3. ClientInit (shared-flag = 1 for shared access)
@@ -284,7 +330,12 @@ impl VncClient {
         let fb_height = u16::from_be_bytes([server_init[2], server_init[3]]);
 
         // Skip pixel format (16 bytes)
-        let name_length = u32::from_be_bytes([server_init[20], server_init[21], server_init[22], server_init[23]]);
+        let name_length = u32::from_be_bytes([
+            server_init[20],
+            server_init[21],
+            server_init[22],
+            server_init[23],
+        ]);
 
         let mut name_bytes = vec![0u8; name_length as usize];
         stream.read_exact(&mut name_bytes).await?;
@@ -292,9 +343,9 @@ impl VncClient {
 
         // Send SetEncodings (support Raw encoding only for simplicity)
         let set_encodings = [
-            2u8,    // SetEncodings message type
-            0,      // padding
-            0, 1,   // number of encodings (1)
+            2u8, // SetEncodings message type
+            0,   // padding
+            0, 1, // number of encodings (1)
             0, 0, 0, 0, // Raw encoding (0)
         ];
         stream.write_all(&set_encodings).await?;
@@ -338,7 +389,11 @@ impl VncClient {
         let first_color = u16::from_be_bytes([header[1], header[2]]);
         let num_colors = u16::from_be_bytes([header[3], header[4]]);
 
-        trace!("SetColourMapEntries: first={}, count={}", first_color, num_colors);
+        trace!(
+            "SetColourMapEntries: first={}, count={}",
+            first_color,
+            num_colors
+        );
 
         // Each color is 6 bytes (RGB as u16 each)
         let color_data_size = (num_colors as usize) * 6;
@@ -383,9 +438,21 @@ impl VncClient {
             let y = u16::from_be_bytes([rect_header[2], rect_header[3]]);
             let width = u16::from_be_bytes([rect_header[4], rect_header[5]]);
             let height = u16::from_be_bytes([rect_header[6], rect_header[7]]);
-            let encoding = i32::from_be_bytes([rect_header[8], rect_header[9], rect_header[10], rect_header[11]]);
+            let encoding = i32::from_be_bytes([
+                rect_header[8],
+                rect_header[9],
+                rect_header[10],
+                rect_header[11],
+            ]);
 
-            trace!("Rectangle: {}x{} at ({}, {}), encoding={}", width, height, x, y, encoding);
+            trace!(
+                "Rectangle: {}x{} at ({}, {}), encoding={}",
+                width,
+                height,
+                x,
+                y,
+                encoding
+            );
 
             // For Raw encoding (0), consume pixel data
             // We're using 32-bit RGBA (4 bytes per pixel) based on server's pixel format
@@ -397,7 +464,10 @@ impl VncClient {
                 read_half.read_exact(&mut pixel_data).await?;
                 // Pixel data consumed and discarded
             } else {
-                warn!("Unsupported encoding: {}, may cause protocol issues", encoding);
+                warn!(
+                    "Unsupported encoding: {}, may cause protocol issues",
+                    encoding
+                );
                 // For other encodings, we would need to parse differently
                 // Since we only advertised Raw encoding, this shouldn't happen
             }
@@ -432,8 +502,13 @@ impl VncClient {
                 Some(&event),
                 protocol.as_ref(),
                 status_tx,
-            ).await {
-                Ok(ClientLlmResult { actions, memory_updates }) => {
+            )
+            .await
+            {
+                Ok(ClientLlmResult {
+                    actions,
+                    memory_updates,
+                }) => {
                     // Update memory
                     if let Some(mem) = memory_updates {
                         client_data.lock().await.memory = mem;
@@ -451,7 +526,9 @@ impl VncClient {
                             action,
                             fb_width,
                             fb_height,
-                        ).await {
+                        )
+                        .await
+                        {
                             error!("Failed to execute VNC action: {}", e);
                         }
                     }
@@ -502,7 +579,10 @@ impl VncClient {
                 }),
             );
 
-            if let Ok(ClientLlmResult { actions, memory_updates }) = call_llm_for_client(
+            if let Ok(ClientLlmResult {
+                actions,
+                memory_updates,
+            }) = call_llm_for_client(
                 llm_client,
                 app_state,
                 client_id.to_string(),
@@ -511,7 +591,9 @@ impl VncClient {
                 Some(&event),
                 protocol.as_ref(),
                 status_tx,
-            ).await {
+            )
+            .await
+            {
                 if let Some(mem) = memory_updates {
                     client_data.lock().await.memory = mem;
                 }
@@ -527,7 +609,9 @@ impl VncClient {
                         action,
                         fb_width,
                         fb_height,
-                    ).await {
+                    )
+                    .await
+                    {
                         error!("Failed to execute VNC action: {}", e);
                     }
                 }
@@ -575,7 +659,8 @@ impl VncClient {
 
         match protocol.as_ref().execute_action(action)? {
             ClientActionResult::Custom { name, data } => {
-                Self::send_vnc_message_with_writer(writer, &name, &data, fb_width, fb_height).await?;
+                Self::send_vnc_message_with_writer(writer, &name, &data, fb_width, fb_height)
+                    .await?;
             }
             ClientActionResult::Disconnect => {
                 return Err(anyhow!("Disconnect requested"));
@@ -603,12 +688,16 @@ impl VncClient {
                 let height = data["height"].as_u64().unwrap_or(fb_height as u64) as u16;
 
                 let msg = [
-                    3u8,  // FramebufferUpdateRequest
+                    3u8, // FramebufferUpdateRequest
                     if incremental { 1 } else { 0 },
-                    (x >> 8) as u8, (x & 0xff) as u8,
-                    (y >> 8) as u8, (y & 0xff) as u8,
-                    (width >> 8) as u8, (width & 0xff) as u8,
-                    (height >> 8) as u8, (height & 0xff) as u8,
+                    (x >> 8) as u8,
+                    (x & 0xff) as u8,
+                    (y >> 8) as u8,
+                    (y & 0xff) as u8,
+                    (width >> 8) as u8,
+                    (width & 0xff) as u8,
+                    (height >> 8) as u8,
+                    (height & 0xff) as u8,
                 ];
                 stream.write_all(&msg).await?;
             }
@@ -618,10 +707,12 @@ impl VncClient {
                 let button_mask = data["button_mask"].as_u64().unwrap_or(0) as u8;
 
                 let msg = [
-                    5u8,  // PointerEvent
+                    5u8, // PointerEvent
                     button_mask,
-                    (x >> 8) as u8, (x & 0xff) as u8,
-                    (y >> 8) as u8, (y & 0xff) as u8,
+                    (x >> 8) as u8,
+                    (x & 0xff) as u8,
+                    (y >> 8) as u8,
+                    (y & 0xff) as u8,
                 ];
                 stream.write_all(&msg).await?;
             }
@@ -630,9 +721,10 @@ impl VncClient {
                 let down = data["down"].as_bool().unwrap_or(false);
 
                 let msg = [
-                    4u8,  // KeyEvent
+                    4u8, // KeyEvent
                     if down { 1 } else { 0 },
-                    0, 0,  // padding
+                    0,
+                    0, // padding
                     (key >> 24) as u8,
                     (key >> 16) as u8,
                     (key >> 8) as u8,
@@ -646,8 +738,10 @@ impl VncClient {
                 let length = text_bytes.len() as u32;
 
                 let mut msg = vec![
-                    6u8,  // ClientCutText
-                    0, 0, 0,  // padding
+                    6u8, // ClientCutText
+                    0,
+                    0,
+                    0, // padding
                     (length >> 24) as u8,
                     (length >> 16) as u8,
                     (length >> 8) as u8,
@@ -684,12 +778,16 @@ impl VncClient {
                 let height = data["height"].as_u64().unwrap_or(fb_height as u64) as u16;
 
                 let msg = [
-                    3u8,  // FramebufferUpdateRequest
+                    3u8, // FramebufferUpdateRequest
                     if incremental { 1 } else { 0 },
-                    (x >> 8) as u8, (x & 0xff) as u8,
-                    (y >> 8) as u8, (y & 0xff) as u8,
-                    (width >> 8) as u8, (width & 0xff) as u8,
-                    (height >> 8) as u8, (height & 0xff) as u8,
+                    (x >> 8) as u8,
+                    (x & 0xff) as u8,
+                    (y >> 8) as u8,
+                    (y & 0xff) as u8,
+                    (width >> 8) as u8,
+                    (width & 0xff) as u8,
+                    (height >> 8) as u8,
+                    (height & 0xff) as u8,
                 ];
                 writer.write_all(&msg).await?;
             }
@@ -699,10 +797,12 @@ impl VncClient {
                 let button_mask = data["button_mask"].as_u64().unwrap_or(0) as u8;
 
                 let msg = [
-                    5u8,  // PointerEvent
+                    5u8, // PointerEvent
                     button_mask,
-                    (x >> 8) as u8, (x & 0xff) as u8,
-                    (y >> 8) as u8, (y & 0xff) as u8,
+                    (x >> 8) as u8,
+                    (x & 0xff) as u8,
+                    (y >> 8) as u8,
+                    (y & 0xff) as u8,
                 ];
                 writer.write_all(&msg).await?;
             }
@@ -711,9 +811,10 @@ impl VncClient {
                 let down = data["down"].as_bool().unwrap_or(false);
 
                 let msg = [
-                    4u8,  // KeyEvent
+                    4u8, // KeyEvent
                     if down { 1 } else { 0 },
-                    0, 0,  // padding
+                    0,
+                    0, // padding
                     (key >> 24) as u8,
                     (key >> 16) as u8,
                     (key >> 8) as u8,
@@ -727,8 +828,10 @@ impl VncClient {
                 let length = text_bytes.len() as u32;
 
                 let mut msg = vec![
-                    6u8,  // ClientCutText
-                    0, 0, 0,  // padding
+                    6u8, // ClientCutText
+                    0,
+                    0,
+                    0, // padding
                     (length >> 24) as u8,
                     (length >> 16) as u8,
                     (length >> 8) as u8,

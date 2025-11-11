@@ -1,9 +1,12 @@
 # SNMP Protocol E2E Tests
 
 ## Test Overview
-Tests SNMP agent implementation with GET, GETNEXT, and custom MIB requests. Validates that the LLM can respond to SNMP queries with proper OID values and data types. Tests both basic system OIDs and custom enterprise OIDs.
+
+Tests SNMP agent implementation with GET, GETNEXT, and custom MIB requests. Validates that the LLM can respond to SNMP
+queries with proper OID values and data types. Tests both basic system OIDs and custom enterprise OIDs.
 
 ## Test Strategy
+
 - **Isolated test servers**: Each test spawns separate NetGet instance with specific OID instructions
 - **Command-line snmpget tool**: Uses Net-SNMP's `snmpget` command for reliable testing
 - **Rust snmp crate**: Uses `snmp` crate for GETNEXT and programmatic testing
@@ -11,6 +14,7 @@ Tests SNMP agent implementation with GET, GETNEXT, and custom MIB requests. Vali
 - **Multiple data types**: Tests string, integer, counter, gauge, timeticks types
 
 ## LLM Call Budget
+
 - `test_snmp_basic_get()`: 2 LLM calls (sysDescr query + sysName query)
 - `test_snmp_get_next()`: 1 LLM call (GETNEXT request)
 - `test_snmp_interface_stats()`: 4 LLM calls (ifIndex, ifDescr, ifSpeed, ifOperStatus queries)
@@ -18,85 +22,99 @@ Tests SNMP agent implementation with GET, GETNEXT, and custom MIB requests. Vali
 - **Total: 10 LLM calls** (exactly at limit)
 
 **Why At Limit?**:
+
 1. SNMP is stateless - each request is independent
 2. Each OID query requires separate LLM call (no batching)
 3. Tests validate multiple scenarios (system OIDs, interface OIDs, custom OIDs)
 
-**Optimization Opportunity**: Could use scripting mode to handle all queries with single setup call + 0 runtime calls. However, tests currently use action-based mode to validate LLM's ability to interpret SNMP requests.
+**Optimization Opportunity**: Could use scripting mode to handle all queries with single setup call + 0 runtime calls.
+However, tests currently use action-based mode to validate LLM's ability to interpret SNMP requests.
 
 ## Scripting Usage
+
 ❌ **Scripting Disabled** - Action-based responses only
 
 **Rationale**: SNMP tests validate that LLM can:
+
 1. Parse SNMP request format (OIDs, request type)
 2. Generate appropriate responses (correct data types, values)
 3. Handle different OID patterns (system, interface, custom)
 
-Scripting would bypass this validation. However, scripting would dramatically improve performance (10 LLM calls → 1 setup call).
+Scripting would bypass this validation. However, scripting would dramatically improve performance (10 LLM calls → 1
+setup call).
 
-**Future Enhancement**: Add scripted SNMP test to validate script generation for OID responses. Would be useful for high-traffic SNMP monitoring scenarios.
+**Future Enhancement**: Add scripted SNMP test to validate script generation for OID responses. Would be useful for
+high-traffic SNMP monitoring scenarios.
 
 ## Client Library
+
 - **snmpget command-line tool** (from Net-SNMP package)
-  - Most reliable SNMP client (used by sysadmins worldwide)
-  - Handles all SNMP versions and PDU types
-  - Used for basic GET tests
+    - Most reliable SNMP client (used by sysadmins worldwide)
+    - Handles all SNMP versions and PDU types
+    - Used for basic GET tests
 
 - **snmp crate v0.3** (Rust SNMP client library)
-  - Programmatic SNMP queries
-  - Used for GETNEXT and multi-OID tests
-  - Provides `SyncSession` for blocking requests
+    - Programmatic SNMP queries
+    - Used for GETNEXT and multi-OID tests
+    - Provides `SyncSession` for blocking requests
 
 **Why command-line tool?**:
+
 1. More reliable than Rust libraries (mature, well-tested)
 2. Easy to debug (can run same command manually)
 3. Exact same tool used in production SNMP monitoring
 
 **Why snmp crate?**:
+
 1. Programmatic control for complex tests (GETNEXT, table walking)
 2. Rust integration (no subprocess overhead)
 3. Type-safe API for variable bindings
 
 ## Expected Runtime
+
 - Model: qwen3-coder:30b
 - Runtime: ~60-90 seconds for full test suite (4 tests)
 - Breakdown:
-  - `test_snmp_basic_get()`: ~15-20s (2 LLM calls)
-  - `test_snmp_get_next()`: ~10-15s (1 LLM call)
-  - `test_snmp_interface_stats()`: ~25-30s (4 LLM calls)
-  - `test_snmp_custom_mib()`: ~20-25s (3 LLM calls)
+    - `test_snmp_basic_get()`: ~15-20s (2 LLM calls)
+    - `test_snmp_get_next()`: ~10-15s (1 LLM call)
+    - `test_snmp_interface_stats()`: ~25-30s (4 LLM calls)
+    - `test_snmp_custom_mib()`: ~20-25s (3 LLM calls)
 
 **Why Fast?**:
+
 1. UDP protocol (no connection overhead)
 2. Simple BER encoding/decoding (<1ms)
 3. No authentication handshake
 4. Each request independent (parallel processing possible)
 
 ## Failure Rate
+
 - **Low** (~5%) - SNMP is simpler than TCP protocols
 - Common failures:
-  - LLM returns wrong data type (e.g., string instead of integer)
-  - LLM doesn't understand OID notation (e.g., returns "1.3.6.1" as string)
-  - Response timeout (LLM too slow or Ollama overload)
+    - LLM returns wrong data type (e.g., string instead of integer)
+    - LLM doesn't understand OID notation (e.g., returns "1.3.6.1" as string)
+    - Response timeout (LLM too slow or Ollama overload)
 - Rare failures:
-  - BER encoding error (server bug, not LLM issue)
-  - Wrong OID returned (LLM misunderstands "next" in GETNEXT)
+    - BER encoding error (server bug, not LLM issue)
+    - Wrong OID returned (LLM misunderstands "next" in GETNEXT)
 
 ## Test Cases
 
 ### 1. SNMP Basic GET (`test_snmp_basic_get`)
+
 - **LLM Calls**: 2 (sysDescr + sysName)
 - **Prompt**: Respond to two OIDs - sysDescr and sysName
 - **Client**: snmpget command-line tool (2 separate queries)
 - **Queries**:
-  1. `1.3.6.1.2.1.1.1.0` (sysDescr) - Expected: "NetGet SNMP Server v1.0"
-  2. `1.3.6.1.2.1.1.5.0` (sysName) - Expected: "netget.local"
+    1. `1.3.6.1.2.1.1.1.0` (sysDescr) - Expected: "NetGet SNMP Server v1.0"
+    2. `1.3.6.1.2.1.1.5.0` (sysName) - Expected: "netget.local"
 - **Validation**:
-  - Response contains "NetGet" or "Server" (lenient check for sysDescr)
-  - sysName query succeeds (any response is valid)
+    - Response contains "NetGet" or "Server" (lenient check for sysDescr)
+    - sysName query succeeds (any response is valid)
 - **Purpose**: Basic SNMP GET operation with common system OIDs
 
 ### 2. SNMP GETNEXT (`test_snmp_get_next`)
+
 - **LLM Calls**: 1 (GETNEXT request)
 - **Prompt**: Support GETNEXT - when queried with 1.3.6.1.2.1.1, return next OID 1.3.6.1.2.1.1.1.0
 - **Client**: snmp crate `SyncSession::getnext()`
@@ -106,39 +124,44 @@ Scripting would bypass this validation. However, scripting would dramatically im
 - **Purpose**: Test GETNEXT operation (table walking primitive)
 
 **Note**: GETNEXT is tricky for LLM:
+
 - Must understand lexicographic OID ordering
 - Must return "next" OID in tree (not same OID)
 - Common mistake: LLM returns same OID or wrong next OID
 
 ### 3. SNMP Interface Statistics (`test_snmp_interface_stats`)
+
 - **LLM Calls**: 4 (ifIndex, ifDescr, ifSpeed, ifOperStatus)
 - **Prompt**: Provide interface statistics for eth0 (OID 1.3.6.1.2.1.2.2.1.x.1)
 - **Client**: snmp crate `SyncSession::get()`
 - **Queries**:
-  1. `1.3.6.1.2.1.2.2.1.1.1` (ifIndex) - Expected: 1 (integer)
-  2. `1.3.6.1.2.1.2.2.1.2.1` (ifDescr) - Expected: "eth0" (string)
-  3. `1.3.6.1.2.1.2.2.1.5.1` (ifSpeed) - Expected: 1000000000 (gauge/integer)
-  4. `1.3.6.1.2.1.2.2.1.8.1` (ifOperStatus) - Expected: 1 (integer, up)
+    1. `1.3.6.1.2.1.2.2.1.1.1` (ifIndex) - Expected: 1 (integer)
+    2. `1.3.6.1.2.1.2.2.1.2.1` (ifDescr) - Expected: "eth0" (string)
+    3. `1.3.6.1.2.1.2.2.1.5.1` (ifSpeed) - Expected: 1000000000 (gauge/integer)
+    4. `1.3.6.1.2.1.2.2.1.8.1` (ifOperStatus) - Expected: 1 (integer, up)
 - **Validation**: All queries return responses (values checked if available)
 - **Purpose**: Test interface MIB table queries (common SNMP use case)
 
 **Note**: This tests SNMP table structure:
+
 - Table OID: 1.3.6.1.2.1.2.2 (ifTable)
 - Entry OID: 1.3.6.1.2.1.2.2.1 (ifEntry)
 - Column OIDs: 1.3.6.1.2.1.2.2.1.X.N (X=column, N=interface index)
 
 ### 4. Custom Enterprise MIB (`test_snmp_custom_mib`)
+
 - **LLM Calls**: 3 (3 custom OID queries)
 - **Prompt**: Support custom enterprise OID tree 1.3.6.1.4.1.99999.x.x.0
 - **Client**: snmp crate `SyncSession::get()`
 - **Queries**:
-  1. `1.3.6.1.4.1.99999.1.1.0` - Expected: "Custom Application v1.0" (string)
-  2. `1.3.6.1.4.1.99999.1.2.0` - Expected: 42 (counter)
-  3. `1.3.6.1.4.1.99999.1.3.0` - Expected: "active" (string)
+    1. `1.3.6.1.4.1.99999.1.1.0` - Expected: "Custom Application v1.0" (string)
+    2. `1.3.6.1.4.1.99999.1.2.0` - Expected: 42 (counter)
+    3. `1.3.6.1.4.1.99999.1.3.0` - Expected: "active" (string)
 - **Validation**: All queries return responses (values checked if available)
 - **Purpose**: Test custom enterprise MIB support (non-standard OIDs)
 
 **Note**: Enterprise OIDs:
+
 - Format: 1.3.6.1.4.1.{enterprise}.{custom}
 - 1.3.6.1.4.1 = iso.org.dod.internet.private.enterprises
 - Each company/organization gets unique enterprise number
@@ -147,11 +170,13 @@ Scripting would bypass this validation. However, scripting would dramatically im
 ## Known Issues
 
 ### 1. snmpget Tool Dependency
+
 **Symptom**: Test fails with "snmpget command not found"
 
 **Cause**: Net-SNMP not installed on test system
 
 **Workaround**: Install Net-SNMP:
+
 - macOS: `brew install net-snmp`
 - Ubuntu: `apt-get install snmp`
 - Fedora: `dnf install net-snmp-utils`
@@ -159,6 +184,7 @@ Scripting would bypass this validation. However, scripting would dramatically im
 **Status**: Test uses fallback error handling - skips test if tool not available
 
 ### 2. LLM Data Type Confusion
+
 **Symptom**: snmpget shows wrong data type (e.g., "INTEGER: Custom Application v1.0")
 
 **Cause**: LLM returns wrong "type" in JSON (e.g., "integer" instead of "string")
@@ -168,11 +194,13 @@ Scripting would bypass this validation. However, scripting would dramatically im
 **Workaround**: Tests use lenient validation - accept any response format
 
 ### 3. OID Notation Confusion
+
 **Symptom**: LLM returns OID as string value instead of OID reference
 
 **Cause**: LLM doesn't understand distinction between OID (object identifier) and value
 
 **Example**:
+
 - Prompt: "For OID 1.3.6.1.2.1.1.1.0, return 'System'"
 - LLM: `{"oid": "1.3.6.1.2.1.1.1.0", "type": "string", "value": "1.3.6.1.2.1.1.1.0"}`
 - Expected: `{"oid": "1.3.6.1.2.1.1.1.0", "type": "string", "value": "System"}`
@@ -180,11 +208,13 @@ Scripting would bypass this validation. However, scripting would dramatically im
 **Frequency**: Rare (<1%)
 
 ### 4. GETNEXT Semantic Confusion
+
 **Symptom**: GETNEXT returns same OID or wrong next OID
 
 **Cause**: LLM doesn't understand lexicographic OID ordering
 
 **Example**:
+
 - Query: GETNEXT 1.3.6.1.2.1.1
 - Expected: 1.3.6.1.2.1.1.1.0 (next OID)
 - LLM Returns: 1.3.6.1.2.1.1 (same OID) or 1.3.6.1.2.1.2.0 (wrong next)
@@ -196,36 +226,44 @@ Scripting would bypass this validation. However, scripting would dramatically im
 ## Performance Notes
 
 ### Why SNMP Is Fast
+
 1. **UDP overhead**: ~100 bytes per request (vs TCP 3-way handshake)
 2. **Stateless**: No connection setup, no teardown
 3. **Simple encoding**: BER is compact (<100 bytes typical)
 4. **No encryption**: SNMPv1/v2c is plaintext (fast)
 
 ### Bottleneck
+
 - **LLM processing**: 2-5s per request (dominates)
 - UDP + BER: <1ms total (negligible)
 
 ### Parallel Processing
+
 Tests could run in parallel:
+
 - Each query is independent
 - No shared state between queries
 - Ollama lock allows concurrent test execution
 
 Example: 4 tests × 10 queries = 40 LLM calls
+
 - Sequential: 40 × 5s = 200s (3.3 minutes)
 - Parallel (4 concurrent): 10 × 5s = 50s (< 1 minute)
 
 However, tests currently run sequentially for clarity.
 
 ### Scripting Mode Performance Improvement
+
 If scripting were enabled:
 
 **Current (action-based)**:
+
 - Setup: 1 LLM call (~5s)
 - 10 queries: 10 LLM calls (~50s)
 - Total: ~55s
 
 **With scripting**:
+
 - Setup: 1 LLM call (~5s, generates script)
 - 10 queries: 0 LLM calls (script handles, <1ms each)
 - Total: ~5s
@@ -235,6 +273,7 @@ If scripting were enabled:
 ## Future Enhancements
 
 ### Test Coverage Gaps
+
 1. **SET requests**: No tests for SetRequest (write operations)
 2. **GETBULK**: No tests for GetBulkRequest (SNMPv2c bulk retrieval)
 3. **Traps**: No tests for SNMP traps (proactive notifications)
@@ -243,6 +282,7 @@ If scripting were enabled:
 6. **Community string validation**: No tests for wrong community string
 
 ### Consolidation Opportunity
+
 All tests could be consolidated into single comprehensive server:
 
 ```rust
@@ -272,6 +312,7 @@ let prompt = format!(
 However, this loses test isolation - one LLM failure affects all validations.
 
 ### Scripting Mode Test
+
 Add test for SNMP scripting:
 
 ```rust
@@ -300,6 +341,7 @@ async fn test_snmp_scripted_responses() -> E2EResult<()> {
 This would validate that scripting works for SNMP and show 10x performance improvement.
 
 ## References
+
 - [RFC 1157: SNMP (SNMPv1)](https://datatracker.ietf.org/doc/html/rfc1157)
 - [RFC 3416: SNMPv2 Protocol Operations](https://datatracker.ietf.org/doc/html/rfc3416)
 - [snmp crate Documentation](https://docs.rs/snmp/latest/snmp/)

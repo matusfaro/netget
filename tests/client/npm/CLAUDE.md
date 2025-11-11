@@ -5,6 +5,7 @@
 ### Approach
 
 Black-box E2E tests using the **public NPM registry** (registry.npmjs.org). Tests verify:
+
 1. Connection initialization
 2. Package information retrieval
 3. Package search functionality
@@ -26,19 +27,19 @@ Black-box E2E tests using the **public NPM registry** (registry.npmjs.org). Test
 #### Per-Test LLM Calls
 
 1. **test_npm_client_get_package_info** (2 LLM calls)
-   - Connect event (npm_connected)
-   - Package info received event (npm_package_info_received)
+    - Connect event (npm_connected)
+    - Package info received event (npm_package_info_received)
 
 2. **test_npm_client_search_packages** (2 LLM calls)
-   - Connect event
-   - Search results received event (npm_search_results_received)
+    - Connect event
+    - Search results received event (npm_search_results_received)
 
 3. **test_npm_client_download_tarball** (1 LLM call)
-   - Connect event (download doesn't trigger LLM, it's a direct operation)
+    - Connect event (download doesn't trigger LLM, it's a direct operation)
 
 4. **test_npm_client_scoped_package** (2 LLM calls)
-   - Connect event
-   - Package info received event
+    - Connect event
+    - Package info received event
 
 **Total**: ~7 LLM calls
 
@@ -63,11 +64,13 @@ Black-box E2E tests using the **public NPM registry** (registry.npmjs.org). Test
 **Purpose**: Verify client can retrieve package metadata
 
 **Steps**:
+
 1. Connect to NPM registry
 2. Request "lodash" package info
 3. LLM processes package data (version, description, dist)
 
 **Expected**:
+
 - Client connects successfully
 - Package info retrieved with valid structure
 - LLM can analyze package versions and metadata
@@ -77,11 +80,13 @@ Black-box E2E tests using the **public NPM registry** (registry.npmjs.org). Test
 **Purpose**: Verify client can search NPM registry
 
 **Steps**:
+
 1. Connect to NPM registry
 2. Search for "http server" packages
 3. LLM processes search results
 
 **Expected**:
+
 - Client connects successfully
 - Search returns multiple results
 - LLM can analyze package list
@@ -91,11 +96,13 @@ Black-box E2E tests using the **public NPM registry** (registry.npmjs.org). Test
 **Purpose**: Verify client can download package tarballs
 
 **Steps**:
+
 1. Connect to NPM registry
 2. Download "lodash" tarball to temp directory
 3. Verify file exists and has content
 
 **Expected**:
+
 - Client connects successfully
 - Tarball downloads to specified path
 - File is valid .tgz archive (> 0 bytes)
@@ -105,11 +112,13 @@ Black-box E2E tests using the **public NPM registry** (registry.npmjs.org). Test
 **Purpose**: Verify client handles scoped packages (@scope/package)
 
 **Steps**:
+
 1. Connect to NPM registry
 2. Request "@types/node" package info
 3. LLM processes scoped package data
 
 **Expected**:
+
 - Client properly encodes package name (@types%2fnode)
 - Package info retrieved successfully
 - Scoped package URL handling works correctly
@@ -133,6 +142,7 @@ Black-box E2E tests using the **public NPM registry** (registry.npmjs.org). Test
 **Issue**: Tests fail if NPM registry is down or rate-limited
 **Impact**: False negatives in CI/CD
 **Mitigation**:
+
 - Use well-known stable packages (lodash, @types/node)
 - Set reasonable timeouts (30s for queries, 120s for downloads)
 - Retry logic in HTTP client (via reqwest)
@@ -146,16 +156,19 @@ Black-box E2E tests using the **public NPM registry** (registry.npmjs.org). Test
 ## Running Tests
 
 ### Run All NPM Client Tests
+
 ```bash
 ./cargo-isolated.sh test --no-default-features --features npm --test client::npm::e2e_test -- --ignored
 ```
 
 ### Run Specific Test
+
 ```bash
 ./cargo-isolated.sh test --no-default-features --features npm --test client::npm::e2e_test test_npm_client_get_package_info -- --ignored
 ```
 
 ### Prerequisites
+
 1. Ollama running: `ollama serve`
 2. Internet connection
 3. npm feature enabled
@@ -165,18 +178,18 @@ Black-box E2E tests using the **public NPM registry** (registry.npmjs.org). Test
 ### Packages Used
 
 1. **lodash** (v4.17.21+)
-   - Extremely popular utility library
-   - Stable API, rarely changes
-   - Small tarball (~100KB)
+    - Extremely popular utility library
+    - Stable API, rarely changes
+    - Small tarball (~100KB)
 
 2. **@types/node** (latest)
-   - TypeScript type definitions
-   - Popular scoped package
-   - Good test for URL encoding
+    - TypeScript type definitions
+    - Popular scoped package
+    - Good test for URL encoding
 
 3. **Search Query**: "http server"
-   - Returns popular packages (express, koa, fastify)
-   - Good variety for LLM analysis
+    - Returns popular packages (express, koa, fastify)
+    - Good variety for LLM analysis
 
 ## Test Maintenance
 

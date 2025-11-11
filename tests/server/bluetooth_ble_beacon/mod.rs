@@ -85,8 +85,9 @@ async fn test_eddystone_url_advertising() -> Result<()> {
         "BLUETOOTH_BLE_BEACON",
         8882,
         json!({}),
-        "Act as an Eddystone-URL beacon broadcasting https://example.com"
-    ).await?;
+        "Act as an Eddystone-URL beacon broadcasting https://example.com",
+    )
+    .await?;
 
     // Wait for server to start and LLM to advertise beacon
     sleep(Duration::from_secs(2)).await;
@@ -146,8 +147,9 @@ async fn test_beacon_server_startup() -> Result<()> {
         "BLUETOOTH_BLE_BEACON",
         8884,
         json!({}),
-        "Act as a BLE beacon"
-    ).await?;
+        "Act as a BLE beacon",
+    )
+    .await?;
 
     // Wait for server to start
     sleep(Duration::from_millis(500)).await;

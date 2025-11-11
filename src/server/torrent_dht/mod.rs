@@ -16,8 +16,8 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 use actions::TorrentDhtProtocol;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// BitTorrent DHT server
 pub struct TorrentDhtServer;
@@ -33,8 +33,14 @@ impl TorrentDhtServer {
     ) -> Result<SocketAddr> {
         let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
         let local_addr = socket.local_addr()?;
-        info!("BitTorrent DHT server (action-based) listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] BitTorrent DHT server listening on {}", local_addr));
+        info!(
+            "BitTorrent DHT server (action-based) listening on {}",
+            local_addr
+        );
+        let _ = status_tx.send(format!(
+            "[INFO] BitTorrent DHT server listening on {}",
+            local_addr
+        ));
 
         let protocol = Arc::new(TorrentDhtProtocol::new());
 
@@ -45,10 +51,14 @@ impl TorrentDhtServer {
                 match socket.recv_from(&mut buffer).await {
                     Ok((n, peer_addr)) => {
                         let data = buffer[..n].to_vec();
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
 
                         // Add connection to ServerInstance
-                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -63,10 +73,17 @@ impl TorrentDhtServer {
                             status_changed_at: now,
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
-                        app_state.add_connection_to_server(server_id, conn_state).await;
+                        app_state
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
-                        console_debug!(status_tx, "BitTorrent DHT received {} bytes from {}", n, peer_addr);
+                        console_debug!(
+                            status_tx,
+                            "BitTorrent DHT received {} bytes from {}",
+                            n,
+                            peer_addr
+                        );
 
                         // TRACE: Log full payload
                         let hex_str = hex::encode(&data);
@@ -83,7 +100,10 @@ impl TorrentDhtServer {
                             match Self::parse_krpc_message(&data) {
                                 Ok((query_type, params)) => {
                                     debug!("BitTorrent DHT query type: {}", query_type);
-                                    let _ = status_clone.send(format!("[DEBUG] BitTorrent DHT query type: {}", query_type));
+                                    let _ = status_clone.send(format!(
+                                        "[DEBUG] BitTorrent DHT query type: {}",
+                                        query_type
+                                    ));
 
                                     // Create event for LLM
                                     let event_type = match query_type.as_str() {
@@ -95,7 +115,10 @@ impl TorrentDhtServer {
                                     let event = Event::new(event_type, serde_json::json!(params));
 
                                     debug!("BitTorrent DHT calling LLM for {} query", query_type);
-                                    let _ = status_clone.send(format!("[DEBUG] BitTorrent DHT calling LLM for {} query", query_type));
+                                    let _ = status_clone.send(format!(
+                                        "[DEBUG] BitTorrent DHT calling LLM for {} query",
+                                        query_type
+                                    ));
 
                                     // Call LLM
                                     match call_llm(
@@ -105,40 +128,72 @@ impl TorrentDhtServer {
                                         None,
                                         &event,
                                         protocol_clone.as_ref(),
-                                    ).await {
+                                    )
+                                    .await
+                                    {
                                         Ok(execution_result) => {
                                             for message in &execution_result.messages {
                                                 info!("{}", message);
-                                                let _ = status_clone.send(format!("[INFO] {}", message));
+                                                let _ = status_clone
+                                                    .send(format!("[INFO] {}", message));
                                             }
 
-                                            debug!("BitTorrent DHT got {} protocol results", execution_result.protocol_results.len());
-                                            let _ = status_clone.send(format!("[DEBUG] BitTorrent DHT got {} protocol results", execution_result.protocol_results.len()));
+                                            debug!(
+                                                "BitTorrent DHT got {} protocol results",
+                                                execution_result.protocol_results.len()
+                                            );
+                                            let _ = status_clone.send(format!(
+                                                "[DEBUG] BitTorrent DHT got {} protocol results",
+                                                execution_result.protocol_results.len()
+                                            ));
 
-                                            for protocol_result in execution_result.protocol_results {
-                                                if let Some(output_data) = protocol_result.get_all_output().first() {
-                                                    if let Err(e) = socket_clone.send_to(output_data, peer_addr).await {
-                                                        error!("Failed to send DHT response: {}", e);
+                                            for protocol_result in execution_result.protocol_results
+                                            {
+                                                if let Some(output_data) =
+                                                    protocol_result.get_all_output().first()
+                                                {
+                                                    if let Err(e) = socket_clone
+                                                        .send_to(output_data, peer_addr)
+                                                        .await
+                                                    {
+                                                        error!(
+                                                            "Failed to send DHT response: {}",
+                                                            e
+                                                        );
                                                     } else {
-                                                        debug!("BitTorrent DHT sent {} bytes to {}", output_data.len(), peer_addr);
+                                                        debug!(
+                                                            "BitTorrent DHT sent {} bytes to {}",
+                                                            output_data.len(),
+                                                            peer_addr
+                                                        );
                                                         let _ = status_clone.send(format!("[DEBUG] BitTorrent DHT sent {} bytes to {}", output_data.len(), peer_addr));
 
                                                         let hex_str = hex::encode(output_data);
-                                                        trace!("BitTorrent DHT sent (hex): {}", hex_str);
-                                                        let _ = status_clone.send(format!("[TRACE] BitTorrent DHT sent (hex): {}", hex_str));
+                                                        trace!(
+                                                            "BitTorrent DHT sent (hex): {}",
+                                                            hex_str
+                                                        );
+                                                        let _ = status_clone.send(format!(
+                                                            "[TRACE] BitTorrent DHT sent (hex): {}",
+                                                            hex_str
+                                                        ));
                                                     }
                                                 }
                                             }
                                         }
                                         Err(e) => {
                                             error!("BitTorrent DHT LLM call failed: {}", e);
-                                            let _ = status_clone.send(format!("✗ BitTorrent DHT LLM error: {}", e));
+                                            let _ = status_clone
+                                                .send(format!("✗ BitTorrent DHT LLM error: {}", e));
                                         }
                                     }
                                 }
                                 Err(e) => {
                                     error!("Failed to parse KRPC message: {}", e);
-                                    let _ = status_clone.send(format!("[ERROR] Failed to parse KRPC message: {}", e));
+                                    let _ = status_clone.send(format!(
+                                        "[ERROR] Failed to parse KRPC message: {}",
+                                        e
+                                    ));
                                 }
                             }
                         });
@@ -162,7 +217,8 @@ impl TorrentDhtServer {
 
         if let Value::Dict(dict) = value {
             // Get message type (q = query, r = response, e = error)
-            let msg_type = dict.get::<[u8]>(b"y")
+            let msg_type = dict
+                .get::<[u8]>(b"y")
                 .and_then(|v| {
                     if let Value::Bytes(bytes) = v {
                         String::from_utf8(bytes.clone()).ok()
@@ -174,7 +230,8 @@ impl TorrentDhtServer {
 
             if msg_type == "q" {
                 // Query message
-                let query_type = dict.get::<[u8]>(b"q")
+                let query_type = dict
+                    .get::<[u8]>(b"q")
                     .and_then(|v| {
                         if let Value::Bytes(bytes) = v {
                             String::from_utf8(bytes.clone()).ok()
@@ -185,19 +242,21 @@ impl TorrentDhtServer {
                     .ok_or_else(|| anyhow::anyhow!("Missing 'q' field"))?;
 
                 // Get transaction ID
-                let transaction_id = dict.get::<[u8]>(b"t")
-                    .and_then(|v| {
-                        if let Value::Bytes(bytes) = v {
-                            Some(hex::encode(bytes))
-                        } else {
-                            None
-                        }
-                    });
+                let transaction_id = dict.get::<[u8]>(b"t").and_then(|v| {
+                    if let Value::Bytes(bytes) = v {
+                        Some(hex::encode(bytes))
+                    } else {
+                        None
+                    }
+                });
 
                 // Get arguments
                 let mut params = serde_json::Map::new();
                 if let Some(transaction_id) = transaction_id {
-                    params.insert("transaction_id".to_string(), serde_json::json!(transaction_id));
+                    params.insert(
+                        "transaction_id".to_string(),
+                        serde_json::json!(transaction_id),
+                    );
                 }
 
                 if let Some(Value::Dict(args)) = dict.get::<[u8]>(b"a") {
@@ -225,7 +284,9 @@ impl TorrentDhtServer {
             Value::Bytes(bytes) => {
                 // Try to decode as UTF-8 string, otherwise hex encode
                 if let Ok(s) = String::from_utf8(bytes.clone()) {
-                    if s.chars().all(|c| c.is_ascii_graphic() || c.is_ascii_whitespace()) {
+                    if s.chars()
+                        .all(|c| c.is_ascii_graphic() || c.is_ascii_whitespace())
+                    {
                         serde_json::json!(s)
                     } else {
                         serde_json::json!(hex::encode(bytes))

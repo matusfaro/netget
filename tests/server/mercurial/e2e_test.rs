@@ -5,7 +5,7 @@
 
 #![cfg(all(test, feature = "mercurial"))]
 
-use super::super::helpers::{self, ServerConfig, E2EResult};
+use super::super::helpers::{self, E2EResult, ServerConfig};
 
 #[tokio::test]
 async fn test_mercurial_capabilities() -> E2EResult<()> {
@@ -30,9 +30,7 @@ Return the following capabilities (one per line):
 Always respond quickly with these standard capabilities."#;
 
     // Start server
-    let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
-    ).await?;
+    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
 
     let port = server.port;
     println!("Mercurial server started on port {}", port);
@@ -58,9 +56,18 @@ Always respond quickly with these standard capabilities."#;
     println!("Capabilities response:\n{}", body);
 
     // Verify capabilities format (newline-separated)
-    assert!(body.contains("batch"), "Should advertise 'batch' capability");
-    assert!(body.contains("branchmap"), "Should advertise 'branchmap' capability");
-    assert!(body.contains("getbundle"), "Should advertise 'getbundle' capability");
+    assert!(
+        body.contains("batch"),
+        "Should advertise 'batch' capability"
+    );
+    assert!(
+        body.contains("branchmap"),
+        "Should advertise 'branchmap' capability"
+    );
+    assert!(
+        body.contains("getbundle"),
+        "Should advertise 'getbundle' capability"
+    );
 
     println!("✓ Capabilities test passed");
     Ok(())
@@ -80,9 +87,7 @@ Return one head node ID (40-character hex string):
 
 This represents the tip of the default branch."#;
 
-    let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
-    ).await?;
+    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
 
     let port = server.port;
     println!("Mercurial server started on port {}", port);
@@ -139,9 +144,7 @@ stable abc123def456789012345678901234567890abcd
 
 Each line represents one branch with its head node IDs."#;
 
-    let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
-    ).await?;
+    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
 
     let port = server.port;
     println!("Mercurial server started on port {}", port);
@@ -212,9 +215,7 @@ develop\tabc123def456789012345678901234567890abcd
 
 Each line is tab-separated: bookmark name, then node ID."#;
 
-    let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
-    ).await?;
+    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
 
     let port = server.port;
     println!("Mercurial server started on port {}", port);
@@ -224,7 +225,10 @@ Each line is tab-separated: bookmark name, then node ID."#;
     // Test: Request listkeys for bookmarks namespace
     println!("\n--- Test: Request Listkeys (bookmarks) ---");
     let client = reqwest::Client::new();
-    let listkeys_url = format!("http://127.0.0.1:{}/?cmd=listkeys&namespace=bookmarks", port);
+    let listkeys_url = format!(
+        "http://127.0.0.1:{}/?cmd=listkeys&namespace=bookmarks",
+        port
+    );
     println!("Requesting: {}", listkeys_url);
 
     let response = client.get(&listkeys_url).send().await?;
@@ -281,9 +285,7 @@ Return HTTP 404 error with message "Repository not found".
 
 Test error handling for non-existent repositories."#;
 
-    let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
-    ).await?;
+    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
 
     let port = server.port;
     println!("Mercurial server started on port {}", port);
@@ -293,7 +295,10 @@ Test error handling for non-existent repositories."#;
     // Test: Request capabilities for non-existent repository
     println!("\n--- Test: Request Non-Existent Repository ---");
     let client = reqwest::Client::new();
-    let nonexistent_url = format!("http://127.0.0.1:{}/nonexistent-repo?cmd=capabilities", port);
+    let nonexistent_url = format!(
+        "http://127.0.0.1:{}/nonexistent-repo?cmd=capabilities",
+        port
+    );
     println!("Requesting: {}", nonexistent_url);
 
     let response = client.get(&nonexistent_url).send().await?;

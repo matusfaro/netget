@@ -131,7 +131,10 @@ impl UsbSmartCardServer {
             }
             Err(e) => {
                 error!("Failed to connect to vpcd at {}: {}", vpcd_addr, e);
-                error!("Make sure vpcd daemon is running: vpcd --tcp-port {}", vpcd_port);
+                error!(
+                    "Make sure vpcd daemon is running: vpcd --tcp-port {}",
+                    vpcd_port
+                );
                 let _ = status_tx.send(format!(
                     "Smart Card ERROR: vpcd daemon not running at {}",
                     vpcd_addr

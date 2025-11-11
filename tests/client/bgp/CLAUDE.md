@@ -14,11 +14,11 @@ All tests are in `tests/client/bgp/e2e_test.rs` with feature gate `#[cfg(all(tes
 
 ### Test Coverage
 
-| Test | Description | LLM Calls | Runtime |
-|------|-------------|-----------|---------|
-| `test_bgp_client_connect_to_server` | Basic connection to BGP server | 2 | ~3s |
-| `test_bgp_client_session_establishment` | Full BGP OPEN handshake | 3 | ~4s |
-| `test_bgp_client_custom_params` | Custom AS/router ID params | 2 | ~3s |
+| Test                                    | Description                    | LLM Calls | Runtime |
+|-----------------------------------------|--------------------------------|-----------|---------|
+| `test_bgp_client_connect_to_server`     | Basic connection to BGP server | 2         | ~3s     |
+| `test_bgp_client_session_establishment` | Full BGP OPEN handshake        | 3         | ~4s     |
+| `test_bgp_client_custom_params`         | Custom AS/router ID params     | 2         | ~3s     |
 
 **Total LLM calls**: 7 (well under 10 budget)
 **Total runtime**: ~10s
@@ -32,6 +32,7 @@ Following the efficiency guidelines from CLAUDE.md, these tests minimize LLM cal
 3. **Minimal verification**: Check connection, not full protocol compliance
 
 Budget breakdown:
+
 - Server startup: 1 LLM call per test
 - Client startup: 1-2 LLM calls per test
 - Session handling: 0-1 LLM calls per test
@@ -43,6 +44,7 @@ Total: **7 calls across 3 tests** (< 10 budget)
 ### Black-Box Testing
 
 Tests treat NetGet as a black box:
+
 - Spawn binary via helpers (`start_netget_server`, `start_netget_client`)
 - Provide prompts describing desired behavior
 - Verify output contains expected strings
@@ -51,6 +53,7 @@ Tests treat NetGet as a black box:
 ### Server Setup
 
 Each test starts a BGP server:
+
 ```rust
 let server_config = NetGetConfig::new(
     "Start BGP server on port {AVAILABLE_PORT} with AS 65000..."
@@ -63,6 +66,7 @@ The `{AVAILABLE_PORT}` placeholder is replaced by the test harness with an avail
 ### Client Setup
 
 BGP clients are started with:
+
 ```rust
 let client_config = NetGetConfig::new(format!(
     "Connect to 127.0.0.1:{} via BGP...",
@@ -79,6 +83,7 @@ let mut client = start_netget_client(client_config).await?;
 ### Verification
 
 Tests verify client behavior by checking output:
+
 ```rust
 assert!(
     client.output_contains("connected").await,
@@ -89,6 +94,7 @@ assert!(
 ### Cleanup
 
 All tests clean up servers and clients:
+
 ```rust
 server.stop().await?;
 client.stop().await?;
@@ -97,16 +103,19 @@ client.stop().await?;
 ## Running Tests
 
 ### Run all BGP client tests
+
 ```bash
 ./cargo-isolated.sh test --no-default-features --features bgp --test client::bgp::e2e_test
 ```
 
 ### Run specific test
+
 ```bash
 ./cargo-isolated.sh test --no-default-features --features bgp test_bgp_client_connect_to_server
 ```
 
 ### Run with logging
+
 ```bash
 RUST_LOG=debug ./cargo-isolated.sh test --no-default-features --features bgp
 ```
@@ -115,15 +124,17 @@ RUST_LOG=debug ./cargo-isolated.sh test --no-default-features --features bgp
 
 - **Compilation**: 10-30s (with `--no-default-features --features bgp`)
 - **Test execution**: ~10s total
-  - `test_bgp_client_connect_to_server`: ~3s
-  - `test_bgp_client_session_establishment`: ~4s
-  - `test_bgp_client_custom_params`: ~3s
+    - `test_bgp_client_connect_to_server`: ~3s
+    - `test_bgp_client_session_establishment`: ~4s
+    - `test_bgp_client_custom_params`: ~3s
 
 ## Known Issues
 
-1. **Timing Sensitivity**: BGP session establishment requires time for OPEN/KEEPALIVE exchange. Tests use `tokio::time::sleep()` to allow handshake completion.
+1. **Timing Sensitivity**: BGP session establishment requires time for OPEN/KEEPALIVE exchange. Tests use
+   `tokio::time::sleep()` to allow handshake completion.
 
-2. **Port Availability**: Tests use `{AVAILABLE_PORT}` to avoid port conflicts. On busy systems, port allocation may occasionally fail.
+2. **Port Availability**: Tests use `{AVAILABLE_PORT}` to avoid port conflicts. On busy systems, port allocation may
+   occasionally fail.
 
 3. **LLM Variability**: LLM responses may vary. Tests check for flexible output patterns (e.g., "connected" OR "OPEN").
 
@@ -132,6 +143,7 @@ RUST_LOG=debug ./cargo-isolated.sh test --no-default-features --features bgp
 ## Test Infrastructure
 
 Tests rely on:
+
 - `tests/server/helpers.rs` - Test helper functions
 - `NetGetConfig` - Configuration builder for test instances
 - `start_netget_server()` - Spawn server process

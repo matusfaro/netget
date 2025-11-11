@@ -7,9 +7,9 @@ use crate::llm::actions::{
 };
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use ollama_rs::generation::completion::request::GenerationRequest;
 use ollama_rs::generation::chat::request::ChatMessageRequest;
 use ollama_rs::generation::chat::{ChatMessage, MessageRole};
+use ollama_rs::generation::completion::request::GenerationRequest;
 use ollama_rs::Ollama;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -68,8 +68,7 @@ impl Message {
 }
 
 /// Structured response from the LLM
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct LlmResponse {
     /// Data to send over the connection (None = no output)
     #[serde(default)]
@@ -99,7 +98,6 @@ pub struct LlmResponse {
     #[serde(default)]
     pub append_memory: Option<String>,
 }
-
 
 impl LlmResponse {
     /// Parse from JSON string with fallback to legacy text format
@@ -360,7 +358,10 @@ impl OllamaClient {
         // TRACE: Full payload
         trace!("Full LLM prompt:\n{}", prompt);
         if let Some(ref tx) = self.status_tx {
-            let _ = tx.send(format!("[TRACE] LLM prompt:\r\n{}", prompt.replace('\n', "\r\n")));
+            let _ = tx.send(format!(
+                "[TRACE] LLM prompt:\r\n{}",
+                prompt.replace('\n', "\r\n")
+            ));
         }
         if let Some(ref schema) = format {
             trace!(
@@ -368,7 +369,8 @@ impl OllamaClient {
                 serde_json::to_string_pretty(schema).unwrap_or_else(|_| "invalid".to_string())
             );
             if let Some(ref tx) = self.status_tx {
-                let schema_str = serde_json::to_string_pretty(schema).unwrap_or_else(|_| "invalid".to_string());
+                let schema_str =
+                    serde_json::to_string_pretty(schema).unwrap_or_else(|_| "invalid".to_string());
                 let _ = tx.send(format!(
                     "[TRACE] JSON schema:\r\n{}",
                     schema_str.replace('\n', "\r\n")
@@ -526,9 +528,16 @@ impl OllamaClient {
         messages: Vec<Message>,
         _format: Option<serde_json::Value>,
     ) -> Result<String> {
-        debug!("Sending chat request (model: {}, {} messages)", model, messages.len());
+        debug!(
+            "Sending chat request (model: {}, {} messages)",
+            model,
+            messages.len()
+        );
         for (i, msg) in messages.iter().enumerate() {
-            debug!("Message {}: [{}] {}",  i + 1, msg.role,
+            debug!(
+                "Message {}: [{}] {}",
+                i + 1,
+                msg.role,
                 if msg.content.len() > 200 {
                     format!("{}...", &msg.content[..200])
                 } else {
@@ -538,10 +547,8 @@ impl OllamaClient {
         }
 
         // Convert our messages to ollama-rs ChatMessage format
-        let ollama_messages: Vec<ChatMessage> = messages
-            .iter()
-            .map(|m| m.to_ollama_message())
-            .collect();
+        let ollama_messages: Vec<ChatMessage> =
+            messages.iter().map(|m| m.to_ollama_message()).collect();
 
         // Create chat request
         let request = ChatMessageRequest::new(model.to_string(), ollama_messages);
@@ -557,7 +564,10 @@ impl OllamaClient {
 
         let content = response.message.content;
 
-        debug!("Received chat response from Ollama ({} chars)", content.len());
+        debug!(
+            "Received chat response from Ollama ({} chars)",
+            content.len()
+        );
         trace!("Full response: {}", content);
 
         Ok(content)
@@ -624,7 +634,12 @@ impl OllamaClient {
                         if attempt < MAX_RETRIES + 1 {
                             info!("Retrying with corrective feedback...");
                             // Recursive call with corrected prompt (needs Box::pin for recursion)
-                            return Box::pin(self.generate_with_retry(model, &retry_prompt, expected_format)).await;
+                            return Box::pin(self.generate_with_retry(
+                                model,
+                                &retry_prompt,
+                                expected_format,
+                            ))
+                            .await;
                         }
                     } else {
                         // No more retries
@@ -643,7 +658,9 @@ impl OllamaClient {
         model: &str,
         initial_prompt_builder: F,
         max_iterations: usize,
-        approval_tx: Option<tokio::sync::mpsc::UnboundedSender<crate::state::app_state::WebApprovalRequest>>,
+        approval_tx: Option<
+            tokio::sync::mpsc::UnboundedSender<crate::state::app_state::WebApprovalRequest>,
+        >,
         web_search_mode: crate::state::app_state::WebSearchMode,
     ) -> Result<Vec<serde_json::Value>>
     where
@@ -670,7 +687,10 @@ impl OllamaClient {
         }
 
         // Log initial messages
-        trace!("New messages:\n{}", &conversation_history[last_logged_position..]);
+        trace!(
+            "New messages:\n{}",
+            &conversation_history[last_logged_position..]
+        );
         last_logged_position = conversation_history.len();
 
         for turn in 1..=max_iterations {
@@ -739,7 +759,9 @@ impl OllamaClient {
                                 tool_action.describe()
                             ));
                         }
-                        let result = execute_tool(&tool_action, approval_tx.as_ref(), web_search_mode, None).await;
+                        let result =
+                            execute_tool(&tool_action, approval_tx.as_ref(), web_search_mode, None)
+                                .await;
                         info!("  Result: {}", result.summary());
                         if let Some(ref tx) = self.status_tx {
                             let _ = tx.send(format!("[INFO]   Result: {}", result.summary()));
@@ -775,7 +797,10 @@ impl OllamaClient {
             let conv_size = conversation_history.len();
 
             // Log only new messages since last checkpoint
-            trace!("New messages:\n{}", &conversation_history[last_logged_position..]);
+            trace!(
+                "New messages:\n{}",
+                &conversation_history[last_logged_position..]
+            );
             if let Some(ref tx) = self.status_tx {
                 let _ = tx.send(format!(
                     "[TRACE] Conversation updated: {} chars (added {} new chars)",

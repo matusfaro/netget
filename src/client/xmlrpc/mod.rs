@@ -10,6 +10,9 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
+use crate::client::xmlrpc::actions::{
+    XMLRPC_CLIENT_CONNECTED_EVENT, XMLRPC_CLIENT_RESPONSE_RECEIVED_EVENT,
+};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::actions::client_trait::Client;
 use crate::llm::ollama_client::OllamaClient;
@@ -17,7 +20,6 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::xmlrpc::actions::{XMLRPC_CLIENT_CONNECTED_EVENT, XMLRPC_CLIENT_RESPONSE_RECEIVED_EVENT};
 
 /// XML-RPC client that calls methods on remote servers
 pub struct XmlRpcClient;
@@ -34,26 +36,34 @@ impl XmlRpcClient {
         // For XML-RPC, "connection" is logical, not a persistent connection
         // The server URL is stored and used for each method call
 
-        info!("XML-RPC client {} initialized for {}", client_id, remote_addr);
+        info!(
+            "XML-RPC client {} initialized for {}",
+            client_id, remote_addr
+        );
 
         // Ensure URL is properly formatted
-        let server_url = if remote_addr.starts_with("http://") || remote_addr.starts_with("https://") {
-            remote_addr.clone()
-        } else {
-            format!("http://{}", remote_addr)
-        };
+        let server_url =
+            if remote_addr.starts_with("http://") || remote_addr.starts_with("https://") {
+                remote_addr.clone()
+            } else {
+                format!("http://{}", remote_addr)
+            };
 
         // Store server URL in protocol_data
-        app_state.with_client_mut(client_id, |client| {
-            client.set_protocol_field(
-                "server_url".to_string(),
-                serde_json::json!(server_url),
-            );
-        }).await;
+        app_state
+            .with_client_mut(client_id, |client| {
+                client.set_protocol_field("server_url".to_string(), serde_json::json!(server_url));
+            })
+            .await;
 
         // Update status
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] XML-RPC client {} ready for {}", client_id, server_url));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] XML-RPC client {} ready for {}",
+            client_id, server_url
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Call LLM with initial connected event to trigger first action
@@ -66,9 +76,15 @@ impl XmlRpcClient {
                 }),
             );
 
-            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+            let memory = app_state
+                .get_memory_for_client(client_id)
+                .await
+                .unwrap_or_default();
 
-            if let Ok(ClientLlmResult { actions, memory_updates }) = call_llm_for_client(
+            if let Ok(ClientLlmResult {
+                actions,
+                memory_updates,
+            }) = call_llm_for_client(
                 &_llm_client,
                 &app_state,
                 client_id.to_string(),
@@ -77,7 +93,9 @@ impl XmlRpcClient {
                 Some(&event),
                 protocol.as_ref(),
                 &status_tx,
-            ).await {
+            )
+            .await
+            {
                 // Update memory
                 if let Some(mem) = memory_updates {
                     app_state.set_memory_for_client(client_id, mem).await;
@@ -86,11 +104,13 @@ impl XmlRpcClient {
                 // Execute initial actions
                 for action in actions {
                     match protocol.execute_action(action) {
-                        Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data })
-                            if name == "xmlrpc_call" => {
+                        Ok(crate::llm::actions::client_trait::ClientActionResult::Custom {
+                            name,
+                            data,
+                        }) if name == "xmlrpc_call" => {
                             if let (Some(method), Some(params)) = (
                                 data.get("method_name").and_then(|v| v.as_str()),
-                                data.get("params").and_then(|v| v.as_array())
+                                data.get("params").and_then(|v| v.as_array()),
                             ) {
                                 // Spawn initial method call
                                 let app_state_clone = app_state.clone();
@@ -107,12 +127,16 @@ impl XmlRpcClient {
                                         app_state_clone,
                                         llm_client_clone,
                                         status_tx_clone,
-                                    ).await;
+                                    )
+                                    .await;
                                 });
                             }
                         }
                         Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
-                            info!("XML-RPC client {} disconnecting on initial action", client_id);
+                            info!(
+                                "XML-RPC client {} disconnecting on initial action",
+                                client_id
+                            );
                             return Ok("0.0.0.0:0".parse().unwrap());
                         }
                         _ => {}
@@ -148,7 +172,15 @@ impl XmlRpcClient {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send>> {
         Box::pin(async move {
-            Self::call_method_impl(client_id, method_name, params, app_state, llm_client, status_tx).await
+            Self::call_method_impl(
+                client_id,
+                method_name,
+                params,
+                app_state,
+                llm_client,
+                status_tx,
+            )
+            .await
         })
     }
 
@@ -162,14 +194,23 @@ impl XmlRpcClient {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         // Get server URL from client
-        let server_url = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("server_url")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }).await.flatten().context("No server URL found")?;
+        let server_url = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("server_url")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .await
+            .flatten()
+            .context("No server URL found")?;
 
-        info!("XML-RPC client {} calling method: {} with {} params",
-            client_id, method_name, params.len());
+        info!(
+            "XML-RPC client {} calling method: {} with {} params",
+            client_id,
+            method_name,
+            params.len()
+        );
 
         // Convert JSON values to xmlrpc::Value
         let mut xmlrpc_params = Vec::new();
@@ -188,16 +229,22 @@ impl XmlRpcClient {
                 request = request.arg(param);
             }
             request.call_url(&server_url)
-        }).await {
+        })
+        .await
+        {
             Ok(Ok(response)) => {
-                info!("XML-RPC client {} received response for {}", client_id, method_name_for_log);
+                info!(
+                    "XML-RPC client {} received response for {}",
+                    client_id, method_name_for_log
+                );
 
                 // Convert response to JSON
                 let result_json = Self::xmlrpc_value_to_json(&response);
 
                 // Call LLM with response
                 if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                    let protocol = Arc::new(crate::client::xmlrpc::actions::XmlRpcClientProtocol::new());
+                    let protocol =
+                        Arc::new(crate::client::xmlrpc::actions::XmlRpcClientProtocol::new());
                     let event = Event::new(
                         &XMLRPC_CLIENT_RESPONSE_RECEIVED_EVENT,
                         serde_json::json!({
@@ -206,7 +253,10 @@ impl XmlRpcClient {
                         }),
                     );
 
-                    let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                    let memory = app_state
+                        .get_memory_for_client(client_id)
+                        .await
+                        .unwrap_or_default();
 
                     match call_llm_for_client(
                         &llm_client,
@@ -217,8 +267,13 @@ impl XmlRpcClient {
                         Some(&event),
                         protocol.as_ref(),
                         &status_tx,
-                    ).await {
-                        Ok(ClientLlmResult { actions, memory_updates }) => {
+                    )
+                    .await
+                    {
+                        Ok(ClientLlmResult {
+                            actions,
+                            memory_updates,
+                        }) => {
                             // Update memory
                             if let Some(mem) = memory_updates {
                                 app_state.set_memory_for_client(client_id, mem).await;
@@ -263,11 +318,15 @@ impl XmlRpcClient {
             }
             Ok(Err(fault)) => {
                 let fault_msg = fault.to_string();
-                error!("XML-RPC client {} error for {}: {}", client_id, method_name_for_log, fault_msg);
+                error!(
+                    "XML-RPC client {} error for {}: {}",
+                    client_id, method_name_for_log, fault_msg
+                );
 
                 // Call LLM with fault
                 if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                    let protocol = Arc::new(crate::client::xmlrpc::actions::XmlRpcClientProtocol::new());
+                    let protocol =
+                        Arc::new(crate::client::xmlrpc::actions::XmlRpcClientProtocol::new());
                     let event = Event::new(
                         &XMLRPC_CLIENT_RESPONSE_RECEIVED_EVENT,
                         serde_json::json!({
@@ -278,9 +337,15 @@ impl XmlRpcClient {
                         }),
                     );
 
-                    let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                    let memory = app_state
+                        .get_memory_for_client(client_id)
+                        .await
+                        .unwrap_or_default();
 
-                    if let Ok(ClientLlmResult { actions, memory_updates }) = call_llm_for_client(
+                    if let Ok(ClientLlmResult {
+                        actions,
+                        memory_updates,
+                    }) = call_llm_for_client(
                         &llm_client,
                         &app_state,
                         client_id.to_string(),
@@ -289,7 +354,9 @@ impl XmlRpcClient {
                         Some(&event),
                         protocol.as_ref(),
                         &status_tx,
-                    ).await {
+                    )
+                    .await
+                    {
                         // Update memory
                         if let Some(mem) = memory_updates {
                             app_state.set_memory_for_client(client_id, mem).await;
@@ -381,7 +448,10 @@ impl XmlRpcClient {
             xmlrpc::Value::DateTime(dt) => serde_json::json!(dt.to_string()),
             xmlrpc::Value::Base64(b) => {
                 // Convert to base64 string for JSON
-                serde_json::json!(base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b))
+                serde_json::json!(base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    b
+                ))
             }
             xmlrpc::Value::Array(arr) => {
                 let json_arr: Vec<_> = arr.iter().map(Self::xmlrpc_value_to_json).collect();

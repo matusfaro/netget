@@ -7,8 +7,8 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
-use crate::server::connection::ConnectionId;
 use crate::protocol::EventType;
+use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
@@ -117,7 +117,7 @@ impl Protocol for SocketFileProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
@@ -151,12 +151,14 @@ impl Server for SocketFileProtocol {
     > {
         Box::pin(async move {
             // Extract socket_path and send_first from startup_params
-            let socket_path = ctx.startup_params
+            let socket_path = ctx
+                .startup_params
                 .as_ref()
                 .and_then(|p| Some(p.get_string("socket_path")))
                 .ok_or_else(|| anyhow::anyhow!("socket_path parameter is required"))?;
 
-            let send_first = ctx.startup_params
+            let send_first = ctx
+                .startup_params
                 .as_ref()
                 .and_then(|p| p.get_optional_bool("send_first"))
                 .unwrap_or(false);
@@ -170,7 +172,8 @@ impl Server for SocketFileProtocol {
                 ctx.status_tx,
                 send_first,
                 ctx.server_id,
-            ).await?;
+            )
+            .await?;
 
             // Return a dummy SocketAddr since Unix sockets don't have IP addresses
             // Store the actual socket path in the server instance
@@ -343,9 +346,12 @@ fn close_this_connection_action() -> ActionDefinition {
 // Socket File Action Constants
 // ============================================================================
 
-pub static SEND_SOCKET_DATA_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| send_socket_data_action());
-pub static WAIT_FOR_MORE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| wait_for_more_action());
-pub static CLOSE_THIS_CONNECTION_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| close_this_connection_action());
+pub static SEND_SOCKET_DATA_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| send_socket_data_action());
+pub static WAIT_FOR_MORE_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| wait_for_more_action());
+pub static CLOSE_THIS_CONNECTION_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| close_this_connection_action());
 
 // ============================================================================
 // Socket File Event Type Constants
@@ -355,7 +361,7 @@ pub static CLOSE_THIS_CONNECTION_ACTION: LazyLock<ActionDefinition> = LazyLock::
 pub static SOCKET_FILE_CONNECTION_OPENED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "socket_file_connection_opened",
-        "New Unix domain socket connection established (send initial greeting/banner if needed)"
+        "New Unix domain socket connection established (send initial greeting/banner if needed)",
     )
     .with_parameters(vec![])
     .with_actions(vec![
@@ -368,16 +374,14 @@ pub static SOCKET_FILE_CONNECTION_OPENED_EVENT: LazyLock<EventType> = LazyLock::
 pub static SOCKET_FILE_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "socket_file_data_received",
-        "Data received on Unix domain socket connection"
+        "Data received on Unix domain socket connection",
     )
-    .with_parameters(vec![
-        Parameter {
-            name: "data".to_string(),
-            type_hint: "string".to_string(),
-            description: "The data received (as hex string or UTF-8 if printable)".to_string(),
-            required: true,
-        },
-    ])
+    .with_parameters(vec![Parameter {
+        name: "data".to_string(),
+        type_hint: "string".to_string(),
+        description: "The data received (as hex string or UTF-8 if printable)".to_string(),
+        required: true,
+    }])
     .with_actions(vec![
         SEND_SOCKET_DATA_ACTION.clone(),
         WAIT_FOR_MORE_ACTION.clone(),

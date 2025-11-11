@@ -2,13 +2,15 @@
 
 ## Overview
 
-End-to-end tests for RIP (Routing Information Protocol) server implementation, validating protocol compliance and LLM-controlled routing decisions.
+End-to-end tests for RIP (Routing Information Protocol) server implementation, validating protocol compliance and
+LLM-controlled routing decisions.
 
 ## Test Strategy
 
 ### Black-Box Testing
 
 Tests interact with NetGet via UDP (RIP uses UDP port 520):
+
 - Send RIP request messages
 - Receive RIP response messages
 - Validate message format and route entries
@@ -19,6 +21,7 @@ Tests interact with NetGet via UDP (RIP uses UDP port 520):
 **Target**: < 10 LLM calls per test suite
 
 **Actual LLM calls**:
+
 - `test_rip_routing_table_request`: 1 LLM call (server startup)
 - `test_rip_route_advertisement`: 1 LLM call (server startup)
 - `test_rip_metric_handling`: 1 LLM call (server startup)
@@ -27,7 +30,8 @@ Tests interact with NetGet via UDP (RIP uses UDP port 520):
 
 ### Test Organization
 
-Each test creates a new server instance with a specific prompt describing routing behavior. This allows testing different routing scenarios without requiring complex multi-step interactions.
+Each test creates a new server instance with a specific prompt describing routing behavior. This allows testing
+different routing scenarios without requiring complex multi-step interactions.
 
 ## Test Cases
 
@@ -36,6 +40,7 @@ Each test creates a new server instance with a specific prompt describing routin
 **Purpose**: Verify server responds to routing table requests with advertised routes
 
 **LLM Prompt**:
+
 ```
 listen on port 0 via rip.
 When you receive a RIP request for the entire routing table (AFI=0, metric=16),
@@ -46,6 +51,7 @@ respond with routes for:
 ```
 
 **Test Flow**:
+
 1. Client sends RIP request (AFI=0, metric=16 = entire table)
 2. Server responds with RIP response containing routes
 3. Validate response format (command=2, version=2)
@@ -61,6 +67,7 @@ respond with routes for:
 **Purpose**: Verify server advertises specific routes with correct format
 
 **LLM Prompt**:
+
 ```
 listen on port 0 via rip.
 For any RIP request, advertise the following routes:
@@ -69,6 +76,7 @@ For any RIP request, advertise the following routes:
 ```
 
 **Test Flow**:
+
 1. Client sends RIP request
 2. Server responds with advertised routes
 3. Validate each route has valid metric (1-16)
@@ -84,6 +92,7 @@ For any RIP request, advertise the following routes:
 **Purpose**: Verify server handles different metric values correctly
 
 **LLM Prompt**:
+
 ```
 listen on port 0 via rip.
 Advertise routes with different metrics:
@@ -94,13 +103,14 @@ Advertise routes with different metrics:
 ```
 
 **Test Flow**:
+
 1. Client sends RIP request
 2. Server responds with routes having various metrics
 3. Verify presence of routes with different metric ranges:
-   - Low (1-3): Directly connected
-   - Medium (4-10): Multi-hop reachable
-   - High (11-15): Maximum reachable
-   - Infinity (16): Unreachable
+    - Low (1-3): Directly connected
+    - Medium (4-10): Multi-hop reachable
+    - High (11-15): Maximum reachable
+    - Infinity (16): Unreachable
 
 **LLM Calls**: 1 (server startup only)
 
@@ -109,6 +119,7 @@ Advertise routes with different metrics:
 ## RIP Protocol Compliance
 
 Tests validate:
+
 - **Message Format**: 4-byte header (command, version, unused)
 - **Route Entry Format**: 20 bytes per entry (AFI, tag, IP, mask, next hop, metric)
 - **Version**: RIPv2 (version field = 2)
@@ -188,6 +199,7 @@ test result: ok. 3 passed; 0 failed
 ### Runtime Breakdown
 
 **Per Test**:
+
 - Server startup: 5-10 seconds
 - LLM processing (1 call): 60-90 seconds
 - UDP request/response: < 1 second
@@ -195,6 +207,7 @@ test result: ok. 3 passed; 0 failed
 - **Total per test**: ~70-100 seconds
 
 **Full Suite**:
+
 - 3 tests × ~90 seconds = ~270 seconds (~4.5 minutes)
 - With parallel execution: Not supported (Ollama lock)
 
@@ -210,24 +223,24 @@ test result: ok. 3 passed; 0 failed
 ### Common Failures
 
 1. **Timeout waiting for response**
-   - Check Ollama is running
-   - Increase timeout in test (currently 120 seconds)
-   - Verify LLM model is loaded
+    - Check Ollama is running
+    - Increase timeout in test (currently 120 seconds)
+    - Verify LLM model is loaded
 
 2. **Invalid RIP message format**
-   - Check server logs in test output
-   - Verify LLM generated correct actions
-   - May need to refine prompt
+    - Check server logs in test output
+    - Verify LLM generated correct actions
+    - May need to refine prompt
 
 3. **Wrong route count**
-   - LLM may have interpreted prompt differently
-   - Check actual routes returned in test output
-   - Adjust expectations or prompt clarity
+    - LLM may have interpreted prompt differently
+    - Check actual routes returned in test output
+    - Adjust expectations or prompt clarity
 
 4. **Port binding errors**
-   - Another test may still be running
-   - Use `lsof -i :520` to check for conflicts
-   - Wait a few seconds and retry
+    - Another test may still be running
+    - Use `lsof -i :520` to check for conflicts
+    - Wait a few seconds and retry
 
 ### Useful Debugging Commands
 
@@ -253,6 +266,7 @@ tail -f netget.log
 ### Test Stability
 
 Tests are designed to be:
+
 - **Deterministic**: Same prompt should yield consistent behavior
 - **Isolated**: Each test runs independent server
 - **Forgiving**: Tests check essential behavior, not exact values

@@ -15,7 +15,9 @@ mod tests {
     async fn test_http_server_basic() -> Result<()> {
         // Start NetGet
         let mut netget = NetGetWrapper::new();
-        netget.start("qwen2.5-coder:7b", vec!["--no-scripting"]).await?;
+        netget
+            .start("qwen2.5-coder:7b", vec!["--no-scripting"])
+            .await?;
 
         // Create HTTP server with comprehensive prompt
         let prompt = r#"
@@ -49,7 +51,9 @@ mod tests {
         assert_eq!(body, "Test data");
 
         // Test 4: 404 handling
-        validator.expect_status("/nonexistent", StatusCode::NOT_FOUND).await?;
+        validator
+            .expect_status("/nonexistent", StatusCode::NOT_FOUND)
+            .await?;
 
         // Cleanup
         netget.stop().await?;
@@ -75,7 +79,9 @@ mod tests {
         validator.wait_for_ready(20).await?;
 
         // Initial count should be 0
-        validator.expect_json_field("/counter", "count", &json!(0)).await?;
+        validator
+            .expect_json_field("/counter", "count", &json!(0))
+            .await?;
 
         // Increment counter
         let response = validator.post_text("/counter/increment", "").await?;
@@ -84,11 +90,15 @@ mod tests {
 
         // Increment again
         validator.post_text("/counter/increment", "").await?;
-        validator.expect_json_field("/counter", "count", &json!(2)).await?;
+        validator
+            .expect_json_field("/counter", "count", &json!(2))
+            .await?;
 
         // Reset
         validator.post_text("/counter/reset", "").await?;
-        validator.expect_json_field("/counter", "count", &json!(0)).await?;
+        validator
+            .expect_json_field("/counter", "count", &json!(0))
+            .await?;
 
         netget.stop().await?;
         Ok(())
@@ -141,7 +151,9 @@ mod tests {
     #[cfg(feature = "scripting")]
     async fn test_http_with_scripting() -> Result<()> {
         let mut netget = NetGetWrapper::new();
-        netget.start("qwen2.5-coder:7b", vec!["--scripting", "python"]).await?;
+        netget
+            .start("qwen2.5-coder:7b", vec!["--scripting", "python"])
+            .await?;
 
         // Create server with scripting
         let prompt = r#"

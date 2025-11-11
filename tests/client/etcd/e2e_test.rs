@@ -17,13 +17,18 @@ async fn start_etcd_server() -> Result<(String, std::process::Child)> {
             "run",
             "--rm",
             "-d",
-            "-p", "2379:2379",
-            "-p", "2380:2380",
-            "--name", "netget-etcd-test",
+            "-p",
+            "2379:2379",
+            "-p",
+            "2380:2380",
+            "--name",
+            "netget-etcd-test",
             "quay.io/coreos/etcd:v3.5.17",
             "/usr/local/bin/etcd",
-            "--advertise-client-urls", "http://0.0.0.0:2379",
-            "--listen-client-urls", "http://0.0.0.0:2379",
+            "--advertise-client-urls",
+            "http://0.0.0.0:2379",
+            "--listen-client-urls",
+            "http://0.0.0.0:2379",
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -96,9 +101,17 @@ async fn test_etcd_client_multiple_keys() -> Result<()> {
     let mut client = client;
 
     // Put multiple keys
-    client.put("/app/config/database", "postgresql://localhost:5432/mydb", None).await?;
+    client
+        .put(
+            "/app/config/database",
+            "postgresql://localhost:5432/mydb",
+            None,
+        )
+        .await?;
     client.put("/app/config/timeout", "30", None).await?;
-    client.put("/app/config/max_connections", "100", None).await?;
+    client
+        .put("/app/config/max_connections", "100", None)
+        .await?;
     println!("✓ PUT 3 config keys");
 
     // Get all keys

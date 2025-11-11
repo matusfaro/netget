@@ -9,9 +9,9 @@
 //! The identity key should be kept secure and rarely rotated, while the signing key
 //! can be rotated monthly for security best practices.
 
-use ed25519_dalek::{SigningKey, VerifyingKey, Signature, Signer};
-use sha2::{Digest, Sha256};
 use anyhow::Result;
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
+use sha2::{Digest, Sha256};
 
 /// Authority keypair consisting of identity key (long-term) and signing key (medium-term)
 #[derive(Clone)]
@@ -91,4 +91,3 @@ impl AuthorityKeys {
         self.identity_key.to_bytes()
     }
 }
-

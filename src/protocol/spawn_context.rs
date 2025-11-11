@@ -81,12 +81,16 @@ impl StartupParams {
     /// - If the parameter exists but is not a string
     pub fn get_optional_string(&self, key: &str) -> Option<String> {
         self.validate_key(key);
-        self.params.get(key).map(|v| v.as_str().unwrap_or_else(|| {
-                panic!(
-                    "Optional string parameter '{}' exists but is not a string. Value: {}",
-                    key, v
-                )
-            }).to_string())
+        self.params.get(key).map(|v| {
+            v.as_str()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Optional string parameter '{}' exists but is not a string. Value: {}",
+                        key, v
+                    )
+                })
+                .to_string()
+        })
     }
 
     /// Get a required boolean parameter
@@ -97,12 +101,15 @@ impl StartupParams {
     /// - If the parameter is not a boolean
     pub fn get_bool(&self, key: &str) -> bool {
         self.validate_key(key);
-        self.params.get(key).and_then(|v| v.as_bool()).unwrap_or_else(|| {
-            panic!(
-                "Required boolean parameter '{}' is missing or not a boolean. Params: {}",
-                key, self.params
-            )
-        })
+        self.params
+            .get(key)
+            .and_then(|v| v.as_bool())
+            .unwrap_or_else(|| {
+                panic!(
+                    "Required boolean parameter '{}' is missing or not a boolean. Params: {}",
+                    key, self.params
+                )
+            })
     }
 
     /// Get an optional boolean parameter
@@ -112,12 +119,14 @@ impl StartupParams {
     /// - If the parameter exists but is not a boolean
     pub fn get_optional_bool(&self, key: &str) -> Option<bool> {
         self.validate_key(key);
-        self.params.get(key).map(|v| v.as_bool().unwrap_or_else(|| {
+        self.params.get(key).map(|v| {
+            v.as_bool().unwrap_or_else(|| {
                 panic!(
                     "Optional boolean parameter '{}' exists but is not a boolean. Value: {}",
                     key, v
                 )
-            }))
+            })
+        })
     }
 
     /// Get a required integer parameter
@@ -128,12 +137,15 @@ impl StartupParams {
     /// - If the parameter is not an integer
     pub fn get_i64(&self, key: &str) -> i64 {
         self.validate_key(key);
-        self.params.get(key).and_then(|v| v.as_i64()).unwrap_or_else(|| {
-            panic!(
-                "Required integer parameter '{}' is missing or not an integer. Params: {}",
-                key, self.params
-            )
-        })
+        self.params
+            .get(key)
+            .and_then(|v| v.as_i64())
+            .unwrap_or_else(|| {
+                panic!(
+                    "Required integer parameter '{}' is missing or not an integer. Params: {}",
+                    key, self.params
+                )
+            })
     }
 
     /// Get an optional integer parameter
@@ -143,12 +155,14 @@ impl StartupParams {
     /// - If the parameter exists but is not an integer
     pub fn get_optional_i64(&self, key: &str) -> Option<i64> {
         self.validate_key(key);
-        self.params.get(key).map(|v| v.as_i64().unwrap_or_else(|| {
+        self.params.get(key).map(|v| {
+            v.as_i64().unwrap_or_else(|| {
                 panic!(
                     "Optional integer parameter '{}' exists but is not an integer. Value: {}",
                     key, v
                 )
-            }))
+            })
+        })
     }
 
     /// Get a required unsigned integer parameter
@@ -201,7 +215,9 @@ impl StartupParams {
                 if val > u32::MAX as u64 {
                     panic!(
                         "Optional u32 parameter '{}' exceeds u32::MAX ({}). Value: {}",
-                        key, u32::MAX, val
+                        key,
+                        u32::MAX,
+                        val
                     );
                 }
                 Some(val as u32)
@@ -217,12 +233,15 @@ impl StartupParams {
     /// - If the parameter is not an object
     pub fn get_object(&self, key: &str) -> &serde_json::Map<String, serde_json::Value> {
         self.validate_key(key);
-        self.params.get(key).and_then(|v| v.as_object()).unwrap_or_else(|| {
-            panic!(
-                "Required object parameter '{}' is missing or not an object. Params: {}",
-                key, self.params
-            )
-        })
+        self.params
+            .get(key)
+            .and_then(|v| v.as_object())
+            .unwrap_or_else(|| {
+                panic!(
+                    "Required object parameter '{}' is missing or not an object. Params: {}",
+                    key, self.params
+                )
+            })
     }
 
     /// Get an optional object/map parameter
@@ -230,7 +249,10 @@ impl StartupParams {
     /// # Panics
     /// - If the parameter was not declared in `get_startup_parameters()`
     /// - If the parameter exists but is not an object
-    pub fn get_optional_object(&self, key: &str) -> Option<&serde_json::Map<String, serde_json::Value>> {
+    pub fn get_optional_object(
+        &self,
+        key: &str,
+    ) -> Option<&serde_json::Map<String, serde_json::Value>> {
         self.validate_key(key);
         match self.params.get(key) {
             None => None,
@@ -251,12 +273,15 @@ impl StartupParams {
     /// - If the parameter is not an array
     pub fn get_array(&self, key: &str) -> &Vec<serde_json::Value> {
         self.validate_key(key);
-        self.params.get(key).and_then(|v| v.as_array()).unwrap_or_else(|| {
-            panic!(
-                "Required array parameter '{}' is missing or not an array. Params: {}",
-                key, self.params
-            )
-        })
+        self.params
+            .get(key)
+            .and_then(|v| v.as_array())
+            .unwrap_or_else(|| {
+                panic!(
+                    "Required array parameter '{}' is missing or not an array. Params: {}",
+                    key, self.params
+                )
+            })
     }
 
     /// Get an optional array parameter

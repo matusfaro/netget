@@ -33,13 +33,15 @@ async fn test_xmpp_client_connect() -> Result<()> {
 
     // Create client instance
     let client_id = ClientId::from(1);
-    app_state.add_client(
-        client_id,
-        "XMPP".to_string(),
-        "alice@localhost@password".to_string(),
-        "Send presence and log any messages".to_string(),
-        None,
-    ).await;
+    app_state
+        .add_client(
+            client_id,
+            "XMPP".to_string(),
+            "alice@localhost@password".to_string(),
+            "Send presence and log any messages".to_string(),
+            None,
+        )
+        .await;
 
     // Connect client
     use netget::client::xmpp::XmppClientConnection;
@@ -52,7 +54,8 @@ async fn test_xmpp_client_connect() -> Result<()> {
             status_tx.clone(),
             client_id,
         ),
-    ).await;
+    )
+    .await;
 
     // Check connection succeeded
     assert!(result.is_ok(), "Connection timed out");
@@ -106,13 +109,15 @@ async fn test_xmpp_client_send_message() -> Result<()> {
 
     // Create client instance
     let client_id = ClientId::from(1);
-    app_state.add_client(
-        client_id,
-        "XMPP".to_string(),
-        "alice@localhost@password".to_string(),
-        "Send a test message to bob@localhost".to_string(),
-        None,
-    ).await;
+    app_state
+        .add_client(
+            client_id,
+            "XMPP".to_string(),
+            "alice@localhost@password".to_string(),
+            "Send a test message to bob@localhost".to_string(),
+            None,
+        )
+        .await;
 
     // Connect client
     use netget::client::xmpp::XmppClientConnection;
@@ -122,7 +127,8 @@ async fn test_xmpp_client_send_message() -> Result<()> {
         app_state.clone(),
         status_tx.clone(),
         client_id,
-    ).await?;
+    )
+    .await?;
 
     // Wait for connection and LLM to process
     tokio::time::sleep(Duration::from_secs(5)).await;
@@ -159,13 +165,15 @@ async fn test_xmpp_client_presence() -> Result<()> {
 
     // Create client instance with presence instruction
     let client_id = ClientId::from(1);
-    app_state.add_client(
-        client_id,
-        "XMPP".to_string(),
-        "alice@localhost@password".to_string(),
-        "Send presence as 'away' with status 'Testing NetGet XMPP'".to_string(),
-        None,
-    ).await;
+    app_state
+        .add_client(
+            client_id,
+            "XMPP".to_string(),
+            "alice@localhost@password".to_string(),
+            "Send presence as 'away' with status 'Testing NetGet XMPP'".to_string(),
+            None,
+        )
+        .await;
 
     // Connect client
     use netget::client::xmpp::XmppClientConnection;
@@ -175,7 +183,8 @@ async fn test_xmpp_client_presence() -> Result<()> {
         app_state.clone(),
         status_tx.clone(),
         client_id,
-    ).await?;
+    )
+    .await?;
 
     // Wait for LLM to process and send presence
     tokio::time::sleep(Duration::from_secs(5)).await;

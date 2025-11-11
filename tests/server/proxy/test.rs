@@ -7,17 +7,16 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, ServerConfig, E2EResult};
+use super::super::super::helpers::{self, E2EResult, ServerConfig};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use std::net::SocketAddr;
 
 /// Simple HTTP test server that echoes requests
 async fn start_test_http_server() -> E2EResult<(u16, tokio::task::JoinHandle<()>)> {
     use axum::{
-        Router,
-        routing::{get, post},
         http::{HeaderMap, StatusCode},
+        routing::{get, post},
+        Router,
     };
 
     // Shared state to track received requests
@@ -32,27 +31,36 @@ async fn start_test_http_server() -> E2EResult<(u16, tokio::task::JoinHandle<()>
 
     let app = Router::new()
         .route("/", get(|| async { "Test Server Root" }))
-        .route("/echo", get({
-            let state = state.clone();
-            move |headers: HeaderMap| async move {
-                *state.last_headers.lock().await = headers.clone();
-                format!("Echo: Headers received")
-            }
-        }))
-        .route("/json", get(|| async {
-            axum::Json(serde_json::json!({
-                "message": "test",
-                "value": 42
-            }))
-        }))
-        .route("/post", post({
-            let state = state.clone();
-            move |headers: HeaderMap, body: String| async move {
-                *state.last_headers.lock().await = headers;
-                *state.last_body.lock().await = body;
-                (StatusCode::CREATED, "Created")
-            }
-        }))
+        .route(
+            "/echo",
+            get({
+                let state = state.clone();
+                move |headers: HeaderMap| async move {
+                    *state.last_headers.lock().await = headers.clone();
+                    format!("Echo: Headers received")
+                }
+            }),
+        )
+        .route(
+            "/json",
+            get(|| async {
+                axum::Json(serde_json::json!({
+                    "message": "test",
+                    "value": 42
+                }))
+            }),
+        )
+        .route(
+            "/post",
+            post({
+                let state = state.clone();
+                move |headers: HeaderMap, body: String| async move {
+                    *state.last_headers.lock().await = headers;
+                    *state.last_body.lock().await = body;
+                    (StatusCode::CREATED, "Created")
+                }
+            }),
+        )
         .with_state(state_clone);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
@@ -69,16 +77,15 @@ async fn start_test_http_server() -> E2EResult<(u16, tokio::task::JoinHandle<()>
 
 /// Simple HTTPS test server that echoes requests (with self-signed certificate)
 async fn start_test_https_server() -> E2EResult<(u16, tokio::task::JoinHandle<()>)> {
-    use axum::{Router, routing::get};
+    use axum::{routing::get, Router};
     use axum_server::tls_rustls::RustlsConfig;
     use rcgen::{CertificateParams, KeyPair};
 
     // Generate self-signed certificate
     let mut params = CertificateParams::default();
-    params.distinguished_name.push(
-        rcgen::DnType::CommonName,
-        "localhost"
-    );
+    params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, "localhost");
     params.subject_alt_names = vec![
         rcgen::SanType::DnsName(rcgen::Ia5String::try_from("localhost".to_string())?),
         rcgen::SanType::IpAddress(std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1))),
@@ -104,12 +111,15 @@ async fn start_test_https_server() -> E2EResult<(u16, tokio::task::JoinHandle<()
     // Create simple app
     let app = Router::new()
         .route("/", get(|| async { "HTTPS Test Server" }))
-        .route("/get", get(|| async {
-            axum::Json(serde_json::json!({
-                "origin": "127.0.0.1",
-                "url": "https://localhost/get"
-            }))
-        }));
+        .route(
+            "/get",
+            get(|| async {
+                axum::Json(serde_json::json!({
+                    "origin": "127.0.0.1",
+                    "url": "https://localhost/get"
+                }))
+            }),
+        );
 
     // Bind to random port - we need to get the port before spawning
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
@@ -158,7 +168,10 @@ async fn test_proxy_http_passthrough() -> E2EResult<()> {
 
     // Make request through proxy
     let target_url = format!("http://127.0.0.1:{}/", target_port);
-    println!("Sending request to target: {} (through proxy {})", target_url, proxy_url);
+    println!(
+        "Sending request to target: {} (through proxy {})",
+        target_url, proxy_url
+    );
 
     let response = client.get(&target_url).send().await?;
     println!("Response received: {}", response.status());
@@ -190,9 +203,7 @@ async fn test_proxy_http_block() -> E2EResult<()> {
     // Configure HTTP client to use proxy
     let proxy_url = format!("http://127.0.0.1:{}", server.port);
     let proxy = reqwest::Proxy::http(&proxy_url)?;
-    let client = reqwest::Client::builder()
-        .proxy(proxy)
-        .build()?;
+    let client = reqwest::Client::builder().proxy(proxy).build()?;
 
     // Make request through proxy - should be blocked
     let target_url = format!("http://127.0.0.1:{}/", target_port);
@@ -202,7 +213,11 @@ async fn test_proxy_http_block() -> E2EResult<()> {
     let body = response.text().await?;
     println!("DEBUG: Response body = {:?}", body);
     println!("DEBUG: Body length = {}", body.len());
-    assert!(body.contains("Access Denied"), "Expected 'Access Denied' in body, got: {:?}", body);
+    assert!(
+        body.contains("Access Denied"),
+        "Expected 'Access Denied' in body, got: {:?}",
+        body
+    );
 
     println!("✓ Request successfully blocked by proxy");
     server.stop().await?;
@@ -265,9 +280,7 @@ async fn test_proxy_modify_request_body() -> E2EResult<()> {
     // Configure HTTP client to use proxy
     let proxy_url = format!("http://127.0.0.1:{}", server.port);
     let proxy = reqwest::Proxy::http(&proxy_url)?;
-    let client = reqwest::Client::builder()
-        .proxy(proxy)
-        .build()?;
+    let client = reqwest::Client::builder().proxy(proxy).build()?;
 
     // Make POST request
     let target_url = format!("http://127.0.0.1:{}/post", target_port);
@@ -303,9 +316,7 @@ async fn test_proxy_filter_by_path() -> E2EResult<()> {
     // Configure HTTP client to use proxy
     let proxy_url = format!("http://127.0.0.1:{}", server.port);
     let proxy = reqwest::Proxy::http(&proxy_url)?;
-    let client = reqwest::Client::builder()
-        .proxy(proxy)
-        .build()?;
+    let client = reqwest::Client::builder().proxy(proxy).build()?;
 
     // Request to / should pass through
     let root_url = format!("http://127.0.0.1:{}/", target_port);
@@ -336,7 +347,10 @@ async fn test_proxy_https_passthrough() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} using proxy stack with no certificate (pass-through mode). Allow all HTTPS connections";
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
-    println!("Proxy server started on port {} (pass-through mode)", server.port);
+    println!(
+        "Proxy server started on port {} (pass-through mode)",
+        server.port
+    );
 
     // Configure HTTP client to use proxy for HTTPS
     let proxy_url = format!("http://127.0.0.1:{}", server.port);
@@ -372,7 +386,10 @@ async fn test_proxy_https_block_by_sni() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} using proxy stack with no certificate. Block HTTPS connections to 127.0.0.1 with reason 'Blocked by policy'";
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
-    println!("Proxy server started on port {} (SNI blocking mode)", server.port);
+    println!(
+        "Proxy server started on port {} (SNI blocking mode)",
+        server.port
+    );
 
     // Configure HTTP client to use proxy
     let proxy_url = format!("http://127.0.0.1:{}", server.port);
@@ -425,9 +442,7 @@ async fn test_proxy_url_rewrite() -> E2EResult<()> {
     // Configure HTTP client to use proxy
     let proxy_url = format!("http://127.0.0.1:{}", server.port);
     let proxy = reqwest::Proxy::http(&proxy_url)?;
-    let client = reqwest::Client::builder()
-        .proxy(proxy)
-        .build()?;
+    let client = reqwest::Client::builder().proxy(proxy).build()?;
 
     // Request to /api/something should be rewritten to /
     let target_url = format!("http://127.0.0.1:{}/api/something", target_port);

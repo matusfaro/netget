@@ -58,7 +58,12 @@ pub struct Connection {
 impl Connection {
     /// Create a new connection with a specific ID
     /// NOTE: Callers should use AppState::get_next_unified_id() to get the ID
-    pub fn new_with_id(id: ConnectionId, stream: TcpStream, remote_addr: SocketAddr, local_addr: SocketAddr) -> Self {
+    pub fn new_with_id(
+        id: ConnectionId,
+        stream: TcpStream,
+        remote_addr: SocketAddr,
+        local_addr: SocketAddr,
+    ) -> Self {
         Self {
             id,
             remote_addr,

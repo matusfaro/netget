@@ -47,24 +47,34 @@ impl DhcpClient {
         client_id: ClientId,
     ) -> Result<SocketAddr> {
         // Parse remote_addr (DHCP server address)
-        let server_addr: SocketAddr = remote_addr.parse()
-            .context("Invalid DHCP server address")?;
+        let server_addr: SocketAddr = remote_addr.parse().context("Invalid DHCP server address")?;
 
         // Bind to DHCP client port (68)
         // Note: This may require elevated privileges
-        let socket = Arc::new(UdpSocket::bind("0.0.0.0:68").await
-            .context("Failed to bind to DHCP client port 68 (may need elevated privileges)")?);
+        let socket = Arc::new(
+            UdpSocket::bind("0.0.0.0:68")
+                .await
+                .context("Failed to bind to DHCP client port 68 (may need elevated privileges)")?,
+        );
 
         // Enable broadcast
         socket.set_broadcast(true)?;
 
         let local_addr = socket.local_addr()?;
 
-        info!("DHCP client {} bound to {}, targeting server {}", client_id, local_addr, server_addr);
-        let _ = status_tx.send(format!("[CLIENT] DHCP client {} connected, targeting server {}", client_id, server_addr));
+        info!(
+            "DHCP client {} bound to {}, targeting server {}",
+            client_id, local_addr, server_addr
+        );
+        let _ = status_tx.send(format!(
+            "[CLIENT] DHCP client {} connected, targeting server {}",
+            client_id, server_addr
+        ));
 
         // Update client status
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Initialize client data
@@ -74,10 +84,13 @@ impl DhcpClient {
         }));
 
         // Spawn event: dhcp_connected
-        let event = Event::new(&DHCP_CLIENT_CONNECTED_EVENT, serde_json::json!({
-            "server_addr": server_addr.to_string(),
-            "local_addr": local_addr.to_string()
-        }));
+        let event = Event::new(
+            &DHCP_CLIENT_CONNECTED_EVENT,
+            serde_json::json!({
+                "server_addr": server_addr.to_string(),
+                "local_addr": local_addr.to_string()
+            }),
+        );
 
         debug!("DHCP client {} calling LLM for connected event", client_id);
 
@@ -94,8 +107,13 @@ impl DhcpClient {
                 Some(&event),
                 protocol.as_ref(),
                 &status_tx,
-            ).await {
-                Ok(ClientLlmResult { actions, memory_updates }) => {
+            )
+            .await
+            {
+                Ok(ClientLlmResult {
+                    actions,
+                    memory_updates,
+                }) => {
                     // Update memory
                     if let Some(mem) = memory_updates {
                         client_data.lock().await.memory = mem;
@@ -114,16 +132,31 @@ impl DhcpClient {
                                         if name == "dhcp_discover" {
                                             #[cfg(feature = "dhcp")]
                                             {
-                                                if let Ok(discover_packet) = Self::build_discover_packet(&data) {
-                                                    let target = if data.get("broadcast").and_then(|v| v.as_bool()).unwrap_or(true) {
+                                                if let Ok(discover_packet) =
+                                                    Self::build_discover_packet(&data)
+                                                {
+                                                    let target = if data
+                                                        .get("broadcast")
+                                                        .and_then(|v| v.as_bool())
+                                                        .unwrap_or(true)
+                                                    {
                                                         "255.255.255.255:67".parse().unwrap()
                                                     } else {
                                                         server_addr
                                                     };
 
-                                                    let _ = socket.send_to(&discover_packet, target).await;
-                                                    debug!("DHCP client {} sent DISCOVER ({} bytes)", client_id, discover_packet.len());
-                                                    trace!("DHCP DISCOVER (hex): {}", hex::encode(&discover_packet));
+                                                    let _ = socket
+                                                        .send_to(&discover_packet, target)
+                                                        .await;
+                                                    debug!(
+                                                        "DHCP client {} sent DISCOVER ({} bytes)",
+                                                        client_id,
+                                                        discover_packet.len()
+                                                    );
+                                                    trace!(
+                                                        "DHCP DISCOVER (hex): {}",
+                                                        hex::encode(&discover_packet)
+                                                    );
                                                 }
                                             }
 
@@ -134,16 +167,31 @@ impl DhcpClient {
                                         } else if name == "dhcp_request" {
                                             #[cfg(feature = "dhcp")]
                                             {
-                                                if let Ok(request_packet) = Self::build_request_packet(&data) {
-                                                    let target = if data.get("broadcast").and_then(|v| v.as_bool()).unwrap_or(true) {
+                                                if let Ok(request_packet) =
+                                                    Self::build_request_packet(&data)
+                                                {
+                                                    let target = if data
+                                                        .get("broadcast")
+                                                        .and_then(|v| v.as_bool())
+                                                        .unwrap_or(true)
+                                                    {
                                                         "255.255.255.255:67".parse().unwrap()
                                                     } else {
                                                         server_addr
                                                     };
 
-                                                    let _ = socket.send_to(&request_packet, target).await;
-                                                    debug!("DHCP client {} sent REQUEST ({} bytes)", client_id, request_packet.len());
-                                                    trace!("DHCP REQUEST (hex): {}", hex::encode(&request_packet));
+                                                    let _ = socket
+                                                        .send_to(&request_packet, target)
+                                                        .await;
+                                                    debug!(
+                                                        "DHCP client {} sent REQUEST ({} bytes)",
+                                                        client_id,
+                                                        request_packet.len()
+                                                    );
+                                                    trace!(
+                                                        "DHCP REQUEST (hex): {}",
+                                                        hex::encode(&request_packet)
+                                                    );
                                                 }
                                             }
 
@@ -154,10 +202,21 @@ impl DhcpClient {
                                         } else if name == "dhcp_inform" {
                                             #[cfg(feature = "dhcp")]
                                             {
-                                                if let Ok(inform_packet) = Self::build_inform_packet(&data) {
-                                                    let _ = socket.send_to(&inform_packet, server_addr).await;
-                                                    debug!("DHCP client {} sent INFORM ({} bytes)", client_id, inform_packet.len());
-                                                    trace!("DHCP INFORM (hex): {}", hex::encode(&inform_packet));
+                                                if let Ok(inform_packet) =
+                                                    Self::build_inform_packet(&data)
+                                                {
+                                                    let _ = socket
+                                                        .send_to(&inform_packet, server_addr)
+                                                        .await;
+                                                    debug!(
+                                                        "DHCP client {} sent INFORM ({} bytes)",
+                                                        client_id,
+                                                        inform_packet.len()
+                                                    );
+                                                    trace!(
+                                                        "DHCP INFORM (hex): {}",
+                                                        hex::encode(&inform_packet)
+                                                    );
                                                 }
                                             }
 
@@ -201,7 +260,10 @@ impl DhcpClient {
                     Ok((n, peer_addr)) => {
                         let data = buffer[..n].to_vec();
 
-                        debug!("DHCP client {} received {} bytes from {}", client_id, n, peer_addr);
+                        debug!(
+                            "DHCP client {} received {} bytes from {}",
+                            client_id, n, peer_addr
+                        );
                         trace!("DHCP response (hex): {}", hex::encode(&data));
 
                         // Handle data with LLM
@@ -218,9 +280,13 @@ impl DhcpClient {
                                 let parsed_info = Self::parse_dhcp_response(&data);
 
                                 #[cfg(not(feature = "dhcp"))]
-                                let parsed_info: Option<(String, serde_json::Value)> = None;
+                                let parsed_info: Option<(
+                                    String,
+                                    serde_json::Value,
+                                )> = None;
 
-                                let event_data = if let Some((message_type, details)) = parsed_info {
+                                let event_data = if let Some((message_type, details)) = parsed_info
+                                {
                                     serde_json::json!({
                                         "message_type": message_type,
                                         "details": details
@@ -233,10 +299,13 @@ impl DhcpClient {
                                     })
                                 };
 
-                                let event = Event::new(&DHCP_CLIENT_RESPONSE_RECEIVED_EVENT, event_data);
+                                let event =
+                                    Event::new(&DHCP_CLIENT_RESPONSE_RECEIVED_EVENT, event_data);
 
                                 // Call LLM with response event
-                                if let Some(instruction) = state_clone.get_instruction_for_client(client_id).await {
+                                if let Some(instruction) =
+                                    state_clone.get_instruction_for_client(client_id).await
+                                {
                                     let protocol = Arc::new(DhcpClientProtocol::new());
 
                                     match call_llm_for_client(
@@ -248,8 +317,13 @@ impl DhcpClient {
                                         Some(&event),
                                         protocol.as_ref(),
                                         &status_clone,
-                                    ).await {
-                                        Ok(ClientLlmResult { actions, memory_updates }) => {
+                                    )
+                                    .await
+                                    {
+                                        Ok(ClientLlmResult {
+                                            actions,
+                                            memory_updates,
+                                        }) => {
                                             // Update memory
                                             if let Some(mem) = memory_updates {
                                                 client_data_clone.lock().await.memory = mem;
@@ -264,7 +338,10 @@ impl DhcpClient {
                                                         use crate::llm::actions::client_trait::ClientActionResult;
 
                                                         match action_result {
-                                                            ClientActionResult::Custom { name, data: action_data } => {
+                                                            ClientActionResult::Custom {
+                                                                name,
+                                                                data: action_data,
+                                                            } => {
                                                                 if name == "dhcp_discover" {
                                                                     #[cfg(feature = "dhcp")]
                                                                     {
@@ -304,9 +381,19 @@ impl DhcpClient {
                                                                 }
                                                             }
                                                             ClientActionResult::Disconnect => {
-                                                                info!("DHCP client {} disconnecting", client_id);
-                                                                state_clone.update_client_status(client_id, ClientStatus::Disconnected).await;
-                                                                let _ = status_clone.send("__UPDATE_UI__".to_string());
+                                                                info!(
+                                                                    "DHCP client {} disconnecting",
+                                                                    client_id
+                                                                );
+                                                                state_clone
+                                                                    .update_client_status(
+                                                                        client_id,
+                                                                        ClientStatus::Disconnected,
+                                                                    )
+                                                                    .await;
+                                                                let _ = status_clone.send(
+                                                                    "__UPDATE_UI__".to_string(),
+                                                                );
                                                                 break;
                                                             }
                                                             ClientActionResult::WaitForMore => {
@@ -322,7 +409,10 @@ impl DhcpClient {
                                             }
                                         }
                                         Err(e) => {
-                                            error!("DHCP client {} LLM call failed: {}", client_id, e);
+                                            error!(
+                                                "DHCP client {} LLM call failed: {}",
+                                                client_id, e
+                                            );
                                         }
                                     }
                                 }
@@ -332,13 +422,18 @@ impl DhcpClient {
                             }
                             ConnectionState::Processing => {
                                 // Queue data for later processing
-                                debug!("DHCP client {} is processing, queueing response", client_id);
+                                debug!(
+                                    "DHCP client {} is processing, queueing response",
+                                    client_id
+                                );
                             }
                         }
                     }
                     Err(e) => {
                         error!("DHCP client {} receive error: {}", client_id, e);
-                        state_clone.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
+                        state_clone
+                            .update_client_status(client_id, ClientStatus::Error(e.to_string()))
+                            .await;
                         let _ = status_clone.send("__UPDATE_UI__".to_string());
                         break;
                     }
@@ -358,7 +453,8 @@ impl DhcpClient {
         let xid = rand::random::<u32>();
 
         // Get MAC address from params or generate random one
-        let mac_str = params.get("mac_address")
+        let mac_str = params
+            .get("mac_address")
             .and_then(|v| v.as_str())
             .unwrap_or("00:00:00:00:00:00");
 
@@ -372,12 +468,14 @@ impl DhcpClient {
             .set_chaddr(&chaddr);
 
         // Add DHCP options
-        msg.opts_mut().insert(v4::DhcpOption::MessageType(v4::MessageType::Discover));
+        msg.opts_mut()
+            .insert(v4::DhcpOption::MessageType(v4::MessageType::Discover));
 
         // Optional: requested IP
         if let Some(requested_ip) = params.get("requested_ip").and_then(|v| v.as_str()) {
             if let Ok(ip) = requested_ip.parse::<Ipv4Addr>() {
-                msg.opts_mut().insert(v4::DhcpOption::RequestedIpAddress(ip));
+                msg.opts_mut()
+                    .insert(v4::DhcpOption::RequestedIpAddress(ip));
             }
         }
 
@@ -395,20 +493,23 @@ impl DhcpClient {
         let xid = rand::random::<u32>();
 
         // Get MAC address
-        let mac_str = params.get("mac_address")
+        let mac_str = params
+            .get("mac_address")
             .and_then(|v| v.as_str())
             .unwrap_or("00:00:00:00:00:00");
 
         let chaddr = Self::parse_mac_address(mac_str)?;
 
         // Get requested IP (required for REQUEST)
-        let requested_ip = params.get("requested_ip")
+        let requested_ip = params
+            .get("requested_ip")
             .and_then(|v| v.as_str())
             .context("Missing 'requested_ip' parameter")?
             .parse::<Ipv4Addr>()?;
 
         // Get server IP (optional)
-        let server_ip = params.get("server_ip")
+        let server_ip = params
+            .get("server_ip")
             .and_then(|v| v.as_str())
             .map(|s| s.parse::<Ipv4Addr>())
             .transpose()?;
@@ -421,11 +522,14 @@ impl DhcpClient {
             .set_chaddr(&chaddr);
 
         // Add DHCP options
-        msg.opts_mut().insert(v4::DhcpOption::MessageType(v4::MessageType::Request));
-        msg.opts_mut().insert(v4::DhcpOption::RequestedIpAddress(requested_ip));
+        msg.opts_mut()
+            .insert(v4::DhcpOption::MessageType(v4::MessageType::Request));
+        msg.opts_mut()
+            .insert(v4::DhcpOption::RequestedIpAddress(requested_ip));
 
         if let Some(server) = server_ip {
-            msg.opts_mut().insert(v4::DhcpOption::ServerIdentifier(server));
+            msg.opts_mut()
+                .insert(v4::DhcpOption::ServerIdentifier(server));
         }
 
         // Encode to bytes
@@ -442,14 +546,16 @@ impl DhcpClient {
         let xid = rand::random::<u32>();
 
         // Get MAC address
-        let mac_str = params.get("mac_address")
+        let mac_str = params
+            .get("mac_address")
             .and_then(|v| v.as_str())
             .unwrap_or("00:00:00:00:00:00");
 
         let chaddr = Self::parse_mac_address(mac_str)?;
 
         // Get current IP (required for INFORM)
-        let current_ip = params.get("current_ip")
+        let current_ip = params
+            .get("current_ip")
             .and_then(|v| v.as_str())
             .context("Missing 'current_ip' parameter")?
             .parse::<Ipv4Addr>()?;
@@ -458,11 +564,12 @@ impl DhcpClient {
         let mut msg = v4::Message::default();
         msg.set_opcode(v4::Opcode::BootRequest)
             .set_xid(xid)
-            .set_ciaddr(current_ip)  // Set client IP address
+            .set_ciaddr(current_ip) // Set client IP address
             .set_chaddr(&chaddr);
 
         // Add DHCP options
-        msg.opts_mut().insert(v4::DhcpOption::MessageType(v4::MessageType::Inform));
+        msg.opts_mut()
+            .insert(v4::DhcpOption::MessageType(v4::MessageType::Inform));
 
         // Encode to bytes
         let bytes = msg.to_vec()?;
@@ -478,8 +585,7 @@ impl DhcpClient {
 
         let mut mac = Vec::with_capacity(16); // DHCP chaddr is 16 bytes
         for part in parts {
-            let byte = u8::from_str_radix(part, 16)
-                .context("Invalid hex in MAC address")?;
+            let byte = u8::from_str_radix(part, 16).context("Invalid hex in MAC address")?;
             mac.push(byte);
         }
 
@@ -498,22 +604,24 @@ impl DhcpClient {
         match v4::Message::decode(&mut Decoder::new(data)) {
             Ok(msg) => {
                 // Extract message type
-                let message_type = msg.opts().get(v4::OptionCode::MessageType)
-                    .and_then(|opt| {
-                        if let v4::DhcpOption::MessageType(mt) = opt {
-                            Some(*mt)
-                        } else {
-                            None
-                        }
-                    });
+                let message_type = msg.opts().get(v4::OptionCode::MessageType).and_then(|opt| {
+                    if let v4::DhcpOption::MessageType(mt) = opt {
+                        Some(*mt)
+                    } else {
+                        None
+                    }
+                });
 
-                let message_type_str = message_type.as_ref()
+                let message_type_str = message_type
+                    .as_ref()
                     .map(|mt| format!("{:?}", mt))
                     .unwrap_or_else(|| "Unknown".to_string());
 
                 // Extract key fields
                 let offered_ip = msg.yiaddr();
-                let server_ip = msg.opts().get(v4::OptionCode::ServerIdentifier)
+                let server_ip = msg
+                    .opts()
+                    .get(v4::OptionCode::ServerIdentifier)
                     .and_then(|opt| {
                         if let v4::DhcpOption::ServerIdentifier(ip) = opt {
                             Some(*ip)
@@ -522,34 +630,36 @@ impl DhcpClient {
                         }
                     });
 
-                let subnet_mask = msg.opts().get(v4::OptionCode::SubnetMask)
-                    .and_then(|opt| {
-                        if let v4::DhcpOption::SubnetMask(mask) = opt {
-                            Some(*mask)
-                        } else {
-                            None
-                        }
-                    });
+                let subnet_mask = msg.opts().get(v4::OptionCode::SubnetMask).and_then(|opt| {
+                    if let v4::DhcpOption::SubnetMask(mask) = opt {
+                        Some(*mask)
+                    } else {
+                        None
+                    }
+                });
 
-                let router = msg.opts().get(v4::OptionCode::Router)
-                    .and_then(|opt| {
-                        if let v4::DhcpOption::Router(routers) = opt {
-                            routers.first().copied()
-                        } else {
-                            None
-                        }
-                    });
+                let router = msg.opts().get(v4::OptionCode::Router).and_then(|opt| {
+                    if let v4::DhcpOption::Router(routers) = opt {
+                        routers.first().copied()
+                    } else {
+                        None
+                    }
+                });
 
-                let dns_servers = msg.opts().get(v4::OptionCode::DomainNameServer)
-                    .and_then(|opt| {
-                        if let v4::DhcpOption::DomainNameServer(dns) = opt {
-                            Some(dns.clone())
-                        } else {
-                            None
-                        }
-                    });
+                let dns_servers =
+                    msg.opts()
+                        .get(v4::OptionCode::DomainNameServer)
+                        .and_then(|opt| {
+                            if let v4::DhcpOption::DomainNameServer(dns) = opt {
+                                Some(dns.clone())
+                            } else {
+                                None
+                            }
+                        });
 
-                let lease_time = msg.opts().get(v4::OptionCode::AddressLeaseTime)
+                let lease_time = msg
+                    .opts()
+                    .get(v4::OptionCode::AddressLeaseTime)
                     .and_then(|opt| {
                         if let v4::DhcpOption::AddressLeaseTime(time) = opt {
                             Some(*time)

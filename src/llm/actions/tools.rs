@@ -105,7 +105,15 @@ impl ToolAction {
     pub fn from_json(value: &serde_json::Value) -> Result<Self> {
         // Check if the tool type is recognized first
         if let Some(action_type) = value.get("type").and_then(|t| t.as_str()) {
-            if !matches!(action_type, "read_file" | "web_search" | "read_base_stack_docs" | "list_network_interfaces" | "list_models" | "generate_random") {
+            if !matches!(
+                action_type,
+                "read_file"
+                    | "web_search"
+                    | "read_base_stack_docs"
+                    | "list_network_interfaces"
+                    | "list_models"
+                    | "generate_random"
+            ) {
                 anyhow::bail!("Unknown tool type: '{}'. Valid tools: read_file, web_search, read_base_stack_docs, list_network_interfaces, list_models, generate_random", action_type);
             }
         }
@@ -116,7 +124,15 @@ impl ToolAction {
     /// Check if a JSON value is a tool action
     pub fn is_tool_action(value: &serde_json::Value) -> bool {
         if let Some(action_type) = value.get("type").and_then(|t| t.as_str()) {
-            matches!(action_type, "read_file" | "web_search" | "read_base_stack_docs" | "list_network_interfaces" | "list_models" | "generate_random")
+            matches!(
+                action_type,
+                "read_file"
+                    | "web_search"
+                    | "read_base_stack_docs"
+                    | "list_network_interfaces"
+                    | "list_models"
+                    | "generate_random"
+            )
         } else {
             false
         }
@@ -157,12 +173,8 @@ impl ToolAction {
             ToolAction::ReadBaseStackDocs { protocol } => {
                 format!("read_base_stack_docs: \"{}\"", protocol)
             }
-            ToolAction::ListNetworkInterfaces => {
-                "list_network_interfaces".to_string()
-            }
-            ToolAction::ListModels => {
-                "list_models: query available Ollama models".to_string()
-            }
+            ToolAction::ListNetworkInterfaces => "list_network_interfaces".to_string(),
+            ToolAction::ListModels => "list_models: query available Ollama models".to_string(),
             ToolAction::GenerateRandom {
                 data_type,
                 length,
@@ -322,7 +334,11 @@ pub async fn execute_read_file(
         Ok(metadata) => {
             if metadata.len() > MAX_FILE_SIZE {
                 warn!("File too large: {} bytes", metadata.len());
-                info!("  ✗ File too large: {} bytes (max: {} bytes)", metadata.len(), MAX_FILE_SIZE);
+                info!(
+                    "  ✗ File too large: {} bytes (max: {} bytes)",
+                    metadata.len(),
+                    MAX_FILE_SIZE
+                );
                 return ToolResult::error(
                     "read_file",
                     format!("{} ({})", path, mode),
@@ -490,10 +506,7 @@ pub async fn execute_web_search(query: &str) -> ToolResult {
     // Otherwise, use DuckDuckGo HTML search (no API key required)
     use url::form_urlencoded;
     let encoded_query = form_urlencoded::byte_serialize(query.as_bytes()).collect::<String>();
-    let url = format!(
-        "https://html.duckduckgo.com/html/?q={}",
-        encoded_query
-    );
+    let url = format!("https://html.duckduckgo.com/html/?q={}", encoded_query);
 
     let client = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (compatible; NetGet/1.0)")
@@ -590,7 +603,10 @@ async fn fetch_url(url: &str) -> ToolResult {
                     } else {
                         // Truncate to reasonable length (10000 chars)
                         let truncated = if text.len() > 10000 {
-                            format!("{}...\n\n[Content truncated to 10000 characters]", &text[..10000])
+                            format!(
+                                "{}...\n\n[Content truncated to 10000 characters]",
+                                &text[..10000]
+                            )
                         } else {
                             text
                         };
@@ -738,7 +754,11 @@ pub async fn execute_list_models() -> ToolResult {
                 );
                 debug!("Found {} models", model_count);
                 info!("  ✓ Found {} models", model_count);
-                ToolResult::success("list_models", "query available models".to_string(), formatted)
+                ToolResult::success(
+                    "list_models",
+                    "query available models".to_string(),
+                    formatted,
+                )
             }
         }
         Err(e) => {
@@ -820,9 +840,7 @@ pub async fn execute_generate_random(
                 "letters" => "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
                 "lowercase" => "abcdefghijklmnopqrstuvwxyz",
                 "uppercase" => "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
-                _ => {
-                    "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-                }
+                _ => "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
             };
 
             let result: String = (0..len)
@@ -860,14 +878,68 @@ pub async fn execute_generate_random(
         // Random word (lorem ipsum style)
         "word" => {
             const WORDS: &[&str] = &[
-                "lorem", "ipsum", "dolor", "sit", "amet", "consectetur", "adipiscing", "elit",
-                "sed", "do", "eiusmod", "tempor", "incididunt", "ut", "labore", "et", "dolore",
-                "magna", "aliqua", "enim", "ad", "minim", "veniam", "quis", "nostrud",
-                "exercitation", "ullamco", "laboris", "nisi", "aliquip", "ex", "ea", "commodo",
-                "consequat", "duis", "aute", "irure", "in", "reprehenderit", "voluptate",
-                "velit", "esse", "cillum", "fugiat", "nulla", "pariatur", "excepteur", "sint",
-                "occaecat", "cupidatat", "non", "proident", "sunt", "culpa", "qui", "officia",
-                "deserunt", "mollit", "anim", "id", "est", "laborum",
+                "lorem",
+                "ipsum",
+                "dolor",
+                "sit",
+                "amet",
+                "consectetur",
+                "adipiscing",
+                "elit",
+                "sed",
+                "do",
+                "eiusmod",
+                "tempor",
+                "incididunt",
+                "ut",
+                "labore",
+                "et",
+                "dolore",
+                "magna",
+                "aliqua",
+                "enim",
+                "ad",
+                "minim",
+                "veniam",
+                "quis",
+                "nostrud",
+                "exercitation",
+                "ullamco",
+                "laboris",
+                "nisi",
+                "aliquip",
+                "ex",
+                "ea",
+                "commodo",
+                "consequat",
+                "duis",
+                "aute",
+                "irure",
+                "in",
+                "reprehenderit",
+                "voluptate",
+                "velit",
+                "esse",
+                "cillum",
+                "fugiat",
+                "nulla",
+                "pariatur",
+                "excepteur",
+                "sint",
+                "occaecat",
+                "cupidatat",
+                "non",
+                "proident",
+                "sunt",
+                "culpa",
+                "qui",
+                "officia",
+                "deserunt",
+                "mollit",
+                "anim",
+                "id",
+                "est",
+                "laborum",
             ];
             let word = WORDS[rng.gen_range(0..WORDS.len())];
             info!("  ✓ Generated word: {}", word);
@@ -877,9 +949,25 @@ pub async fn execute_generate_random(
         // Random sentence
         "sentence" => {
             const WORDS: &[&str] = &[
-                "lorem", "ipsum", "dolor", "sit", "amet", "consectetur", "adipiscing", "elit",
-                "sed", "do", "eiusmod", "tempor", "incididunt", "ut", "labore", "et", "dolore",
-                "magna", "aliqua",
+                "lorem",
+                "ipsum",
+                "dolor",
+                "sit",
+                "amet",
+                "consectetur",
+                "adipiscing",
+                "elit",
+                "sed",
+                "do",
+                "eiusmod",
+                "tempor",
+                "incididunt",
+                "ut",
+                "labore",
+                "et",
+                "dolore",
+                "magna",
+                "aliqua",
             ];
             let word_count = length.unwrap_or(10);
             let sentence: Vec<String> = (0..word_count)
@@ -902,9 +990,31 @@ pub async fn execute_generate_random(
         // Random paragraph
         "paragraph" => {
             const WORDS: &[&str] = &[
-                "lorem", "ipsum", "dolor", "sit", "amet", "consectetur", "adipiscing", "elit",
-                "sed", "do", "eiusmod", "tempor", "incididunt", "ut", "labore", "et", "dolore",
-                "magna", "aliqua", "enim", "ad", "minim", "veniam", "quis", "nostrud",
+                "lorem",
+                "ipsum",
+                "dolor",
+                "sit",
+                "amet",
+                "consectetur",
+                "adipiscing",
+                "elit",
+                "sed",
+                "do",
+                "eiusmod",
+                "tempor",
+                "incididunt",
+                "ut",
+                "labore",
+                "et",
+                "dolore",
+                "magna",
+                "aliqua",
+                "enim",
+                "ad",
+                "minim",
+                "veniam",
+                "quis",
+                "nostrud",
             ];
             let sentence_count = length.unwrap_or(5);
             let paragraph: Vec<String> = (0..sentence_count)
@@ -997,7 +1107,9 @@ pub async fn execute_generate_random(
                 .as_secs();
             // Generate random timestamp within ±1 year from now
             let one_year = 365 * 24 * 60 * 60;
-            let min_time = min.map(|m| m as u64).unwrap_or(now.saturating_sub(one_year));
+            let min_time = min
+                .map(|m| m as u64)
+                .unwrap_or(now.saturating_sub(one_year));
             let max_time = max.map(|m| m as u64).unwrap_or(now + one_year);
             let timestamp = rng.gen_range(min_time..=max_time);
             info!("  ✓ Generated timestamp: {}", timestamp);
@@ -1012,7 +1124,9 @@ pub async fn execute_generate_random(
                 .unwrap()
                 .as_secs();
             let one_year = 365 * 24 * 60 * 60;
-            let min_time = min.map(|m| m as u64).unwrap_or(now.saturating_sub(one_year));
+            let min_time = min
+                .map(|m| m as u64)
+                .unwrap_or(now.saturating_sub(one_year));
             let max_time = max.map(|m| m as u64).unwrap_or(now + one_year);
             let timestamp = rng.gen_range(min_time..=max_time);
 
@@ -1275,7 +1389,9 @@ pub fn generate_random_action() -> ActionDefinition {
 }
 
 /// Get all tool action definitions
-pub fn get_all_tool_actions(web_search_mode: crate::state::app_state::WebSearchMode) -> Vec<ActionDefinition> {
+pub fn get_all_tool_actions(
+    web_search_mode: crate::state::app_state::WebSearchMode,
+) -> Vec<ActionDefinition> {
     use crate::state::app_state::WebSearchMode;
 
     let mut actions = vec![
@@ -1314,7 +1430,8 @@ async fn execute_list_network_interfaces() -> ToolResult {
         ToolResult::error(
             "list_network_interfaces",
             "list interfaces",
-            "DataLink feature not enabled. Rebuild with --features datalink to use this tool.".to_string(),
+            "DataLink feature not enabled. Rebuild with --features datalink to use this tool."
+                .to_string(),
         )
     }
 
@@ -1345,7 +1462,8 @@ async fn execute_list_network_interfaces() -> ToolResult {
                 }
 
                 // Add helpful note
-                result.push_str("Note: Use these interface names when starting DataLink servers.\n");
+                result
+                    .push_str("Note: Use these interface names when starting DataLink servers.\n");
                 result.push_str("Example: \"listen on interface eth0 via datalink\"\n");
 
                 debug!("Found {} network interfaces", devices.len());
@@ -1368,7 +1486,9 @@ async fn execute_list_network_interfaces() -> ToolResult {
 /// Execute a tool action
 pub async fn execute_tool(
     action: &ToolAction,
-    approval_tx: Option<&tokio::sync::mpsc::UnboundedSender<crate::state::app_state::WebApprovalRequest>>,
+    approval_tx: Option<
+        &tokio::sync::mpsc::UnboundedSender<crate::state::app_state::WebApprovalRequest>,
+    >,
     web_search_mode: crate::state::app_state::WebSearchMode,
     _state: Option<&crate::state::AppState>,
 ) -> ToolResult {
@@ -1459,15 +1579,9 @@ pub async fn execute_tool(
                 execute_web_search(query).await
             }
         }
-        ToolAction::ReadBaseStackDocs { protocol } => {
-            execute_read_base_stack_docs(protocol).await
-        }
-        ToolAction::ListNetworkInterfaces => {
-            execute_list_network_interfaces().await
-        }
-        ToolAction::ListModels => {
-            execute_list_models().await
-        }
+        ToolAction::ReadBaseStackDocs { protocol } => execute_read_base_stack_docs(protocol).await,
+        ToolAction::ListNetworkInterfaces => execute_list_network_interfaces().await,
+        ToolAction::ListModels => execute_list_models().await,
         ToolAction::GenerateRandom {
             data_type,
             length,
@@ -1506,7 +1620,11 @@ async fn execute_read_base_stack_docs(protocol: &str) -> ToolResult {
                 protocol,
                 docs.len()
             );
-            info!("  ✓ Retrieved docs for '{}' ({} bytes)", protocol, docs.len());
+            info!(
+                "  ✓ Retrieved docs for '{}' ({} bytes)",
+                protocol,
+                docs.len()
+            );
 
             // Append open_server action description to inform LLM it's now enabled
             let mut result = docs;
@@ -1514,31 +1632,45 @@ async fn execute_read_base_stack_docs(protocol: &str) -> ToolResult {
             result.push_str("## open_server Action (Now Enabled)\n\n");
             result.push_str("The `open_server` action is now enabled. You can use it to start a server with this protocol.\n\n");
             result.push_str("**Action:** `open_server`\n\n");
-            result.push_str("**Description:** Start a new server with the protocol you just read about.\n\n");
+            result.push_str(
+                "**Description:** Start a new server with the protocol you just read about.\n\n",
+            );
             result.push_str("**Required Parameters:**\n");
             result.push_str("- `port` (number): Port number to listen on\n");
             result.push_str("- `base_stack` (string): Protocol stack to use (e.g., the protocol you just read about)\n");
-            result.push_str("- `instruction` (string): Detailed instructions for handling network events\n\n");
+            result.push_str(
+                "- `instruction` (string): Detailed instructions for handling network events\n\n",
+            );
             result.push_str("**Optional Parameters:**\n");
             result.push_str("- `send_first` (boolean): True if server sends data first (FTP, SMTP), false if it waits for client (HTTP)\n");
             result.push_str("- `initial_memory` (string): Initial memory as a string for persistent context across connections\n");
             result.push_str("- `startup_params` (object): Protocol-specific startup parameters (see protocol documentation above)\n");
-            result.push_str("- `scheduled_tasks` (array): Scheduled tasks to create with this server\n");
+            result.push_str(
+                "- `scheduled_tasks` (array): Scheduled tasks to create with this server\n",
+            );
             result.push_str("- Script-related parameters (if scripting is enabled)\n\n");
             result.push_str("**Example:**\n");
             result.push_str("```json\n");
             result.push_str("{\n");
             result.push_str("  \"type\": \"open_server\",\n");
             result.push_str("  \"port\": 8080,\n");
-            result.push_str(&format!("  \"base_stack\": \"{}\",\n", protocol.to_lowercase()));
-            result.push_str("  \"instruction\": \"Handle requests according to protocol specification\"\n");
+            result.push_str(&format!(
+                "  \"base_stack\": \"{}\",\n",
+                protocol.to_lowercase()
+            ));
+            result.push_str(
+                "  \"instruction\": \"Handle requests according to protocol specification\"\n",
+            );
             result.push_str("}\n");
             result.push_str("```\n");
 
             ToolResult::success("read_base_stack_docs", protocol.to_string(), result)
         }
         Err(e) => {
-            warn!("Failed to get documentation for protocol '{}': {}", protocol, e);
+            warn!(
+                "Failed to get documentation for protocol '{}': {}",
+                protocol, e
+            );
             info!("  ✗ Protocol '{}' not found: {}", protocol, e);
             ToolResult::error(
                 "read_base_stack_docs",

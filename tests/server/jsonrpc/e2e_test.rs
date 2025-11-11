@@ -5,7 +5,7 @@
 
 #![cfg(feature = "jsonrpc")]
 
-use crate::server::helpers::{self, ServerConfig, E2EResult};
+use crate::server::helpers::{self, E2EResult, ServerConfig};
 use serde_json::{json, Value};
 use std::time::Duration;
 
@@ -43,8 +43,10 @@ async fn test_jsonrpc_basic_method_call() -> E2EResult<()> {
             .post(format!("http://127.0.0.1:{}", server.port))
             .header("Content-Type", "application/json")
             .json(&request_body)
-            .send()
-    ).await {
+            .send(),
+    )
+    .await
+    {
         Ok(Ok(resp)) => {
             println!("✓ Received HTTP response: {}", resp.status());
             resp
@@ -66,20 +68,35 @@ async fn test_jsonrpc_basic_method_call() -> E2EResult<()> {
     println!("Response: {}", serde_json::to_string_pretty(&json)?);
 
     // Validate JSON-RPC 2.0 response format
-    assert_eq!(json.get("jsonrpc").and_then(|v| v.as_str()), Some("2.0"),
-               "Expected 'jsonrpc' field to be '2.0'");
+    assert_eq!(
+        json.get("jsonrpc").and_then(|v| v.as_str()),
+        Some("2.0"),
+        "Expected 'jsonrpc' field to be '2.0'"
+    );
 
-    assert_eq!(json.get("id"), Some(&json!(1)),
-               "Expected 'id' field to match request id");
+    assert_eq!(
+        json.get("id"),
+        Some(&json!(1)),
+        "Expected 'id' field to match request id"
+    );
 
     // Should have either 'result' or 'error', not both
     let has_result = json.get("result").is_some();
     let has_error = json.get("error").is_some();
-    assert!(has_result || has_error, "Response must have 'result' or 'error'");
-    assert!(!(has_result && has_error), "Response cannot have both 'result' and 'error'");
+    assert!(
+        has_result || has_error,
+        "Response must have 'result' or 'error'"
+    );
+    assert!(
+        !(has_result && has_error),
+        "Response cannot have both 'result' and 'error'"
+    );
 
     if has_result {
-        println!("✓ Received success response with result: {:?}", json["result"]);
+        println!(
+            "✓ Received success response with result: {:?}",
+            json["result"]
+        );
     } else {
         println!("✗ Received error response: {:?}", json["error"]);
     }
@@ -118,8 +135,10 @@ async fn test_jsonrpc_notification() -> E2EResult<()> {
             .post(format!("http://127.0.0.1:{}", server.port))
             .header("Content-Type", "application/json")
             .json(&request_body)
-            .send()
-    ).await {
+            .send(),
+    )
+    .await
+    {
         Ok(Ok(resp)) => resp,
         Ok(Err(e)) => return Err(e.into()),
         Err(_) => return Err("Request timeout".into()),
@@ -128,7 +147,10 @@ async fn test_jsonrpc_notification() -> E2EResult<()> {
     // Notifications should return 204 No Content or 200 with empty body
     let status = response.status();
     println!("✓ Received HTTP response: {}", status);
-    assert!(status == 200 || status == 204, "Expected 200 or 204 for notification");
+    assert!(
+        status == 200 || status == 204,
+        "Expected 200 or 204 for notification"
+    );
 
     println!("✓ JSON-RPC Notification test completed\n");
     Ok(())
@@ -165,8 +187,10 @@ async fn test_jsonrpc_batch_request() -> E2EResult<()> {
             .post(format!("http://127.0.0.1:{}", server.port))
             .header("Content-Type", "application/json")
             .json(&request_body)
-            .send()
-    ).await {
+            .send(),
+    )
+    .await
+    {
         Ok(Ok(resp)) => resp,
         Ok(Err(e)) => return Err(e.into()),
         Err(_) => return Err("Request timeout".into()),
@@ -184,8 +208,12 @@ async fn test_jsonrpc_batch_request() -> E2EResult<()> {
 
     // Each response should be a valid JSON-RPC 2.0 response
     for (i, resp) in responses.iter().enumerate() {
-        assert_eq!(resp.get("jsonrpc").and_then(|v| v.as_str()), Some("2.0"),
-                   "Response {} should have jsonrpc=2.0", i);
+        assert_eq!(
+            resp.get("jsonrpc").and_then(|v| v.as_str()),
+            Some("2.0"),
+            "Response {} should have jsonrpc=2.0",
+            i
+        );
         assert!(resp.get("id").is_some(), "Response {} should have id", i);
         println!("✓ Response {} is valid", i + 1);
     }
@@ -223,14 +251,20 @@ async fn test_jsonrpc_method_not_found() -> E2EResult<()> {
             .post(format!("http://127.0.0.1:{}", server.port))
             .header("Content-Type", "application/json")
             .json(&request_body)
-            .send()
-    ).await {
+            .send(),
+    )
+    .await
+    {
         Ok(Ok(resp)) => resp,
         Ok(Err(e)) => return Err(e.into()),
         Err(_) => return Err("Request timeout".into()),
     };
 
-    assert_eq!(response.status(), 200, "Expected HTTP 200 OK (JSON-RPC errors use 200)");
+    assert_eq!(
+        response.status(),
+        200,
+        "Expected HTTP 200 OK (JSON-RPC errors use 200)"
+    );
 
     // Parse JSON-RPC error response
     let json: Value = response.json().await?;
@@ -241,8 +275,14 @@ async fn test_jsonrpc_method_not_found() -> E2EResult<()> {
     assert_eq!(json.get("id"), Some(&json!(99)));
 
     let error = json.get("error").expect("Should have 'error' field");
-    let code = error.get("code").and_then(|v| v.as_i64()).expect("Error should have 'code'");
-    let message = error.get("message").and_then(|v| v.as_str()).expect("Error should have 'message'");
+    let code = error
+        .get("code")
+        .and_then(|v| v.as_i64())
+        .expect("Error should have 'code'");
+    let message = error
+        .get("message")
+        .and_then(|v| v.as_str())
+        .expect("Error should have 'message'");
 
     println!("✓ Error code: {}, message: {}", code, message);
 

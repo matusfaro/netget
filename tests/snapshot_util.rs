@@ -45,10 +45,19 @@ pub fn assert_snapshot(test_name: &str, snapshot_dir: &str, actual: &str) {
 
         // Print diff instructions
         eprintln!("\n╔══════════════════════════════════════════════════════════════╗");
-        eprintln!("║ Snapshot Mismatch: {}                                ", test_name);
+        eprintln!(
+            "║ Snapshot Mismatch: {}                                ",
+            test_name
+        );
         eprintln!("╠══════════════════════════════════════════════════════════════╣");
-        eprintln!("║ Expected: {}                                          ", snapshot_path);
-        eprintln!("║ Actual:   {}                                      ", actual_path);
+        eprintln!(
+            "║ Expected: {}                                          ",
+            snapshot_path
+        );
+        eprintln!(
+            "║ Actual:   {}                                      ",
+            actual_path
+        );
         eprintln!("╠══════════════════════════════════════════════════════════════╣");
         eprintln!("║ To review the difference:                                    ║");
         eprintln!("║   diff {} {}  ║", snapshot_path, actual_path);

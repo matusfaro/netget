@@ -11,8 +11,9 @@ use std::time::Duration;
 
 #[tokio::test]
 async fn test_turn_basic_allocation() -> E2EResult<()> {
-    let config = ServerConfig::new("Start a TURN relay server on port 0 with 600 second allocations")
-        .with_log_level("off");
+    let config =
+        ServerConfig::new("Start a TURN relay server on port 0 with 600 second allocations")
+            .with_log_level("off");
 
     let test_state = start_netget_server(config).await?;
 
@@ -62,7 +63,8 @@ async fn test_turn_basic_allocation() -> E2EResult<()> {
             );
 
             // Verify magic cookie
-            let magic_cookie = u32::from_be_bytes([response[4], response[5], response[6], response[7]]);
+            let magic_cookie =
+                u32::from_be_bytes([response[4], response[5], response[6], response[7]]);
             assert_eq!(
                 magic_cookie, 0x2112A442,
                 "Invalid magic cookie: 0x{:08x}",
@@ -72,10 +74,7 @@ async fn test_turn_basic_allocation() -> E2EResult<()> {
             // Verify transaction ID matches
             let response_tid = &response[8..20];
             let request_tid = &allocate_request[8..20];
-            assert_eq!(
-                response_tid, request_tid,
-                "Transaction ID mismatch"
-            );
+            assert_eq!(response_tid, request_tid, "Transaction ID mismatch");
 
             // Look for XOR-RELAYED-ADDRESS attribute (0x0016)
             let mut found_relay_addr = false;
@@ -119,8 +118,9 @@ async fn test_turn_basic_allocation() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_turn_refresh_allocation() -> E2EResult<()> {
-    let config = ServerConfig::new("Start a TURN relay server on port 0 allowing allocation refresh")
-        .with_log_level("off");
+    let config =
+        ServerConfig::new("Start a TURN relay server on port 0 allowing allocation refresh")
+            .with_log_level("off");
 
     let test_state = start_netget_server(config).await?;
 
@@ -142,7 +142,9 @@ async fn test_turn_refresh_allocation() -> E2EResult<()> {
         .expect("Failed to send allocate");
 
     let mut buf = vec![0u8; 2048];
-    client.recv_from(&mut buf).expect("Failed to receive allocate response");
+    client
+        .recv_from(&mut buf)
+        .expect("Failed to receive allocate response");
 
     println!("✓ Initial allocation successful");
 
@@ -181,8 +183,10 @@ async fn test_turn_refresh_allocation() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_turn_create_permission() -> E2EResult<()> {
-    let config = ServerConfig::new("Start a TURN relay server on port 0 that allows creating permissions for peers")
-        .with_log_level("off");
+    let config = ServerConfig::new(
+        "Start a TURN relay server on port 0 that allows creating permissions for peers",
+    )
+    .with_log_level("off");
 
     let test_state = start_netget_server(config).await?;
 
@@ -204,7 +208,9 @@ async fn test_turn_create_permission() -> E2EResult<()> {
         .expect("Failed to send allocate");
 
     let mut buf = vec![0u8; 2048];
-    client.recv_from(&mut buf).expect("Failed to receive allocate response");
+    client
+        .recv_from(&mut buf)
+        .expect("Failed to receive allocate response");
 
     println!("✓ Initial allocation successful");
 
@@ -244,8 +250,9 @@ async fn test_turn_create_permission() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_turn_multiple_allocations() -> E2EResult<()> {
-    let config = ServerConfig::new("Start a TURN relay server on port 0 supporting multiple allocations")
-        .with_log_level("off");
+    let config =
+        ServerConfig::new("Start a TURN relay server on port 0 supporting multiple allocations")
+            .with_log_level("off");
 
     let test_state = start_netget_server(config).await?;
 
@@ -320,10 +327,16 @@ async fn test_turn_error_insufficient_capacity() -> E2EResult<()> {
 
             // Check if it's an error response (class = 2)
             let class = (message_type & 0x0110) >> 4;
-            println!("Response message type: 0x{:04x}, class: {}", message_type, class);
+            println!(
+                "Response message type: 0x{:04x}, class: {}",
+                message_type, class
+            );
 
             // Should be error response (0x0113 = Allocate Error Response)
-            assert!(class == 2 || message_type == 0x0113, "Expected error response");
+            assert!(
+                class == 2 || message_type == 0x0113,
+                "Expected error response"
+            );
 
             println!("✓ TURN server sent error response");
         }
@@ -369,15 +382,20 @@ async fn test_turn_invalid_magic_cookie() -> E2EResult<()> {
             if len >= 20 {
                 let message_type = u16::from_be_bytes([response[0], response[1]]);
                 let class = (message_type & 0x0110) >> 4;
-                println!("Received response: 0x{:04x}, class: {}", message_type, class);
+                println!(
+                    "Received response: 0x{:04x}, class: {}",
+                    message_type, class
+                );
 
                 // If server responds, it should be an error
                 assert_eq!(class, 2, "Expected error response class");
             }
             println!("✓ Server rejected invalid magic cookie");
         }
-        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock
-                || e.kind() == std::io::ErrorKind::TimedOut => {
+        Err(e)
+            if e.kind() == std::io::ErrorKind::WouldBlock
+                || e.kind() == std::io::ErrorKind::TimedOut =>
+        {
             println!("✓ Server silently ignored invalid packet");
         }
         Err(e) => {
@@ -423,11 +441,17 @@ async fn test_turn_refresh_without_allocation() -> E2EResult<()> {
                 let message_type = u16::from_be_bytes([response[0], response[1]]);
                 let class = (message_type & 0x0110) >> 4;
 
-                println!("Response message type: 0x{:04x}, class: {}", message_type, class);
+                println!(
+                    "Response message type: 0x{:04x}, class: {}",
+                    message_type, class
+                );
 
                 // Either success (LLM is lenient) or error (proper validation)
                 // We accept both behaviors
-                assert!(class == 1 || class == 2, "Expected success or error response");
+                assert!(
+                    class == 1 || class == 2,
+                    "Expected success or error response"
+                );
 
                 if class == 2 {
                     println!("✓ Server rejected refresh without allocation (strict validation)");
@@ -447,8 +471,10 @@ async fn test_turn_refresh_without_allocation() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_turn_permission_without_allocation() -> E2EResult<()> {
-    let config = ServerConfig::new("Start a TURN relay server on port 0 that rejects permission requests without allocation")
-        .with_log_level("off");
+    let config = ServerConfig::new(
+        "Start a TURN relay server on port 0 that rejects permission requests without allocation",
+    )
+    .with_log_level("off");
 
     let test_state = start_netget_server(config).await?;
 
@@ -479,10 +505,16 @@ async fn test_turn_permission_without_allocation() -> E2EResult<()> {
                 let message_type = u16::from_be_bytes([response[0], response[1]]);
                 let class = (message_type & 0x0110) >> 4;
 
-                println!("Response message type: 0x{:04x}, class: {}", message_type, class);
+                println!(
+                    "Response message type: 0x{:04x}, class: {}",
+                    message_type, class
+                );
 
                 // Either success (LLM is lenient) or error (proper validation)
-                assert!(class == 1 || class == 2, "Expected success or error response");
+                assert!(
+                    class == 1 || class == 2,
+                    "Expected success or error response"
+                );
 
                 if class == 2 {
                     println!("✓ Server rejected permission without allocation (strict)");
@@ -502,8 +534,10 @@ async fn test_turn_permission_without_allocation() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_turn_short_lifetime_allocation() -> E2EResult<()> {
-    let config = ServerConfig::new("Start a TURN relay server on port 0 with very short 5 second allocation lifetime")
-        .with_log_level("off");
+    let config = ServerConfig::new(
+        "Start a TURN relay server on port 0 with very short 5 second allocation lifetime",
+    )
+    .with_log_level("off");
 
     let test_state = start_netget_server(config).await?;
 
@@ -525,7 +559,9 @@ async fn test_turn_short_lifetime_allocation() -> E2EResult<()> {
         .expect("Failed to send allocate");
 
     let mut buf = vec![0u8; 2048];
-    let (len, _) = client.recv_from(&mut buf).expect("Failed to receive allocate response");
+    let (len, _) = client
+        .recv_from(&mut buf)
+        .expect("Failed to receive allocate response");
 
     let response = &buf[..len];
     let message_type = u16::from_be_bytes([response[0], response[1]]);
@@ -555,7 +591,10 @@ async fn test_turn_short_lifetime_allocation() -> E2EResult<()> {
                 let message_type = u16::from_be_bytes([response[0], response[1]]);
                 let class = (message_type & 0x0110) >> 4;
 
-                println!("Response after expiration: 0x{:04x}, class: {}", message_type, class);
+                println!(
+                    "Response after expiration: 0x{:04x}, class: {}",
+                    message_type, class
+                );
 
                 // Either error (allocation expired) or success (LLM doesn't track expiration strictly)
                 // Both are acceptable behaviors
@@ -566,8 +605,10 @@ async fn test_turn_short_lifetime_allocation() -> E2EResult<()> {
                 }
             }
         }
-        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock
-                || e.kind() == std::io::ErrorKind::TimedOut => {
+        Err(e)
+            if e.kind() == std::io::ErrorKind::WouldBlock
+                || e.kind() == std::io::ErrorKind::TimedOut =>
+        {
             println!("✓ Server ignored refresh of expired allocation (no response)");
         }
         Err(e) => {
@@ -581,8 +622,7 @@ async fn test_turn_short_lifetime_allocation() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_turn_allocate_with_lifetime_attribute() -> E2EResult<()> {
-    let config = ServerConfig::new("Start a TURN relay server on port 0")
-        .with_log_level("off");
+    let config = ServerConfig::new("Start a TURN relay server on port 0").with_log_level("off");
 
     let test_state = start_netget_server(config).await?;
 
@@ -671,7 +711,9 @@ async fn test_turn_allocate_with_lifetime_attribute() -> E2EResult<()> {
 
 /// Build a TURN allocate request
 fn build_turn_allocate_request() -> Vec<u8> {
-    build_turn_allocate_request_with_tid(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c])
+    build_turn_allocate_request_with_tid(&[
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
+    ])
 }
 
 /// Build a TURN allocate request with custom transaction ID
@@ -709,7 +751,9 @@ fn build_turn_refresh_request() -> Vec<u8> {
     packet.extend_from_slice(&0x2112A442u32.to_be_bytes());
 
     // Transaction ID
-    let tid = [0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02];
+    let tid = [
+        0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02,
+    ];
     packet.extend_from_slice(&tid);
 
     packet
@@ -730,7 +774,9 @@ fn build_turn_create_permission_request() -> Vec<u8> {
     packet.extend_from_slice(&0x2112A442u32.to_be_bytes());
 
     // Transaction ID
-    let tid = [0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03];
+    let tid = [
+        0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03,
+    ];
     packet.extend_from_slice(&tid);
 
     packet

@@ -15,7 +15,7 @@ use std::sync::LazyLock;
 pub static USB_DEVICE_OPENED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "usb_device_opened",
-        "USB device successfully opened and interface claimed"
+        "USB device successfully opened and interface claimed",
     )
     .with_parameters(vec![
         Parameter {
@@ -49,7 +49,7 @@ pub static USB_DEVICE_OPENED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 pub static USB_CONTROL_RESPONSE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "usb_control_response",
-        "Response received from USB control transfer"
+        "Response received from USB control transfer",
     )
     .with_parameters(vec![
         Parameter {
@@ -71,7 +71,7 @@ pub static USB_CONTROL_RESPONSE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 pub static USB_BULK_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "usb_bulk_data_received",
-        "Data received from USB bulk endpoint"
+        "Data received from USB bulk endpoint",
     )
     .with_parameters(vec![
         Parameter {
@@ -99,7 +99,7 @@ pub static USB_BULK_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| 
 pub static USB_INTERRUPT_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "usb_interrupt_data_received",
-        "Data received from USB interrupt endpoint"
+        "Data received from USB interrupt endpoint",
     )
     .with_parameters(vec![
         Parameter {
@@ -188,7 +188,8 @@ impl Protocol for UsbClientProtocol {
                     Parameter {
                         name: "data_hex".to_string(),
                         type_hint: "string".to_string(),
-                        description: "Data to send (hex encoded, empty for IN transfers)".to_string(),
+                        description: "Data to send (hex encoded, empty for IN transfers)"
+                            .to_string(),
                         required: false,
                     },
                     Parameter {
@@ -279,14 +280,12 @@ impl Protocol for UsbClientProtocol {
             ActionDefinition {
                 name: "claim_interface".to_string(),
                 description: "Claim a USB interface for exclusive access".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "interface_number".to_string(),
-                        type_hint: "number".to_string(),
-                        description: "Interface number to claim".to_string(),
-                        required: true,
-                    },
-                ],
+                parameters: vec![Parameter {
+                    name: "interface_number".to_string(),
+                    type_hint: "number".to_string(),
+                    description: "Interface number to claim".to_string(),
+                    required: true,
+                }],
                 example: json!({
                     "type": "claim_interface",
                     "interface_number": 0
@@ -311,7 +310,8 @@ impl Protocol for UsbClientProtocol {
         vec![
             EventType {
                 id: "usb_device_opened".to_string(),
-                description: "Triggered when USB device is opened and interface claimed".to_string(),
+                description: "Triggered when USB device is opened and interface claimed"
+                    .to_string(),
                 actions: vec![],
                 parameters: vec![],
             },
@@ -400,7 +400,8 @@ impl Client for UsbClientProtocol {
                 let request_type = action
                     .get("request_type")
                     .and_then(|v| v.as_u64())
-                    .context("Missing 'request_type' field")? as u8;
+                    .context("Missing 'request_type' field")?
+                    as u8;
 
                 let request = action
                     .get("request")
@@ -422,10 +423,7 @@ impl Client for UsbClientProtocol {
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
 
-                let length = action
-                    .get("length")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0) as usize;
+                let length = action.get("length").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
 
                 let data = if !data_hex.is_empty() {
                     hex::decode(data_hex).context("Invalid hex data")?
@@ -508,7 +506,8 @@ impl Client for UsbClientProtocol {
                 let interface_number = action
                     .get("interface_number")
                     .and_then(|v| v.as_u64())
-                    .context("Missing 'interface_number' field")? as u8;
+                    .context("Missing 'interface_number' field")?
+                    as u8;
 
                 Ok(ClientActionResult::Custom {
                     name: "claim_interface".to_string(),
@@ -519,7 +518,10 @@ impl Client for UsbClientProtocol {
             }
             "detach_device" => Ok(ClientActionResult::Disconnect),
             "wait_for_more" => Ok(ClientActionResult::WaitForMore),
-            _ => Err(anyhow::anyhow!("Unknown USB client action: {}", action_type)),
+            _ => Err(anyhow::anyhow!(
+                "Unknown USB client action: {}",
+                action_type
+            )),
         }
     }
 }

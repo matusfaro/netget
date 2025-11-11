@@ -15,7 +15,7 @@ use tokio::time::sleep;
 
 /// Test that Bluetooth client can initialize and scan for devices
 #[tokio::test]
-#[ignore]  // Requires real BLE hardware
+#[ignore] // Requires real BLE hardware
 async fn test_bluetooth_scan() {
     // This test is a placeholder for manual testing
     // To implement:
@@ -34,7 +34,7 @@ async fn test_bluetooth_scan() {
 
 /// Test that Bluetooth client can connect to a device by address
 #[tokio::test]
-#[ignore]  // Requires real BLE hardware
+#[ignore] // Requires real BLE hardware
 async fn test_bluetooth_connect_by_address() {
     // This test is a placeholder for manual testing
     // To implement:
@@ -50,7 +50,7 @@ async fn test_bluetooth_connect_by_address() {
 
 /// Test that Bluetooth client can discover GATT services
 #[tokio::test]
-#[ignore]  // Requires real BLE hardware
+#[ignore] // Requires real BLE hardware
 async fn test_bluetooth_discover_services() {
     // This test is a placeholder for manual testing
     // To implement:
@@ -65,7 +65,7 @@ async fn test_bluetooth_discover_services() {
 
 /// Test that Bluetooth client can read a characteristic
 #[tokio::test]
-#[ignore]  // Requires real BLE hardware with Battery Service
+#[ignore] // Requires real BLE hardware with Battery Service
 async fn test_bluetooth_read_battery_level() {
     // This test is a placeholder for manual testing
     // To implement:
@@ -84,7 +84,7 @@ async fn test_bluetooth_read_battery_level() {
 
 /// Test that Bluetooth client can subscribe to notifications
 #[tokio::test]
-#[ignore]  // Requires real BLE hardware with notify-capable characteristic
+#[ignore] // Requires real BLE hardware with notify-capable characteristic
 async fn test_bluetooth_subscribe_notifications() {
     // This test is a placeholder for manual testing
     // To implement:
@@ -152,9 +152,11 @@ mod unit_tests {
         let result = protocol.execute_action(action);
         assert!(result.is_ok());
 
-        if let Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) = result {
+        if let Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) =
+            result
+        {
             assert_eq!(name, "scan_devices");
-            assert_eq!(data["duration_secs"], 5);  // Default
+            assert_eq!(data["duration_secs"], 5); // Default
         } else {
             panic!("Expected Custom action result");
         }
@@ -171,7 +173,9 @@ mod unit_tests {
         let result = protocol.execute_action(action);
         assert!(result.is_ok());
 
-        if let Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) = result {
+        if let Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) =
+            result
+        {
             assert_eq!(name, "scan_devices");
             assert_eq!(data["duration_secs"], 10);
         } else {
@@ -188,7 +192,10 @@ mod unit_tests {
 
         let result = protocol.execute_action(action);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("address or device_name"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("address or device_name"));
     }
 
     #[test]
@@ -202,7 +209,9 @@ mod unit_tests {
         let result = protocol.execute_action(action);
         assert!(result.is_ok());
 
-        if let Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) = result {
+        if let Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) =
+            result
+        {
             assert_eq!(name, "connect_device");
             assert_eq!(data["device_address"], "AA:BB:CC:DD:EE:FF");
         } else {
@@ -221,7 +230,9 @@ mod unit_tests {
         let result = protocol.execute_action(action);
         assert!(result.is_ok());
 
-        if let Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) = result {
+        if let Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) =
+            result
+        {
             assert_eq!(name, "connect_device");
             assert_eq!(data["device_name"], "Heart Rate Monitor");
         } else {
@@ -243,7 +254,9 @@ mod unit_tests {
         let result = protocol.execute_action(action);
         assert!(result.is_ok());
 
-        if let Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) = result {
+        if let Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) =
+            result
+        {
             assert_eq!(name, "write_characteristic");
             assert_eq!(data["value_bytes"].as_array().unwrap().len(), 2);
             assert_eq!(data["value_bytes"][0], 255);

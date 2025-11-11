@@ -57,45 +57,46 @@ pub static USB_MSC_DETACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "usb_msc_detached",
         "Host detached from USB mass storage device",
     )
-    .with_parameters(vec![
-        Parameter {
-            name: "connection_id".to_string(),
-            type_hint: "string".to_string(),
-            description: "Connection ID of the USB/IP session".to_string(),
-            required: true,
-        },
-    ])
+    .with_parameters(vec![Parameter {
+        name: "connection_id".to_string(),
+        type_hint: "string".to_string(),
+        description: "Connection ID of the USB/IP session".to_string(),
+        required: true,
+    }])
 });
 
 #[cfg(feature = "usb-msc")]
 pub static USB_MSC_READ_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("usb_msc_read", "Host read sectors from the mass storage device")
-        .with_parameters(vec![
-            Parameter {
+    EventType::new(
+        "usb_msc_read",
+        "Host read sectors from the mass storage device",
+    )
+    .with_parameters(vec![
+        Parameter {
             name: "connection_id".to_string(),
             type_hint: "string".to_string(),
             description: "Connection ID".to_string(),
             required: true,
         },
-            Parameter {
+        Parameter {
             name: "lba".to_string(),
             type_hint: "number".to_string(),
             description: "Logical Block Address (starting sector)".to_string(),
             required: true,
         },
-            Parameter {
+        Parameter {
             name: "sector_count".to_string(),
             type_hint: "number".to_string(),
             description: "Number of sectors read".to_string(),
             required: true,
         },
-            Parameter {
+        Parameter {
             name: "bytes_read".to_string(),
             type_hint: "number".to_string(),
             description: "Total bytes read".to_string(),
             required: true,
         },
-        ])
+    ])
 });
 
 #[cfg(feature = "usb-msc")]
@@ -139,7 +140,14 @@ pub struct UsbMscProtocol {
     #[allow(dead_code)]
     connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
     /// Map of USB/IP MSC handlers for each connection
-    handlers: Arc<Mutex<HashMap<ConnectionId, Arc<std::sync::Mutex<Box<dyn usbip::UsbInterfaceHandler + Send>>>>>>,
+    handlers: Arc<
+        Mutex<
+            HashMap<
+                ConnectionId,
+                Arc<std::sync::Mutex<Box<dyn usbip::UsbInterfaceHandler + Send>>>,
+            >,
+        >,
+    >,
 }
 
 #[cfg(feature = "usb-msc")]
@@ -255,9 +263,8 @@ impl Server for UsbMscProtocol {
     fn spawn(
         &self,
         ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>,
-    > {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>>
+    {
         let disk_image = ctx
             .startup_params
             .as_ref()
@@ -277,10 +284,7 @@ impl Server for UsbMscProtocol {
         })
     }
 
-    fn execute_action(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action["type"]
             .as_str()
             .context("Action must have 'type' field")?;
@@ -319,17 +323,17 @@ fn mount_disk_action() -> ActionDefinition {
         description: "Mount a disk image file as the virtual mass storage device".to_string(),
         parameters: vec![
             Parameter {
-            name: "disk_image".to_string(),
-            type_hint: "string".to_string(),
-            description: "Path to disk image file".to_string(),
-            required: true,
-        },
+                name: "disk_image".to_string(),
+                type_hint: "string".to_string(),
+                description: "Path to disk image file".to_string(),
+                required: true,
+            },
             Parameter {
-            name: "write_protect".to_string(),
-            type_hint: "boolean".to_string(),
-            description: "Enable write protection (default: false)".to_string(),
-            required: false,
-        },
+                name: "write_protect".to_string(),
+                type_hint: "boolean".to_string(),
+                description: "Enable write protection (default: false)".to_string(),
+                required: false,
+            },
         ],
         example: json!({
             "type": "mount_disk",

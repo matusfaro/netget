@@ -271,12 +271,17 @@ impl ServerInstance {
     }
 
     /// Get protocol-specific data
-    pub fn get_protocol_data<T: serde::de::DeserializeOwned>(&self) -> Result<T, serde_json::Error> {
+    pub fn get_protocol_data<T: serde::de::DeserializeOwned>(
+        &self,
+    ) -> Result<T, serde_json::Error> {
         serde_json::from_value(self.protocol_data.clone())
     }
 
     /// Set protocol-specific data
-    pub fn set_protocol_data<T: serde::Serialize>(&mut self, data: T) -> Result<(), serde_json::Error> {
+    pub fn set_protocol_data<T: serde::Serialize>(
+        &mut self,
+        data: T,
+    ) -> Result<(), serde_json::Error> {
         self.protocol_data = serde_json::to_value(data)?;
         Ok(())
     }
@@ -319,7 +324,8 @@ impl ServerInstance {
         let log_filename = format!("netget_{}_{}.log", output_name, timestamp_str);
         let log_path = PathBuf::from(log_filename);
 
-        self.log_files.insert(output_name.to_string(), log_path.clone());
+        self.log_files
+            .insert(output_name.to_string(), log_path.clone());
         log_path
     }
 

@@ -57,9 +57,7 @@ pub enum CommonAction {
     },
 
     /// Close a specific server
-    CloseServer {
-        server_id: u32,
-    },
+    CloseServer { server_id: u32 },
 
     /// Close all servers
     CloseAllServers,
@@ -82,28 +80,19 @@ pub enum CommonAction {
     },
 
     /// Close a specific client
-    CloseClient {
-        client_id: u32,
-    },
+    CloseClient { client_id: u32 },
 
     /// Close all clients
     CloseAllClients,
 
     /// Close a specific connection by its unified ID
-    CloseConnectionById {
-        connection_id: u32,
-    },
+    CloseConnectionById { connection_id: u32 },
 
     /// Reconnect a disconnected client
-    ReconnectClient {
-        client_id: u32,
-    },
+    ReconnectClient { client_id: u32 },
 
     /// Update the client instruction
-    UpdateClientInstruction {
-        client_id: u32,
-        instruction: String,
-    },
+    UpdateClientInstruction { client_id: u32, instruction: String },
 
     /// Update the server instruction (combines with existing)
     UpdateInstruction { instruction: String },
@@ -475,7 +464,9 @@ pub fn reconnect_client_action() -> ActionDefinition {
 pub fn update_client_instruction_action() -> ActionDefinition {
     ActionDefinition {
         name: "update_client_instruction".to_string(),
-        description: "Update the instruction for a specific client (replaces existing instruction).".to_string(),
+        description:
+            "Update the instruction for a specific client (replaces existing instruction)."
+                .to_string(),
         parameters: vec![
             Parameter {
                 name: "client_id".to_string(),
@@ -824,7 +815,12 @@ pub fn get_user_input_common_actions(
     is_open_server_enabled: bool,
     is_open_client_enabled: bool,
 ) -> Vec<ActionDefinition> {
-    get_all_common_actions(selected_mode, env, is_open_server_enabled, is_open_client_enabled)
+    get_all_common_actions(
+        selected_mode,
+        env,
+        is_open_server_enabled,
+        is_open_client_enabled,
+    )
 }
 
 /// Get common actions for network events (exclude server management actions)

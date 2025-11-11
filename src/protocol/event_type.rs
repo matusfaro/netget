@@ -90,7 +90,11 @@ impl EventType {
                     "  - {} ({}){}: {}\n",
                     param.name,
                     param.type_hint,
-                    if param.required { ", required" } else { ", optional" },
+                    if param.required {
+                        ", required"
+                    } else {
+                        ", optional"
+                    },
                     param.description
                 ));
             }
@@ -179,8 +183,14 @@ pub fn format_event_types_for_prompt(event_types: &[EventType]) -> String {
     result.push_str("This protocol can emit the following event types:\n\n");
 
     for event_type in event_types {
-        result.push_str(&format!("• {} - {}\n", event_type.id, event_type.description));
-        result.push_str(&format!("  Available actions: {}\n", event_type.action_names().join(", ")));
+        result.push_str(&format!(
+            "• {} - {}\n",
+            event_type.id, event_type.description
+        ));
+        result.push_str(&format!(
+            "  Available actions: {}\n",
+            event_type.action_names().join(", ")
+        ));
     }
 
     result.push('\n');
@@ -193,7 +203,10 @@ pub fn format_script_template_for_prompt(event_types: &[EventType]) -> String {
         return String::new();
     }
 
-    let event_ids: Vec<String> = event_types.iter().map(|e| format!("\"{}\"", e.id)).collect();
+    let event_ids: Vec<String> = event_types
+        .iter()
+        .map(|e| format!("\"{}\"", e.id))
+        .collect();
 
     format!(
         r#"
@@ -240,4 +253,3 @@ Event types for this protocol: {}
         event_ids.join(", ")
     )
 }
-

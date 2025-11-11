@@ -15,7 +15,7 @@
     feature = "torrent-peer"
 ))]
 mod tests {
-    use super::super::helpers::{self, BitTorrentTestNetwork};
+    use super::super::helpers::BitTorrentTestNetwork;
     use super::super::torrent_builder::{TorrentBuilder, TorrentInfo};
     use anyhow::Result;
     use std::collections::HashMap;
@@ -39,16 +39,21 @@ mod tests {
         println!("\n=== BitTorrent Network Integration Test ===\n");
 
         // Setup test content
-        let test_content = b"Hello from NetGet BitTorrent! This is a test file for E2E integration.".to_vec();
+        let test_content =
+            b"Hello from NetGet BitTorrent! This is a test file for E2E integration.".to_vec();
         let test_filename = "test.txt".to_string();
 
         // Setup complete test network
-        let network = BitTorrentTestNetwork::setup(test_content.clone(), test_filename.clone())
-            .await?;
+        let network =
+            BitTorrentTestNetwork::setup(test_content.clone(), test_filename.clone()).await?;
 
         // Create .torrent file
-        let builder = TorrentBuilder::new(network.tracker_url(), test_filename.clone(), test_content.clone())
-            .piece_length(16384);
+        let builder = TorrentBuilder::new(
+            network.tracker_url(),
+            test_filename.clone(),
+            test_content.clone(),
+        )
+        .piece_length(16384);
         let (torrent_bytes, info_hash) = builder.build()?;
         let torrent_info = TorrentInfo::parse(&torrent_bytes)?;
 
@@ -78,7 +83,9 @@ mod tests {
             println!("⚠ No data downloaded (LLM may not have sent piece)");
         } else {
             println!("✓ Downloaded {} bytes", downloaded_data.len());
-            if downloaded_data.starts_with(&test_content[..downloaded_data.len().min(test_content.len())]) {
+            if downloaded_data
+                .starts_with(&test_content[..downloaded_data.len().min(test_content.len())])
+            {
                 println!("✓ Downloaded data matches original content!");
             } else {
                 println!("⚠ Downloaded data differs from original (LLM may have sent fake data)");
@@ -256,7 +263,10 @@ mod tests {
     }
 
     /// Test peer wire protocol handshake and piece download
-    async fn test_peer_download(network: &BitTorrentTestNetwork, info_hash: &str) -> Result<Vec<u8>> {
+    async fn test_peer_download(
+        network: &BitTorrentTestNetwork,
+        info_hash: &str,
+    ) -> Result<Vec<u8>> {
         let mut stream = TcpStream::connect(&network.peer_addr()).await?;
         println!("  Connected to peer: {}", network.peer_addr());
 
@@ -300,7 +310,12 @@ mod tests {
                     }
 
                     let message_id = message[0];
-                    println!("  Message {}: id={} ({} bytes)", i + 1, message_id, message.len());
+                    println!(
+                        "  Message {}: id={} ({} bytes)",
+                        i + 1,
+                        message_id,
+                        message.len()
+                    );
 
                     match message_id {
                         0 => println!("    Type: choke"),
@@ -325,7 +340,9 @@ mod tests {
                         3 => println!("    Type: not_interested"),
                         4 => {
                             println!("    Type: have");
-                            let piece_index = u32::from_be_bytes([message[1], message[2], message[3], message[4]]);
+                            let piece_index = u32::from_be_bytes([
+                                message[1], message[2], message[3], message[4],
+                            ]);
                             println!("    Piece index: {}", piece_index);
                         }
                         5 => {
@@ -339,10 +356,19 @@ mod tests {
                         }
                         7 => {
                             println!("    Type: piece");
-                            let index = u32::from_be_bytes([message[1], message[2], message[3], message[4]]);
-                            let begin = u32::from_be_bytes([message[5], message[6], message[7], message[8]]);
+                            let index = u32::from_be_bytes([
+                                message[1], message[2], message[3], message[4],
+                            ]);
+                            let begin = u32::from_be_bytes([
+                                message[5], message[6], message[7], message[8],
+                            ]);
                             let block = &message[9..];
-                            println!("    Index: {}, Begin: {}, Block size: {}", index, begin, block.len());
+                            println!(
+                                "    Index: {}, Begin: {}, Block size: {}",
+                                index,
+                                begin,
+                                block.len()
+                            );
 
                             // Save the downloaded block
                             downloaded_data.extend_from_slice(block);
@@ -388,9 +414,6 @@ mod tests {
 
     /// URL-encode a string
     fn url_encode_str(s: &str) -> String {
-        s.as_bytes()
-            .iter()
-            .map(|b| format!("%{:02x}", b))
-            .collect()
+        s.as_bytes().iter().map(|b| format!("%{:02x}", b)).collect()
     }
 }

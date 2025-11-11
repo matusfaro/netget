@@ -32,7 +32,9 @@ Log all requests at DEBUG level.
 "#;
 
     let config = ServerConfig::new(prompt.to_string());
-    let server = start_netget_server(config).await.expect("Failed to start server");
+    let server = start_netget_server(config)
+        .await
+        .expect("Failed to start server");
 
     // Wait for server to fully start
     wait_for_server_startup(&server, Duration::from_secs(10), "KAFKA").await;
@@ -63,11 +65,16 @@ Log all requests at DEBUG level.
         .expect("Failed to fetch metadata");
 
     // Verify broker is present in metadata
-    assert!(!metadata.brokers().is_empty(), "Expected at least one broker in metadata");
+    assert!(
+        !metadata.brokers().is_empty(),
+        "Expected at least one broker in metadata"
+    );
 
-    println!("✓ Kafka broker metadata: {} brokers, {} topics",
-             metadata.brokers().len(),
-             metadata.topics().len());
+    println!(
+        "✓ Kafka broker metadata: {} brokers, {} topics",
+        metadata.brokers().len(),
+        metadata.topics().len()
+    );
 
     // Give server time to process
     sleep(Duration::from_millis(500)).await;
@@ -87,7 +94,9 @@ Log all produce and fetch requests at DEBUG level.
 "#;
 
     let config = ServerConfig::new(prompt.to_string());
-    let server = start_netget_server(config).await.expect("Failed to start server");
+    let server = start_netget_server(config)
+        .await
+        .expect("Failed to start server");
     wait_for_server_startup(&server, Duration::from_secs(10), "KAFKA").await;
 
     let bootstrap_servers = format!("127.0.0.1:{}", server.port);
@@ -117,7 +126,10 @@ Log all produce and fetch requests at DEBUG level.
 
         match delivery_result {
             Ok((partition, offset)) => {
-                println!("✓ Message sent to partition {} at offset {}", partition, offset);
+                println!(
+                    "✓ Message sent to partition {} at offset {}",
+                    partition, offset
+                );
             }
             Err((err, _)) => {
                 panic!("Failed to send message: {:?}", err);
@@ -126,7 +138,8 @@ Log all produce and fetch requests at DEBUG level.
     }
 
     // Flush producer
-    producer.flush(Timeout::After(Duration::from_secs(5)))
+    producer
+        .flush(Timeout::After(Duration::from_secs(5)))
         .expect("Failed to flush producer");
 
     println!("✓ All {} messages sent successfully", test_messages.len());
@@ -156,11 +169,19 @@ Log all produce and fetch requests at DEBUG level.
     while received_count < test_messages.len() {
         match timeout(consume_timeout, consumer.recv()).await {
             Ok(Ok(message)) => {
-                let key = message.key().map(|k| String::from_utf8_lossy(k).to_string());
-                let payload = message.payload().map(|p| String::from_utf8_lossy(p).to_string());
+                let key = message
+                    .key()
+                    .map(|k| String::from_utf8_lossy(k).to_string());
+                let payload = message
+                    .payload()
+                    .map(|p| String::from_utf8_lossy(p).to_string());
 
-                println!("✓ Received message: key={:?}, payload={:?}, offset={}",
-                         key, payload, message.offset());
+                println!(
+                    "✓ Received message: key={:?}, payload={:?}, offset={}",
+                    key,
+                    payload,
+                    message.offset()
+                );
 
                 received_count += 1;
             }
@@ -168,7 +189,11 @@ Log all produce and fetch requests at DEBUG level.
                 panic!("Consumer error: {:?}", e);
             }
             Err(_) => {
-                println!("Timeout waiting for message (received {}/{})", received_count, test_messages.len());
+                println!(
+                    "Timeout waiting for message (received {}/{})",
+                    received_count,
+                    test_messages.len()
+                );
                 break;
             }
         }
@@ -182,7 +207,10 @@ Log all produce and fetch requests at DEBUG level.
         received_count
     );
 
-    println!("✓ Successfully produced and consumed {} messages", received_count);
+    println!(
+        "✓ Successfully produced and consumed {} messages",
+        received_count
+    );
 }
 
 /// Test Kafka metadata requests
@@ -202,7 +230,9 @@ Log all metadata requests at DEBUG level.
 "#;
 
     let config = ServerConfig::new(prompt.to_string());
-    let server = start_netget_server(config).await.expect("Failed to start server");
+    let server = start_netget_server(config)
+        .await
+        .expect("Failed to start server");
     wait_for_server_startup(&server, Duration::from_secs(10), "KAFKA").await;
 
     let bootstrap_servers = format!("127.0.0.1:{}", server.port);
@@ -222,31 +252,40 @@ Log all metadata requests at DEBUG level.
         .expect("Failed to fetch metadata");
 
     // Verify brokers
-    assert!(!metadata.brokers().is_empty(), "Expected at least one broker");
+    assert!(
+        !metadata.brokers().is_empty(),
+        "Expected at least one broker"
+    );
     println!("✓ Found {} broker(s)", metadata.brokers().len());
 
     for broker in metadata.brokers() {
-        println!("  - Broker ID: {}, Host: {}, Port: {}",
-                 broker.id(), broker.host(), broker.port());
+        println!(
+            "  - Broker ID: {}, Host: {}, Port: {}",
+            broker.id(),
+            broker.host(),
+            broker.port()
+        );
     }
 
     // Verify topics
-    let topic_names: Vec<&str> = metadata
-        .topics()
-        .iter()
-        .map(|t| t.name())
-        .collect();
+    let topic_names: Vec<&str> = metadata.topics().iter().map(|t| t.name()).collect();
 
     println!("✓ Found {} topic(s): {:?}", topic_names.len(), topic_names);
 
     // Check for expected topics (if LLM created them)
     for topic in metadata.topics() {
-        println!("  - Topic: {}, Partitions: {}",
-                 topic.name(), topic.partitions().len());
+        println!(
+            "  - Topic: {}, Partitions: {}",
+            topic.name(),
+            topic.partitions().len()
+        );
 
         for partition in topic.partitions() {
-            println!("    - Partition {}, Leader: {:?}",
-                     partition.id(), partition.leader());
+            println!(
+                "    - Partition {}, Leader: {:?}",
+                partition.id(),
+                partition.leader()
+            );
         }
     }
 

@@ -20,93 +20,90 @@ impl TurnProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for TurnProtocol {
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            vec![
-                allocate_relay_address_action(),
-                revoke_allocation_action(),
-            ]
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                send_turn_allocate_response_action(),
-                send_turn_refresh_response_action(),
-                send_turn_create_permission_response_action(),
-                relay_data_to_peer_action(),
-                send_turn_error_response_action(),
-                ignore_request_action(),
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "TURN"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            get_turn_event_types()
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>UDP>TURN"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["turn"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Experimental)
-                .implementation("Manual TURN protocol (RFC 8656)")
-                .llm_control("Allocations, permissions, relay decisions")
-                .e2e_testing("turnutils_uclient / WebRTC")
-                .notes("Allocation tracking works, data relay pending")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "TURN relay server for NAT traversal"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Start a TURN relay server on port 3478 with 10 minute allocations"
-        }
-        fn group_name(&self) -> &'static str {
-            "Proxy & Network"
-        }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        vec![allocate_relay_address_action(), revoke_allocation_action()]
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            send_turn_allocate_response_action(),
+            send_turn_refresh_response_action(),
+            send_turn_create_permission_response_action(),
+            relay_data_to_peer_action(),
+            send_turn_error_response_action(),
+            ignore_request_action(),
+        ]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "TURN"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_turn_event_types()
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>UDP>TURN"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["turn"]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("Manual TURN protocol (RFC 8656)")
+            .llm_control("Allocations, permissions, relay decisions")
+            .e2e_testing("turnutils_uclient / WebRTC")
+            .notes("Allocation tracking works, data relay pending")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "TURN relay server for NAT traversal"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Start a TURN relay server on port 3478 with 10 minute allocations"
+    }
+    fn group_name(&self) -> &'static str {
+        "Proxy & Network"
+    }
 }
 
 // Implement Server trait (server-specific functionality)
 impl Server for TurnProtocol {
-        fn spawn(
-            &self,
-            ctx: crate::protocol::SpawnContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::server::turn::TurnServer;
-                TurnServer::spawn_with_llm_actions(
-                    ctx.listen_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.server_id,
-                ).await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "send_turn_allocate_response" => self.execute_send_allocate_response(action),
-                "send_turn_refresh_response" => self.execute_send_refresh_response(action),
-                "send_turn_create_permission_response" => self.execute_send_permission_response(action),
-                "relay_data_to_peer" => self.execute_relay_data(action),
-                "send_turn_error_response" => self.execute_send_error_response(action),
-                "ignore_request" => Ok(ActionResult::NoAction),
-                _ => Err(anyhow::anyhow!("Unknown TURN action: {}", action_type)),
-            }
-        }
-}
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::turn::TurnServer;
+            TurnServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
 
+        match action_type {
+            "send_turn_allocate_response" => self.execute_send_allocate_response(action),
+            "send_turn_refresh_response" => self.execute_send_refresh_response(action),
+            "send_turn_create_permission_response" => self.execute_send_permission_response(action),
+            "relay_data_to_peer" => self.execute_relay_data(action),
+            "send_turn_error_response" => self.execute_send_error_response(action),
+            "ignore_request" => Ok(ActionResult::NoAction),
+            _ => Err(anyhow::anyhow!("Unknown TURN action: {}", action_type)),
+        }
+    }
+}
 
 impl TurnProtocol {
     /// Execute TURN allocate response
@@ -130,8 +127,8 @@ impl TurnProtocol {
         // from the raw action JSON for allocation tracking
 
         // Parse transaction ID from hex
-        let transaction_id_bytes = hex::decode(transaction_id)
-            .context("Invalid transaction_id hex")?;
+        let transaction_id_bytes =
+            hex::decode(transaction_id).context("Invalid transaction_id hex")?;
 
         if transaction_id_bytes.len() != 12 {
             return Err(anyhow::anyhow!("Transaction ID must be 12 bytes"));
@@ -143,7 +140,8 @@ impl TurnProtocol {
             .context("Invalid relay_address format")?;
 
         // Build TURN allocate response
-        let packet = Self::build_allocate_response(&transaction_id_bytes, relay_addr, lifetime_seconds)?;
+        let packet =
+            Self::build_allocate_response(&transaction_id_bytes, relay_addr, lifetime_seconds)?;
 
         // Note: Allocation metadata tracking is handled in the TURN server's main loop
         // The server maintains an allocations HashMap with all necessary state
@@ -164,8 +162,8 @@ impl TurnProtocol {
             .unwrap_or(600) as u32;
 
         // Parse transaction ID from hex
-        let transaction_id_bytes = hex::decode(transaction_id)
-            .context("Invalid transaction_id hex")?;
+        let transaction_id_bytes =
+            hex::decode(transaction_id).context("Invalid transaction_id hex")?;
 
         if transaction_id_bytes.len() != 12 {
             return Err(anyhow::anyhow!("Transaction ID must be 12 bytes"));
@@ -185,8 +183,8 @@ impl TurnProtocol {
             .context("Missing 'transaction_id' field")?;
 
         // Parse transaction ID from hex
-        let transaction_id_bytes = hex::decode(transaction_id)
-            .context("Invalid transaction_id hex")?;
+        let transaction_id_bytes =
+            hex::decode(transaction_id).context("Invalid transaction_id hex")?;
 
         if transaction_id_bytes.len() != 12 {
             return Err(anyhow::anyhow!("Transaction ID must be 12 bytes"));
@@ -220,7 +218,11 @@ impl TurnProtocol {
 
         // For simplicity, we'll just acknowledge the relay request
         // In a real implementation, this would actually forward data to the peer
-        tracing::info!("TURN would relay {} bytes to {}", data_bytes.len(), peer_address);
+        tracing::info!(
+            "TURN would relay {} bytes to {}",
+            data_bytes.len(),
+            peer_address
+        );
 
         Ok(ActionResult::NoAction)
     }
@@ -243,8 +245,8 @@ impl TurnProtocol {
             .context("Missing 'transaction_id' field")?;
 
         // Parse transaction ID from hex
-        let transaction_id_bytes = hex::decode(transaction_id)
-            .context("Invalid transaction_id hex")?;
+        let transaction_id_bytes =
+            hex::decode(transaction_id).context("Invalid transaction_id hex")?;
 
         if transaction_id_bytes.len() != 12 {
             return Err(anyhow::anyhow!("Transaction ID must be 12 bytes"));
@@ -364,10 +366,8 @@ impl TurnProtocol {
 
         // Message Type: error response for given method
         // Class = 2 (error), method = provided
-        let message_type = (method & 0x000F)
-                         | ((method & 0x0070) << 1)
-                         | ((method & 0x0F80) << 2)
-                         | 0x0110;
+        let message_type =
+            (method & 0x000F) | ((method & 0x0070) << 1) | ((method & 0x0F80) << 2) | 0x0110;
         packet.extend_from_slice(&message_type.to_be_bytes());
 
         // Message Length (will be updated later)
@@ -521,7 +521,8 @@ fn send_turn_allocate_response_action() -> ActionDefinition {
             Parameter {
                 name: "relay_address".to_string(),
                 type_hint: "string".to_string(),
-                description: "Relay address allocated for client (e.g., \"203.0.113.100:55000\")".to_string(),
+                description: "Relay address allocated for client (e.g., \"203.0.113.100:55000\")"
+                    .to_string(),
                 required: true,
             },
             Parameter {
@@ -583,14 +584,12 @@ fn send_turn_create_permission_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_turn_create_permission_response".to_string(),
         description: "Send TURN create permission response".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "transaction_id".to_string(),
-                type_hint: "string".to_string(),
-                description: "Transaction ID from request (hex string)".to_string(),
-                required: true,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "transaction_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Transaction ID from request (hex string)".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "send_turn_create_permission_response",
             "transaction_id": "0123456789abcdef01234567"
@@ -687,14 +686,12 @@ fn revoke_allocation_action() -> ActionDefinition {
     ActionDefinition {
         name: "revoke_allocation".to_string(),
         description: "Revoke an existing allocation (async action)".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "allocation_id".to_string(),
-                type_hint: "string".to_string(),
-                description: "Allocation ID to revoke".to_string(),
-                required: true,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "allocation_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "Allocation ID to revoke".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "revoke_allocation",
             "allocation_id": "alloc-123"
@@ -718,28 +715,28 @@ fn ignore_request_action() -> ActionDefinition {
 pub static TURN_ALLOCATE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "turn_allocate_request",
-        "TURN allocate request received from client"
+        "TURN allocate request received from client",
     )
 });
 
 pub static TURN_REFRESH_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "turn_refresh_request",
-        "TURN refresh request received from client"
+        "TURN refresh request received from client",
     )
 });
 
 pub static TURN_CREATE_PERMISSION_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "turn_create_permission_request",
-        "TURN create permission request received from client"
+        "TURN create permission request received from client",
     )
 });
 
 pub static TURN_SEND_INDICATION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "turn_send_indication",
-        "TURN send indication received from client"
+        "TURN send indication received from client",
     )
 });
 

@@ -36,7 +36,7 @@ pub mod ins {
 #[cfg(feature = "usb-smartcard")]
 pub mod sw {
     pub const SUCCESS: u16 = 0x9000;
-    pub const BYTES_REMAINING: u8 = 0x61;  // SW1, SW2 = number of bytes
+    pub const BYTES_REMAINING: u8 = 0x61; // SW1, SW2 = number of bytes
     pub const WARNING: u16 = 0x6200;
     pub const FILE_NOT_FOUND: u16 = 0x6A82;
     pub const WRONG_LENGTH: u16 = 0x6700;
@@ -173,7 +173,8 @@ impl SmartCardFileSystem {
         fs.files.insert(0x3F00, vec![0x62, 0x00]); // Empty DF
 
         // File 0x2F00: Elementary File (EF) - test data
-        fs.files.insert(0x2F00, b"Hello from NetGet Smart Card!".to_vec());
+        fs.files
+            .insert(0x2F00, b"Hello from NetGet Smart Card!".to_vec());
 
         fs
     }

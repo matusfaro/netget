@@ -77,10 +77,17 @@ impl BitTorrentTestNetwork {
         println!("✓ Peer/Seeder started on port {}", peer_server.port);
 
         println!("\n✅ BitTorrent Test Network Setup Complete!");
-        println!("   - Tracker: http://127.0.0.1:{}/announce", tracker_server.port);
+        println!(
+            "   - Tracker: http://127.0.0.1:{}/announce",
+            tracker_server.port
+        );
         println!("   - DHT: udp://127.0.0.1:{}", dht_server.port);
         println!("   - Peer: tcp://127.0.0.1:{}", peer_server.port);
-        println!("   - Test file: {} ({} bytes)", test_filename, test_content.len());
+        println!(
+            "   - Test file: {} ({} bytes)",
+            test_filename,
+            test_content.len()
+        );
 
         Ok(BitTorrentTestNetwork {
             tracker: tracker_server,

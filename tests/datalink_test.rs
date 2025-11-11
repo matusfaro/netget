@@ -48,12 +48,16 @@ async fn test_list_network_interfaces_tool() {
 
     // Tool should return either a list of interfaces or an error message
     if result.success {
-        assert!(result.result.contains("Available network interfaces") ||
-                result.result.contains("No network interfaces found"));
+        assert!(
+            result.result.contains("Available network interfaces")
+                || result.result.contains("No network interfaces found")
+        );
     } else {
         // If it failed, it should have a meaningful error message
-        assert!(result.result.contains("permissions") ||
-                result.result.contains("pcap") ||
-                result.result.contains("Failed to list"));
+        assert!(
+            result.result.contains("permissions")
+                || result.result.contains("pcap")
+                || result.result.contains("Failed to list")
+        );
     }
 }

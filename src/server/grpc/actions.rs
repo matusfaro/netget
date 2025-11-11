@@ -62,7 +62,10 @@ impl GrpcProtocol {
             .and_then(|v| v.as_str())
             .context("Missing 'proto_schema' parameter")?;
 
-        debug!("gRPC reload schema request (length: {} bytes)", proto_schema.len());
+        debug!(
+            "gRPC reload schema request (length: {} bytes)",
+            proto_schema.len()
+        );
 
         // Return as Custom action result so server can reload schema
         Ok(ActionResult::Custom {
@@ -107,9 +110,9 @@ impl GrpcProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for GrpcProtocol {
-        fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
-            use crate::llm::actions::ParameterDefinition;
-            vec![
+    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        use crate::llm::actions::ParameterDefinition;
+        vec![
                 ParameterDefinition {
                     name: "proto_schema".to_string(),
                     type_hint: "string".to_string(),
@@ -125,91 +128,88 @@ impl Protocol for GrpcProtocol {
                     example: json!(true),
                 },
             ]
-        }
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            vec![
-                reload_schema_action(),
-                list_services_action(),
-                describe_method_action(),
-            ]
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                grpc_unary_response_action(),
-                grpc_error_action(),
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "gRPC"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            get_grpc_event_types()
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>TCP>HTTP2>GRPC"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["grpc", "grpcserver", "protobuf"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Experimental)
-                .implementation("prost-reflect dynamic schema, tonic, hyper HTTP/2")
-                .llm_control("All RPC request/response handling, dynamic schema loading")
-                .e2e_testing("grpcurl / gRPC clients")
-                .notes("Unary RPCs only, no streaming, dynamic protobuf via prost-reflect")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "gRPC server"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Start a gRPC server on port 50051 with this schema: service UserService { rpc GetUser(UserId) returns (User); }"
-        }
-        fn group_name(&self) -> &'static str {
-            "AI & API"
-        }
+    }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        vec![
+            reload_schema_action(),
+            list_services_action(),
+            describe_method_action(),
+        ]
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![grpc_unary_response_action(), grpc_error_action()]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "gRPC"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_grpc_event_types()
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>HTTP2>GRPC"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["grpc", "grpcserver", "protobuf"]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("prost-reflect dynamic schema, tonic, hyper HTTP/2")
+            .llm_control("All RPC request/response handling, dynamic schema loading")
+            .e2e_testing("grpcurl / gRPC clients")
+            .notes("Unary RPCs only, no streaming, dynamic protobuf via prost-reflect")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "gRPC server"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Start a gRPC server on port 50051 with this schema: service UserService { rpc GetUser(UserId) returns (User); }"
+    }
+    fn group_name(&self) -> &'static str {
+        "AI & API"
+    }
 }
 
 // Implement Server trait (server-specific functionality)
 impl Server for GrpcProtocol {
-        fn spawn(
-            &self,
-            ctx: crate::protocol::SpawnContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::server::grpc::GrpcServer;
-                GrpcServer::spawn_with_llm_actions(
-                    ctx.listen_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.server_id,
-                    ctx.startup_params,
-                ).await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "grpc_unary_response" => self.execute_grpc_unary_response(action),
-                "grpc_error" => self.execute_grpc_error(action),
-                "reload_schema" => self.execute_reload_schema(action),
-                "list_services" => self.execute_list_services(action),
-                "describe_method" => self.execute_describe_method(action),
-                _ => Err(anyhow::anyhow!("Unknown gRPC action: {}", action_type)),
-            }
-        }
-}
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::grpc::GrpcServer;
+            GrpcServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+                ctx.startup_params,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
 
+        match action_type {
+            "grpc_unary_response" => self.execute_grpc_unary_response(action),
+            "grpc_error" => self.execute_grpc_error(action),
+            "reload_schema" => self.execute_reload_schema(action),
+            "list_services" => self.execute_list_services(action),
+            "describe_method" => self.execute_describe_method(action),
+            _ => Err(anyhow::anyhow!("Unknown gRPC action: {}", action_type)),
+        }
+    }
+}
 
 // ============================================================================
 // Action Definitions
@@ -244,7 +244,9 @@ fn grpc_error_action() -> ActionDefinition {
             Parameter {
                 name: "code".to_string(),
                 type_hint: "string".to_string(),
-                description: "gRPC status code (OK, CANCELLED, INVALID_ARGUMENT, NOT_FOUND, INTERNAL, etc.)".to_string(),
+                description:
+                    "gRPC status code (OK, CANCELLED, INVALID_ARGUMENT, NOT_FOUND, INTERNAL, etc.)"
+                        .to_string(),
                 required: false,
             },
             Parameter {

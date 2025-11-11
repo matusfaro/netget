@@ -15,23 +15,21 @@ use std::sync::LazyLock;
 pub static GIT_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "git_connected",
-        "Git client initialized and ready for operations"
+        "Git client initialized and ready for operations",
     )
-    .with_parameters(vec![
-        Parameter {
-            name: "repository_path".to_string(),
-            type_hint: "string".to_string(),
-            description: "Local path to the Git repository".to_string(),
-            required: true,
-        },
-    ])
+    .with_parameters(vec![Parameter {
+        name: "repository_path".to_string(),
+        type_hint: "string".to_string(),
+        description: "Local path to the Git repository".to_string(),
+        required: true,
+    }])
 });
 
 /// Git operation completed event
 pub static GIT_OPERATION_COMPLETED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "git_operation_completed",
-        "Git operation completed successfully"
+        "Git operation completed successfully",
     )
     .with_parameters(vec![
         Parameter {
@@ -51,24 +49,22 @@ pub static GIT_OPERATION_COMPLETED_EVENT: LazyLock<EventType> = LazyLock::new(||
 
 /// Git operation error event
 pub static GIT_OPERATION_ERROR_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "git_operation_error",
-        "Git operation encountered an error"
+    EventType::new("git_operation_error", "Git operation encountered an error").with_parameters(
+        vec![
+            Parameter {
+                name: "operation".to_string(),
+                type_hint: "string".to_string(),
+                description: "Type of operation that failed".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "error".to_string(),
+                type_hint: "string".to_string(),
+                description: "Error message".to_string(),
+                required: true,
+            },
+        ],
     )
-    .with_parameters(vec![
-        Parameter {
-            name: "operation".to_string(),
-            type_hint: "string".to_string(),
-            description: "Type of operation that failed".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "error".to_string(),
-            type_hint: "string".to_string(),
-            description: "Error message".to_string(),
-            required: true,
-        },
-    ])
 });
 
 /// Git client protocol action handler
@@ -82,33 +78,34 @@ impl GitClientProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for GitClientProtocol {
-        fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-            vec![
-                ParameterDefinition {
-                    name: "local_path".to_string(),
-                    description: "Local path for Git operations (clone destination or existing repo)".to_string(),
-                    type_hint: "string".to_string(),
-                    required: false,
-                    example: json!("./my-repo"),
-                },
-                ParameterDefinition {
-                    name: "username".to_string(),
-                    description: "Git username for authentication".to_string(),
-                    type_hint: "string".to_string(),
-                    required: false,
-                    example: json!("git-user"),
-                },
-                ParameterDefinition {
-                    name: "password".to_string(),
-                    description: "Git password or personal access token".to_string(),
-                    type_hint: "string".to_string(),
-                    required: false,
-                    example: json!("ghp_xxxxxxxxxxxxx"),
-                },
-            ]
-        }
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            vec![
+    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
+        vec![
+            ParameterDefinition {
+                name: "local_path".to_string(),
+                description: "Local path for Git operations (clone destination or existing repo)"
+                    .to_string(),
+                type_hint: "string".to_string(),
+                required: false,
+                example: json!("./my-repo"),
+            },
+            ParameterDefinition {
+                name: "username".to_string(),
+                description: "Git username for authentication".to_string(),
+                type_hint: "string".to_string(),
+                required: false,
+                example: json!("git-user"),
+            },
+            ParameterDefinition {
+                name: "password".to_string(),
+                description: "Git password or personal access token".to_string(),
+                type_hint: "string".to_string(),
+                required: false,
+                example: json!("ghp_xxxxxxxxxxxxx"),
+            },
+        ]
+    }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        vec![
                 ActionDefinition {
                     name: "git_clone".to_string(),
                     description: "Clone a Git repository".to_string(),
@@ -356,291 +353,300 @@ impl Protocol for GitClientProtocol {
                     }),
                 },
             ]
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                // Git client operations are typically async (user-initiated)
-                // Sync actions would be for responding to events, but Git doesn't have
-                // server-initiated events like TCP does
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "Git"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            vec![
-                EventType {
-                    id: "git_connected".to_string(),
-                    description: "Triggered when Git client is initialized".to_string(),
-                    actions: vec![],
-                    parameters: vec![],
-                },
-                EventType {
-                    id: "git_operation_completed".to_string(),
-                    description: "Triggered when a Git operation completes successfully".to_string(),
-                    actions: vec![],
-                    parameters: vec![],
-                },
-                EventType {
-                    id: "git_operation_error".to_string(),
-                    description: "Triggered when a Git operation fails".to_string(),
-                    actions: vec![],
-                    parameters: vec![],
-                },
-            ]
-        }
-        fn stack_name(&self) -> &'static str {
-            "APP>Git"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["git", "git client", "version control", "clone", "fetch", "pull", "push", "branch", "tag", "diff"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Experimental)
-                .implementation("git2 library (libgit2 wrapper)")
-                .llm_control("Full control over Git operations")
-                .e2e_testing("Local Git repository testing")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "Git client for version control operations"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Clone the repository https://github.com/user/repo.git to ./repo"
-        }
-        fn group_name(&self) -> &'static str {
-            "Version Control"
-        }
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            // Git client operations are typically async (user-initiated)
+            // Sync actions would be for responding to events, but Git doesn't have
+            // server-initiated events like TCP does
+        ]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "Git"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        vec![
+            EventType {
+                id: "git_connected".to_string(),
+                description: "Triggered when Git client is initialized".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+            EventType {
+                id: "git_operation_completed".to_string(),
+                description: "Triggered when a Git operation completes successfully".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+            EventType {
+                id: "git_operation_error".to_string(),
+                description: "Triggered when a Git operation fails".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+        ]
+    }
+    fn stack_name(&self) -> &'static str {
+        "APP>Git"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec![
+            "git",
+            "git client",
+            "version control",
+            "clone",
+            "fetch",
+            "pull",
+            "push",
+            "branch",
+            "tag",
+            "diff",
+        ]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("git2 library (libgit2 wrapper)")
+            .llm_control("Full control over Git operations")
+            .e2e_testing("Local Git repository testing")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "Git client for version control operations"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Clone the repository https://github.com/user/repo.git to ./repo"
+    }
+    fn group_name(&self) -> &'static str {
+        "Version Control"
+    }
 }
 
 // Implement Client trait (client-specific functionality)
 impl Client for GitClientProtocol {
-        fn connect(
-            &self,
-            ctx: crate::protocol::ConnectContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::client::git::GitClient;
-                GitClient::connect_with_llm_actions(
-                    ctx.remote_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.client_id,
-                )
-                .await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "git_clone" => {
-                    let url = action
-                        .get("url")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'url' field")?
-                        .to_string();
-                    let path = action
-                        .get("path")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'path' field")?
-                        .to_string();
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "git_clone".to_string(),
-                        data: json!({
-                            "url": url,
-                            "path": path,
-                        }),
-                    })
-                }
-                "git_fetch" => {
-                    let remote = action
-                        .get("remote")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("origin")
-                        .to_string();
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "git_fetch".to_string(),
-                        data: json!({
-                            "remote": remote,
-                        }),
-                    })
-                }
-                "git_pull" => {
-                    let remote = action
-                        .get("remote")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("origin")
-                        .to_string();
-                    let branch = action
-                        .get("branch")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "git_pull".to_string(),
-                        data: json!({
-                            "remote": remote,
-                            "branch": branch,
-                        }),
-                    })
-                }
-                "git_push" => {
-                    let remote = action
-                        .get("remote")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("origin")
-                        .to_string();
-                    let branch = action
-                        .get("branch")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "git_push".to_string(),
-                        data: json!({
-                            "remote": remote,
-                            "branch": branch,
-                        }),
-                    })
-                }
-                "git_checkout" => {
-                    let target = action
-                        .get("target")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'target' field")?
-                        .to_string();
-                    let create = action
-                        .get("create")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "git_checkout".to_string(),
-                        data: json!({
-                            "target": target,
-                            "create": create,
-                        }),
-                    })
-                }
-                "git_list_branches" => {
-                    let remote = action
-                        .get("remote")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "git_list_branches".to_string(),
-                        data: json!({
-                            "remote": remote,
-                        }),
-                    })
-                }
-                "git_log" => {
-                    let max_count = action
-                        .get("max_count")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(10) as usize;
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "git_log".to_string(),
-                        data: json!({
-                            "max_count": max_count,
-                        }),
-                    })
-                }
-                "git_status" => {
-                    Ok(ClientActionResult::Custom {
-                        name: "git_status".to_string(),
-                        data: json!({}),
-                    })
-                }
-                "git_delete_branch" => {
-                    let branch = action
-                        .get("branch")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'branch' field")?
-                        .to_string();
-                    let force = action
-                        .get("force")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    let remote = action
-                        .get("remote")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "git_delete_branch".to_string(),
-                        data: json!({
-                            "branch": branch,
-                            "force": force,
-                            "remote": remote,
-                        }),
-                    })
-                }
-                "git_list_tags" => {
-                    Ok(ClientActionResult::Custom {
-                        name: "git_list_tags".to_string(),
-                        data: json!({}),
-                    })
-                }
-                "git_create_tag" => {
-                    let name = action
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'name' field")?
-                        .to_string();
-                    let target = action
-                        .get("target")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-                    let message = action
-                        .get("message")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "git_create_tag".to_string(),
-                        data: json!({
-                            "name": name,
-                            "target": target,
-                            "message": message,
-                        }),
-                    })
-                }
-                "git_diff" => {
-                    let target = action
-                        .get("target")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-                    let staged = action
-                        .get("staged")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "git_diff".to_string(),
-                        data: json!({
-                            "target": target,
-                            "staged": staged,
-                        }),
-                    })
-                }
-                "disconnect" => Ok(ClientActionResult::Disconnect),
-                _ => Err(anyhow::anyhow!("Unknown Git client action: {}", action_type)),
-            }
-        }
-}
+    fn connect(
+        &self,
+        ctx: crate::protocol::ConnectContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::client::git::GitClient;
+            GitClient::connect_with_llm_actions(
+                ctx.remote_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.client_id,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
 
+        match action_type {
+            "git_clone" => {
+                let url = action
+                    .get("url")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'url' field")?
+                    .to_string();
+                let path = action
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'path' field")?
+                    .to_string();
+
+                Ok(ClientActionResult::Custom {
+                    name: "git_clone".to_string(),
+                    data: json!({
+                        "url": url,
+                        "path": path,
+                    }),
+                })
+            }
+            "git_fetch" => {
+                let remote = action
+                    .get("remote")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("origin")
+                    .to_string();
+
+                Ok(ClientActionResult::Custom {
+                    name: "git_fetch".to_string(),
+                    data: json!({
+                        "remote": remote,
+                    }),
+                })
+            }
+            "git_pull" => {
+                let remote = action
+                    .get("remote")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("origin")
+                    .to_string();
+                let branch = action
+                    .get("branch")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                Ok(ClientActionResult::Custom {
+                    name: "git_pull".to_string(),
+                    data: json!({
+                        "remote": remote,
+                        "branch": branch,
+                    }),
+                })
+            }
+            "git_push" => {
+                let remote = action
+                    .get("remote")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("origin")
+                    .to_string();
+                let branch = action
+                    .get("branch")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                Ok(ClientActionResult::Custom {
+                    name: "git_push".to_string(),
+                    data: json!({
+                        "remote": remote,
+                        "branch": branch,
+                    }),
+                })
+            }
+            "git_checkout" => {
+                let target = action
+                    .get("target")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'target' field")?
+                    .to_string();
+                let create = action
+                    .get("create")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
+                Ok(ClientActionResult::Custom {
+                    name: "git_checkout".to_string(),
+                    data: json!({
+                        "target": target,
+                        "create": create,
+                    }),
+                })
+            }
+            "git_list_branches" => {
+                let remote = action
+                    .get("remote")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
+                Ok(ClientActionResult::Custom {
+                    name: "git_list_branches".to_string(),
+                    data: json!({
+                        "remote": remote,
+                    }),
+                })
+            }
+            "git_log" => {
+                let max_count = action
+                    .get("max_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(10) as usize;
+
+                Ok(ClientActionResult::Custom {
+                    name: "git_log".to_string(),
+                    data: json!({
+                        "max_count": max_count,
+                    }),
+                })
+            }
+            "git_status" => Ok(ClientActionResult::Custom {
+                name: "git_status".to_string(),
+                data: json!({}),
+            }),
+            "git_delete_branch" => {
+                let branch = action
+                    .get("branch")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'branch' field")?
+                    .to_string();
+                let force = action
+                    .get("force")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let remote = action
+                    .get("remote")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                Ok(ClientActionResult::Custom {
+                    name: "git_delete_branch".to_string(),
+                    data: json!({
+                        "branch": branch,
+                        "force": force,
+                        "remote": remote,
+                    }),
+                })
+            }
+            "git_list_tags" => Ok(ClientActionResult::Custom {
+                name: "git_list_tags".to_string(),
+                data: json!({}),
+            }),
+            "git_create_tag" => {
+                let name = action
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'name' field")?
+                    .to_string();
+                let target = action
+                    .get("target")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let message = action
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                Ok(ClientActionResult::Custom {
+                    name: "git_create_tag".to_string(),
+                    data: json!({
+                        "name": name,
+                        "target": target,
+                        "message": message,
+                    }),
+                })
+            }
+            "git_diff" => {
+                let target = action
+                    .get("target")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let staged = action
+                    .get("staged")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
+                Ok(ClientActionResult::Custom {
+                    name: "git_diff".to_string(),
+                    data: json!({
+                        "target": target,
+                        "staged": staged,
+                    }),
+                })
+            }
+            "disconnect" => Ok(ClientActionResult::Disconnect),
+            _ => Err(anyhow::anyhow!(
+                "Unknown Git client action: {}",
+                action_type
+            )),
+        }
+    }
+}

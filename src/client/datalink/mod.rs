@@ -4,19 +4,19 @@ pub mod actions;
 pub use actions::DataLinkClientProtocol;
 
 use anyhow::{Context, Result};
+use pcap::{Capture, Device};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, trace};
-use pcap::{Capture, Device};
 
+use crate::client::datalink::actions::DATALINK_CLIENT_FRAME_CAPTURED_EVENT;
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::{Event, StartupParams};
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::datalink::actions::DATALINK_CLIENT_FRAME_CAPTURED_EVENT;
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -53,22 +53,30 @@ impl DataLinkClient {
         startup_params: Option<StartupParams>,
     ) -> Result<SocketAddr> {
         // Extract interface from startup_params
-        let params = startup_params
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("DataLink client requires startup parameters (interface)"))?;
+        let params = startup_params.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("DataLink client requires startup parameters (interface)")
+        })?;
 
         let interface = params.get_string("interface");
         let promiscuous = params.get_optional_bool("promiscuous").unwrap_or(false);
 
-        info!("DataLink client {} opening interface: {} (promiscuous: {})", client_id, interface, promiscuous);
+        info!(
+            "DataLink client {} opening interface: {} (promiscuous: {})",
+            client_id, interface, promiscuous
+        );
 
         // Create channel for frame injection commands
         let (inject_tx, mut inject_rx) = mpsc::unbounded_channel::<InjectionCommand>();
         let inject_tx_arc = Arc::new(Mutex::new(inject_tx));
 
         // Update client state
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] DataLink client {} connected to interface {}", client_id, interface));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] DataLink client {} connected to interface {}",
+            client_id, interface
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Initialize client data for capture handling
@@ -92,7 +100,10 @@ impl DataLinkClient {
                 Ok(d) => d,
                 Err(e) => {
                     error!("DataLink client {} failed to find device: {}", client_id, e);
-                    let _ = status_tx_clone.send(format!("[ERROR] DataLink client {} failed to find device: {}", client_id, e));
+                    let _ = status_tx_clone.send(format!(
+                        "[ERROR] DataLink client {} failed to find device: {}",
+                        client_id, e
+                    ));
                     return;
                 }
             };
@@ -104,14 +115,23 @@ impl DataLinkClient {
             {
                 Ok(c) => c,
                 Err(e) => {
-                    error!("DataLink client {} failed to open capture: {}", client_id, e);
-                    let _ = status_tx_clone.send(format!("[ERROR] DataLink client {} failed to open capture: {}", client_id, e));
+                    error!(
+                        "DataLink client {} failed to open capture: {}",
+                        client_id, e
+                    );
+                    let _ = status_tx_clone.send(format!(
+                        "[ERROR] DataLink client {} failed to open capture: {}",
+                        client_id, e
+                    ));
                     return;
                 }
             };
 
             info!("DataLink client {} capture opened successfully", client_id);
-            let _ = status_tx_clone.send(format!("[INFO] DataLink client {} ready for frame injection", client_id));
+            let _ = status_tx_clone.send(format!(
+                "[INFO] DataLink client {} ready for frame injection",
+                client_id
+            ));
 
             let runtime = tokio::runtime::Handle::current();
 
@@ -121,12 +141,26 @@ impl DataLinkClient {
                 if let Ok(cmd) = inject_rx.try_recv() {
                     match cap.sendpacket(&cmd.frame[..]) {
                         Ok(_) => {
-                            trace!("DataLink client {} injected frame ({} bytes)", client_id, cmd.frame.len());
-                            let _ = status_tx_clone.send(format!("[TRACE] DataLink client {} injected frame ({} bytes)", client_id, cmd.frame.len()));
+                            trace!(
+                                "DataLink client {} injected frame ({} bytes)",
+                                client_id,
+                                cmd.frame.len()
+                            );
+                            let _ = status_tx_clone.send(format!(
+                                "[TRACE] DataLink client {} injected frame ({} bytes)",
+                                client_id,
+                                cmd.frame.len()
+                            ));
                         }
                         Err(e) => {
-                            error!("DataLink client {} frame injection failed: {}", client_id, e);
-                            let _ = status_tx_clone.send(format!("[ERROR] DataLink client {} frame injection failed: {}", client_id, e));
+                            error!(
+                                "DataLink client {} frame injection failed: {}",
+                                client_id, e
+                            );
+                            let _ = status_tx_clone.send(format!(
+                                "[ERROR] DataLink client {} frame injection failed: {}",
+                                client_id, e
+                            ));
                         }
                     }
                 }
@@ -136,7 +170,11 @@ impl DataLinkClient {
                     match cap.next_packet() {
                         Ok(packet) => {
                             let frame = packet.data.to_vec();
-                            trace!("DataLink client {} captured frame ({} bytes)", client_id, frame.len());
+                            trace!(
+                                "DataLink client {} captured frame ({} bytes)",
+                                client_id,
+                                frame.len()
+                            );
 
                             // Handle frame with LLM
                             let state_clone = app_state_clone.clone();
@@ -240,8 +278,13 @@ impl DataLinkClient {
 
             info!("DataLink client {} disconnected", client_id);
             runtime.block_on(async {
-                app_state_clone.update_client_status(client_id, ClientStatus::Disconnected).await;
-                let _ = status_tx_clone.send(format!("[CLIENT] DataLink client {} disconnected", client_id));
+                app_state_clone
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                let _ = status_tx_clone.send(format!(
+                    "[CLIENT] DataLink client {} disconnected",
+                    client_id
+                ));
                 let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
             });
         });

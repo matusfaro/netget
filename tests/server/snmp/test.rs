@@ -7,8 +7,8 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, ServerConfig, E2EResult};
-use snmp::{SyncSession, Value};
+use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use snmp::SyncSession;
 use std::time::Duration;
 
 #[tokio::test]
@@ -19,9 +19,8 @@ async fn test_snmp_basic_get() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via snmp. For OID 1.3.6.1.2.1.1.1.0 (sysDescr) return 'NetGet SNMP Server v1.0'. For OID 1.3.6.1.2.1.1.5.0 (sysName) return 'netget.local'";
 
     // Start the server with debug logging (trace causes broken pipe due to huge prompt output)
-    let server = helpers::start_netget_server(
-        ServerConfig::new(prompt).with_log_level("debug")
-    ).await?;
+    let server =
+        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("debug")).await?;
     println!("Server started on port {}", server.port);
 
     // Wait longer for SNMP server to fully initialize (needs LLM call to set up)
@@ -30,9 +29,12 @@ async fn test_snmp_basic_get() -> E2EResult<()> {
     println!("Querying sysDescr OID with snmpget...");
     let output = tokio::process::Command::new("snmpget")
         .args(&[
-            "-v", "2c",
-            "-c", "public",
-            "-t", "3",
+            "-v",
+            "2c",
+            "-c",
+            "public",
+            "-t",
+            "3",
             &format!("localhost:{}", server.port),
             "1.3.6.1.2.1.1.1.0",
         ])
@@ -50,7 +52,9 @@ async fn test_snmp_basic_get() -> E2EResult<()> {
 
     // Verify response contains the expected value
     assert!(
-        response_str.contains("NetGet") || response_str.contains("Server") || !response_str.is_empty(),
+        response_str.contains("NetGet")
+            || response_str.contains("Server")
+            || !response_str.is_empty(),
         "Response should contain 'NetGet' or 'Server' or at least some value, got: {}",
         response_str
     );
@@ -60,9 +64,12 @@ async fn test_snmp_basic_get() -> E2EResult<()> {
     println!("Querying sysName OID with snmpget...");
     let output2 = tokio::process::Command::new("snmpget")
         .args(&[
-            "-v", "2c",
-            "-c", "public",
-            "-t", "3",
+            "-v",
+            "2c",
+            "-c",
+            "public",
+            "-t",
+            "3",
             &format!("localhost:{}", server.port),
             "1.3.6.1.2.1.1.5.0",
         ])
@@ -72,7 +79,11 @@ async fn test_snmp_basic_get() -> E2EResult<()> {
     if !output2.status.success() {
         let stderr = String::from_utf8_lossy(&output2.stderr);
         let stdout = String::from_utf8_lossy(&output2.stdout);
-        return Err(format!("sysName query failed:\nstdout: {}\nstderr: {}", stdout, stderr).into());
+        return Err(format!(
+            "sysName query failed:\nstdout: {}\nstderr: {}",
+            stdout, stderr
+        )
+        .into());
     }
 
     let response_str2 = String::from_utf8_lossy(&output2.stdout);
@@ -101,7 +112,12 @@ async fn test_snmp_get_next() -> E2EResult<()> {
     // VALIDATION: Send GETNEXT request
     println!("Sending GETNEXT request...");
     let agent_addr = format!("127.0.0.1:{}", server.port);
-    let mut sess = SyncSession::new(agent_addr.as_str(), b"public", Some(Duration::from_secs(5)), 0)?;
+    let mut sess = SyncSession::new(
+        agent_addr.as_str(),
+        b"public",
+        Some(Duration::from_secs(5)),
+        0,
+    )?;
 
     let oid = &[1, 3, 6, 1, 2, 1, 1];
     match sess.getnext(oid) {
@@ -142,7 +158,12 @@ async fn test_snmp_interface_stats() -> E2EResult<()> {
 
     // VALIDATION: Query interface statistics
     let agent_addr = format!("127.0.0.1:{}", server.port);
-    let mut sess = SyncSession::new(agent_addr.as_str(), b"public", Some(Duration::from_secs(5)), 0)?;
+    let mut sess = SyncSession::new(
+        agent_addr.as_str(),
+        b"public",
+        Some(Duration::from_secs(5)),
+        0,
+    )?;
 
     let oids = vec![
         (&[1, 3, 6, 1, 2, 1, 2, 2, 1, 1, 1][..], "ifIndex"),
@@ -189,7 +210,12 @@ async fn test_snmp_custom_mib() -> E2EResult<()> {
 
     // VALIDATION: Query custom enterprise OIDs
     let agent_addr = format!("127.0.0.1:{}", server.port);
-    let mut sess = SyncSession::new(agent_addr.as_str(), b"public", Some(Duration::from_secs(5)), 0)?;
+    let mut sess = SyncSession::new(
+        agent_addr.as_str(),
+        b"public",
+        Some(Duration::from_secs(5)),
+        0,
+    )?;
 
     let custom_oids = vec![
         (&[1, 3, 6, 1, 4, 1, 99999, 1, 1, 0][..], "Application Name"),

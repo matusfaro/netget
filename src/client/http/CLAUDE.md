@@ -2,11 +2,13 @@
 
 ## Overview
 
-The HTTP client implementation provides LLM-controlled HTTP/HTTPS requests. The LLM can construct requests with full control over method, path, headers, and body, and interpret responses.
+The HTTP client implementation provides LLM-controlled HTTP/HTTPS requests. The LLM can construct requests with full
+control over method, path, headers, and body, and interpret responses.
 
 ## Implementation Details
 
 ### Library Choice
+
 - **reqwest** - Modern async HTTP client for Rust
 - Supports HTTP/1.1, HTTP/2, and HTTPS (TLS via rustls)
 - Automatic protocol negotiation via ALPN during TLS handshake
@@ -37,6 +39,7 @@ The HTTP client implementation provides LLM-controlled HTTP/HTTPS requests. The 
 ### Connection Model
 
 Unlike TCP (persistent connection), HTTP client is **request/response** based:
+
 - "Connection" = initialization of HTTP client
 - Each request is independent
 - LLM triggers requests via actions
@@ -45,18 +48,21 @@ Unlike TCP (persistent connection), HTTP client is **request/response** based:
 ### LLM Control
 
 **Async Actions** (user-triggered):
+
 - `send_http_request` - Make HTTP request
-  - Parameters: method, path, headers, body
-  - Returns Custom result with request data
+    - Parameters: method, path, headers, body
+    - Returns Custom result with request data
 - `disconnect` - Stop HTTP client
 
 **Sync Actions** (in response to HTTP responses):
+
 - `send_http_request` - Make follow-up request based on response
 
 **Events:**
+
 - `http_connected` - Fired when client initialized
 - `http_response_received` - Fired when response received
-  - Data includes: status_code, status_text, headers, body
+    - Data includes: status_code, status_text, headers, body
 
 ### Structured Actions (CRITICAL)
 
@@ -97,15 +103,15 @@ LLMs can construct structured requests and interpret JSON/text responses.
 2. **Action Execution**: Returns `ClientActionResult::Custom` with request data
 3. **Request Execution**: `HttpClient::make_request()` called
 4. **Response Handling**:
-   - Parse status, headers, body
-   - Create `http_response_received` event
-   - Call LLM for interpretation
+    - Parse status, headers, body
+    - Create `http_response_received` event
+    - Call LLM for interpretation
 5. **LLM Response**: May trigger follow-up requests
 
 ### Startup Parameters
 
 - `default_headers` (optional) - Headers included in all requests
-  - Example: `{"User-Agent": "NetGet/1.0"}`
+    - Example: `{"User-Agent": "NetGet/1.0"}`
 
 ### Dual Logging
 
@@ -124,9 +130,11 @@ status_tx.send("[CLIENT] HTTP request sent");                          // → TU
 ## Features
 
 ### Supported Methods
+
 - GET, POST, PUT, DELETE, PATCH, HEAD
 
 ### Supported Features
+
 - ✅ HTTPS (TLS via rustls)
 - ✅ HTTP/1.1 and HTTP/2 (automatic protocol negotiation via ALPN)
 - ✅ Custom headers
@@ -136,6 +144,7 @@ status_tx.send("[CLIENT] HTTP request sent");                          // → TU
 - ✅ Automatic redirects (reqwest default)
 
 ### URL Handling
+
 - Base URL stored in `protocol_data`
 - Absolute URLs: `https://example.com/path`
 - Relative paths: `/api/users` → `{base_url}/api/users`
@@ -155,6 +164,7 @@ status_tx.send("[CLIENT] HTTP request sent");                          // → TU
 **User**: "Connect to http://httpbin.org and get /status/200"
 
 **LLM Action**:
+
 ```json
 {
   "type": "send_http_request",
@@ -168,6 +178,7 @@ status_tx.send("[CLIENT] HTTP request sent");                          // → TU
 **User**: "Post user data to /api/users"
 
 **LLM Action**:
+
 ```json
 {
   "type": "send_http_request",
@@ -185,6 +196,7 @@ status_tx.send("[CLIENT] HTTP request sent");                          // → TU
 **User**: "Fetch user profile with auth token"
 
 **LLM Action**:
+
 ```json
 {
   "type": "send_http_request",

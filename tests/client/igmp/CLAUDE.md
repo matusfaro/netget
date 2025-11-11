@@ -13,9 +13,11 @@ All tests are in `tests/client/igmp/e2e_test.rs` with feature gate `#[cfg(all(te
 ### Test Cases
 
 #### 1. `test_igmp_client_join_and_receive`
+
 **Purpose**: Verify client can join a multicast group and receive data
 **LLM Calls**: 2 (client startup, multicast join instruction)
 **Flow**:
+
 1. Start IGMP client with instruction to join group 239.255.1.1
 2. Send UDP packet to multicast group from external sender
 3. Verify client receives and logs the data
@@ -26,9 +28,11 @@ All tests are in `tests/client/igmp/e2e_test.rs` with feature gate `#[cfg(all(te
 ---
 
 #### 2. `test_igmp_client_join_and_leave`
+
 **Purpose**: Verify client can join and then leave a multicast group
 **LLM Calls**: 3 (client startup, join instruction, leave instruction)
 **Flow**:
+
 1. Start IGMP client with instruction to join and leave group 239.255.1.2
 2. Verify client processes both actions
 3. Cleanup
@@ -38,9 +42,11 @@ All tests are in `tests/client/igmp/e2e_test.rs` with feature gate `#[cfg(all(te
 ---
 
 #### 3. `test_igmp_client_send_multicast`
+
 **Purpose**: Verify client can send multicast data
 **LLM Calls**: 2 (client startup, send instruction)
 **Flow**:
+
 1. Start IGMP client with instruction to send data to group 239.255.1.3
 2. Verify client sends the multicast packet
 3. Cleanup
@@ -51,12 +57,12 @@ All tests are in `tests/client/igmp/e2e_test.rs` with feature gate `#[cfg(all(te
 
 ## LLM Call Budget
 
-| Test | LLM Calls | Purpose |
-|------|-----------|---------|
-| `test_igmp_client_join_and_receive` | 2 | Startup + join |
-| `test_igmp_client_join_and_leave` | 3 | Startup + join + leave |
-| `test_igmp_client_send_multicast` | 2 | Startup + send |
-| **Total** | **7** | Well under 10 budget |
+| Test                                | LLM Calls | Purpose                |
+|-------------------------------------|-----------|------------------------|
+| `test_igmp_client_join_and_receive` | 2         | Startup + join         |
+| `test_igmp_client_join_and_leave`   | 3         | Startup + join + leave |
+| `test_igmp_client_send_multicast`   | 2         | Startup + send         |
+| **Total**                           | **7**     | Well under 10 budget   |
 
 ## Test Execution
 
@@ -87,6 +93,7 @@ All tests use administratively-scoped multicast addresses (239.255.0.0/16):
 - `239.255.1.3:15001` - Send test
 
 **Why 239.255.x.x?**
+
 - Organization-local scope (RFC 2365)
 - Won't leak outside local network
 - No conflicts with well-known multicast groups
@@ -94,36 +101,43 @@ All tests use administratively-scoped multicast addresses (239.255.0.0/16):
 ### Platform Considerations
 
 #### Linux
+
 - Multicast loopback enabled by default
 - Works without special configuration
 - May require `IP_MULTICAST_LOOP` set to 1 (default)
 
 #### macOS
+
 - Multicast loopback enabled by default
 - Works without special configuration
 
 #### Windows
+
 - Multicast loopback enabled by default
 - Firewall may need configuration to allow multicast
 
 ## Known Issues
 
 ### 1. Timing Sensitivity
+
 - Tests use `tokio::time::sleep()` to allow multicast join propagation
 - May need adjustment on slow systems
 - **Mitigation**: Increase sleep durations if tests are flaky
 
 ### 2. Multicast Not Received on Some Networks
+
 - Some network configurations block multicast
 - Virtual network adapters (VPN, Docker) may interfere
 - **Mitigation**: Test on physical interface, ensure loopback works
 
 ### 3. IGMP Snooping
+
 - Layer 2 switches with IGMP snooping may delay multicast delivery
 - Loopback tests bypass this issue
 - **Mitigation**: Use loopback (127.0.0.1) for local testing
 
 ### 4. Port Conflicts
+
 - Tests use fixed ports (15000, 15001)
 - Parallel test execution may cause conflicts
 - **Mitigation**: Use `--test-threads=1` or dynamic port allocation
@@ -133,6 +147,7 @@ All tests use administratively-scoped multicast addresses (239.255.0.0/16):
 ### Why < 10 LLM Calls?
 
 Each LLM call takes ~1-2 seconds with ollama-lock serialization:
+
 - 7 total calls × 1.5s = ~10.5 seconds for LLM processing
 - Add client startup, network I/O, cleanup = ~15 seconds total runtime
 
@@ -166,14 +181,17 @@ echo "TEST" | nc -u 239.255.1.1 15000
 ### Common Errors
 
 **"Address already in use"**
+
 - Another test or process using port 15000/15001
 - Solution: Use different ports or kill conflicting process
 
 **"Network is unreachable"**
+
 - Multicast routing not configured
 - Solution: Ensure loopback interface supports multicast
 
 **"No such device"**
+
 - Interface doesn't exist
 - Solution: Use `0.0.0.0` (any interface)
 

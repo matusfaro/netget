@@ -14,8 +14,9 @@ async fn test_battery_server_startup() -> Result<()> {
         "BLUETOOTH_BLE_BATTERY",
         8900,
         json!({"initial_level": 80}),
-        "Act as a BLE battery service at 80%"
-    ).await?;
+        "Act as a BLE battery service at 80%",
+    )
+    .await?;
 
     sleep(Duration::from_millis(500)).await;
     assert!(ctx.server_id.is_some(), "Server should have started");
@@ -31,8 +32,9 @@ async fn test_battery_level_update() -> Result<()> {
         "BLUETOOTH_BLE_BATTERY",
         8901,
         json!({}),
-        "Set battery to 75%, then drain by 10%"
-    ).await?;
+        "Set battery to 75%, then drain by 10%",
+    )
+    .await?;
 
     sleep(Duration::from_secs(2)).await;
     assert!(ctx.server_id.is_some(), "Server should have started");

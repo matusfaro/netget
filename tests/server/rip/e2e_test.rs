@@ -5,7 +5,7 @@
 
 #[cfg(all(test, feature = "rip"))]
 mod e2e_rip {
-    use crate::server::helpers::{start_netget_server, ServerConfig, E2EResult};
+    use crate::server::helpers::{start_netget_server, E2EResult, ServerConfig};
     use tokio::net::UdpSocket;
     use tokio::time::{timeout, Duration};
 
@@ -280,10 +280,7 @@ mod e2e_rip {
         let mut has_unreachable = false;
 
         for route in &routes {
-            println!(
-                "  [TEST] Route: {} metric {}",
-                route.ip, route.metric
-            );
+            println!("  [TEST] Route: {} metric {}", route.ip, route.metric);
 
             match route.metric {
                 1..=3 => has_low_metric = true,

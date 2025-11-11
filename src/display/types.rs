@@ -71,7 +71,12 @@ pub struct Rect {
 
 impl Rect {
     pub const fn new(x: u32, y: u32, width: u32, height: u32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 }
 
@@ -154,9 +159,7 @@ pub enum DisplayCommand {
     },
 
     /// Set background color
-    SetBackground {
-        color: Color,
-    },
+    SetBackground { color: Color },
 
     /// Clear the canvas
     Clear,

@@ -19,12 +19,12 @@ use hyper_util::rt::TokioIo;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
 
-use crate::server::connection::ConnectionId;
-use crate::server::SqsProtocol;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
+use crate::server::connection::ConnectionId;
+use crate::server::SqsProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 
 /// SQS server that delegates queue operations to LLM
 pub struct SqsServer;
@@ -39,7 +39,8 @@ impl SqsServer {
         _send_first: bool,
         server_id: crate::state::ServerId,
     ) -> anyhow::Result<SocketAddr> {
-        let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let listener =
+            crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         console_info!(status_tx, "SQS server listening on {}", local_addr);
 
@@ -50,13 +51,18 @@ impl SqsServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
                         info!("SQS connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!("[INFO] SQS connection from {}", remote_addr));
+                        let _ =
+                            status_tx.send(format!("[INFO] SQS connection from {}", remote_addr));
 
                         // Add connection to ServerInstance
-                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -71,7 +77,9 @@ impl SqsServer {
                             status_changed_at: now,
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
-                        app_state.add_connection_to_server(server_id, conn_state).await;
+                        app_state
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let llm_client_clone = llm_client.clone();
@@ -105,13 +113,18 @@ impl SqsServer {
                             });
 
                             // Serve HTTP/1 on this connection
-                            if let Err(err) = http1::Builder::new().serve_connection(io, service).await {
+                            if let Err(err) =
+                                http1::Builder::new().serve_connection(io, service).await
+                            {
                                 error!("Error serving SQS connection: {:?}", err);
                             }
 
                             // Mark connection as closed
-                            app_state_clone.close_connection_on_server(server_id, connection_id).await;
-                            let _ = status_tx_clone.send(format!("[INFO] SQS connection {} closed", connection_id));
+                            app_state_clone
+                                .close_connection_on_server(server_id, connection_id)
+                                .await;
+                            let _ = status_tx_clone
+                                .send(format!("[INFO] SQS connection {} closed", connection_id));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
@@ -143,7 +156,8 @@ async fn handle_sqs_request_with_llm(
 
     // Extract SQS operation from x-amz-target header
     // Format: "AmazonSQS.SendMessage", "AmazonSQS.ReceiveMessage", etc.
-    let operation = req.headers()
+    let operation = req
+        .headers()
         .get("x-amz-target")
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.split('.').nth(1))
@@ -170,7 +184,9 @@ async fn handle_sqs_request_with_llm(
     );
     let _ = status_tx.send(format!(
         "[DEBUG] SQS {} operation={} ({} bytes)",
-        method, operation, body_bytes.len()
+        method,
+        operation,
+        body_bytes.len()
     ));
 
     // Try to extract queue URL from JSON body
@@ -213,12 +229,9 @@ async fn handle_sqs_request_with_llm(
                 match result {
                     ActionResult::Custom { name, data } => {
                         if name == "sqs_response" {
-                            let status = data.get("status")
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(200) as u16;
-                            let body = data.get("body")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("{}");
+                            let status =
+                                data.get("status").and_then(|v| v.as_u64()).unwrap_or(200) as u16;
+                            let body = data.get("body").and_then(|v| v.as_str()).unwrap_or("{}");
 
                             debug!("SQS response: status={}", status);
                             let _ = status_tx.send(format!("[DEBUG] SQS → {} response", status));
@@ -226,10 +239,13 @@ async fn handle_sqs_request_with_llm(
                             let _ = status_tx.send(format!("[TRACE] SQS response: {}", body));
 
                             // Generate a simple request ID using timestamp
-                            let request_id = format!("{:x}", std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap()
-                                .as_nanos());
+                            let request_id = format!(
+                                "{:x}",
+                                std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap()
+                                    .as_nanos()
+                            );
 
                             return Ok(Response::builder()
                                 .status(status)
@@ -249,10 +265,13 @@ async fn handle_sqs_request_with_llm(
             debug!("SQS response: 200 (default)");
             let _ = status_tx.send("[DEBUG] SQS → 200 response (default)".to_string());
 
-            let request_id = format!("{:x}", std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos());
+            let request_id = format!(
+                "{:x}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            );
 
             Ok(Response::builder()
                 .status(200)
@@ -265,17 +284,20 @@ async fn handle_sqs_request_with_llm(
             error!("LLM execution failed for SQS request: {}", e);
             let _ = status_tx.send(format!("[ERROR] LLM execution failed: {}", e));
 
-            let request_id = format!("{:x}", std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos());
+            let request_id = format!(
+                "{:x}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            );
 
             Ok(Response::builder()
                 .status(500)
                 .header("Content-Type", "application/x-amz-json-1.0")
                 .header("x-amzn-RequestId", request_id)
                 .body(Full::new(Bytes::from(
-                    r#"{"__type":"InternalFailure","message":"Internal server error"}"#
+                    r#"{"__type":"InternalFailure","message":"Internal server error"}"#,
                 )))
                 .unwrap())
         }

@@ -208,4 +208,3 @@ impl ScriptingEnvironment {
         }
     }
 }
-

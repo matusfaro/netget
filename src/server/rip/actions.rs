@@ -20,85 +20,87 @@ impl RipProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for RipProtocol {
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            Vec::new()
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                send_rip_response_action(),
-                send_rip_request_action(),
-                ignore_request_action(),
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "RIP"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            get_rip_event_types()
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>UDP>RIP"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["rip"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState, PrivilegeRequirement};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Experimental)
-                .privilege_requirement(PrivilegeRequirement::PrivilegedPort(520))
-                .implementation("Manual RIPv2 packet construction (RFC 2453)")
-                .llm_control("Route advertisements, routing decisions")
-                .e2e_testing("Manual RIP packet construction with route entries")
-                .notes("Distance-vector routing protocol, 15 hop limit")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "Routing Information Protocol v2 for dynamic routing"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "listen on port 520 via rip. Advertise routes for 192.168.1.0/24 (metric 1) and 10.0.0.0/8 (metric 5)"
-        }
-        fn group_name(&self) -> &'static str {
-            "Network"
-        }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        Vec::new()
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            send_rip_response_action(),
+            send_rip_request_action(),
+            ignore_request_action(),
+        ]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "RIP"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_rip_event_types()
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>UDP>RIP"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["rip"]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{
+            DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2,
+        };
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(520))
+            .implementation("Manual RIPv2 packet construction (RFC 2453)")
+            .llm_control("Route advertisements, routing decisions")
+            .e2e_testing("Manual RIP packet construction with route entries")
+            .notes("Distance-vector routing protocol, 15 hop limit")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "Routing Information Protocol v2 for dynamic routing"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "listen on port 520 via rip. Advertise routes for 192.168.1.0/24 (metric 1) and 10.0.0.0/8 (metric 5)"
+    }
+    fn group_name(&self) -> &'static str {
+        "Network"
+    }
 }
 
 // Implement Server trait (server-specific functionality)
 impl Server for RipProtocol {
-        fn spawn(
-            &self,
-            ctx: crate::protocol::SpawnContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::server::rip::RipServer;
-                RipServer::spawn_with_llm_actions(
-                    ctx.listen_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.server_id,
-                ).await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "send_rip_response" => self.execute_send_rip_response(action),
-                "send_rip_request" => self.execute_send_rip_request(action),
-                "ignore_request" => Ok(ActionResult::NoAction),
-                _ => Err(anyhow::anyhow!("Unknown RIP action: {}", action_type)),
-            }
-        }
-}
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::rip::RipServer;
+            RipServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
 
+        match action_type {
+            "send_rip_response" => self.execute_send_rip_response(action),
+            "send_rip_request" => self.execute_send_rip_request(action),
+            "ignore_request" => Ok(ActionResult::NoAction),
+            _ => Err(anyhow::anyhow!("Unknown RIP action: {}", action_type)),
+        }
+    }
+}
 
 impl RipProtocol {
     fn execute_send_rip_response(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -219,7 +221,7 @@ impl RipProtocol {
 pub static RIP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "rip_request",
-        "Triggered when a RIP message (request or response) is received"
+        "Triggered when a RIP message (request or response) is received",
     )
     .with_parameters(vec![
         Parameter {
@@ -243,7 +245,8 @@ pub static RIP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         Parameter {
             name: "routes".to_string(),
             type_hint: "array".to_string(),
-            description: "Array of route entries (ip_address, subnet_mask, next_hop, metric)".to_string(),
+            description: "Array of route entries (ip_address, subnet_mask, next_hop, metric)"
+                .to_string(),
             required: true,
         },
         Parameter {

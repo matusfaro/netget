@@ -2,7 +2,8 @@
 
 ## Overview
 
-The BitTorrent Peer Wire Protocol client provides LLM-controlled peer-to-peer data exchange for BitTorrent file transfers. This is the core protocol used between BitTorrent clients to exchange torrent pieces.
+The BitTorrent Peer Wire Protocol client provides LLM-controlled peer-to-peer data exchange for BitTorrent file
+transfers. This is the core protocol used between BitTorrent clients to exchange torrent pieces.
 
 ## Protocol Details
 
@@ -43,16 +44,19 @@ The BitTorrent Peer Wire Protocol client provides LLM-controlled peer-to-peer da
 ### Message Format
 
 **Handshake (68 bytes):**
+
 ```
 <pstrlen=19><pstr="BitTorrent protocol"><reserved=8 bytes><info_hash=20 bytes><peer_id=20 bytes>
 ```
 
 **Peer Wire Messages:**
+
 ```
 <length prefix=4 bytes><message ID=1 byte><payload>
 ```
 
 **Message Types:**
+
 - 0: choke
 - 1: unchoke
 - 2: interested
@@ -69,34 +73,34 @@ The BitTorrent Peer Wire Protocol client provides LLM-controlled peer-to-peer da
 ### Actions
 
 1. **peer_handshake** - Send handshake to peer
-   - Parameters: info_hash, peer_id
-   - LLM decides: identity and torrent to exchange
+    - Parameters: info_hash, peer_id
+    - LLM decides: identity and torrent to exchange
 
 2. **peer_interested** - Express interest in peer's pieces
-   - LLM decides: when to show interest
+    - LLM decides: when to show interest
 
 3. **peer_not_interested** - Express lack of interest
-   - LLM decides: when interest is lost
+    - LLM decides: when interest is lost
 
 4. **peer_request_piece** - Request a piece from peer
-   - Parameters: index, begin, length
-   - LLM decides: piece selection strategy (rarest-first, sequential, etc.)
+    - Parameters: index, begin, length
+    - LLM decides: piece selection strategy (rarest-first, sequential, etc.)
 
 5. **peer_send_piece** - Send piece data to peer
-   - Parameters: index, begin, block
-   - LLM decides: upload strategy, rate limiting
+    - Parameters: index, begin, block
+    - LLM decides: upload strategy, rate limiting
 
 6. **disconnect** - Close peer connection
 
 ### Events
 
 1. **peer_handshake** - Received handshake from peer
-   - Data: info_hash, peer_id, reserved bytes
-   - LLM analyzes: peer identity, torrent match
+    - Data: info_hash, peer_id, reserved bytes
+    - LLM analyzes: peer identity, torrent match
 
 2. **peer_message** - Received peer wire message
-   - Data: message_type, payload_len, payload_hex
-   - LLM analyzes: piece availability, choke state, received pieces
+    - Data: message_type, payload_len, payload_hex
+    - LLM analyzes: piece availability, choke state, received pieces
 
 ## Limitations
 
@@ -135,6 +139,7 @@ See `tests/client/torrent_peer/CLAUDE.md` for E2E testing details.
 ## Protocol Extensions
 
 Common extensions (not fully implemented):
+
 - **BEP 6:** Fast Extension (reject/allowed messages)
 - **BEP 9:** Extension for Peers to Send Metadata Files
 - **BEP 10:** Extension Protocol (capability negotiation)

@@ -159,4 +159,3 @@ impl EventHandlerConfig {
         self.handlers.len()
     }
 }
-

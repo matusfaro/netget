@@ -2,17 +2,18 @@
 
 ## Overview
 
-The WebDAV client extends HTTP to support Web-based Distributed Authoring and Versioning (WebDAV) operations. It provides LLM-controlled access to remote file systems via WebDAV protocol.
+The WebDAV client extends HTTP to support Web-based Distributed Authoring and Versioning (WebDAV) operations. It
+provides LLM-controlled access to remote file systems via WebDAV protocol.
 
 ## Library Choices
 
 ### Core Libraries
 
 - **reqwest** (v0.12+) - HTTP client with custom method support
-  - Supports custom HTTP methods via `Method::from_bytes()`
-  - Built-in TLS support for HTTPS
-  - Timeout configuration
-  - No native WebDAV support, so we implement WebDAV on top
+    - Supports custom HTTP methods via `Method::from_bytes()`
+    - Built-in TLS support for HTTPS
+    - Timeout configuration
+    - No native WebDAV support, so we implement WebDAV on top
 
 ### Why reqwest?
 
@@ -34,23 +35,24 @@ WebDAV is **connectionless** like HTTP - each operation is a separate HTTP reque
 ### State Management
 
 State stored in `AppState::protocol_data`:
+
 - `base_url`: Base URL for all WebDAV requests
 - `http_client`: Reqwest client instance marker
 
 ### WebDAV Methods Supported
 
-| Method | Purpose | Body Required |
-|--------|---------|---------------|
-| **PROPFIND** | List properties/directory contents | XML (properties to fetch) |
-| **MKCOL** | Create collection (directory) | No |
-| **COPY** | Copy resource | No (uses Destination header) |
-| **MOVE** | Move/rename resource | No (uses Destination header) |
-| **DELETE** | Delete resource | No |
-| **PUT** | Upload file | Yes (file content) |
-| **GET** | Download file | No |
-| **PROPPATCH** | Modify properties | XML (properties to update) |
-| **LOCK** | Lock resource | XML (lock info) |
-| **UNLOCK** | Unlock resource | No |
+| Method        | Purpose                            | Body Required                |
+|---------------|------------------------------------|------------------------------|
+| **PROPFIND**  | List properties/directory contents | XML (properties to fetch)    |
+| **MKCOL**     | Create collection (directory)      | No                           |
+| **COPY**      | Copy resource                      | No (uses Destination header) |
+| **MOVE**      | Move/rename resource               | No (uses Destination header) |
+| **DELETE**    | Delete resource                    | No                           |
+| **PUT**       | Upload file                        | Yes (file content)           |
+| **GET**       | Download file                      | No                           |
+| **PROPPATCH** | Modify properties                  | XML (properties to update)   |
+| **LOCK**      | Lock resource                      | XML (lock info)              |
+| **UNLOCK**    | Unlock resource                    | No                           |
 
 ## LLM Integration
 
@@ -67,13 +69,14 @@ State stored in `AppState::protocol_data`:
 
 - **webdav_connected**: Fired when client initializes
 - **webdav_response_received**: Fired after each WebDAV response
-  - Contains: status_code, headers, body (XML), method used
+    - Contains: status_code, headers, body (XML), method used
 
 ### XML Body Construction
 
 #### PROPFIND Example
 
 **All properties:**
+
 ```xml
 <?xml version="1.0" encoding="utf-8"?>
 <D:propfind xmlns:D="DAV:">
@@ -82,6 +85,7 @@ State stored in `AppState::protocol_data`:
 ```
 
 **Specific properties:**
+
 ```xml
 <?xml version="1.0" encoding="utf-8"?>
 <D:propfind xmlns:D="DAV:">
@@ -100,9 +104,9 @@ The LLM specifies which properties to request (or `null` for all), and we constr
 WebDAV uses special HTTP headers:
 
 - **Depth**: Controls recursion level for PROPFIND/COPY
-  - `0`: Resource only
-  - `1`: Resource + immediate children
-  - `infinity`: All descendants
+    - `0`: Resource only
+    - `1`: Resource + immediate children
+    - `infinity`: All descendants
 - **Destination**: Target path for COPY/MOVE
 - **Overwrite**: T (true) or F (false) for COPY/MOVE
 - **Lock-Token**: Token for LOCK/UNLOCK operations
@@ -155,6 +159,7 @@ Connect to http://webdav.example.com/dav and list all files in the /documents/ f
 ```
 
 LLM generates:
+
 ```json
 {
   "type": "propfind",
@@ -170,6 +175,7 @@ Upload a file named hello.txt with content "Hello, WebDAV!" to /dav/files/
 ```
 
 LLM generates:
+
 ```json
 {
   "type": "put",
@@ -186,6 +192,7 @@ Create a new folder named "projects" in /dav/
 ```
 
 LLM generates:
+
 ```json
 {
   "type": "mkcol",
@@ -200,6 +207,7 @@ Copy /dav/report.pdf to /dav/backup/report.pdf
 ```
 
 LLM generates:
+
 ```json
 {
   "type": "copy",

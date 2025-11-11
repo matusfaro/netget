@@ -2,11 +2,13 @@
 
 ## Overview
 
-The Redis client implementation provides LLM-controlled access to Redis servers. The LLM can execute Redis commands and interpret responses.
+The Redis client implementation provides LLM-controlled access to Redis servers. The LLM can execute Redis commands and
+interpret responses.
 
 ## Implementation Details
 
 ### Library Choice
+
 - **Direct TCP connection** with simplified RESP parsing
 - Line-based response reading
 - No external Redis library (simplified implementation)
@@ -34,22 +36,26 @@ The Redis client implementation provides LLM-controlled access to Redis servers.
 ### LLM Control
 
 **Async Actions** (user-triggered):
+
 - `execute_redis_command` - Execute Redis command
-  - Parameter: command (string)
-  - Examples: "GET key", "SET key value", "HGETALL hash"
+    - Parameter: command (string)
+    - Examples: "GET key", "SET key value", "HGETALL hash"
 - `disconnect` - Close connection
 
 **Sync Actions** (in response to Redis responses):
+
 - `execute_redis_command` - Execute follow-up command based on response
 
 **Events:**
+
 - `redis_connected` - Fired when connection established
 - `redis_response_received` - Fired when response received
-  - Data includes: response (string)
+    - Data includes: response (string)
 
 ### Command Format
 
 Redis commands are sent as simple strings:
+
 ```
 GET mykey\r\n
 SET mykey myvalue\r\n
@@ -97,6 +103,7 @@ status_tx.send("[CLIENT] Redis client connected");      // → TUI
 **User**: "Connect to Redis and get the value of user:123"
 
 **LLM Action**:
+
 ```json
 {
   "type": "execute_redis_command",
@@ -109,6 +116,7 @@ status_tx.send("[CLIENT] Redis client connected");      // → TUI
 **User**: "Set the key 'status' to 'active'"
 
 **LLM Action**:
+
 ```json
 {
   "type": "execute_redis_command",
@@ -121,6 +129,7 @@ status_tx.send("[CLIENT] Redis client connected");      // → TUI
 **User**: "Get all fields from hash user:123"
 
 **LLM Action**:
+
 ```json
 {
   "type": "execute_redis_command",

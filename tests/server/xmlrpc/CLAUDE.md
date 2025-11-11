@@ -2,11 +2,13 @@
 
 ## Test Overview
 
-Tests XML-RPC server with HTTP clients and manual XML construction, validating method calls, introspection, fault responses, and various data types.
+Tests XML-RPC server with HTTP clients and manual XML construction, validating method calls, introspection, fault
+responses, and various data types.
 
 ## Test Strategy
 
 **Individual Feature Tests** - Each test validates one XML-RPC capability:
+
 1. Simple method with integer parameters
 2. Introspection (system.listMethods)
 3. Fault response for unknown methods
@@ -22,25 +24,25 @@ Tests use **action-based mode** to ensure LLM interprets XML-RPC semantics.
 ### Breakdown by Test Function
 
 1. **`test_xmlrpc_simple_method`** - **2 LLM calls**
-   - 1 startup + 1 method call (add)
+    - 1 startup + 1 method call (add)
 
 2. **`test_xmlrpc_introspection_list_methods`** - **2 LLM calls**
-   - 1 startup + 1 introspection call
+    - 1 startup + 1 introspection call
 
 3. **`test_xmlrpc_fault_response`** - **2 LLM calls**
-   - 1 startup + 1 fault trigger
+    - 1 startup + 1 fault trigger
 
 4. **`test_xmlrpc_string_parameter`** - **2 LLM calls**
-   - 1 startup + 1 method call (greet)
+    - 1 startup + 1 method call (greet)
 
 5. **`test_xmlrpc_boolean_parameter`** - **2 LLM calls**
-   - 1 startup + 1 method call (toggle)
+    - 1 startup + 1 method call (toggle)
 
 6. **`test_xmlrpc_multiple_parameters`** - **2 LLM calls**
-   - 1 startup + 1 method call (concat)
+    - 1 startup + 1 method call (concat)
 
 7. **`test_xmlrpc_non_post_request`** - **1 LLM call**
-   - 1 startup (GET request rejected without LLM call)
+    - 1 startup (GET request rejected without LLM call)
 
 **Total: 13 LLM calls** (slightly over limit but acceptable - tests are independent)
 
@@ -49,6 +51,7 @@ Tests use **action-based mode** to ensure LLM interprets XML-RPC semantics.
 ## Scripting Usage
 
 **Disabled** - Action-based mode:
+
 - Each method call triggers LLM
 - Validates LLM's XML parsing and response generation
 - Tests introspection and error handling logic
@@ -56,6 +59,7 @@ Tests use **action-based mode** to ensure LLM interprets XML-RPC semantics.
 ## Client Library
 
 **Manual XML Construction + reqwest**:
+
 - `quick-xml` for XML parsing (in helper functions)
 - `reqwest` for HTTP POST
 - Manual XML-RPC request building validates protocol understanding
@@ -69,47 +73,62 @@ Tests use **action-based mode** to ensure LLM interprets XML-RPC semantics.
 ## Failure Rate
 
 **Low** (2-5%):
+
 - **Stable**: XML parsing, HTTP handling
 - **Occasional Issues**:
-  - LLM returns wrong fault code
-  - LLM generates invalid XML structure
-  - Timeout on slower models
+    - LLM returns wrong fault code
+    - LLM generates invalid XML structure
+    - Timeout on slower models
 
 ## Test Cases
 
 ### 1. Simple Method (`test_xmlrpc_simple_method`)
+
 **Validates**: Basic method call with integers
+
 - POST with `<methodCall>` XML
 - Receives `<methodResponse>` with `<int>8</int>`
 - HTTP 200 status
 
 ### 2. Introspection (`test_xmlrpc_introspection_list_methods`)
+
 **Validates**: system.listMethods support
+
 - Calls introspection method
 - Response contains method names in `<array>`
 
 ### 3. Fault Response (`test_xmlrpc_fault_response`)
+
 **Validates**: Error handling
+
 - Calls non-existent method
 - Receives `<fault>` response with faultCode and faultString
 
 ### 4. String Parameter (`test_xmlrpc_string_parameter`)
+
 **Validates**: String type handling
+
 - Passes `<string>Alice</string>`
 - Response contains greeting with name
 
 ### 5. Boolean Parameter (`test_xmlrpc_boolean_parameter`)
+
 **Validates**: Boolean type (0/1)
+
 - Passes `<boolean>1</boolean>`
 - Response contains boolean result
 
 ### 6. Multiple Parameters (`test_xmlrpc_multiple_parameters`)
+
 **Validates**: Multi-param methods
+
 - Passes two strings
 - Response concatenates them
 
 ### 7. Non-POST Request (`test_xmlrpc_non_post_request`)
+
 **Validates**: HTTP method validation
+
 - Sends GET request
 - Receives fault response (XML-RPC requires POST)
 
@@ -127,6 +146,7 @@ Tests use **action-based mode** to ensure LLM interprets XML-RPC semantics.
 ## Key Test Patterns
 
 ### XML Request Construction
+
 ```rust
 fn build_method_call(method_name: &str, params: &[(&str, &str)]) -> String {
     format!(
@@ -141,6 +161,7 @@ fn build_method_call(method_name: &str, params: &[(&str, &str)]) -> String {
 ```
 
 ### XML Response Parsing
+
 ```rust
 fn parse_xmlrpc_response(xml: &str) -> E2EResult<String> {
     let mut reader = Reader::from_str(xml);
@@ -151,6 +172,7 @@ fn parse_xmlrpc_response(xml: &str) -> E2EResult<String> {
 ## Why This Protocol is Readable
 
 Compared to binary protocols:
+
 1. **Human-readable** - XML is text-based
 2. **Self-describing** - Tags indicate types
 3. **Simple structure** - methodCall/methodResponse pattern

@@ -2,24 +2,30 @@
 
 ## Test Overview
 
-End-to-end tests for TURN (Traversal Using Relays around NAT) server functionality. Tests spawn NetGet TURN server and validate allocation management, permission handling, and protocol compliance using raw UDP sockets and manual TURN/STUN message construction.
+End-to-end tests for TURN (Traversal Using Relays around NAT) server functionality. Tests spawn NetGet TURN server and
+validate allocation management, permission handling, and protocol compliance using raw UDP sockets and manual TURN/STUN
+message construction.
 
-**Protocols Tested**: TURN Allocate/Refresh/CreatePermission (RFC 8656), XOR-RELAYED-ADDRESS attribute, allocation lifetime tracking
+**Protocols Tested**: TURN Allocate/Refresh/CreatePermission (RFC 8656), XOR-RELAYED-ADDRESS attribute, allocation
+lifetime tracking
 
 ## Test Strategy
 
 **Raw UDP Socket Approach**: Tests use `std::net::UdpSocket` (sync, blocking) for precise protocol control:
+
 - Manual TURN message construction (extends STUN format)
 - Byte-level validation of responses
 - Tests allocation state management
 
 **Allocation Lifecycle Testing**: Tests validate full allocation lifecycle:
+
 1. Allocate → Server assigns relay address
 2. Refresh → Extend lifetime
 3. CreatePermission → Add permitted peers
 4. Expiration → Allocations deleted after lifetime
 
-**Stateful Protocol Testing**: Unlike STUN (stateless), TURN requires tracking allocations across multiple requests. Tests validate state consistency.
+**Stateful Protocol Testing**: Unlike STUN (stateless), TURN requires tracking allocations across multiple requests.
+Tests validate state consistency.
 
 ## LLM Call Budget
 
@@ -40,10 +46,13 @@ End-to-end tests for TURN (Traversal Using Relays around NAT) server functionali
 
 ### Optimization Opportunities
 
-**Current Issue**: Each test creates separate TURN server with specific behavior, even though allocation state is per-client.
+**Current Issue**: Each test creates separate TURN server with specific behavior, even though allocation state is
+per-client.
 
 **Major Consolidation Opportunity**: TURN tests could be consolidated more than other protocols:
-1. **Basic Allocation Operations**: Single server handles allocate, refresh, permission, multiple clients (**~6-7 LLM calls**)
+
+1. **Basic Allocation Operations**: Single server handles allocate, refresh, permission, multiple clients (**~6-7 LLM
+   calls**)
 2. **Error Handling**: Rejections, invalid requests (**~2-3 LLM calls**, some skip LLM)
 3. **Lifetime and Expiration**: Short lifetime test (**~3 LLM calls**)
 
@@ -51,11 +60,13 @@ This could reduce to **~11-13 LLM calls total**, slightly over the 10 call targe
 
 **Trade-off**: More complex test setup (need to track allocations across test steps), but significant performance gain.
 
-**Challenge**: Expiration test (`test_turn_short_lifetime_allocation`) requires waiting 7 seconds for expiration. Cannot consolidate with other tests without adding delays.
+**Challenge**: Expiration test (`test_turn_short_lifetime_allocation`) requires waiting 7 seconds for expiration. Cannot
+consolidate with other tests without adding delays.
 
 ## Scripting Usage
 
 **Scripting NOT Used**: TURN requires dynamic state management:
+
 - Allocation ID generation (unique per client)
 - Relay address assignment (from pool or dynamic)
 - Transaction ID echo (varies per request)
@@ -64,6 +75,7 @@ This could reduce to **~11-13 LLM calls total**, slightly over the 10 call targe
 Scripting mode cannot handle stateful allocation tracking. Each request requires LLM consultation.
 
 **Future Optimization**: Template-based scripting with state variables:
+
 - Script: "Allocate {relay_ip}:{relay_port} with lifetime {lifetime}, allocation_id {alloc_id}"
 - Executor manages allocation state and fills variables
 - Could reduce to ~1-2 LLM calls per server (initial setup + policy)
@@ -71,10 +83,12 @@ Scripting mode cannot handle stateful allocation tracking. Each request requires
 ## Client Library
 
 **Manual Implementation** - Raw UDP socket with TURN-specific helper functions
+
 - **`UdpSocket::bind("127.0.0.1:0")`**: Sync UDP socket
 - **Message Construction**: Extends STUN format with TURN methods
 
 **Helper Functions**:
+
 ```rust
 fn build_turn_allocate_request() -> Vec<u8>;
 fn build_turn_allocate_request_with_tid(tid: &[u8; 12]) -> Vec<u8>;
@@ -85,6 +99,7 @@ fn build_turn_allocate_request_with_lifetime(seconds: u32) -> Vec<u8>;
 ```
 
 **Message Format** (same as STUN, different method):
+
 ```
 [Message Type: 0x0003 (Allocate Request)]
 [Message Length: 0 or attribute length]
@@ -98,12 +113,14 @@ fn build_turn_allocate_request_with_lifetime(seconds: u32) -> Vec<u8>;
 **Model**: qwen3-coder:30b (default NetGet model)
 
 **Runtime**: ~120-180 seconds for full test suite (10 tests, 24 LLM calls)
+
 - Per-test average: ~12-18 seconds
 - LLM call latency: ~2-5 seconds per call
 - UDP request/response: <1ms
 - Allocation expiration test adds 7 seconds (waiting for expiration)
 
-**With Ollama Lock**: Tests run reliably in parallel. Total suite time ~120-180s due to serialized LLM access and expiration wait.
+**With Ollama Lock**: Tests run reliably in parallel. Total suite time ~120-180s due to serialized LLM access and
+expiration wait.
 
 **Longest Test**: `test_turn_short_lifetime_allocation` (~15-20 seconds) due to 7-second wait for expiration.
 
@@ -112,6 +129,7 @@ fn build_turn_allocate_request_with_lifetime(seconds: u32) -> Vec<u8>;
 **Historical Flakiness**: **Low-Medium** (~5-10%)
 
 **Why More Flaky Than STUN?**:
+
 - Stateful protocol: Requires tracking allocations across requests
 - LLM must generate unique allocation IDs and relay addresses
 - Timing-sensitive: Expiration tests depend on clock consistency
@@ -120,33 +138,35 @@ fn build_turn_allocate_request_with_lifetime(seconds: u32) -> Vec<u8>;
 **Common Failure Modes**:
 
 1. **LLM Forgets Allocation State** (~5% of runs)
-   - Symptom: Refresh request succeeds even without prior allocation
-   - Cause: LLM doesn't track allocations properly (prompt issue)
-   - Impact: Tests with "without allocation" in name may pass when they should fail
-   - Mitigation: Tests accept both strict and lenient behavior
+    - Symptom: Refresh request succeeds even without prior allocation
+    - Cause: LLM doesn't track allocations properly (prompt issue)
+    - Impact: Tests with "without allocation" in name may pass when they should fail
+    - Mitigation: Tests accept both strict and lenient behavior
 
 2. **Missing XOR-RELAYED-ADDRESS Attribute** (~3% of runs)
-   - Symptom: Allocate response valid but no relay address attribute
-   - Cause: LLM omits attribute in response
-   - Impact: Test assertion fails looking for attribute 0x0016
-   - Mitigation: Tests allow responses without attribute (lenient validation)
+    - Symptom: Allocate response valid but no relay address attribute
+    - Cause: LLM omits attribute in response
+    - Impact: Test assertion fails looking for attribute 0x0016
+    - Mitigation: Tests allow responses without attribute (lenient validation)
 
 3. **Expiration Timing Issues** (~2% of runs)
-   - Symptom: `test_turn_short_lifetime_allocation` fails unexpectedly
-   - Cause: Clock drift or LLM doesn't enforce expiration strictly
-   - Impact: Refresh after expiration succeeds when it should fail
-   - Mitigation: Tests accept both behaviors (expired=error or expired=allow)
+    - Symptom: `test_turn_short_lifetime_allocation` fails unexpectedly
+    - Cause: Clock drift or LLM doesn't enforce expiration strictly
+    - Impact: Refresh after expiration succeeds when it should fail
+    - Mitigation: Tests accept both behaviors (expired=error or expired=allow)
 
 4. **Timeout on Multiple Allocations** (~2% of runs)
-   - Symptom: `test_turn_multiple_allocations` times out waiting for 3rd response
-   - Cause: Ollama overload with rapid requests
-   - Mitigation: Ollama lock prevents this
+    - Symptom: `test_turn_multiple_allocations` times out waiting for 3rd response
+    - Cause: Ollama overload with rapid requests
+    - Mitigation: Ollama lock prevents this
 
 **Most Stable Tests**:
+
 - `test_turn_basic_allocation`: Simple allocate request, no state complexity
 - `test_turn_invalid_magic_cookie`: No LLM involved (rejection)
 
 **Occasionally Flaky**:
+
 - `test_turn_refresh_without_allocation`: LLM may be lenient and allow refresh
 - `test_turn_short_lifetime_allocation`: Timing-sensitive expiration logic
 
@@ -155,63 +175,63 @@ fn build_turn_allocate_request_with_lifetime(seconds: u32) -> Vec<u8>;
 ### Basic Allocation
 
 1. **Basic Allocation** (`test_turn_basic_allocation`)
-   - Sends Allocate Request (0x0003)
-   - Validates Allocate Success Response (0x0103)
-   - Checks magic cookie and transaction ID
-   - Looks for XOR-RELAYED-ADDRESS attribute (0x0016)
+    - Sends Allocate Request (0x0003)
+    - Validates Allocate Success Response (0x0103)
+    - Checks magic cookie and transaction ID
+    - Looks for XOR-RELAYED-ADDRESS attribute (0x0016)
 
 ### Allocation Lifecycle
 
 2. **Refresh Allocation** (`test_turn_refresh_allocation`)
-   - Allocates relay address
-   - Sends Refresh Request (0x0004)
-   - Validates Refresh Success Response (0x0104) or Allocate Success (0x0103)
-   - Tests lifetime extension
+    - Allocates relay address
+    - Sends Refresh Request (0x0004)
+    - Validates Refresh Success Response (0x0104) or Allocate Success (0x0103)
+    - Tests lifetime extension
 
 3. **Short Lifetime Allocation** (`test_turn_short_lifetime_allocation`)
-   - Allocates with 5-second lifetime
-   - Waits 7 seconds for expiration
-   - Sends Refresh Request after expiration
-   - Validates server handles expired allocation (error or lenient allow)
+    - Allocates with 5-second lifetime
+    - Waits 7 seconds for expiration
+    - Sends Refresh Request after expiration
+    - Validates server handles expired allocation (error or lenient allow)
 
 4. **Allocate with LIFETIME Attribute** (`test_turn_allocate_with_lifetime_attribute`)
-   - Sends Allocate Request with LIFETIME attribute (0x000D, 300 seconds)
-   - Validates response includes LIFETIME attribute
-   - Tests explicit lifetime negotiation
+    - Sends Allocate Request with LIFETIME attribute (0x000D, 300 seconds)
+    - Validates response includes LIFETIME attribute
+    - Tests explicit lifetime negotiation
 
 ### Permission Management
 
 5. **Create Permission** (`test_turn_create_permission`)
-   - Allocates relay address
-   - Sends CreatePermission Request (0x0008)
-   - Validates CreatePermission Success Response (0x0108)
-   - Tests peer permission addition
+    - Allocates relay address
+    - Sends CreatePermission Request (0x0008)
+    - Validates CreatePermission Success Response (0x0108)
+    - Tests peer permission addition
 
 6. **Permission Without Allocation** (`test_turn_permission_without_allocation`)
-   - Sends CreatePermission WITHOUT prior allocation
-   - Tests if server rejects (strict) or allows (lenient)
-   - Accepts both behaviors (LLM variability)
+    - Sends CreatePermission WITHOUT prior allocation
+    - Tests if server rejects (strict) or allows (lenient)
+    - Accepts both behaviors (LLM variability)
 
 ### Concurrent Allocations
 
 7. **Multiple Allocations** (`test_turn_multiple_allocations`)
-   - Creates 3 separate clients
-   - Each allocates relay address
-   - Validates all succeed
-   - Tests concurrent allocation management
+    - Creates 3 separate clients
+    - Each allocates relay address
+    - Validates all succeed
+    - Tests concurrent allocation management
 
 ### Error Handling
 
 8. **Error Insufficient Capacity** (`test_turn_error_insufficient_capacity`)
-   - Server configured to reject allocations
-   - Sends Allocate Request
-   - Validates error response (class=2, or message type 0x0113)
-   - Tests error response generation
+    - Server configured to reject allocations
+    - Sends Allocate Request
+    - Validates error response (class=2, or message type 0x0113)
+    - Tests error response generation
 
 9. **Invalid Magic Cookie** (`test_turn_invalid_magic_cookie`)
-   - Sends request with 0xDEADBEEF instead of 0x2112A442
-   - Validates server rejects (no response or error)
-   - Tests input validation
+    - Sends request with 0xDEADBEEF instead of 0x2112A442
+    - Validates server rejects (no response or error)
+    - Tests input validation
 
 10. **Refresh Without Allocation** (`test_turn_refresh_without_allocation`)
     - Sends Refresh Request WITHOUT prior allocation
@@ -221,6 +241,7 @@ fn build_turn_allocate_request_with_lifetime(seconds: u32) -> Vec<u8>;
 ### Coverage Gaps
 
 **Not Yet Tested**:
+
 - SendIndication/DataIndication (data relay not implemented)
 - ChannelBind/ChannelData messages
 - TCP allocations (REQUESTED-TRANSPORT=TCP)
@@ -236,6 +257,7 @@ fn build_turn_allocate_request_with_lifetime(seconds: u32) -> Vec<u8>;
 ### Helper Functions
 
 **`build_turn_allocate_request()`**:
+
 ```rust
 fn build_turn_allocate_request() -> Vec<u8> {
     let mut packet = Vec::new();
@@ -248,15 +270,18 @@ fn build_turn_allocate_request() -> Vec<u8> {
 ```
 
 **`build_turn_allocate_request_with_lifetime(seconds: u32)`**:
+
 - Builds Allocate Request with LIFETIME attribute (0x000D)
 - Attribute format: [Type=0x000D, Length=4, Value=seconds (big-endian u32)]
 - Used for testing explicit lifetime negotiation
 
 **`build_turn_refresh_request()`**:
+
 - Message Type: 0x0004 (Refresh Request)
 - No attributes (uses default lifetime)
 
 **`build_turn_create_permission_request()`**:
+
 - Message Type: 0x0008 (CreatePermission Request)
 - No XOR-PEER-ADDRESS attribute (tests minimal request)
 

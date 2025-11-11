@@ -93,13 +93,11 @@ impl DefaultInstructionsRegistry {
         // WebSocket defaults
         instructions.insert(
             "websocket_message".to_string(),
-            EventInstructions::new(
-                "Handle the WebSocket message and respond as configured.",
-            )
-            .with_example(
-                r#"{"type": "text", "data": "ping"}"#,
-                r#"{"type": "send_websocket_message", "message": "pong"}"#,
-            ),
+            EventInstructions::new("Handle the WebSocket message and respond as configured.")
+                .with_example(
+                    r#"{"type": "text", "data": "ping"}"#,
+                    r#"{"type": "send_websocket_message", "message": "pong"}"#,
+                ),
         );
 
         // MQTT defaults
@@ -117,17 +115,15 @@ impl DefaultInstructionsRegistry {
         // Redis defaults
         instructions.insert(
             "redis_command".to_string(),
-            EventInstructions::new(
-                "Execute the Redis command and return appropriate response.",
-            )
-            .with_example(
-                "GET key1",
-                r#"{"type": "redis_response", "response": "value1"}"#,
-            )
-            .with_example(
-                "SET key2 value2",
-                r#"{"type": "redis_response", "response": "OK"}"#,
-            ),
+            EventInstructions::new("Execute the Redis command and return appropriate response.")
+                .with_example(
+                    "GET key1",
+                    r#"{"type": "redis_response", "response": "value1"}"#,
+                )
+                .with_example(
+                    "SET key2 value2",
+                    r#"{"type": "redis_response", "response": "OK"}"#,
+                ),
         );
 
         // MySQL defaults

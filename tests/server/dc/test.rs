@@ -7,9 +7,9 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, ServerConfig, E2EResult};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use super::super::super::helpers::{self, E2EResult, ServerConfig};
 use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// Read DC command (terminated by |)
 async fn read_dc_command(
@@ -79,7 +79,11 @@ async fn test_dc_authentication() -> E2EResult<()> {
         match tokio::time::timeout(Duration::from_secs(10), read_dc_command(&mut stream, 10)).await
         {
             Ok(Ok(response)) => {
-                println!("DC response ({}): {}", attempt, response.trim_end_matches('|'));
+                println!(
+                    "DC response ({}): {}",
+                    attempt,
+                    response.trim_end_matches('|')
+                );
                 if response.contains("$Hello") && response.contains("testuser") {
                     println!("✓ $Hello received");
                     received_hello = true;
@@ -105,7 +109,10 @@ async fn test_dc_authentication() -> E2EResult<()> {
     // Read any response (just to complete the handshake)
     let _ = tokio::time::timeout(Duration::from_secs(5), read_dc_command(&mut stream, 5)).await;
 
-    assert!(received_hello, "Expected $Hello response after $ValidateNick");
+    assert!(
+        received_hello,
+        "Expected $Hello response after $ValidateNick"
+    );
 
     server.stop().await?;
     println!("=== Test completed ===\n");
@@ -145,7 +152,11 @@ async fn test_dc_hub_info() -> E2EResult<()> {
         match tokio::time::timeout(Duration::from_secs(10), read_dc_command(&mut stream, 10)).await
         {
             Ok(Ok(response)) => {
-                println!("DC response ({}): {}", attempt, response.trim_end_matches('|'));
+                println!(
+                    "DC response ({}): {}",
+                    attempt,
+                    response.trim_end_matches('|')
+                );
                 if response.contains("$HubName") || response.contains("NetGet") {
                     println!("✓ Hub name received");
                     received_hub_name = true;
@@ -271,7 +282,9 @@ async fn test_dc_search() -> E2EResult<()> {
 
     // Send search command
     println!("Sending: $Search Hub:testuser F?F?0?1?test|");
-    stream.write_all(b"$Search Hub:testuser F?F?0?1?test|").await?;
+    stream
+        .write_all(b"$Search Hub:testuser F?F?0?1?test|")
+        .await?;
     stream.flush().await?;
 
     // Read search results (may be multiple responses)
@@ -280,7 +293,11 @@ async fn test_dc_search() -> E2EResult<()> {
         match tokio::time::timeout(Duration::from_secs(10), read_dc_command(&mut stream, 10)).await
         {
             Ok(Ok(response)) => {
-                println!("DC response ({}): {}", attempt, response.trim_end_matches('|'));
+                println!(
+                    "DC response ({}): {}",
+                    attempt,
+                    response.trim_end_matches('|')
+                );
                 if response.contains("$SR") && response.contains("test") {
                     println!("✓ Search result ($SR) received");
                     received_search_result = true;

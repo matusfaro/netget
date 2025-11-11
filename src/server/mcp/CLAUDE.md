@@ -2,7 +2,8 @@
 
 ## Overview
 
-MCP server implementing the Model Context Protocol specification, where the LLM controls all server capabilities: resources, tools, and prompts. Built on JSON-RPC 2.0 over HTTP with session management and three-phase initialization.
+MCP server implementing the Model Context Protocol specification, where the LLM controls all server capabilities:
+resources, tools, and prompts. Built on JSON-RPC 2.0 over HTTP with session management and three-phase initialization.
 
 ## Protocol Version
 
@@ -13,31 +14,39 @@ MCP server implementing the Model Context Protocol specification, where the LLM 
 ## Library Choices
 
 ### Core Dependencies
+
 - **axum** v0.7 - Modern HTTP framework
-  - Chosen for: Clean routing, extractors, better ergonomics than hyper
-  - Used for: HTTP server and JSON-RPC endpoint
+    - Chosen for: Clean routing, extractors, better ergonomics than hyper
+    - Used for: HTTP server and JSON-RPC endpoint
 - **serde_json** - JSON handling
 - **uuid** - Session ID generation
 - **tokio** - Async runtime
 
 ### Custom JSON-RPC Implementation
+
 **Why Not Use a JSON-RPC Library?**
+
 - MCP has specific JSON-RPC patterns (initialize flow, notifications)
 - Custom implementation provides full control over MCP semantics
 - Simple enough to implement directly
 
 ### Session Management
+
 **In-Memory Session Store**:
+
 ```rust
 HashMap<String, Arc<Mutex<McpSession>>>
 ```
+
 - Sessions keyed by UUID
 - Tracks initialization state, capabilities, subscriptions
 
 ## Architecture Decisions
 
 ### Three-Phase Initialization
+
 **MCP Handshake**:
+
 1. **Client → initialize request** (with clientInfo, capabilities)
 2. **Server → initialize response** (with serverInfo, capabilities)
 3. **Client → initialized notification** (confirms connection)
@@ -45,7 +54,9 @@ HashMap<String, Arc<Mutex<McpSession>>>
 Only after phase 3 can client make resource/tool/prompt requests.
 
 ### LLM Control Points
+
 **Complete Capability Control** - LLM declares all capabilities:
+
 1. **initialize**: LLM declares supported resources, tools, prompts
 2. **resources/list**: LLM returns available resources
 3. **resources/read**: LLM provides resource content
@@ -55,6 +66,7 @@ Only after phase 3 can client make resource/tool/prompt requests.
 7. **prompts/get**: LLM provides prompt template
 
 **Action-Based Responses**:
+
 ```json
 {
   "actions": [
@@ -75,7 +87,9 @@ Only after phase 3 can client make resource/tool/prompt requests.
 ```
 
 ### Capability System
+
 **Three Capability Categories**:
+
 - **Resources** - Files, URLs, data sources (with optional subscriptions)
 - **Tools** - Executable functions (like calculator, search)
 - **Prompts** - Template prompts (like "code-review", "summarize")
@@ -83,6 +97,7 @@ Only after phase 3 can client make resource/tool/prompt requests.
 Each capability declared during initialize, then implemented via LLM.
 
 ### Connection Management
+
 - One HTTP POST endpoint (`/`) handles all JSON-RPC messages
 - Sessions created on initialize, tracked in shared state
 - Axum handles concurrent connections efficiently
@@ -90,6 +105,7 @@ Each capability declared during initialize, then implemented via LLM.
 ## State Management
 
 ### Server State
+
 ```rust
 McpServerState {
     llm_client: OllamaClient,
@@ -103,6 +119,7 @@ McpServerState {
 ```
 
 ### Per-Session State
+
 ```rust
 McpSession {
     session_id: String,
@@ -113,6 +130,7 @@ McpSession {
 ```
 
 ### Per-Connection Protocol Info
+
 ```rust
 ProtocolConnectionInfo::Mcp {
     session_id: String,
@@ -128,6 +146,7 @@ ProtocolConnectionInfo::Mcp {
 ## Limitations
 
 ### Not Implemented
+
 - **WebSocket transport** - Only HTTP POST supported
 - **SSE (Server-Sent Events)** - No server push notifications
 - **Sampling** - LLM sampling API not exposed
@@ -136,17 +155,20 @@ ProtocolConnectionInfo::Mcp {
 - **Cancellation** - Request cancellation not fully implemented
 
 ### Session Management
+
 - **In-memory only** - Sessions lost on restart
 - **No expiration** - Sessions never timeout
 - **No cleanup** - Closed sessions remain in memory
 
 ### Resource Subscriptions
+
 - **Tracking only** - No actual change notifications
 - **No polling** - Server doesn't monitor resources
 
 ## Example Prompts and Responses
 
 ### Startup
+
 ```
 Listen on port 8000 via MCP.
 
@@ -168,7 +190,9 @@ When initialized, declare all these capabilities.
 ```
 
 ### Network Event (Initialize)
+
 **Received**:
+
 ```json
 {
   "jsonrpc": "2.0",
@@ -183,6 +207,7 @@ When initialized, declare all these capabilities.
 ```
 
 **LLM Response**:
+
 ```json
 {
   "actions": [
@@ -203,7 +228,9 @@ When initialized, declare all these capabilities.
 ```
 
 ### Network Event (Resources List)
+
 **Received**:
+
 ```json
 {
   "jsonrpc": "2.0",
@@ -213,6 +240,7 @@ When initialized, declare all these capabilities.
 ```
 
 **LLM Response**:
+
 ```json
 {
   "actions": [
@@ -233,7 +261,9 @@ When initialized, declare all these capabilities.
 ```
 
 ### Network Event (Tools Call)
+
 **Received**:
+
 ```json
 {
   "jsonrpc": "2.0",
@@ -247,6 +277,7 @@ When initialized, declare all these capabilities.
 ```
 
 **LLM Response**:
+
 ```json
 {
   "actions": [

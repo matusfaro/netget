@@ -14,10 +14,10 @@ use tracing::{debug, error, info, trace};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
-use actions::{DataLinkProtocol, DATALINK_PACKET_CAPTURED_EVENT};
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use actions::{DataLinkProtocol, DATALINK_PACKET_CAPTURED_EVENT};
 
 /// Get LLM context and output format instructions for DataLink stack
 pub fn get_llm_protocol_prompt() -> (&'static str, &'static str) {
@@ -122,13 +122,19 @@ impl DataLinkServer {
                         runtime.spawn(async move {
                             // Build event data
                             let hex_str = hex::encode(&data);
-                            let event = Event::new(&DATALINK_PACKET_CAPTURED_EVENT, serde_json::json!({
-                                "packet_length": data.len(),
-                                "packet_hex": hex_str
-                            }));
+                            let event = Event::new(
+                                &DATALINK_PACKET_CAPTURED_EVENT,
+                                serde_json::json!({
+                                    "packet_length": data.len(),
+                                    "packet_hex": hex_str
+                                }),
+                            );
 
                             debug!("Datalink calling LLM for packet ({} bytes)", data.len());
-                            let _ = status_clone.send(format!("[DEBUG] Datalink calling LLM for packet ({} bytes)", data.len()));
+                            let _ = status_clone.send(format!(
+                                "[DEBUG] Datalink calling LLM for packet ({} bytes)",
+                                data.len()
+                            ));
 
                             match call_llm(
                                 &llm_clone,
@@ -137,15 +143,23 @@ impl DataLinkServer {
                                 None,
                                 &event,
                                 protocol_task_clone.as_ref(),
-                            ).await {
+                            )
+                            .await
+                            {
                                 Ok(execution_result) => {
                                     for message in &execution_result.messages {
                                         info!("{}", message);
                                         let _ = status_clone.send(format!("[INFO] {}", message));
                                     }
 
-                                    debug!("Datalink got {} protocol results", execution_result.protocol_results.len());
-                                    let _ = status_clone.send(format!("[DEBUG] Datalink got {} protocol results", execution_result.protocol_results.len()));
+                                    debug!(
+                                        "Datalink got {} protocol results",
+                                        execution_result.protocol_results.len()
+                                    );
+                                    let _ = status_clone.send(format!(
+                                        "[DEBUG] Datalink got {} protocol results",
+                                        execution_result.protocol_results.len()
+                                    ));
 
                                     let _ = status_clone.send(format!(
                                         "→ Datalink packet processed: {} bytes",
@@ -154,7 +168,8 @@ impl DataLinkServer {
                                 }
                                 Err(e) => {
                                     error!("Datalink LLM call failed: {}", e);
-                                    let _ = status_clone.send(format!("✗ Datalink LLM error: {}", e));
+                                    let _ =
+                                        status_clone.send(format!("✗ Datalink LLM error: {}", e));
                                 }
                             }
                         });
@@ -174,4 +189,3 @@ impl DataLinkServer {
         Ok(interface)
     }
 }
-

@@ -11,16 +11,16 @@ use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace, warn};
 
+use crate::client::usb::actions::{
+    USB_BULK_DATA_RECEIVED_EVENT, USB_CONTROL_RESPONSE_EVENT, USB_DEVICE_OPENED_EVENT,
+    USB_INTERRUPT_DATA_RECEIVED_EVENT,
+};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::usb::actions::{
-    USB_BULK_DATA_RECEIVED_EVENT, USB_CONTROL_RESPONSE_EVENT, USB_DEVICE_OPENED_EVENT,
-    USB_INTERRUPT_DATA_RECEIVED_EVENT,
-};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -132,8 +132,7 @@ impl UsbClient {
         // Find and open USB device
         let device_info_clone = device_info.clone();
         let device = tokio::task::spawn_blocking(move || {
-            let devices = nusb::list_devices()
-                .context("Failed to list USB devices")?;
+            let devices = nusb::list_devices().context("Failed to list USB devices")?;
 
             for dev_info in devices {
                 if dev_info.vendor_id() == device_info_clone.vendor_id
@@ -159,10 +158,14 @@ impl UsbClient {
             let device = device.clone();
             move || -> Result<(Option<String>, Option<String>)> {
                 // Try to get manufacturer string (index 1 is common)
-                let manufacturer = device.get_string_descriptor(1, LANG_EN_US, Duration::from_secs(1)).ok();
+                let manufacturer = device
+                    .get_string_descriptor(1, LANG_EN_US, Duration::from_secs(1))
+                    .ok();
 
                 // Try to get product string (index 2 is common)
-                let product = device.get_string_descriptor(2, LANG_EN_US, Duration::from_secs(1)).ok();
+                let product = device
+                    .get_string_descriptor(2, LANG_EN_US, Duration::from_secs(1))
+                    .ok();
 
                 Ok((manufacturer, product))
             }
@@ -181,7 +184,8 @@ impl UsbClient {
             let device = device.clone();
             let interface_num = device_info.interface_number;
             move || {
-                device.claim_interface(interface_num)
+                device
+                    .claim_interface(interface_num)
                     .context(format!("Failed to claim interface {}", interface_num))
             }
         })
@@ -314,7 +318,11 @@ impl UsbClient {
                             let index = data["index"].as_u64().unwrap() as u16;
                             let out_data = data["data"]
                                 .as_array()
-                                .map(|arr| arr.iter().filter_map(|v| v.as_u64().map(|n| n as u8)).collect::<Vec<u8>>())
+                                .map(|arr| {
+                                    arr.iter()
+                                        .filter_map(|v| v.as_u64().map(|n| n as u8))
+                                        .collect::<Vec<u8>>()
+                                })
                                 .unwrap_or_default();
                             let length = data["length"].as_u64().unwrap_or(0) as usize;
 
@@ -368,8 +376,13 @@ impl UsbClient {
                                         }),
                                     );
 
-                                    if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                                        if let Ok(ClientLlmResult { actions: new_actions, memory_updates }) = call_llm_for_client(
+                                    if let Some(instruction) =
+                                        app_state.get_instruction_for_client(client_id).await
+                                    {
+                                        if let Ok(ClientLlmResult {
+                                            actions: new_actions,
+                                            memory_updates,
+                                        }) = call_llm_for_client(
                                             llm_client,
                                             app_state,
                                             client_id.to_string(),
@@ -378,7 +391,9 @@ impl UsbClient {
                                             Some(&event),
                                             protocol.as_ref(),
                                             status_tx,
-                                        ).await {
+                                        )
+                                        .await
+                                        {
                                             if let Some(mem) = memory_updates {
                                                 client_data.lock().await.memory = mem;
                                             }
@@ -391,7 +406,8 @@ impl UsbClient {
                                                 llm_client,
                                                 status_tx,
                                                 client_data,
-                                            )).await;
+                                            ))
+                                            .await;
                                         }
                                     }
                                 }
@@ -399,7 +415,10 @@ impl UsbClient {
                                     trace!("USB client {} control transfer completed", client_id);
                                 }
                                 Err(e) => {
-                                    error!("USB client {} control transfer error: {}", client_id, e);
+                                    error!(
+                                        "USB client {} control transfer error: {}",
+                                        client_id, e
+                                    );
                                 }
                             }
                         }
@@ -407,12 +426,18 @@ impl UsbClient {
                             let endpoint = data["endpoint"].as_u64().unwrap() as u8;
                             let out_data = data["data"]
                                 .as_array()
-                                .map(|arr| arr.iter().filter_map(|v| v.as_u64().map(|n| n as u8)).collect::<Vec<u8>>())
+                                .map(|arr| {
+                                    arr.iter()
+                                        .filter_map(|v| v.as_u64().map(|n| n as u8))
+                                        .collect::<Vec<u8>>()
+                                })
                                 .unwrap_or_default();
 
                             trace!(
                                 "USB client {} bulk OUT transfer: endpoint={:02x} length={}",
-                                client_id, endpoint, out_data.len()
+                                client_id,
+                                endpoint,
+                                out_data.len()
                             );
 
                             let interface_clone = interface.clone();
@@ -433,7 +458,9 @@ impl UsbClient {
 
                             trace!(
                                 "USB client {} bulk IN transfer: endpoint={:02x} length={}",
-                                client_id, endpoint, length
+                                client_id,
+                                endpoint,
+                                length
                             );
 
                             let interface_clone = interface.clone();
@@ -442,48 +469,56 @@ impl UsbClient {
 
                             let response_data = result.data.to_vec();
                             if !response_data.is_empty() {
-                                    debug!(
-                                        "USB client {} bulk IN received {} bytes",
-                                        client_id,
-                                        response_data.len()
-                                    );
+                                debug!(
+                                    "USB client {} bulk IN received {} bytes",
+                                    client_id,
+                                    response_data.len()
+                                );
 
-                                    // Send event to LLM
-                                    let event = Event::new(
-                                        &USB_BULK_DATA_RECEIVED_EVENT,
-                                        serde_json::json!({
-                                            "data_hex": hex::encode(&response_data),
-                                            "data_length": response_data.len(),
-                                            "endpoint": endpoint,
-                                        }),
-                                    );
+                                // Send event to LLM
+                                let event = Event::new(
+                                    &USB_BULK_DATA_RECEIVED_EVENT,
+                                    serde_json::json!({
+                                        "data_hex": hex::encode(&response_data),
+                                        "data_length": response_data.len(),
+                                        "endpoint": endpoint,
+                                    }),
+                                );
 
-                                    if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                                        if let Ok(ClientLlmResult { actions: new_actions, memory_updates }) = call_llm_for_client(
-                                            llm_client,
-                                            app_state,
-                                            client_id.to_string(),
-                                            &instruction,
-                                            &client_data.lock().await.memory,
-                                            Some(&event),
-                                            protocol.as_ref(),
-                                            status_tx,
-                                        ).await {
-                                            if let Some(mem) = memory_updates {
-                                                client_data.lock().await.memory = mem;
-                                            }
-                                            Box::pin(Self::execute_actions(
-                                                new_actions,
-                                                protocol.clone(),
-                                                interface,
-                                                client_id,
-                                                app_state,
-                                                llm_client,
-                                                status_tx,
-                                                client_data,
-                                            )).await;
+                                if let Some(instruction) =
+                                    app_state.get_instruction_for_client(client_id).await
+                                {
+                                    if let Ok(ClientLlmResult {
+                                        actions: new_actions,
+                                        memory_updates,
+                                    }) = call_llm_for_client(
+                                        llm_client,
+                                        app_state,
+                                        client_id.to_string(),
+                                        &instruction,
+                                        &client_data.lock().await.memory,
+                                        Some(&event),
+                                        protocol.as_ref(),
+                                        status_tx,
+                                    )
+                                    .await
+                                    {
+                                        if let Some(mem) = memory_updates {
+                                            client_data.lock().await.memory = mem;
                                         }
+                                        Box::pin(Self::execute_actions(
+                                            new_actions,
+                                            protocol.clone(),
+                                            interface,
+                                            client_id,
+                                            app_state,
+                                            llm_client,
+                                            status_tx,
+                                            client_data,
+                                        ))
+                                        .await;
                                     }
+                                }
                             }
                         }
                         "interrupt_transfer_in" => {
@@ -492,7 +527,9 @@ impl UsbClient {
 
                             trace!(
                                 "USB client {} interrupt IN transfer: endpoint={:02x} length={}",
-                                client_id, endpoint, length
+                                client_id,
+                                endpoint,
+                                length
                             );
 
                             let interface_clone = interface.clone();
@@ -501,48 +538,56 @@ impl UsbClient {
 
                             let response_data = result.data.to_vec();
                             if !response_data.is_empty() {
-                                    debug!(
-                                        "USB client {} interrupt IN received {} bytes",
-                                        client_id,
-                                        response_data.len()
-                                    );
+                                debug!(
+                                    "USB client {} interrupt IN received {} bytes",
+                                    client_id,
+                                    response_data.len()
+                                );
 
-                                    // Send event to LLM
-                                    let event = Event::new(
-                                        &USB_INTERRUPT_DATA_RECEIVED_EVENT,
-                                        serde_json::json!({
-                                            "data_hex": hex::encode(&response_data),
-                                            "data_length": response_data.len(),
-                                            "endpoint": endpoint,
-                                        }),
-                                    );
+                                // Send event to LLM
+                                let event = Event::new(
+                                    &USB_INTERRUPT_DATA_RECEIVED_EVENT,
+                                    serde_json::json!({
+                                        "data_hex": hex::encode(&response_data),
+                                        "data_length": response_data.len(),
+                                        "endpoint": endpoint,
+                                    }),
+                                );
 
-                                    if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                                        if let Ok(ClientLlmResult { actions: new_actions, memory_updates }) = call_llm_for_client(
-                                            llm_client,
-                                            app_state,
-                                            client_id.to_string(),
-                                            &instruction,
-                                            &client_data.lock().await.memory,
-                                            Some(&event),
-                                            protocol.as_ref(),
-                                            status_tx,
-                                        ).await {
-                                            if let Some(mem) = memory_updates {
-                                                client_data.lock().await.memory = mem;
-                                            }
-                                            Box::pin(Self::execute_actions(
-                                                new_actions,
-                                                protocol.clone(),
-                                                interface,
-                                                client_id,
-                                                app_state,
-                                                llm_client,
-                                                status_tx,
-                                                client_data,
-                                            )).await;
+                                if let Some(instruction) =
+                                    app_state.get_instruction_for_client(client_id).await
+                                {
+                                    if let Ok(ClientLlmResult {
+                                        actions: new_actions,
+                                        memory_updates,
+                                    }) = call_llm_for_client(
+                                        llm_client,
+                                        app_state,
+                                        client_id.to_string(),
+                                        &instruction,
+                                        &client_data.lock().await.memory,
+                                        Some(&event),
+                                        protocol.as_ref(),
+                                        status_tx,
+                                    )
+                                    .await
+                                    {
+                                        if let Some(mem) = memory_updates {
+                                            client_data.lock().await.memory = mem;
                                         }
+                                        Box::pin(Self::execute_actions(
+                                            new_actions,
+                                            protocol.clone(),
+                                            interface,
+                                            client_id,
+                                            app_state,
+                                            llm_client,
+                                            status_tx,
+                                            client_data,
+                                        ))
+                                        .await;
                                     }
+                                }
                             }
                         }
                         "claim_interface" => {

@@ -2,7 +2,9 @@
 
 ## Overview
 
-Bluetooth Low Energy (BLE) HID keyboard server that allows devices to pair with NetGet and receive keypresses. Built on top of the `bluetooth-ble` protocol, this provides a high-level keyboard interface with connection tracking and targeted messaging.
+Bluetooth Low Energy (BLE) HID keyboard server that allows devices to pair with NetGet and receive keypresses. Built on
+top of the `bluetooth-ble` protocol, this provides a high-level keyboard interface with connection tracking and targeted
+messaging.
 
 ## Architecture
 
@@ -28,6 +30,7 @@ pub struct ClientConnection {
 ```
 
 This allows:
+
 - **Targeted messages**: Send keypresses to specific clients
 - **Per-client state**: Track which devices are connected
 - **Connection events**: Notify LLM when clients connect/disconnect
@@ -38,14 +41,15 @@ This allows:
 
 - **Service UUID**: `0x1812` (HID Service)
 - **Characteristics**:
-  - `0x2A4D` - HID Report Map (keyboard layout descriptor)
-  - `0x2A4B` - HID Report (input reports - keypresses)
-  - `0x2A4A` - HID Information
-  - `0x2A4C` - HID Control Point
+    - `0x2A4D` - HID Report Map (keyboard layout descriptor)
+    - `0x2A4B` - HID Report (input reports - keypresses)
+    - `0x2A4A` - HID Information
+    - `0x2A4C` - HID Control Point
 
 ### HID Report Descriptor
 
 The keyboard uses a standard USB HID report descriptor:
+
 - **Modifier byte**: Ctrl, Shift, Alt, GUI
 - **Reserved byte**: Always 0x00
 - **Key array**: Up to 6 simultaneous keys
@@ -59,6 +63,7 @@ The keyboard uses a standard USB HID report descriptor:
 ```
 
 **Example**: Pressing 'A' with Shift
+
 ```
 02 00 04 00 00 00 00 00
 ││ ││ ││
@@ -70,6 +75,7 @@ The keyboard uses a standard USB HID report descriptor:
 ## LLM Actions
 
 ### type_text
+
 Type a string of text, converting to HID reports automatically.
 
 ```json
@@ -81,6 +87,7 @@ Type a string of text, converting to HID reports automatically.
 ```
 
 ### press_key
+
 Press a single special key.
 
 ```json
@@ -93,6 +100,7 @@ Press a single special key.
 Supported keys: `enter`, `escape`, `tab`, `backspace`, `delete`, arrow keys, function keys, etc.
 
 ### key_combo
+
 Press key combinations.
 
 ```json
@@ -104,6 +112,7 @@ Press key combinations.
 ```
 
 ### send_to_client
+
 Send to a specific connected client.
 
 ```json
@@ -115,6 +124,7 @@ Send to a specific connected client.
 ```
 
 ### list_clients
+
 Get all connected client IDs.
 
 ```json
@@ -126,6 +136,7 @@ Get all connected client IDs.
 ## Events
 
 ### keyboard_client_connected
+
 Fired when a device pairs and connects.
 
 ```json
@@ -136,6 +147,7 @@ Fired when a device pairs and connects.
 ```
 
 ### keyboard_client_disconnected
+
 Fired when a device disconnects.
 
 ```json
@@ -148,6 +160,7 @@ Fired when a device disconnects.
 ## Example Usage
 
 ### Basic Typing
+
 ```
 User: "Act as a Bluetooth keyboard. Type 'Hello from NetGet!'"
 
@@ -155,6 +168,7 @@ LLM: type_text("Hello from NetGet!")
 ```
 
 ### Multi-Client Scenario
+
 ```
 User: "Act as a keyboard. When clients connect, greet them individually."
 
@@ -166,6 +180,7 @@ LLM: type_text("Welcome, Client 2!", client_id=2)
 ```
 
 ### Keyboard Shortcuts
+
 ```
 User: "Send Ctrl+C to all connected devices"
 
@@ -183,6 +198,7 @@ LLM: key_combo(modifiers=["ctrl"], key="c")
 ## Platform Requirements
 
 Same as `bluetooth-ble`:
+
 - **Linux**: BlueZ daemon
 - **macOS**: Bluetooth enabled, may need app bundle
 - **Windows**: Windows 10+ with Bluetooth

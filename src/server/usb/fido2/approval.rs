@@ -6,9 +6,12 @@
 #[cfg(feature = "usb-fido2")]
 use std::collections::HashMap;
 #[cfg(feature = "usb-fido2")]
-use std::sync::{atomic::{AtomicU64, Ordering}, LazyLock};
-#[cfg(feature = "usb-fido2")]
 use std::sync::Arc;
+#[cfg(feature = "usb-fido2")]
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    LazyLock,
+};
 #[cfg(feature = "usb-fido2")]
 use std::time::Duration;
 #[cfg(feature = "usb-fido2")]
@@ -18,8 +21,9 @@ use tracing::{info, warn};
 
 /// Global storage for approval managers (one per server instance)
 #[cfg(feature = "usb-fido2")]
-pub static APPROVAL_MANAGERS: LazyLock<RwLock<HashMap<crate::state::ServerId, Arc<ApprovalManager>>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
+pub static APPROVAL_MANAGERS: LazyLock<
+    RwLock<HashMap<crate::state::ServerId, Arc<ApprovalManager>>>,
+> = LazyLock::new(|| RwLock::new(HashMap::new()));
 
 /// Unique ID for an approval request
 #[cfg(feature = "usb-fido2")]

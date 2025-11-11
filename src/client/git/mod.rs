@@ -5,8 +5,7 @@ pub use actions::GitClientProtocol;
 
 use anyhow::{Context, Result};
 use git2::{
-    BranchType, Cred, FetchOptions, ObjectType, RemoteCallbacks, Repository,
-    StatusOptions,
+    BranchType, Cred, FetchOptions, ObjectType, RemoteCallbacks, Repository, StatusOptions,
 };
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -40,7 +39,10 @@ impl GitClient {
         // 2. A local path (for existing repo)
         // We'll determine this based on the instruction
 
-        info!("Git client {} initializing with target: {}", client_id, remote_addr);
+        info!(
+            "Git client {} initializing with target: {}",
+            client_id, remote_addr
+        );
 
         // Update client state
         app_state
@@ -117,10 +119,8 @@ impl GitClient {
                         .await
                         {
                             error!("Git client {} action error: {}", client_id, e);
-                            let _ = status_tx.send(format!(
-                                "[CLIENT] Git client {} error: {}",
-                                client_id, e
-                            ));
+                            let _ = status_tx
+                                .send(format!("[CLIENT] Git client {} error: {}", client_id, e));
                         }
                     }
                 }
@@ -171,8 +171,7 @@ impl GitClient {
                             client_id, url, path
                         ));
 
-                        match Self::git_clone(url, path, username.as_deref(), password.as_deref())
-                        {
+                        match Self::git_clone(url, path, username.as_deref(), password.as_deref()) {
                             Ok(_repo) => {
                                 *repo_path = Some(PathBuf::from(path));
                                 info!("Git client {} clone successful", client_id);
@@ -239,7 +238,11 @@ impl GitClient {
                             info!("Git client {} listing branches", client_id);
                             match Self::git_list_branches(path, include_remote) {
                                 Ok(branches) => {
-                                    info!("Git client {} branches: {}", client_id, branches.join(", "));
+                                    info!(
+                                        "Git client {} branches: {}",
+                                        client_id,
+                                        branches.join(", ")
+                                    );
                                 }
                                 Err(e) => {
                                     error!("Git client {} list branches failed: {}", client_id, e);
@@ -248,10 +251,8 @@ impl GitClient {
                         }
                     }
                     "git_log" => {
-                        let max_count = data
-                            .get("max_count")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(10) as usize;
+                        let max_count =
+                            data.get("max_count").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
 
                         if let Some(ref path) = repo_path {
                             info!("Git client {} getting log (max {})", client_id, max_count);
@@ -271,9 +272,7 @@ impl GitClient {
                             .get("remote")
                             .and_then(|v| v.as_str())
                             .unwrap_or("origin");
-                        let branch = data
-                            .get("branch")
-                            .and_then(|v| v.as_str());
+                        let branch = data.get("branch").and_then(|v| v.as_str());
 
                         if let Some(ref path) = repo_path {
                             info!("Git client {} pulling from {}", client_id, remote_name);
@@ -298,9 +297,7 @@ impl GitClient {
                             .get("remote")
                             .and_then(|v| v.as_str())
                             .unwrap_or("origin");
-                        let branch = data
-                            .get("branch")
-                            .and_then(|v| v.as_str());
+                        let branch = data.get("branch").and_then(|v| v.as_str());
 
                         if let Some(ref path) = repo_path {
                             info!("Git client {} pushing to {}", client_id, remote_name);
@@ -347,13 +344,8 @@ impl GitClient {
                             .get("branch")
                             .and_then(|v| v.as_str())
                             .context("Missing 'branch' field")?;
-                        let force = data
-                            .get("force")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false);
-                        let remote = data
-                            .get("remote")
-                            .and_then(|v| v.as_str());
+                        let force = data.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
+                        let remote = data.get("remote").and_then(|v| v.as_str());
 
                         if let Some(ref path) = repo_path {
                             info!("Git client {} deleting branch {}", client_id, branch);
@@ -392,12 +384,8 @@ impl GitClient {
                             .get("name")
                             .and_then(|v| v.as_str())
                             .context("Missing 'name' field")?;
-                        let target = data
-                            .get("target")
-                            .and_then(|v| v.as_str());
-                        let message = data
-                            .get("message")
-                            .and_then(|v| v.as_str());
+                        let target = data.get("target").and_then(|v| v.as_str());
+                        let message = data.get("message").and_then(|v| v.as_str());
 
                         if let Some(ref path) = repo_path {
                             info!("Git client {} creating tag {}", client_id, tag_name);
@@ -412,9 +400,7 @@ impl GitClient {
                         }
                     }
                     "git_diff" => {
-                        let target = data
-                            .get("target")
-                            .and_then(|v| v.as_str());
+                        let target = data.get("target").and_then(|v| v.as_str());
                         let staged = data
                             .get("staged")
                             .and_then(|v| v.as_bool())
@@ -449,7 +435,6 @@ impl GitClient {
 
         Ok(())
     }
-
 
     /// Clone a Git repository
     fn git_clone(
@@ -501,7 +486,11 @@ impl GitClient {
         let mut fetch_options = FetchOptions::new();
         fetch_options.remote_callbacks(callbacks);
 
-        remote.fetch(&["refs/heads/*:refs/remotes/origin/*"], Some(&mut fetch_options), None)?;
+        remote.fetch(
+            &["refs/heads/*:refs/remotes/origin/*"],
+            Some(&mut fetch_options),
+            None,
+        )?;
         Ok(())
     }
 
@@ -514,11 +503,7 @@ impl GitClient {
         for entry in statuses.iter() {
             if let Some(path) = entry.path() {
                 let status = entry.status();
-                result.push_str(&format!(
-                    "{:?} - {}\n",
-                    status,
-                    path
-                ));
+                result.push_str(&format!("{:?} - {}\n", status, path));
             }
         }
 
@@ -628,9 +613,12 @@ impl GitClient {
         fetch_options.remote_callbacks(callbacks);
 
         remote.fetch(
-            &[format!("refs/heads/{}:refs/remotes/{}/{}", current_branch_name, remote_name, current_branch_name)],
+            &[format!(
+                "refs/heads/{}:refs/remotes/{}/{}",
+                current_branch_name, remote_name, current_branch_name
+            )],
             Some(&mut fetch_options),
-            None
+            None,
         )?;
 
         // Now merge the fetched changes
@@ -693,18 +681,20 @@ impl GitClient {
         push_options.remote_callbacks(callbacks);
 
         // Push the branch
-        let refspec = format!("refs/heads/{}:refs/heads/{}", current_branch_name, current_branch_name);
+        let refspec = format!(
+            "refs/heads/{}:refs/heads/{}",
+            current_branch_name, current_branch_name
+        );
         remote.push(&[&refspec], Some(&mut push_options))?;
 
-        Ok(format!("Successfully pushed {} to {}", current_branch_name, remote_name))
+        Ok(format!(
+            "Successfully pushed {} to {}",
+            current_branch_name, remote_name
+        ))
     }
 
     /// Checkout a branch or create a new branch
-    fn git_checkout(
-        path: &PathBuf,
-        target: &str,
-        create: bool,
-    ) -> Result<String> {
+    fn git_checkout(path: &PathBuf, target: &str, create: bool) -> Result<String> {
         let repo = Repository::open(path)?;
 
         if create {
@@ -765,7 +755,10 @@ impl GitClient {
                 // Check if branch is merged into HEAD
                 let merge_base = repo.merge_base(head_commit.id(), branch_commit.id())?;
                 if merge_base != branch_commit.id() {
-                    anyhow::bail!("Branch '{}' is not fully merged. Use force=true to delete anyway.", branch_name);
+                    anyhow::bail!(
+                        "Branch '{}' is not fully merged. Use force=true to delete anyway.",
+                        branch_name
+                    );
                 }
             }
 
@@ -841,20 +834,25 @@ impl GitClient {
         if let Some(msg) = message {
             // Create annotated tag
             repo.tag(tag_name, &obj, &sig, msg, false)?;
-            Ok(format!("Created annotated tag '{}' at {} with message: {}", tag_name, target_commit.id(), msg))
+            Ok(format!(
+                "Created annotated tag '{}' at {} with message: {}",
+                tag_name,
+                target_commit.id(),
+                msg
+            ))
         } else {
             // Create lightweight tag
             repo.tag_lightweight(tag_name, &obj, false)?;
-            Ok(format!("Created lightweight tag '{}' at {}", tag_name, target_commit.id()))
+            Ok(format!(
+                "Created lightweight tag '{}' at {}",
+                tag_name,
+                target_commit.id()
+            ))
         }
     }
 
     /// View differences in the repository
-    fn git_diff(
-        path: &PathBuf,
-        target: Option<&str>,
-        staged: bool,
-    ) -> Result<String> {
+    fn git_diff(path: &PathBuf, target: Option<&str>, staged: bool) -> Result<String> {
         let repo = Repository::open(path)?;
 
         let diff = if staged {
@@ -903,7 +901,9 @@ impl GitClient {
         } else {
             Ok(format!(
                 "Diff: {} file(s) changed, {} insertion(s), {} deletion(s)\n\n{}",
-                files_changed, insertions, deletions,
+                files_changed,
+                insertions,
+                deletions,
                 patch_text.lines().take(50).collect::<Vec<_>>().join("\n")
             ))
         }

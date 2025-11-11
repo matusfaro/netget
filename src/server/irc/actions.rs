@@ -4,8 +4,8 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
-use crate::server::connection::ConnectionId;
 use crate::protocol::EventType;
+use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
@@ -104,8 +104,8 @@ impl IrcProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for IrcProtocol {
-        fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
-            vec![
+    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        vec![
                 crate::llm::actions::ParameterDefinition {
                     name: "send_first".to_string(),
                     type_hint: "boolean".to_string(),
@@ -114,105 +114,106 @@ impl Protocol for IrcProtocol {
                     example: serde_json::json!(false),
                 },
             ]
-        }
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            // IRC could have async actions like broadcast_message in the future
-            Vec::new()
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                send_irc_message_action(),
-                send_irc_welcome_action(),
-                send_irc_pong_action(),
-                send_irc_join_action(),
-                send_irc_part_action(),
-                send_irc_privmsg_action(),
-                send_irc_notice_action(),
-                send_irc_numeric_action(),
-                wait_for_more_action(),
-                close_connection_action(),
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "IRC"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            get_irc_event_types()
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>TCP>IRC"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["irc", "chat"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Experimental)
-                .implementation("Manual line-based IRC parsing")
-                .llm_control("All IRC messages (NICK, JOIN, PRIVMSG)")
-                .e2e_testing("Manual IRC client")
-                .notes("No channel state tracking")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "IRC chat server"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Start an IRC server"
-        }
-        fn group_name(&self) -> &'static str {
-            "Application"
-        }
+    }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        // IRC could have async actions like broadcast_message in the future
+        Vec::new()
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            send_irc_message_action(),
+            send_irc_welcome_action(),
+            send_irc_pong_action(),
+            send_irc_join_action(),
+            send_irc_part_action(),
+            send_irc_privmsg_action(),
+            send_irc_notice_action(),
+            send_irc_numeric_action(),
+            wait_for_more_action(),
+            close_connection_action(),
+        ]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "IRC"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_irc_event_types()
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>IRC"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["irc", "chat"]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("Manual line-based IRC parsing")
+            .llm_control("All IRC messages (NICK, JOIN, PRIVMSG)")
+            .e2e_testing("Manual IRC client")
+            .notes("No channel state tracking")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "IRC chat server"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Start an IRC server"
+    }
+    fn group_name(&self) -> &'static str {
+        "Application"
+    }
 }
 
 // Implement Server trait (server-specific functionality)
 impl Server for IrcProtocol {
-        fn spawn(
-            &self,
-            ctx: crate::protocol::SpawnContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::server::irc::IrcServer;
-                let _send_first = ctx.startup_params
-                    .as_ref()
-                    .and_then(|p| p.get_optional_bool("send_first"))
-                    .unwrap_or(false);
-    
-                IrcServer::spawn_with_llm_actions(
-                    ctx.listen_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                                    ctx.server_id,
-                ).await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "send_irc_message" => self.execute_send_irc_message(action),
-                "send_irc_welcome" => self.execute_send_irc_welcome(action),
-                "send_irc_pong" => self.execute_send_irc_pong(action),
-                "send_irc_join" => self.execute_send_irc_join(action),
-                "send_irc_part" => self.execute_send_irc_part(action),
-                "send_irc_privmsg" => self.execute_send_irc_privmsg(action),
-                "send_irc_notice" => self.execute_send_irc_notice(action),
-                "send_irc_numeric" => self.execute_send_irc_numeric(action),
-                "wait_for_more" => Ok(ActionResult::WaitForMore),
-                "close_connection" => Ok(ActionResult::CloseConnection),
-                _ => Err(anyhow::anyhow!("Unknown IRC action: {}", action_type)),
-            }
-        }
-}
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::irc::IrcServer;
+            let _send_first = ctx
+                .startup_params
+                .as_ref()
+                .and_then(|p| p.get_optional_bool("send_first"))
+                .unwrap_or(false);
 
+            IrcServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
+
+        match action_type {
+            "send_irc_message" => self.execute_send_irc_message(action),
+            "send_irc_welcome" => self.execute_send_irc_welcome(action),
+            "send_irc_pong" => self.execute_send_irc_pong(action),
+            "send_irc_join" => self.execute_send_irc_join(action),
+            "send_irc_part" => self.execute_send_irc_part(action),
+            "send_irc_privmsg" => self.execute_send_irc_privmsg(action),
+            "send_irc_notice" => self.execute_send_irc_notice(action),
+            "send_irc_numeric" => self.execute_send_irc_numeric(action),
+            "wait_for_more" => Ok(ActionResult::WaitForMore),
+            "close_connection" => Ok(ActionResult::CloseConnection),
+            _ => Err(anyhow::anyhow!("Unknown IRC action: {}", action_type)),
+        }
+    }
+}
 
 impl IrcProtocol {
     fn execute_send_irc_message(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -690,34 +691,27 @@ fn close_connection_action() -> ActionDefinition {
 // ============================================================================
 
 pub static IRC_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "irc_message_received",
-        "IRC message received from a client"
-    )
-    .with_parameters(vec![
-        Parameter {
+    EventType::new("irc_message_received", "IRC message received from a client")
+        .with_parameters(vec![Parameter {
             name: "message".to_string(),
             type_hint: "string".to_string(),
             description: "The IRC message line received".to_string(),
             required: true,
-        },
-    ])
-    .with_actions(vec![
-        send_irc_message_action(),
-        send_irc_welcome_action(),
-        send_irc_pong_action(),
-        send_irc_join_action(),
-        send_irc_part_action(),
-        send_irc_privmsg_action(),
-        send_irc_notice_action(),
-        send_irc_numeric_action(),
-        wait_for_more_action(),
-        close_connection_action(),
-    ])
+        }])
+        .with_actions(vec![
+            send_irc_message_action(),
+            send_irc_welcome_action(),
+            send_irc_pong_action(),
+            send_irc_join_action(),
+            send_irc_part_action(),
+            send_irc_privmsg_action(),
+            send_irc_notice_action(),
+            send_irc_numeric_action(),
+            wait_for_more_action(),
+            close_connection_action(),
+        ])
 });
 
 pub fn get_irc_event_types() -> Vec<EventType> {
-    vec![
-        IRC_MESSAGE_RECEIVED_EVENT.clone(),
-    ]
+    vec![IRC_MESSAGE_RECEIVED_EVENT.clone()]
 }

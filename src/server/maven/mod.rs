@@ -16,15 +16,15 @@ use hyper_util::rt::TokioIo;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
 
-use crate::server::connection::ConnectionId;
-use actions::MAVEN_ARTIFACT_REQUEST_EVENT;
-use crate::server::MavenProtocol;
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
 use crate::protocol::Event;
+use crate::server::connection::ConnectionId;
+use crate::server::MavenProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use actions::MAVEN_ARTIFACT_REQUEST_EVENT;
 
 /// Maven repository server that delegates artifact requests to LLM
 pub struct MavenServer;
@@ -38,9 +38,14 @@ impl MavenServer {
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
     ) -> anyhow::Result<SocketAddr> {
-        let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let listener =
+            crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        console_info!(status_tx, "Maven repository server listening on {}", local_addr);
+        console_info!(
+            status_tx,
+            "Maven repository server listening on {}",
+            local_addr
+        );
 
         let protocol = Arc::new(MavenProtocol::new());
 
@@ -49,13 +54,23 @@ impl MavenServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        info!("Accepted Maven connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!("[INFO] Maven connection {} from {}", connection_id, remote_addr));
+                        info!(
+                            "Accepted Maven connection {} from {}",
+                            connection_id, remote_addr
+                        );
+                        let _ = status_tx.send(format!(
+                            "[INFO] Maven connection {} from {}",
+                            connection_id, remote_addr
+                        ));
 
                         // Add connection to ServerInstance
-                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -70,7 +85,9 @@ impl MavenServer {
                             status_changed_at: now,
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
-                        app_state.add_connection_to_server(server_id, conn_state).await;
+                        app_state
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let llm_client_clone = llm_client.clone();
@@ -104,14 +121,20 @@ impl MavenServer {
                             });
 
                             // Serve HTTP/1 on this connection
-                            if let Err(err) = http1::Builder::new().serve_connection(io, service).await {
+                            if let Err(err) =
+                                http1::Builder::new().serve_connection(io, service).await
+                            {
                                 error!("Error serving Maven connection: {:?}", err);
-                                let _ = status_tx_clone.send(format!("[ERROR] Maven connection error: {:?}", err));
+                                let _ = status_tx_clone
+                                    .send(format!("[ERROR] Maven connection error: {:?}", err));
                             }
 
                             // Mark connection as closed
-                            app_state_clone.close_connection_on_server(server_id, connection_id).await;
-                            let _ = status_tx_clone.send(format!("✗ Maven connection {} closed", connection_id));
+                            app_state_clone
+                                .close_connection_on_server(server_id, connection_id)
+                                .await;
+                            let _ = status_tx_clone
+                                .send(format!("✗ Maven connection {} closed", connection_id));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
@@ -161,7 +184,8 @@ impl MavenArtifact {
         // Check if this is a maven-metadata.xml request
         if parts.last() == Some(&"maven-metadata.xml")
             || parts.last() == Some(&"maven-metadata.xml.sha1")
-            || parts.last() == Some(&"maven-metadata.xml.md5") {
+            || parts.last() == Some(&"maven-metadata.xml.md5")
+        {
             let is_checksum = parts.last()?.contains(".sha1") || parts.last()?.contains(".md5");
             let checksum_type = if parts.last()?.ends_with(".sha1") {
                 Some("sha1".to_string())
@@ -204,13 +228,29 @@ impl MavenArtifact {
         // Parse filename: {artifactId}-{version}[-{classifier}].{extension}[.checksum]
         // First check for checksums
         let (filename, is_checksum, checksum_type) = if filename.ends_with(".sha1") {
-            (filename.trim_end_matches(".sha1"), true, Some("sha1".to_string()))
+            (
+                filename.trim_end_matches(".sha1"),
+                true,
+                Some("sha1".to_string()),
+            )
         } else if filename.ends_with(".md5") {
-            (filename.trim_end_matches(".md5"), true, Some("md5".to_string()))
+            (
+                filename.trim_end_matches(".md5"),
+                true,
+                Some("md5".to_string()),
+            )
         } else if filename.ends_with(".sha256") {
-            (filename.trim_end_matches(".sha256"), true, Some("sha256".to_string()))
+            (
+                filename.trim_end_matches(".sha256"),
+                true,
+                Some("sha256".to_string()),
+            )
         } else if filename.ends_with(".sha512") {
-            (filename.trim_end_matches(".sha512"), true, Some("sha512".to_string()))
+            (
+                filename.trim_end_matches(".sha512"),
+                true,
+                Some("sha512".to_string()),
+            )
         } else {
             (*filename, false, None)
         };
@@ -335,7 +375,9 @@ async fn handle_maven_request_with_llm(
         Some(connection_id),
         &event,
         protocol.as_ref(),
-    ).await {
+    )
+    .await
+    {
         Ok(execution_result) => {
             debug!("LLM Maven response received");
 
@@ -353,11 +395,15 @@ async fn handle_maven_request_with_llm(
             for protocol_result in execution_result.protocol_results {
                 if let ActionResult::Output(output_data) = protocol_result {
                     // Parse the output as JSON containing Maven response fields
-                    if let Ok(json_value) = serde_json::from_slice::<serde_json::Value>(&output_data) {
+                    if let Ok(json_value) =
+                        serde_json::from_slice::<serde_json::Value>(&output_data)
+                    {
                         if let Some(status) = json_value.get("status").and_then(|v| v.as_u64()) {
                             status_code = status as u16;
                         }
-                        if let Some(headers_obj) = json_value.get("headers").and_then(|v| v.as_object()) {
+                        if let Some(headers_obj) =
+                            json_value.get("headers").and_then(|v| v.as_object())
+                        {
                             for (k, v) in headers_obj {
                                 if let Some(v_str) = v.as_str() {
                                     response_headers.insert(k.clone(), v_str.to_string());
@@ -369,10 +415,14 @@ async fn handle_maven_request_with_llm(
                         if let Some(body) = json_value.get("body") {
                             if let Some(body_str) = body.as_str() {
                                 response_body = body_str.as_bytes().to_vec();
-                            } else if let Some(body_bytes) = json_value.get("body_base64").and_then(|v| v.as_str()) {
+                            } else if let Some(body_bytes) =
+                                json_value.get("body_base64").and_then(|v| v.as_str())
+                            {
                                 // Support base64-encoded binary content
                                 use base64::Engine;
-                                if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(body_bytes) {
+                                if let Ok(decoded) =
+                                    base64::engine::general_purpose::STANDARD.decode(body_bytes)
+                                {
                                     response_body = decoded;
                                 }
                             }
@@ -383,7 +433,10 @@ async fn handle_maven_request_with_llm(
 
             let _ = status_tx.send(format!(
                 "→ Maven {} {} → {} ({} bytes)",
-                method, uri, status_code, response_body.len()
+                method,
+                uri,
+                status_code,
+                response_body.len()
             ));
 
             // Build the HTTP response
@@ -394,7 +447,9 @@ async fn handle_maven_request_with_llm(
                 response = response.header(name, value);
             }
 
-            Ok(response.body(Full::new(Bytes::from(response_body))).unwrap())
+            Ok(response
+                .body(Full::new(Bytes::from(response_body)))
+                .unwrap())
         }
         Err(e) => {
             error!("LLM error generating Maven response: {}", e);

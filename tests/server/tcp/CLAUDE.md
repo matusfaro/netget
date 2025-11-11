@@ -1,9 +1,12 @@
 # TCP Protocol E2E Tests
 
 ## Test Overview
-Tests the raw TCP server implementation with FTP-like commands and custom protocols. Validates that the LLM can construct protocol responses from scratch using raw TCP byte streams.
+
+Tests the raw TCP server implementation with FTP-like commands and custom protocols. Validates that the LLM can
+construct protocol responses from scratch using raw TCP byte streams.
 
 ## Test Strategy
+
 - **Isolated test servers**: Each test spawns a separate NetGet instance with specific instructions
 - **Raw TCP client**: Uses `tokio::net::TcpStream` for direct socket communication
 - **No FTP library**: Originally used suppaftp but it was too slow (>2 minutes per test)
@@ -11,6 +14,7 @@ Tests the raw TCP server implementation with FTP-like commands and custom protoc
 - **Fast validation**: 10-second timeout per operation
 
 ## LLM Call Budget
+
 - `test_ftp_greeting()`: 1 LLM call (connection opened event)
 - `test_ftp_user_command()`: 1 LLM call (USER command received)
 - `test_ftp_pwd_command()`: 1 LLM call (PWD command received)
@@ -18,30 +22,38 @@ Tests the raw TCP server implementation with FTP-like commands and custom protoc
 - `test_custom_response()`: 1 LLM call (PING command received)
 - **Total: 5 LLM calls** (well under 10 limit)
 
-**Optimization Opportunity**: Could consolidate these into a single comprehensive server that handles all commands, reducing to 1 startup call + 5 request calls = 6 total. However, current approach provides better isolation and clearer failure diagnosis.
+**Optimization Opportunity**: Could consolidate these into a single comprehensive server that handles all commands,
+reducing to 1 startup call + 5 request calls = 6 total. However, current approach provides better isolation and clearer
+failure diagnosis.
 
 ## Scripting Usage
+
 ❌ **Scripting Disabled** - Action-based responses only
 
-**Rationale**: TCP tests use simple one-shot prompts that work well with action-based LLM responses. Scripting adds complexity without significant benefit for these straightforward test cases.
+**Rationale**: TCP tests use simple one-shot prompts that work well with action-based LLM responses. Scripting adds
+complexity without significant benefit for these straightforward test cases.
 
 ## Client Library
+
 - **tokio::net::TcpStream** - Raw async TCP socket
 - **tokio::io::{AsyncReadExt, AsyncWriteExt}** - For read/write operations
 - **No protocol library** - Manual command construction and parsing
 
 **Why raw TCP?**:
+
 1. Faster than protocol-specific clients (no library initialization overhead)
 2. Tests actual byte-level LLM behavior
 3. No dependency on external FTP/protocol libraries
 4. Direct control over timing and command sequencing
 
 ## Expected Runtime
+
 - Model: qwen3-coder:30b
 - Runtime: ~50-60 seconds for full test suite (5 tests × ~10s each)
 - Each test includes: server startup (2-3s) + LLM response (5-8s) + validation (<1s)
 
 ## Failure Rate
+
 - **Low** (~5%) - Occasional LLM response format issues
 - Most failures: LLM doesn't include expected keywords (e.g., "220", "ACK")
 - Timeout failures: Rare (<1%) - usually indicates Ollama overload
@@ -49,30 +61,36 @@ Tests the raw TCP server implementation with FTP-like commands and custom protoc
 ## Test Cases
 
 ### 1. FTP Greeting (`test_ftp_greeting`)
+
 - **Prompt**: Respond to CONNECT with FTP 220 greeting
 - **Client**: Sends "CONNECT\r\n"
 - **Expected**: Response starts with "220"
-- **Purpose**: Tests LLM's ability to send banner without receiving data first (though test sends CONNECT to trigger response)
+- **Purpose**: Tests LLM's ability to send banner without receiving data first (though test sends CONNECT to trigger
+  response)
 
 ### 2. FTP USER Command (`test_ftp_user_command`)
+
 - **Prompt**: Respond to USER with 331 password request
 - **Client**: Sends "USER anonymous\r\n"
 - **Expected**: Response starts with "331"
 - **Purpose**: Tests basic FTP command parsing and response generation
 
 ### 3. FTP PWD Command (`test_ftp_pwd_command`)
+
 - **Prompt**: Respond to PWD with 257 current directory
 - **Client**: Sends "PWD\r\n"
 - **Expected**: Response starts with "257"
 - **Purpose**: Tests LLM's ability to handle different FTP commands
 
 ### 4. Simple Echo (`test_simple_echo`)
+
 - **Prompt**: Echo data with "ACK: " prefix
 - **Client**: Sends "Hello, LLM!"
 - **Expected**: Response contains both "ACK" and "Hello, LLM!"
 - **Purpose**: Tests basic data echo and transformation
 
 ### 5. Custom Response (`test_custom_response`)
+
 - **Prompt**: Respond to PING with PONG
 - **Client**: Sends "PING"
 - **Expected**: Response contains "PONG"
@@ -81,31 +99,42 @@ Tests the raw TCP server implementation with FTP-like commands and custom protoc
 ## Known Issues
 
 ### 1. FTP Greeting Test Workaround
-The FTP protocol typically sends a greeting immediately on connection. However, the test sends "CONNECT" to trigger the response. This is a test artifact - in a real FTP server, the `send_first` flag would be used to send the banner without waiting for client data.
+
+The FTP protocol typically sends a greeting immediately on connection. However, the test sends "CONNECT" to trigger the
+response. This is a test artifact - in a real FTP server, the `send_first` flag would be used to send the banner without
+waiting for client data.
 
 **Reason**: The test helper doesn't support `send_first` flag configuration, so we work around it by sending a command.
 
 ### 2. LLM Response Variability
-The LLM may add extra text, formatting, or explanations to responses. Tests use `contains()` or `starts_with()` checks rather than exact matching to accommodate this variability.
+
+The LLM may add extra text, formatting, or explanations to responses. Tests use `contains()` or `starts_with()` checks
+rather than exact matching to accommodate this variability.
 
 Example: LLM might respond with "220 NetGet FTP Server - Welcome!" instead of exactly "220 NetGet FTP Server\r\n"
 
 ### 3. No Connection Cleanup Validation
-Tests don't verify that connections are properly closed on the server side. They just stop the server process, which forcibly closes all connections.
+
+Tests don't verify that connections are properly closed on the server side. They just stop the server process, which
+forcibly closes all connections.
 
 **Future Improvement**: Add tests for graceful connection closure with `close_connection` action.
 
 ## Performance Notes
 
 ### Why Not Use suppaftp?
+
 Original tests used the `suppaftp` library for full FTP client operations. This was abandoned because:
+
 - Each FTP operation required multiple LLM round-trips
 - Full test suite took >2 minutes
 - Most time spent waiting for LLM responses to FTP control channel
 - Raw TCP tests achieve same validation in 1/3 the time
 
 ### Timeout Strategy
+
 10-second timeout per read operation provides good balance:
+
 - Allows for slow LLM responses (5-8s typical)
 - Catches hung connections quickly
 - Fails fast on misconfigured servers
@@ -113,6 +142,7 @@ Original tests used the `suppaftp` library for full FTP client operations. This 
 ## Future Enhancements
 
 ### Test Coverage Gaps
+
 1. **Binary data**: No tests for binary protocol handling (hex encoding/decoding)
 2. **Multi-packet**: No tests for `wait_for_more` accumulation behavior
 3. **Concurrent connections**: No tests for multiple simultaneous clients
@@ -120,6 +150,7 @@ Original tests used the `suppaftp` library for full FTP client operations. This 
 5. **State persistence**: No tests for connection-specific memory/state
 
 ### Consolidation Opportunity
+
 All five tests could be consolidated into a single server with comprehensive instructions:
 
 ```rust
@@ -137,5 +168,6 @@ let prompt = format!(
 This would reduce from 5 server spawns to 1, saving ~10-15 seconds of test time.
 
 ## References
+
 - [RFC 959: File Transfer Protocol (FTP)](https://datatracker.ietf.org/doc/html/rfc959)
 - [Tokio TcpStream](https://docs.rs/tokio/latest/tokio/net/struct.TcpStream.html)

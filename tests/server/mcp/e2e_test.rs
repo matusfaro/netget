@@ -5,7 +5,7 @@
 
 #![cfg(feature = "mcp")]
 
-use crate::server::helpers::{self, ServerConfig, E2EResult};
+use crate::server::helpers::{self, E2EResult, ServerConfig};
 use serde_json::{json, Value};
 use std::time::Duration;
 
@@ -31,7 +31,10 @@ async fn send_mcp_request(
         request_body["id"] = json!(i);
     }
 
-    println!("→ Sending MCP request: {}", serde_json::to_string_pretty(&request_body)?);
+    println!(
+        "→ Sending MCP request: {}",
+        serde_json::to_string_pretty(&request_body)?
+    );
 
     let response = match tokio::time::timeout(
         Duration::from_secs(30),
@@ -39,8 +42,10 @@ async fn send_mcp_request(
             .post(format!("http://127.0.0.1:{}", port))
             .header("Content-Type", "application/json")
             .json(&request_body)
-            .send()
-    ).await {
+            .send(),
+    )
+    .await
+    {
         Ok(Ok(resp)) => {
             println!("✓ Received HTTP response: {}", resp.status());
             resp
@@ -97,33 +102,54 @@ async fn test_mcp_initialize() -> E2EResult<()> {
             }
         })),
         Some(1),
-    ).await?;
+    )
+    .await?;
 
     // Validate JSON-RPC 2.0 response
-    assert_eq!(response.get("jsonrpc").and_then(|v| v.as_str()), Some("2.0"),
-               "Expected 'jsonrpc' field to be '2.0'");
+    assert_eq!(
+        response.get("jsonrpc").and_then(|v| v.as_str()),
+        Some("2.0"),
+        "Expected 'jsonrpc' field to be '2.0'"
+    );
 
-    assert_eq!(response.get("id"), Some(&json!(1)),
-               "Expected 'id' field to match request id");
+    assert_eq!(
+        response.get("id"),
+        Some(&json!(1)),
+        "Expected 'id' field to match request id"
+    );
 
     // Validate initialize response structure
     if let Some(result) = response.get("result") {
         println!("✓ Received initialize result");
 
         // Check protocol version
-        assert_eq!(result.get("protocolVersion").and_then(|v| v.as_str()), Some("2024-11-05"),
-                   "Expected protocolVersion to be '2024-11-05'");
+        assert_eq!(
+            result.get("protocolVersion").and_then(|v| v.as_str()),
+            Some("2024-11-05"),
+            "Expected protocolVersion to be '2024-11-05'"
+        );
 
         // Check server info
         if let Some(server_info) = result.get("serverInfo") {
-            println!("  Server: {} v{}",
-                server_info.get("name").and_then(|v| v.as_str()).unwrap_or("unknown"),
-                server_info.get("version").and_then(|v| v.as_str()).unwrap_or("unknown"));
+            println!(
+                "  Server: {} v{}",
+                server_info
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown"),
+                server_info
+                    .get("version")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+            );
         }
 
         // Check capabilities
         if let Some(capabilities) = result.get("capabilities") {
-            println!("  Capabilities: {}", serde_json::to_string_pretty(capabilities)?);
+            println!(
+                "  Capabilities: {}",
+                serde_json::to_string_pretty(capabilities)?
+            );
         }
 
         println!("✓ MCP Initialize test completed\n");
@@ -148,15 +174,13 @@ async fn test_mcp_ping() -> E2EResult<()> {
     // Send ping request
     println!("\n→ Sending MCP ping request...");
 
-    let response = send_mcp_request(
-        server.port,
-        "ping",
-        None,
-        Some(2),
-    ).await?;
+    let response = send_mcp_request(server.port, "ping", None, Some(2)).await?;
 
     // Validate response
-    assert_eq!(response.get("jsonrpc").and_then(|v| v.as_str()), Some("2.0"));
+    assert_eq!(
+        response.get("jsonrpc").and_then(|v| v.as_str()),
+        Some("2.0")
+    );
     assert_eq!(response.get("id"), Some(&json!(2)));
 
     if response.get("result").is_some() {
@@ -187,15 +211,13 @@ async fn test_mcp_resources_list() -> E2EResult<()> {
     // Send resources/list request
     println!("\n→ Sending MCP resources/list request...");
 
-    let response = send_mcp_request(
-        server.port,
-        "resources/list",
-        None,
-        Some(3),
-    ).await?;
+    let response = send_mcp_request(server.port, "resources/list", None, Some(3)).await?;
 
     // Validate response
-    assert_eq!(response.get("jsonrpc").and_then(|v| v.as_str()), Some("2.0"));
+    assert_eq!(
+        response.get("jsonrpc").and_then(|v| v.as_str()),
+        Some("2.0")
+    );
     assert_eq!(response.get("id"), Some(&json!(3)));
 
     if let Some(result) = response.get("result") {
@@ -242,10 +264,14 @@ async fn test_mcp_resources_read() -> E2EResult<()> {
             "uri": "file:///example.txt"
         })),
         Some(4),
-    ).await?;
+    )
+    .await?;
 
     // Validate response
-    assert_eq!(response.get("jsonrpc").and_then(|v| v.as_str()), Some("2.0"));
+    assert_eq!(
+        response.get("jsonrpc").and_then(|v| v.as_str()),
+        Some("2.0")
+    );
     assert_eq!(response.get("id"), Some(&json!(4)));
 
     if let Some(result) = response.get("result") {
@@ -284,15 +310,13 @@ async fn test_mcp_tools_list() -> E2EResult<()> {
     // Send tools/list request
     println!("\n→ Sending MCP tools/list request...");
 
-    let response = send_mcp_request(
-        server.port,
-        "tools/list",
-        None,
-        Some(5),
-    ).await?;
+    let response = send_mcp_request(server.port, "tools/list", None, Some(5)).await?;
 
     // Validate response
-    assert_eq!(response.get("jsonrpc").and_then(|v| v.as_str()), Some("2.0"));
+    assert_eq!(
+        response.get("jsonrpc").and_then(|v| v.as_str()),
+        Some("2.0")
+    );
     assert_eq!(response.get("id"), Some(&json!(5)));
 
     if let Some(result) = response.get("result") {
@@ -342,10 +366,14 @@ async fn test_mcp_tools_call() -> E2EResult<()> {
             }
         })),
         Some(6),
-    ).await?;
+    )
+    .await?;
 
     // Validate response
-    assert_eq!(response.get("jsonrpc").and_then(|v| v.as_str()), Some("2.0"));
+    assert_eq!(
+        response.get("jsonrpc").and_then(|v| v.as_str()),
+        Some("2.0")
+    );
     assert_eq!(response.get("id"), Some(&json!(6)));
 
     if let Some(result) = response.get("result") {
@@ -384,15 +412,13 @@ async fn test_mcp_prompts_list() -> E2EResult<()> {
     // Send prompts/list request
     println!("\n→ Sending MCP prompts/list request...");
 
-    let response = send_mcp_request(
-        server.port,
-        "prompts/list",
-        None,
-        Some(7),
-    ).await?;
+    let response = send_mcp_request(server.port, "prompts/list", None, Some(7)).await?;
 
     // Validate response
-    assert_eq!(response.get("jsonrpc").and_then(|v| v.as_str()), Some("2.0"));
+    assert_eq!(
+        response.get("jsonrpc").and_then(|v| v.as_str()),
+        Some("2.0")
+    );
     assert_eq!(response.get("id"), Some(&json!(7)));
 
     if let Some(result) = response.get("result") {
@@ -439,10 +465,14 @@ async fn test_mcp_prompts_get() -> E2EResult<()> {
             "name": "code-review"
         })),
         Some(8),
-    ).await?;
+    )
+    .await?;
 
     // Validate response
-    assert_eq!(response.get("jsonrpc").and_then(|v| v.as_str()), Some("2.0"));
+    assert_eq!(
+        response.get("jsonrpc").and_then(|v| v.as_str()),
+        Some("2.0")
+    );
     assert_eq!(response.get("id"), Some(&json!(8)));
 
     if let Some(result) = response.get("result") {
@@ -478,23 +508,27 @@ async fn test_mcp_error_handling() -> E2EResult<()> {
     // Send invalid method request
     println!("\n→ Sending invalid method request...");
 
-    let response = send_mcp_request(
-        server.port,
-        "invalid/method",
-        None,
-        Some(99),
-    ).await?;
+    let response = send_mcp_request(server.port, "invalid/method", None, Some(99)).await?;
 
     // Should receive an error response
-    assert_eq!(response.get("jsonrpc").and_then(|v| v.as_str()), Some("2.0"));
+    assert_eq!(
+        response.get("jsonrpc").and_then(|v| v.as_str()),
+        Some("2.0")
+    );
     assert_eq!(response.get("id"), Some(&json!(99)));
 
     if let Some(error) = response.get("error") {
         println!("✓ Received error response: {:?}", error);
 
         // Check error structure
-        assert!(error.get("code").is_some(), "Error should have 'code' field");
-        assert!(error.get("message").is_some(), "Error should have 'message' field");
+        assert!(
+            error.get("code").is_some(),
+            "Error should have 'code' field"
+        );
+        assert!(
+            error.get("message").is_some(),
+            "Error should have 'message' field"
+        );
 
         println!("✓ MCP Error Handling test completed\n");
         Ok(())

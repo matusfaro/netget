@@ -2,24 +2,28 @@
 
 ## Test Overview
 
-End-to-end tests for ARP (Address Resolution Protocol) server functionality. Tests spawn NetGet ARP server and validate Layer 2 packet handling using pcap for packet capture/injection and pnet for packet construction.
+End-to-end tests for ARP (Address Resolution Protocol) server functionality. Tests spawn NetGet ARP server and validate
+Layer 2 packet handling using pcap for packet capture/injection and pnet for packet construction.
 
 **Protocols Tested**: ARP REQUEST and ARP REPLY (RFC 826)
 
 ## Test Strategy
 
 **pcap + pnet Approach**: Tests use real packet capture and injection:
+
 - `pcap` for raw packet capture and injection (requires CAP_NET_RAW or root)
 - `pnet` for structured ARP packet construction and parsing
 - Loopback interface testing (no external network required)
 - Real wire-format validation
 
 **Structured Packet Construction**: pnet builds Ethernet + ARP frames:
+
 - Ensures RFC 826 compliance
 - Tests exact wire format (Ethernet header + ARP packet)
 - Type-safe packet building (no manual hex encoding)
 
-**Black-Box Protocol Testing**: Tests validate only external behavior (ARP request → ARP reply), not internal LLM prompts or implementation details.
+**Black-Box Protocol Testing**: Tests validate only external behavior (ARP request → ARP reply), not internal LLM
+prompts or implementation details.
 
 **Comprehensive Single-Server Approach**: One server handles all test cases with scripting for maximum efficiency.
 
@@ -28,6 +32,7 @@ End-to-end tests for ARP (Address Resolution Protocol) server functionality. Tes
 ### Current Implementation
 
 **Single Comprehensive Test** (`test_arp_responder`):
+
 - 1 server startup (with comprehensive scripting instructions) = **1-2 LLM calls**
 - 3 ARP requests (all handled by script) = **0 LLM calls**
 - **Total: 1-2 LLM calls** ✅ **Target met: < 10 calls**
@@ -35,6 +40,7 @@ End-to-end tests for ARP (Address Resolution Protocol) server functionality. Tes
 ### Test Breakdown
 
 The single test validates:
+
 1. ARP request for 192.168.1.100 → Reply with aa:bb:cc:dd:ee:ff
 2. ARP request for 192.168.1.101 → Reply with 11:22:33:44:55:66
 3. ARP request for 192.168.1.200 → No reply (ignored)
@@ -44,12 +50,14 @@ The single test validates:
 ## Scripting Usage
 
 **Scripting HEAVILY Used** ✅: ARP is PERFECT for scripting because:
+
 - **Deterministic**: Target IP → MAC address mapping
 - **Stateless**: No session tracking
 - **Simple logic**: If-then rules for IP-to-MAC mappings
 - **Well-defined**: RFC 826 specifies exact packet format
 
 **Script Logic** (conceptual):
+
 ```python
 def handle_arp_request(event):
     target_ip = event['target_ip']
@@ -79,14 +87,17 @@ def handle_arp_request(event):
 ## Client Library
 
 **pnet + pcap** - Raw packet construction and injection
+
 - **`pcap::Capture`**: Raw packet capture and injection (requires privileges)
 - **`pnet::packet::arp`**: Structured ARP packet building
 - **`pnet::packet::ethernet`**: Ethernet frame construction
 - **Manual wire-level testing**: Complete control over packet format
 
-**Why This Approach**: ARP is a Layer 2 protocol, standard network libraries (like std::net) don't support it. Must use raw sockets.
+**Why This Approach**: ARP is a Layer 2 protocol, standard network libraries (like std::net) don't support it. Must use
+raw sockets.
 
 **Helper Functions**:
+
 ```rust
 fn build_arp_request(sender_mac: MacAddr, sender_ip: Ipv4Addr, target_ip: Ipv4Addr) -> Vec<u8>;
 fn find_loopback_interface() -> Result<String, Box<dyn std::error::Error>>;
@@ -97,6 +108,7 @@ fn find_loopback_interface() -> Result<String, Box<dyn std::error::Error>>;
 **Model**: qwen3-coder:30b (default NetGet model)
 
 **Runtime**: ~10-20 seconds for full test suite
+
 - Server startup: ~5-10 seconds (LLM generates script)
 - 3 ARP requests: ~3-6 seconds (pcap capture timeouts)
 - Packet injection/capture: <1ms per request
@@ -111,6 +123,7 @@ fn find_loopback_interface() -> Result<String, Box<dyn std::error::Error>>;
 **Historical Flakiness**: **Medium** (~10-20%)
 
 **Why Less Stable Than Other Tests**:
+
 - **Requires elevated privileges**: Root/CAP_NET_RAW needed, may fail in CI
 - **Platform-dependent**: Interface names vary (lo, lo0, loopback)
 - **Timing-sensitive**: pcap capture windows may miss packets
@@ -119,31 +132,33 @@ fn find_loopback_interface() -> Result<String, Box<dyn std::error::Error>>;
 **Common Failure Modes**:
 
 1. **Insufficient Privileges** (~10% of runs, environment-dependent)
-   - Symptom: Test skipped with "requires CAP_NET_RAW or root" message
-   - Cause: Not running with raw socket capabilities
-   - Mitigation: Run tests with sudo or grant CAP_NET_RAW capability
+    - Symptom: Test skipped with "requires CAP_NET_RAW or root" message
+    - Cause: Not running with raw socket capabilities
+    - Mitigation: Run tests with sudo or grant CAP_NET_RAW capability
 
 2. **Loopback Interface Not Found** (~2% of runs)
-   - Symptom: "No loopback interface found" error
-   - Cause: Platform doesn't have standard "lo" or "lo0" interface
-   - Mitigation: Test detects and skips gracefully
+    - Symptom: "No loopback interface found" error
+    - Cause: Platform doesn't have standard "lo" or "lo0" interface
+    - Mitigation: Test detects and skips gracefully
 
 3. **Packet Capture Timeout** (~5-10% of runs)
-   - Symptom: "Timeout waiting for ARP reply" warning (may be expected)
-   - Cause: ARP reply not captured within timeout window, or loopback doesn't support ARP
-   - Mitigation: Test treats timeout as warning (some loopback interfaces don't support ARP)
+    - Symptom: "Timeout waiting for ARP reply" warning (may be expected)
+    - Cause: ARP reply not captured within timeout window, or loopback doesn't support ARP
+    - Mitigation: Test treats timeout as warning (some loopback interfaces don't support ARP)
 
 4. **LLM Fails to Generate Script** (~3% of runs)
-   - Symptom: Server doesn't respond or responds incorrectly
-   - Cause: LLM doesn't understand IP-to-MAC mapping instructions
-   - Mitigation: Retry test; if persistent, simplify prompt
+    - Symptom: Server doesn't respond or responds incorrectly
+    - Cause: LLM doesn't understand IP-to-MAC mapping instructions
+    - Mitigation: Retry test; if persistent, simplify prompt
 
 **Most Stable Aspects**:
+
 - Packet construction: pnet ensures valid packets
 - Interface detection: Cross-platform loopback detection
 - Graceful degradation: Tests warn but don't fail on timeout (may be expected)
 
 **Least Stable Aspects**:
+
 - Loopback ARP behavior: Varies by OS/kernel version
 - Timing windows: pcap timeout must balance speed vs reliability
 
@@ -152,23 +167,24 @@ fn find_loopback_interface() -> Result<String, Box<dyn std::error::Error>>;
 ### ARP Response Mapping
 
 1. **ARP Request for 192.168.1.100** (successful mapping)
-   - Validates reply with MAC aa:bb:cc:dd:ee:ff
-   - Tests IP-to-MAC mapping logic
-   - Verifies Ethernet framing and ARP packet structure
+    - Validates reply with MAC aa:bb:cc:dd:ee:ff
+    - Tests IP-to-MAC mapping logic
+    - Verifies Ethernet framing and ARP packet structure
 
 2. **ARP Request for 192.168.1.101** (successful mapping)
-   - Validates reply with MAC 11:22:33:44:55:66
-   - Tests second mapping entry
-   - Confirms consistent behavior
+    - Validates reply with MAC 11:22:33:44:55:66
+    - Tests second mapping entry
+    - Confirms consistent behavior
 
 3. **ARP Request for 192.168.1.200** (unmapped IP)
-   - Validates no reply sent
-   - Tests ignore logic for unknown IPs
-   - Confirms selective response behavior
+    - Validates no reply sent
+    - Tests ignore logic for unknown IPs
+    - Confirms selective response behavior
 
 ### Coverage Gaps
 
 **Not Yet Tested**:
+
 - **ARP REPLY packets**: Only ARP REQUEST tested (server doesn't need to handle replies)
 - **Gratuitous ARP**: Sender IP = target IP (ARP announcement)
 - **Proxy ARP**: Responding for IP on different segment
@@ -187,11 +203,13 @@ fn find_loopback_interface() -> Result<String, Box<dyn std::error::Error>>;
 ### Privilege Requirements
 
 **CAP_NET_RAW or Root Required**: ARP requires raw socket access for:
+
 - Promiscuous mode packet capture
 - Raw packet injection at Layer 2
 - Bypassing OS network stack
 
 **Graceful Degradation**: Tests detect privilege issues and skip gracefully:
+
 ```rust
 if Device::list().is_err() {
     println!("⚠ Skipping ARP test: requires CAP_NET_RAW or root privileges");
@@ -204,6 +222,7 @@ if Device::list().is_err() {
 ### Loopback Interface Detection
 
 **Cross-Platform Interface Discovery**:
+
 - Linux: Usually "lo"
 - macOS: Usually "lo0"
 - Other: Searches for interface starting with "lo"
@@ -223,6 +242,7 @@ fn find_loopback_interface() -> Result<String, Box<dyn std::error::Error>> {
 ### Packet Construction
 
 **`build_arp_request(sender_mac, sender_ip, target_ip)`**:
+
 ```rust
 fn build_arp_request(
     sender_mac: MacAddr,
@@ -350,6 +370,7 @@ sudo ./cargo-isolated.sh test --features arp --test server::arp::e2e_test -- --t
 ```
 
 **Important**: Must run with `sudo` or grant CAP_NET_RAW capability:
+
 ```bash
 # Grant capability (persistent, no sudo needed)
 sudo setcap cap_net_raw+ep target/release/netget
@@ -375,6 +396,7 @@ sudo setcap cap_net_raw+ep target/release/netget
 **Achievement**: ✅ **85% reduction** from naive approach
 
 **Naive Approach Would Be**:
+
 - 3 test cases × 1 LLM call per request = 3 LLM calls minimum
 - Plus server startup = 4 LLM calls total
 
@@ -390,6 +412,7 @@ sudo setcap cap_net_raw+ep target/release/netget
 ✅ **Graceful Degradation**: Skips cleanly when privileges unavailable
 
 **Recommendation**: Keep ARP in **Experimental** status until:
+
 1. Loopback ARP behavior validated on major platforms (Linux, macOS, Windows)
 2. Test stability improves to >95% pass rate
 3. Non-loopback testing added (real network interfaces)

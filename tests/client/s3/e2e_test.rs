@@ -27,7 +27,7 @@ mod s3_client_tests {
         let client_config = NetGetConfig::new(
             "Connect to S3 at localhost:9000. \
              Use access_key_id=minioadmin and secret_access_key=minioadmin. \
-             Set endpoint_url to http://localhost:9000 and region to us-east-1."
+             Set endpoint_url to http://localhost:9000 and region to us-east-1.",
         );
 
         let mut client = start_netget_client(client_config).await?;
@@ -60,7 +60,7 @@ mod s3_client_tests {
             "Connect to S3 at localhost:9000. \
              Use access_key_id=minioadmin and secret_access_key=minioadmin. \
              Set endpoint_url to http://localhost:9000 and region to us-east-1. \
-             After connecting, list all buckets."
+             After connecting, list all buckets.",
         );
 
         let mut client = start_netget_client(client_config).await?;
@@ -122,7 +122,7 @@ mod s3_client_tests {
         let client_config = NetGetConfig::new(
             "Connect to S3 at localhost:9000. \
              Use access_key_id=invalid and secret_access_key=invalid. \
-             Set endpoint_url to http://localhost:9000 and region to us-east-1."
+             Set endpoint_url to http://localhost:9000 and region to us-east-1.",
         );
 
         let mut client = start_netget_client(client_config).await?;

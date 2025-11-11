@@ -73,7 +73,9 @@ impl ServerInstructionConfig {
 
     /// Check if a script handles this event type (priority over instructions)
     pub fn has_script_for_event(&self, event_type: &str) -> bool {
-        self.scripts.iter().any(|(_, config)| config.handles_context(event_type))
+        self.scripts
+            .iter()
+            .any(|(_, config)| config.handles_context(event_type))
     }
 }
 

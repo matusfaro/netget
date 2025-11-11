@@ -2,7 +2,8 @@
 
 ## Overview
 
-Border Gateway Protocol (BGP-4) server implementing RFC 4271 with a 6-state FSM. The LLM controls routing policy decisions, peer authentication, and route advertisements.
+Border Gateway Protocol (BGP-4) server implementing RFC 4271 with a 6-state FSM. The LLM controls routing policy
+decisions, peer authentication, and route advertisements.
 
 **Status**: Alpha (fully implemented, needs extensive testing)
 **Protocol Spec**: [RFC 4271 (BGP-4)](https://datatracker.ietf.org/doc/html/rfc4271)
@@ -13,12 +14,14 @@ Border Gateway Protocol (BGP-4) server implementing RFC 4271 with a 6-state FSM.
 ### No Library - Manual Protocol Implementation
 
 **Why no library**:
+
 - No mature Rust BGP server library exists
 - Available crates focus on parsing or client operations
 - BGP protocol is complex but well-specified (RFC 4271)
 - Manual implementation provides full LLM control over routing decisions
 
 **What we implement manually**:
+
 - BGP message construction (OPEN, UPDATE, NOTIFICATION, KEEPALIVE)
 - 6-state FSM (Idle, Connect, Active, OpenSent, OpenConfirm, Established)
 - Message parsing and validation
@@ -26,6 +29,7 @@ Border Gateway Protocol (BGP-4) server implementing RFC 4271 with a 6-state FSM.
 - Error handling with NOTIFICATION messages
 
 **Why not alternatives**:
+
 - `bgp-rs` - Parsing library, not a server
 - `bgpkit-parser` - MRT dump parser, not for live BGP
 - External BGP daemon (bird, frr) - Violates NetGet architecture
@@ -35,6 +39,7 @@ Border Gateway Protocol (BGP-4) server implementing RFC 4271 with a 6-state FSM.
 ### TCP-Based Protocol
 
 BGP uses TCP for reliability:
+
 ```rust
 let listener = create_reusable_tcp_listener(listen_addr).await?;
 ```
@@ -53,18 +58,21 @@ BGP session lifecycle (RFC 4271 Section 8):
 6. **Established**: Full peering established, can exchange UPDATEs
 
 Current implementation handles:
+
 - ✅ Connect (TCP accepted)
 - ✅ OpenSent (send OPEN after receiving peer's OPEN)
 - ✅ OpenConfirm (send KEEPALIVE after peer's KEEPALIVE)
 - ✅ Established (can receive UPDATEs)
 
 Not implemented:
+
 - ❌ Idle → Connect transition (server waits for incoming connections)
 - ❌ Active state (no reconnection logic)
 
 ### BGP Message Format
 
 All BGP messages have 19-byte header:
+
 ```
 +------------------+------------------+
 | Marker (16 bytes, all 0xFF)          |
@@ -74,6 +82,7 @@ All BGP messages have 19-byte header:
 ```
 
 **Message types**:
+
 1. OPEN - Session establishment
 2. UPDATE - Route advertisements
 3. NOTIFICATION - Error reporting
@@ -83,6 +92,7 @@ All BGP messages have 19-byte header:
 ### Hold Timer Negotiation
 
 Server and peer negotiate hold time (minimum of both values):
+
 ```rust
 if hold_time > 0 {
     self.hold_time = self.hold_time.min(hold_time);
@@ -95,6 +105,7 @@ Default: 180 seconds hold time, 60 seconds keepalive.
 ### AS Number Handling
 
 Currently uses 16-bit AS numbers (0-65535):
+
 - Supports private ASNs (64512-65534)
 - 32-bit AS numbers (RFC 6793) not yet implemented
 
@@ -103,6 +114,7 @@ Currently uses 16-bit AS numbers (0-65535):
 ### Startup Parameters
 
 Server configured with:
+
 ```json
 {
   "as_number": 65001,
@@ -135,6 +147,7 @@ Extracted from LLM-generated startup prompt.
 - `bgp_notification`: Peer sent NOTIFICATION (error or graceful shutdown)
 
 **Event data example** (OPEN):
+
 ```json
 {
   "connection_id": "conn_12345",
@@ -150,6 +163,7 @@ Extracted from LLM-generated startup prompt.
 ### Per-Session State
 
 Each BGP session tracked with:
+
 ```rust
 struct BgpSession {
     stream: TcpStream,
@@ -166,6 +180,7 @@ struct BgpSession {
 ### Message Loop
 
 Each session runs event loop reading BGP messages:
+
 ```rust
 loop {
     let mut header_buf = vec![0u8; 19];
@@ -227,6 +242,7 @@ ProtocolConnectionInfo::Bgp {
 ### Partial Implementation
 
 **Implemented**:
+
 - ✅ TCP connection handling
 - ✅ OPEN message exchange
 - ✅ KEEPALIVE exchange
@@ -235,6 +251,7 @@ ProtocolConnectionInfo::Bgp {
 - ✅ Basic UPDATE parsing
 
 **Not Implemented**:
+
 - ❌ Route processing (UPDATE messages parsed but not acted upon)
 - ❌ RIB (Routing Information Base) management
 - ❌ Route advertisements (can send UPDATE structure, but no route storage)
@@ -248,6 +265,7 @@ ProtocolConnectionInfo::Bgp {
 ### No Routing Table
 
 Server doesn't maintain routing table:
+
 - UPDATE messages sent to LLM as hex-encoded data
 - LLM cannot make informed routing decisions without route storage
 - Cannot re-advertise learned routes to other peers
@@ -255,6 +273,7 @@ Server doesn't maintain routing table:
 ### No Multi-Peer Support
 
 Each session independent:
+
 - No route propagation between peers
 - No best path selection
 - No loop prevention (AS_PATH checking)
@@ -262,6 +281,7 @@ Each session independent:
 ### Testing Limitations
 
 BGP protocol is complex:
+
 - Full testing requires multiple interconnected BGP speakers
 - E2E tests cover basic peering but not route exchange
 - No tests for route convergence, path selection, or policy
@@ -275,6 +295,7 @@ netget> Listen on port 179 via BGP. You are AS 65001 with router ID 192.168.1.1.
 ```
 
 Server output:
+
 ```
 [INFO] BGP server listening on 0.0.0.0:179
 [INFO] BGP configured with AS 65001 and router ID 192.168.1.1
@@ -284,12 +305,14 @@ Server output:
 ### Peer Connection
 
 Client connects and sends OPEN:
+
 ```
 [INFO] BGP connection conn_12345 from 192.0.2.10:12345
 → BGP connection conn_12345 from 192.0.2.10:12345
 ```
 
 LLM receives OPEN event:
+
 ```json
 {
   "event": "bgp_open",
@@ -303,6 +326,7 @@ LLM receives OPEN event:
 ```
 
 LLM responds by sending OPEN:
+
 ```json
 {
   "actions": [
@@ -317,6 +341,7 @@ LLM responds by sending OPEN:
 ```
 
 Server sends OPEN:
+
 ```
 [INFO] BGP OPEN sent: AS=65001, hold_time=180s
 [DEBUG] BGP session transitioned to OpenConfirm
@@ -325,12 +350,14 @@ Server sends OPEN:
 ### Keepalive Exchange
 
 Peer sends KEEPALIVE:
+
 ```
 [DEBUG] BGP KEEPALIVE received
 ✓ BGP session conn_12345 established with AS65000
 ```
 
 Server responds with KEEPALIVE:
+
 ```
 [TRACE] BGP KEEPALIVE sent
 ```
@@ -338,11 +365,13 @@ Server responds with KEEPALIVE:
 ### UPDATE Message
 
 Peer sends UPDATE:
+
 ```
 [TRACE] BGP UPDATE received: 128 bytes
 ```
 
 LLM receives UPDATE event:
+
 ```json
 {
   "event": "bgp_update",
@@ -359,6 +388,7 @@ LLM can analyze hex data (requires protocol expertise).
 ### NOTIFICATION (Graceful Shutdown)
 
 Peer sends NOTIFICATION with error code 6 (Cease):
+
 ```
 [ERROR] BGP NOTIFICATION received: code=6, subcode=0
 ```
@@ -368,11 +398,13 @@ Session closes gracefully.
 ### Error Handling
 
 Invalid OPEN version:
+
 ```
 [ERROR] BGP invalid message: Unsupported BGP version: 3
 ```
 
 Server sends NOTIFICATION:
+
 ```
 [ERROR] BGP NOTIFICATION sent: code=2, subcode=1
 ```
@@ -400,6 +432,7 @@ Server sends NOTIFICATION:
 ### NOT for Production Routing
 
 BGP server should **not** be used for production routing:
+
 - No routing table or best path selection
 - No route propagation or filtering
 - No policy enforcement

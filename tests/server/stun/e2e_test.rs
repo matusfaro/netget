@@ -11,8 +11,7 @@ use std::time::Duration;
 
 #[tokio::test]
 async fn test_stun_basic_binding_request() -> E2EResult<()> {
-    let config = ServerConfig::new("Start a STUN server on port 0")
-        .with_log_level("off");
+    let config = ServerConfig::new("Start a STUN server on port 0").with_log_level("off");
 
     let test_state = start_netget_server(config).await?;
 
@@ -64,7 +63,8 @@ async fn test_stun_basic_binding_request() -> E2EResult<()> {
             );
 
             // Verify magic cookie
-            let magic_cookie = u32::from_be_bytes([response[4], response[5], response[6], response[7]]);
+            let magic_cookie =
+                u32::from_be_bytes([response[4], response[5], response[6], response[7]]);
             assert_eq!(
                 magic_cookie, 0x2112A442,
                 "Invalid magic cookie: 0x{:08x}",
@@ -74,10 +74,7 @@ async fn test_stun_basic_binding_request() -> E2EResult<()> {
             // Verify transaction ID matches (bytes 8-19)
             let response_tid = &response[8..20];
             let request_tid = &binding_request[8..20];
-            assert_eq!(
-                response_tid, request_tid,
-                "Transaction ID mismatch"
-            );
+            assert_eq!(response_tid, request_tid, "Transaction ID mismatch");
 
             println!("✓ STUN binding request/response successful");
         }
@@ -93,8 +90,9 @@ async fn test_stun_basic_binding_request() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_stun_multiple_clients() -> E2EResult<()> {
-    let config = ServerConfig::new("Start a STUN server on port 0 that returns the client's public address")
-        .with_log_level("off");
+    let config =
+        ServerConfig::new("Start a STUN server on port 0 that returns the client's public address")
+            .with_log_level("off");
 
     let test_state = start_netget_server(config).await?;
 
@@ -213,8 +211,10 @@ async fn test_stun_xor_mapped_address() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_stun_invalid_magic_cookie() -> E2EResult<()> {
-    let config = ServerConfig::new("Start a STUN server on port 0 that validates magic cookie and rejects invalid packets")
-        .with_log_level("off");
+    let config = ServerConfig::new(
+        "Start a STUN server on port 0 that validates magic cookie and rejects invalid packets",
+    )
+    .with_log_level("off");
 
     let test_state = start_netget_server(config).await?;
 
@@ -255,8 +255,10 @@ async fn test_stun_invalid_magic_cookie() -> E2EResult<()> {
             }
             println!("✓ Server rejected invalid magic cookie");
         }
-        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock
-                || e.kind() == std::io::ErrorKind::TimedOut => {
+        Err(e)
+            if e.kind() == std::io::ErrorKind::WouldBlock
+                || e.kind() == std::io::ErrorKind::TimedOut =>
+        {
             // Timeout is acceptable - server ignored invalid packet
             println!("✓ Server silently ignored invalid packet (no response)");
         }
@@ -309,8 +311,10 @@ async fn test_stun_malformed_short_packet() -> E2EResult<()> {
             }
             println!("✓ Server responded with error to short packet");
         }
-        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock
-                || e.kind() == std::io::ErrorKind::TimedOut => {
+        Err(e)
+            if e.kind() == std::io::ErrorKind::WouldBlock
+                || e.kind() == std::io::ErrorKind::TimedOut =>
+        {
             println!("✓ Server silently ignored malformed short packet");
         }
         Err(e) => {
@@ -324,8 +328,9 @@ async fn test_stun_malformed_short_packet() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_stun_request_with_attributes() -> E2EResult<()> {
-    let config = ServerConfig::new("Start a STUN server on port 0 that handles requests with attributes")
-        .with_log_level("off");
+    let config =
+        ServerConfig::new("Start a STUN server on port 0 that handles requests with attributes")
+            .with_log_level("off");
 
     let test_state = start_netget_server(config).await?;
 
@@ -372,8 +377,7 @@ async fn test_stun_request_with_attributes() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_stun_rapid_requests() -> E2EResult<()> {
-    let config = ServerConfig::new("Start a STUN server on port 0")
-        .with_log_level("off");
+    let config = ServerConfig::new("Start a STUN server on port 0").with_log_level("off");
 
     let test_state = start_netget_server(config).await?;
 
@@ -418,8 +422,10 @@ async fn test_stun_rapid_requests() -> E2EResult<()> {
                     }
                 }
             }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock
-                    || e.kind() == std::io::ErrorKind::TimedOut => {
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
                 break; // No more responses
             }
             Err(e) => {
@@ -428,8 +434,14 @@ async fn test_stun_rapid_requests() -> E2EResult<()> {
         }
     }
 
-    println!("✓ Received {} responses out of 5 requests", responses_received);
-    assert!(responses_received >= 1, "Should receive at least one response");
+    println!(
+        "✓ Received {} responses out of 5 requests",
+        responses_received
+    );
+    assert!(
+        responses_received >= 1,
+        "Should receive at least one response"
+    );
 
     test_state.stop().await?;
     Ok(())
@@ -439,7 +451,9 @@ async fn test_stun_rapid_requests() -> E2EResult<()> {
 
 /// Build a basic STUN binding request
 fn build_stun_binding_request() -> Vec<u8> {
-    build_stun_binding_request_with_tid(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c])
+    build_stun_binding_request_with_tid(&[
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
+    ])
 }
 
 /// Build a STUN binding request with custom transaction ID

@@ -11,13 +11,13 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
+use crate::client::http3::actions::HTTP3_CLIENT_RESPONSE_RECEIVED_EVENT;
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::http3::actions::HTTP3_CLIENT_RESPONSE_RECEIVED_EVENT;
 
 /// HTTP/3 client that makes requests to remote HTTP/3 servers over QUIC
 pub struct Http3Client;
@@ -31,32 +31,32 @@ impl Http3Client {
         status_tx: mpsc::UnboundedSender<String>,
         client_id: ClientId,
     ) -> Result<SocketAddr> {
-        info!("HTTP/3 client {} initializing for {}", client_id, remote_addr);
+        info!(
+            "HTTP/3 client {} initializing for {}",
+            client_id, remote_addr
+        );
 
         // Parse remote address
-        let remote_sock_addr: SocketAddr = remote_addr.parse()
+        let remote_sock_addr: SocketAddr = remote_addr
+            .parse()
             .context("Invalid remote address format, expected host:port")?;
 
         // Store base URL and connection info in protocol_data
         let base_url = format!("https://{}", remote_addr);
 
-        app_state.with_client_mut(client_id, |client| {
-            client.set_protocol_field(
-                "base_url".to_string(),
-                serde_json::json!(base_url),
-            );
-            client.set_protocol_field(
-                "remote_addr".to_string(),
-                serde_json::json!(remote_addr),
-            );
-            client.set_protocol_field(
-                "quic_initialized".to_string(),
-                serde_json::json!(true),
-            );
-        }).await;
+        app_state
+            .with_client_mut(client_id, |client| {
+                client.set_protocol_field("base_url".to_string(), serde_json::json!(base_url));
+                client
+                    .set_protocol_field("remote_addr".to_string(), serde_json::json!(remote_addr));
+                client.set_protocol_field("quic_initialized".to_string(), serde_json::json!(true));
+            })
+            .await;
 
         // Update status to connected
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
 
         let _ = status_tx.send(format!(
             "[CLIENT] HTTP/3 client {} ready for {} (QUIC transport)",
@@ -97,15 +97,20 @@ impl Http3Client {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         // Get connection info from client
-        let (base_url, remote_addr) = app_state.with_client_mut(client_id, |client| {
-            let base_url = client.get_protocol_field("base_url")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            let remote_addr = client.get_protocol_field("remote_addr")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            (base_url, remote_addr)
-        }).await.context("Client not found")?;
+        let (base_url, remote_addr) = app_state
+            .with_client_mut(client_id, |client| {
+                let base_url = client
+                    .get_protocol_field("base_url")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let remote_addr = client
+                    .get_protocol_field("remote_addr")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                (base_url, remote_addr)
+            })
+            .await
+            .context("Client not found")?;
 
         let base_url = base_url.context("No base URL found")?;
         let remote_addr_str = remote_addr.context("No remote address found")?;
@@ -118,8 +123,10 @@ impl Http3Client {
             format!("{}{}", base_url, path)
         };
 
-        info!("HTTP/3 client {} making request: {} {} (priority: {:?})",
-              client_id, method, url, priority);
+        info!(
+            "HTTP/3 client {} making request: {} {} (priority: {:?})",
+            client_id, method, url, priority
+        );
 
         // Create QUIC endpoint
         let mut endpoint = quinn::Endpoint::client("0.0.0.0:0".parse()?)?;
@@ -135,7 +142,7 @@ impl Http3Client {
 
         // Convert to quinn client config
         let client_config = quinn::ClientConfig::new(Arc::new(
-            quinn::crypto::rustls::QuicClientConfig::try_from(rustls_client_config)?
+            quinn::crypto::rustls::QuicClientConfig::try_from(rustls_client_config)?,
         ));
 
         endpoint.set_default_client_config(client_config);
@@ -144,10 +151,14 @@ impl Http3Client {
         let url_parsed = url::Url::parse(&url)?;
         let host = url_parsed.host_str().context("No host in URL")?;
 
-        info!("HTTP/3 client {} connecting to {} via QUIC", client_id, remote_sock_addr);
+        info!(
+            "HTTP/3 client {} connecting to {} via QUIC",
+            client_id, remote_sock_addr
+        );
 
         // Connect via QUIC
-        let connection = endpoint.connect(remote_sock_addr, host)
+        let connection = endpoint
+            .connect(remote_sock_addr, host)
             .context("Failed to create QUIC connection")?
             .await
             .context("Failed to establish QUIC connection")?;
@@ -163,9 +174,7 @@ impl Http3Client {
         info!("HTTP/3 client {} created HTTP/3 session", client_id);
 
         // Build HTTP request
-        let mut req_builder = Request::builder()
-            .uri(&url)
-            .method(method.as_str());
+        let mut req_builder = Request::builder().uri(&url).method(method.as_str());
 
         // Add headers
         if let Some(hdrs) = headers {
@@ -181,23 +190,32 @@ impl Http3Client {
         let request = req_builder.body(()).context("Failed to build request")?;
 
         // Send request
-        let mut stream = send_request.send_request(request)
+        let mut stream = send_request
+            .send_request(request)
             .await
             .context("Failed to send HTTP/3 request")?;
 
         // Send body if present
         if !req_body.is_empty() {
-            stream.send_data(Bytes::from(req_body))
+            stream
+                .send_data(Bytes::from(req_body))
                 .await
                 .context("Failed to send request body")?;
         }
 
-        stream.finish().await.context("Failed to finish sending request")?;
+        stream
+            .finish()
+            .await
+            .context("Failed to finish sending request")?;
 
-        info!("HTTP/3 client {} sent request, waiting for response", client_id);
+        info!(
+            "HTTP/3 client {} sent request, waiting for response",
+            client_id
+        );
 
         // Receive response
-        let response = stream.recv_response()
+        let response = stream
+            .recv_response()
             .await
             .context("Failed to receive response")?;
 
@@ -221,7 +239,10 @@ impl Http3Client {
         }
         let body_text = String::from_utf8_lossy(&body_bytes).to_string();
 
-        info!("HTTP/3 client {} received response: {} ({})", client_id, status_code, status);
+        info!(
+            "HTTP/3 client {} received response: {} ({})",
+            client_id, status_code, status
+        );
 
         // Call LLM with response
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -237,7 +258,10 @@ impl Http3Client {
                 }),
             );
 
-            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+            let memory = app_state
+                .get_memory_for_client(client_id)
+                .await
+                .unwrap_or_default();
 
             match call_llm_for_client(
                 &llm_client,
@@ -248,8 +272,13 @@ impl Http3Client {
                 Some(&event),
                 protocol.as_ref(),
                 &status_tx,
-            ).await {
-                Ok(ClientLlmResult { actions: _, memory_updates }) => {
+            )
+            .await
+            {
+                Ok(ClientLlmResult {
+                    actions: _,
+                    memory_updates,
+                }) => {
                     // Update memory
                     if let Some(mem) = memory_updates {
                         app_state.set_memory_for_client(client_id, mem).await;

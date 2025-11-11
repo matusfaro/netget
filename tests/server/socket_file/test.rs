@@ -7,10 +7,10 @@
 
 #![cfg(all(feature = "socket_file", unix))]
 
-use super::super::super::helpers::{self, ServerConfig, E2EResult};
+use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
-use std::time::Duration;
 
 #[tokio::test]
 async fn test_socket_echo() -> E2EResult<()> {

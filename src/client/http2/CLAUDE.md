@@ -2,7 +2,8 @@
 
 ## Overview
 
-The HTTP/2 client enables LLM-controlled HTTP/2 requests to remote servers. It provides transparent multiplexing, header compression (HPACK), and server push capabilities.
+The HTTP/2 client enables LLM-controlled HTTP/2 requests to remote servers. It provides transparent multiplexing, header
+compression (HPACK), and server push capabilities.
 
 ## Library Choices
 
@@ -11,6 +12,7 @@ The HTTP/2 client enables LLM-controlled HTTP/2 requests to remote servers. It p
 Primary HTTP client library with built-in HTTP/2 support:
 
 **Pros:**
+
 - Automatic HTTP/2 negotiation via ALPN
 - `http2_prior_knowledge()` for forcing HTTP/2
 - Mature, well-tested library
@@ -18,6 +20,7 @@ Primary HTTP client library with built-in HTTP/2 support:
 - Handles all HTTP/2 complexity (multiplexing, flow control, HPACK)
 
 **Cons:**
+
 - No direct access to server push (limitation of current reqwest API)
 - Less control over HTTP/2-specific features
 
@@ -47,6 +50,7 @@ let http_client = reqwest::Client::builder()
 ```
 
 **`http2_prior_knowledge()`**: Forces HTTP/2 protocol without TLS ALPN negotiation. Use this when:
+
 - Server is known to support HTTP/2 over cleartext (h2c)
 - Testing HTTP/2-specific features
 - ALPN negotiation is not available
@@ -56,6 +60,7 @@ For HTTPS with automatic negotiation, omit `http2_prior_knowledge()` and let ALP
 ### State Management
 
 HTTP/2 client stores minimal state in `protocol_data`:
+
 - `http2_client`: Initialization status
 - `base_url`: Base URL for relative requests
 
@@ -66,10 +71,10 @@ Memory updates from LLM are stored per-client via `AppState::set_memory_for_clie
 ### Event Types
 
 1. **`http2_connected`**: Triggered when client is initialized
-   - Parameters: `base_url`
+    - Parameters: `base_url`
 
 2. **`http2_response_received`**: Triggered when HTTP/2 response is received
-   - Parameters: `status_code`, `status_text`, `http_version`, `headers`, `body`
+    - Parameters: `status_code`, `status_text`, `http_version`, `headers`, `body`
 
 ### Action Flow
 
@@ -84,10 +89,12 @@ Memory updates from LLM are stored per-client via `AppState::set_memory_for_clie
 ### Actions
 
 **Async Actions (user-triggered):**
+
 - `send_http2_request(method, path, headers, body)` - Make HTTP/2 request
 - `disconnect()` - Close client
 
 **Sync Actions (response-triggered):**
+
 - `send_http2_request(method, path, headers, body)` - Follow-up request based on response
 
 ### Action Execution
@@ -107,6 +114,7 @@ match action_type {
 ### Multiplexing
 
 Multiple concurrent requests on a single connection:
+
 - Handled automatically by reqwest/h2
 - No head-of-line blocking
 - Streams are independent
@@ -114,6 +122,7 @@ Multiple concurrent requests on a single connection:
 ### Header Compression (HPACK)
 
 HTTP/2 compresses headers using HPACK:
+
 - Handled transparently by h2 crate
 - Reduces bandwidth for repeated headers
 - LLM sees decompressed headers
@@ -121,6 +130,7 @@ HTTP/2 compresses headers using HPACK:
 ### Server Push (Limited)
 
 Current reqwest API does not expose server push:
+
 - Server can push resources preemptively
 - Pushed resources are accepted but not exposed to application
 - Future enhancement: Access pushed resources via h2 directly
@@ -128,6 +138,7 @@ Current reqwest API does not expose server push:
 ### Binary Framing
 
 HTTP/2 uses binary framing:
+
 - Handled by h2 crate
 - LLM interacts with text-based API (method, path, headers, body)
 - No binary protocol knowledge required
@@ -145,11 +156,13 @@ HTTP/2 uses binary framing:
 See `tests/client/http2/CLAUDE.md` for full testing documentation.
 
 **Test Servers:**
+
 - `https://http2.golang.org` - Public HTTP/2 test server
 - `https://nghttp2.org` - HTTP/2 reference implementation
 - Local HTTP/2 server (e.g., nginx with http2 enabled)
 
 **Test Scenarios:**
+
 1. Basic GET request
 2. POST with body
 3. Custom headers
@@ -159,16 +172,19 @@ See `tests/client/http2/CLAUDE.md` for full testing documentation.
 ## Example Prompts
 
 **Basic Request:**
+
 ```
 Connect to https://http2.golang.org and fetch /reqinfo
 ```
 
 **POST Request:**
+
 ```
 Connect to https://httpbin.org and POST to /post with JSON body {"test": "data"}
 ```
 
 **Multiple Requests:**
+
 ```
 Connect to https://http2.golang.org, fetch /, then fetch /clockstream
 ```
@@ -178,6 +194,7 @@ Connect to https://http2.golang.org, fetch /, then fetch /clockstream
 ### Why `http2_prior_knowledge()`?
 
 Forces HTTP/2 without ALPN negotiation:
+
 - Simplifies testing (no TLS required for h2c)
 - Explicit protocol selection
 - Useful for HTTP/2-only servers
@@ -187,6 +204,7 @@ For production, prefer automatic ALPN negotiation (omit `http2_prior_knowledge()
 ### Request Timeout
 
 30-second timeout prevents hanging on slow servers:
+
 ```rust
 .timeout(std::time::Duration::from_secs(30))
 ```
@@ -194,6 +212,7 @@ For production, prefer automatic ALPN negotiation (omit `http2_prior_knowledge()
 ### Memory Management
 
 LLM memory allows stateful interactions:
+
 - Remember previous responses
 - Build on prior requests
 - Track session data

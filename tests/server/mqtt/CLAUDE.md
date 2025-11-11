@@ -2,7 +2,8 @@
 
 ## Test Overview
 
-End-to-end tests for MQTT (Message Queuing Telemetry Transport) broker functionality. These tests verify that the MQTT protocol is properly registered in NetGet's architecture.
+End-to-end tests for MQTT (Message Queuing Telemetry Transport) broker functionality. These tests verify that the MQTT
+protocol is properly registered in NetGet's architecture.
 
 **Current Status**: Placeholder tests only. Full MQTT broker implementation is pending.
 
@@ -11,11 +12,13 @@ End-to-end tests for MQTT (Message Queuing Telemetry Transport) broker functiona
 ## Test Strategy
 
 **Placeholder Validation**: Since MQTT broker is not yet implemented, current tests verify:
+
 1. Protocol is registered and detectable
 2. Proper error messages returned when broker spawn is attempted
 3. Keyword detection works for "mqtt", "mosquitto", etc.
 
 **Future Strategy** (post-implementation):
+
 - Use `rumqttc` client library for real MQTT connections
 - Test publish/subscribe message routing
 - Validate QoS levels (0, 1, 2)
@@ -40,6 +43,7 @@ When full MQTT broker is implemented, target **< 10 total LLM calls**:
 3. **QoS Levels Test**: 1 server startup + 3 publishes (QoS 0/1/2) = **4 LLM calls**
 
 **Optimization Strategy**:
+
 - Consolidate tests: Single comprehensive server with multiple operations
 - Use scripting mode: Topic routing is deterministic, ideal for scripts
 - With scripting: 1 server startup (generates script) + 0 LLM calls per message = **1-2 total calls**
@@ -49,6 +53,7 @@ When full MQTT broker is implemented, target **< 10 total LLM calls**:
 **Not Yet Applicable**: MQTT broker not implemented.
 
 **Future Potential**: **Excellent candidate for scripting**
+
 - Topic routing rules are deterministic
 - Pub/sub matching is algorithmic (wildcards +, #)
 - LLM defines routing policy once during server startup
@@ -56,6 +61,7 @@ When full MQTT broker is implemented, target **< 10 total LLM calls**:
 - Example: "Route messages from 'devices/+/temp' to subscribers of 'devices/#'"
 
 **Expected Performance with Scripting**:
+
 - Server startup: 1 LLM call (generates routing script)
 - All publish/subscribe operations: 0 LLM calls (handled by script)
 - Throughput: Thousands of messages per second (CPU-bound, not LLM-bound)
@@ -63,12 +69,14 @@ When full MQTT broker is implemented, target **< 10 total LLM calls**:
 ## Client Library
 
 **rumqttc v0.24** - Pure Rust MQTT client
+
 - Same ecosystem as rumqttd broker
 - Async/sync APIs with tokio
 - Supports MQTT v3.1.1 and v5.0
 - Full feature set: QoS 0/1/2, retained messages, wildcards
 
 **Usage Example** (for future tests):
+
 ```rust
 use rumqttc::{AsyncClient, MqttOptions, QoS};
 
@@ -91,10 +99,12 @@ while let Ok(notification) = eventloop.poll().await {
 ## Expected Runtime
 
 **Current Tests** (placeholder): ~15-20 seconds
+
 - `test_mqtt_placeholder_registered`: ~3-5 seconds (1 LLM call)
 - `test_mqtt_keyword_detection`: ~12-15 seconds (4 LLM calls)
 
 **Future Tests** (post-implementation, without scripting): ~30-40 seconds
+
 - With scripting: ~5-10 seconds (1-2 LLM calls total)
 
 **Model**: qwen3-coder:30b (default)
@@ -106,12 +116,14 @@ while let Ok(notification) = eventloop.poll().await {
 **Current Tests**: **N/A** (placeholder tests, not yet validating MQTT protocol)
 
 **Expected Future Failure Rate**: **Low** (~2-5%)
+
 - MQTT is simpler than HTTP/SSH
 - Binary protocol reduces ambiguity
 - Pub/sub model is straightforward
 - Topic matching is deterministic
 
 **Potential Failure Modes** (future):
+
 1. LLM incorrectly routes messages to subscribers
 2. Wildcard matching errors (+ vs # confusion)
 3. QoS handshake issues (PUBACK, PUBREC timing)
@@ -122,52 +134,53 @@ while let Ok(notification) = eventloop.poll().await {
 ### Current Tests (Placeholder)
 
 1. **Protocol Registration** (`test_mqtt_placeholder_registered`)
-   - Attempts to start MQTT broker
-   - Verifies error message mentions "not yet implemented" or "placeholder"
-   - Confirms protocol is registered in NetGet architecture
+    - Attempts to start MQTT broker
+    - Verifies error message mentions "not yet implemented" or "placeholder"
+    - Confirms protocol is registered in NetGet architecture
 
 2. **Keyword Detection** (`test_mqtt_keyword_detection`)
-   - Tests various MQTT-related prompts:
-     - "Start an MQTT broker on port 1883"
-     - "Create a mosquitto server for IoT devices"
-     - "Listen via MQTT on port 0"
-     - "Set up message queue telemetry transport on port 1883"
-   - Verifies MQTT protocol is detected (not "unknown protocol")
+    - Tests various MQTT-related prompts:
+        - "Start an MQTT broker on port 1883"
+        - "Create a mosquitto server for IoT devices"
+        - "Listen via MQTT on port 0"
+        - "Set up message queue telemetry transport on port 1883"
+    - Verifies MQTT protocol is detected (not "unknown protocol")
 
 ### Future Tests (Commented Out, Awaiting Implementation)
 
 3. **Basic Connection** (`test_mqtt_basic_connect` - ignored)
-   - Connect rumqttc client to broker
-   - Validate CONNACK received
-   - Tests client registration
+    - Connect rumqttc client to broker
+    - Validate CONNACK received
+    - Tests client registration
 
 4. **Publish/Subscribe** (`test_mqtt_publish_subscribe` - ignored)
-   - Publisher sends message to "test/topic"
-   - Subscriber receives message via "test/#" wildcard
-   - Tests message routing
+    - Publisher sends message to "test/topic"
+    - Subscriber receives message via "test/#" wildcard
+    - Tests message routing
 
 5. **QoS Levels** (`test_mqtt_qos_levels` - ignored)
-   - Publish with QoS 0 (at most once)
-   - Publish with QoS 1 (at least once, requires PUBACK)
-   - Publish with QoS 2 (exactly once, requires PUBREC/PUBREL/PUBCOMP)
-   - Tests QoS handshakes
+    - Publish with QoS 0 (at most once)
+    - Publish with QoS 1 (at least once, requires PUBACK)
+    - Publish with QoS 2 (exactly once, requires PUBREC/PUBREL/PUBCOMP)
+    - Tests QoS handshakes
 
 6. **Retained Messages** (`test_mqtt_retained_messages` - ignored)
-   - Publish retained message to topic
-   - Late subscriber connects
-   - Validates retained message delivered immediately
-   - Tests retained message storage
+    - Publish retained message to topic
+    - Late subscriber connects
+    - Validates retained message delivered immediately
+    - Tests retained message storage
 
 7. **Wildcard Subscriptions** (`test_mqtt_wildcard_subscriptions` - ignored)
-   - Subscribe to "devices/+/temp" (single-level wildcard)
-   - Publish to "devices/sensor1/temp" (should match)
-   - Publish to "devices/sensor2/temp" (should match)
-   - Publish to "devices/sensor1/humidity" (should NOT match)
-   - Tests wildcard matching logic
+    - Subscribe to "devices/+/temp" (single-level wildcard)
+    - Publish to "devices/sensor1/temp" (should match)
+    - Publish to "devices/sensor2/temp" (should match)
+    - Publish to "devices/sensor1/humidity" (should NOT match)
+    - Tests wildcard matching logic
 
 ### Coverage Gaps (Future)
 
 **Not Yet Tested**:
+
 - Multi-level wildcard (#) subscriptions
 - Last will and testament messages
 - Clean session vs persistent session
@@ -178,11 +191,11 @@ while let Ok(notification) = eventloop.poll().await {
 - TLS/SSL encrypted connections (port 8883)
 - WebSocket transport (ws://, wss://)
 - MQTT v5.0 specific features:
-  - User properties
-  - Topic aliases
-  - Request/response pattern
-  - Shared subscriptions
-  - Subscription identifiers
+    - User properties
+    - Topic aliases
+    - Request/response pattern
+    - Shared subscriptions
+    - Subscription identifiers
 
 ## Test Infrastructure
 
@@ -248,11 +261,13 @@ test_state.stop().await?;
 ### Build Requirements
 
 **Critical**: Must build NetGet with MQTT feature before running tests:
+
 ```bash
 ./cargo-isolated.sh build --release --features mqtt
 ```
 
-Without this, E2E tests will fail with "Server did not output startup information" because the binary doesn't include MQTT support.
+Without this, E2E tests will fail with "Server did not output startup information" because the binary doesn't include
+MQTT support.
 
 ## Running Tests
 

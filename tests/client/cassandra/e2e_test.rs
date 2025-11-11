@@ -73,7 +73,10 @@ mod cassandra_client_tests {
         tokio::time::sleep(Duration::from_millis(1000)).await;
 
         // Verify the client is Cassandra protocol
-        assert_eq!(client.protocol, "Cassandra", "Client should be Cassandra protocol");
+        assert_eq!(
+            client.protocol, "Cassandra",
+            "Client should be Cassandra protocol"
+        );
 
         println!("✅ Cassandra client executed query with consistency level");
 

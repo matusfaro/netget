@@ -1,7 +1,9 @@
 # WHOIS Protocol Implementation
 
 ## Overview
-WHOIS (RFC 3912) server for domain lookup queries. The LLM responds with domain registration information using structured actions.
+
+WHOIS (RFC 3912) server for domain lookup queries. The LLM responds with domain registration information using
+structured actions.
 
 **Status**: Beta
 **RFC**: RFC 3912
@@ -10,9 +12,11 @@ WHOIS (RFC 3912) server for domain lookup queries. The LLM responds with domain 
 
 ## Protocol Description
 
-WHOIS is a simple TCP-based query/response protocol used to query databases that store information about registered internet resources, particularly domain names and IP addresses.
+WHOIS is a simple TCP-based query/response protocol used to query databases that store information about registered
+internet resources, particularly domain names and IP addresses.
 
 **Protocol Flow**:
+
 1. Client connects to server on TCP port 43
 2. Client sends query (domain name or IP address) terminated by CRLF
 3. Server responds with registration information in text format
@@ -25,13 +29,15 @@ WHOIS is a simple TCP-based query/response protocol used to query databases that
 ## Library Choices
 
 ### Server Implementation
-- **Manual TCP connection handling** - No external library
-  - WHOIS is simple enough for direct implementation
-  - Line-based text protocol (queries end with CRLF)
-  - Single response per query
-  - No binary parsing needed
 
-**Rationale**: Using manual TCP handling gives us complete control over the protocol without adding dependencies. The protocol is straightforward enough that a library provides minimal value.
+- **Manual TCP connection handling** - No external library
+    - WHOIS is simple enough for direct implementation
+    - Line-based text protocol (queries end with CRLF)
+    - Single response per query
+    - No binary parsing needed
+
+**Rationale**: Using manual TCP handling gives us complete control over the protocol without adding dependencies. The
+protocol is straightforward enough that a library provides minimal value.
 
 ## Architecture Decisions
 
@@ -40,28 +46,30 @@ WHOIS is a simple TCP-based query/response protocol used to query databases that
 The LLM responds to queries with these actions:
 
 - **`send_whois_response`** - Send custom response text
-  - Full control over response format
-  - For non-standard responses
+    - Full control over response format
+    - For non-standard responses
 
 - **`send_whois_record`** - Send formatted domain record
-  - Structured parameters: domain, registrar, registrant, admin_contact, name_servers
-  - Automatically formats standard WHOIS output
+    - Structured parameters: domain, registrar, registrant, admin_contact, name_servers
+    - Automatically formats standard WHOIS output
 
 - **`send_error`** - Send error message
-  - For domain not found or invalid queries
+    - For domain not found or invalid queries
 
 - **`close_connection`** - Close the connection
-  - Allows LLM to terminate connection after response
+    - Allows LLM to terminate connection after response
 
 ### 2. TCP Connection Management
 
 **Per-connection Handling**:
+
 - Each client connection runs in its own task
 - Connection object tracked in `ServerInstance`
 - Stats tracked: bytes sent/received, packets sent/received, last activity
 - Recent queries stored in `ProtocolConnectionInfo::Whois`
 
 **Connection Lifecycle**:
+
 1. Accept connection → Create `ConnectionId` → Add to `ServerInstance`
 2. Loop: Read query → Call LLM → Send response
 3. Close → Update status to `ConnectionStatus::Closed`
@@ -89,6 +97,7 @@ let _ = status_tx.send(format!("[ERROR] WHOIS read error: {}", e));
 ```
 
 **Logging Levels**:
+
 - **ERROR**: Critical failures (accept error, read/write errors)
 - **WARN**: Non-fatal issues (unused currently)
 - **INFO**: User-facing messages, LLM responses
@@ -98,15 +107,17 @@ let _ = status_tx.send(format!("[ERROR] WHOIS read error: {}", e));
 ### 4. Event System
 
 **Sync Events** (network-triggered):
+
 - `whois_query` - Triggered when client sends query
-  - Parameters: `query` (string)
-  - Available actions: all WHOIS actions
+    - Parameters: `query` (string)
+    - Available actions: all WHOIS actions
 
 **No Async Events**: WHOIS has no user-triggered actions.
 
 ### 5. Connection Tracking
 
 **ProtocolConnectionInfo::Whois**:
+
 ```rust
 Whois {
     recent_queries: Vec<(String, Instant)>, // (domain, timestamp)
@@ -120,6 +131,7 @@ Stores last 10 queries per connection for UI display and debugging.
 ### Prompt Structure
 
 The LLM receives:
+
 1. Server instruction (from user)
 2. Event type and parameters
 3. Available actions
@@ -128,6 +140,7 @@ The LLM receives:
 ### Example Interaction
 
 **User Instruction**:
+
 ```
 WHOIS server on port 43 - respond with fake registrar info for any domain
 ```
@@ -135,6 +148,7 @@ WHOIS server on port 43 - respond with fake registrar info for any domain
 **Client Query**: `example.com\r\n`
 
 **LLM Response**:
+
 ```json
 {
   "type": "send_whois_record",
@@ -147,6 +161,7 @@ WHOIS server on port 43 - respond with fake registrar info for any domain
 ```
 
 **Server Output**:
+
 ```
 Domain Name: example.com
 Registrar: Example Registrar Inc.
@@ -160,26 +175,31 @@ Name Server: ns2.example.com
 ## Known Limitations
 
 ### 1. No WHOIS+ (RFC 1835)
+
 - WHOIS++ (RFC 1835) not supported
 - No advanced query syntax
 - No templates or structured queries
 
 ### 2. No Referral Handling
+
 - No WHOIS server redirection
 - No referral URLs
 - Single-server responses only
 
 ### 3. No Authentication
+
 - No access control lists
 - All queries answered for all domains
 - No rate limiting built into protocol layer
 
 ### 4. No Internationalization
+
 - ASCII-only queries and responses
 - No IDN (Internationalized Domain Names) support
 - No multi-language responses
 
 ### 5. Simplified Protocol
+
 - No thick/thin WHOIS distinction
 - No privacy/GDPR redaction logic
 - Fake data only (not a real WHOIS database)
@@ -194,6 +214,7 @@ Name Server: ns2.example.com
 ## Example Prompts
 
 ### Basic Domain Server
+
 ```
 WHOIS server on port 43
 Respond with fake registration info for any .com domain
@@ -201,12 +222,14 @@ Include registrar "Example Registrar" and nameservers ns1/ns2.example.com
 ```
 
 ### Error-Only Server
+
 ```
 listen on whois port 43
 Return "Domain not found" error for all queries
 ```
 
 ### Selective Response
+
 ```
 WHOIS server port 43
 For example.com: show full registration details

@@ -25,11 +25,7 @@ use tokio::sync::Mutex;
 // Event type definitions (static for efficient reuse)
 #[cfg(feature = "usb-mouse")]
 pub static USB_MOUSE_ATTACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "usb_mouse_attached",
-        "Host attached to USB mouse device",
-    )
-    .with_parameters(vec![
+    EventType::new("usb_mouse_attached", "Host attached to USB mouse device").with_parameters(vec![
         Parameter {
             name: "connection_id".to_string(),
             type_hint: "string".to_string(),
@@ -41,18 +37,14 @@ pub static USB_MOUSE_ATTACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 #[cfg(feature = "usb-mouse")]
 pub static USB_MOUSE_DETACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "usb_mouse_detached",
-        "Host detached from USB mouse device",
-    )
-    .with_parameters(vec![
-        Parameter {
+    EventType::new("usb_mouse_detached", "Host detached from USB mouse device").with_parameters(
+        vec![Parameter {
             name: "connection_id".to_string(),
             type_hint: "string".to_string(),
             description: "Connection ID of the USB/IP session".to_string(),
             required: true,
-        },
-    ])
+        }],
+    )
 });
 
 /// USB HID Mouse protocol action handler
@@ -62,7 +54,14 @@ pub struct UsbMouseProtocol {
     #[allow(dead_code)]
     connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
     /// Map of USB/IP mouse handlers for each connection
-    handlers: Arc<Mutex<HashMap<ConnectionId, Arc<std::sync::Mutex<Box<dyn usbip::UsbInterfaceHandler + Send>>>>>>,
+    handlers: Arc<
+        Mutex<
+            HashMap<
+                ConnectionId,
+                Arc<std::sync::Mutex<Box<dyn usbip::UsbInterfaceHandler + Send>>>,
+            >,
+        >,
+    >,
 }
 
 #[cfg(feature = "usb-mouse")]
@@ -169,9 +168,8 @@ impl Server for UsbMouseProtocol {
     fn spawn(
         &self,
         ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>,
-    > {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>>
+    {
         Box::pin(async move {
             crate::server::usb::mouse::UsbMouseServer::spawn_with_llm_actions(
                 ctx.listen_addr,
@@ -184,10 +182,7 @@ impl Server for UsbMouseProtocol {
         })
     }
 
-    fn execute_action(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action["type"]
             .as_str()
             .context("Action must have 'type' field")?;
@@ -201,8 +196,12 @@ impl Server for UsbMouseProtocol {
 
         match action_type {
             "move_relative" => {
-                let _x = action["x"].as_i64().context("move_relative requires 'x' field")? as i8;
-                let _y = action["y"].as_i64().context("move_relative requires 'y' field")? as i8;
+                let _x = action["x"]
+                    .as_i64()
+                    .context("move_relative requires 'x' field")? as i8;
+                let _y = action["y"]
+                    .as_i64()
+                    .context("move_relative requires 'y' field")? as i8;
 
                 // TODO: USB mouse support not yet implemented in usbip crate
                 // Need to implement UsbHidMouseHandler and UsbHidMouseReport
@@ -213,8 +212,12 @@ impl Server for UsbMouseProtocol {
                 Ok(ActionResult::NoAction)
             }
             "move_absolute" => {
-                let _x = action["x"].as_i64().context("move_absolute requires 'x' field")?;
-                let _y = action["y"].as_i64().context("move_absolute requires 'y' field")?;
+                let _x = action["x"]
+                    .as_i64()
+                    .context("move_absolute requires 'x' field")?;
+                let _y = action["y"]
+                    .as_i64()
+                    .context("move_absolute requires 'y' field")?;
                 let _screen_width = action["screen_width"].as_i64().unwrap_or(1920);
                 let _screen_height = action["screen_height"].as_i64().unwrap_or(1080);
                 // TODO: Implement absolute positioning (requires tracking current position)
@@ -227,9 +230,7 @@ impl Server for UsbMouseProtocol {
                     .context("click requires 'button' field")?;
 
                 // TODO: USB mouse support not yet implemented in usbip crate
-                tracing::warn!(
-                    "click not yet implemented - usbip crate lacks mouse support"
-                );
+                tracing::warn!("click not yet implemented - usbip crate lacks mouse support");
                 Ok(ActionResult::NoAction)
             }
             "scroll" => {
@@ -239,14 +240,16 @@ impl Server for UsbMouseProtocol {
                 let _amount = action["amount"].as_i64().unwrap_or(1) as i8;
 
                 // TODO: USB mouse support not yet implemented in usbip crate
-                tracing::warn!(
-                    "scroll not yet implemented - usbip crate lacks mouse support"
-                );
+                tracing::warn!("scroll not yet implemented - usbip crate lacks mouse support");
                 Ok(ActionResult::NoAction)
             }
             "drag" => {
-                let _start_x = action["start_x"].as_i64().context("drag requires 'start_x'")?;
-                let _start_y = action["start_y"].as_i64().context("drag requires 'start_y'")?;
+                let _start_x = action["start_x"]
+                    .as_i64()
+                    .context("drag requires 'start_x'")?;
+                let _start_y = action["start_y"]
+                    .as_i64()
+                    .context("drag requires 'start_y'")?;
                 let _end_x = action["end_x"].as_i64().context("drag requires 'end_x'")?;
                 let _end_y = action["end_y"].as_i64().context("drag requires 'end_y'")?;
                 let _duration_ms = action["duration_ms"].as_i64().unwrap_or(500);
@@ -335,14 +338,12 @@ fn click_action() -> ActionDefinition {
     ActionDefinition {
         name: "click".to_string(),
         description: "Click a mouse button".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "button".to_string(),
-                type_hint: "string".to_string(),
-                description: "Button to click: 'left', 'right', or 'middle'".to_string(),
-                required: true,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "button".to_string(),
+            type_hint: "string".to_string(),
+            description: "Button to click: 'left', 'right', or 'middle'".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "click",
             "button": "left"

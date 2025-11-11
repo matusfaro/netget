@@ -4,14 +4,15 @@ pub mod actions;
 pub use actions::IgmpClientProtocol;
 
 use anyhow::{Context, Result};
+use socket2::{Domain, Protocol, Socket, Type};
 use std::collections::HashSet;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
-use socket2::{Domain, Protocol, Socket, Type};
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, trace, warn};
 
+use crate::client::igmp::actions::{IGMP_CLIENT_CONNECTED_EVENT, IGMP_CLIENT_DATA_RECEIVED_EVENT};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::actions::client_trait::{Client, ClientActionResult};
 use crate::llm::ollama_client::OllamaClient;
@@ -19,7 +20,6 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::igmp::actions::{IGMP_CLIENT_CONNECTED_EVENT, IGMP_CLIENT_DATA_RECEIVED_EVENT};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -67,7 +67,9 @@ impl IgmpClient {
         info!("IGMP client {} bound to {}", client_id, local_addr);
 
         // Update client state
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
         let _ = status_tx.send(format!("[CLIENT] IGMP client {} ready", client_id));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
@@ -78,9 +80,12 @@ impl IgmpClient {
             .map(|c| c.instruction.clone())
             .unwrap_or_default();
 
-        let connected_event = Event::new(&IGMP_CLIENT_CONNECTED_EVENT, serde_json::json!({
-            "local_addr": local_addr.to_string(),
-        }));
+        let connected_event = Event::new(
+            &IGMP_CLIENT_CONNECTED_EVENT,
+            serde_json::json!({
+                "local_addr": local_addr.to_string(),
+            }),
+        );
 
         // Initial LLM call
         let protocol = Arc::new(IgmpClientProtocol::new());
@@ -123,7 +128,12 @@ impl IgmpClient {
                 match socket_clone.recv_from(&mut buffer).await {
                     Ok((n, peer_addr)) => {
                         let data = buffer[..n].to_vec();
-                        trace!("IGMP client {} received {} bytes from {}", client_id, n, peer_addr);
+                        trace!(
+                            "IGMP client {} received {} bytes from {}",
+                            client_id,
+                            n,
+                            peer_addr
+                        );
 
                         // Handle data with LLM
                         let mut client_data_lock = client_data_clone.lock().await;
@@ -135,7 +145,8 @@ impl IgmpClient {
                                 drop(client_data_lock);
 
                                 // Get current instruction and memory
-                                let instruction = app_state_clone.get_instruction_for_client(client_id).await;
+                                let instruction =
+                                    app_state_clone.get_instruction_for_client(client_id).await;
 
                                 if let Some(instruction) = instruction {
                                     let memory = {
@@ -144,11 +155,14 @@ impl IgmpClient {
                                     };
 
                                     // Create event
-                                    let event = Event::new(&IGMP_CLIENT_DATA_RECEIVED_EVENT, serde_json::json!({
-                                        "data_hex": hex::encode(&data),
-                                        "data_length": n,
-                                        "source_addr": peer_addr.to_string(),
-                                    }));
+                                    let event = Event::new(
+                                        &IGMP_CLIENT_DATA_RECEIVED_EVENT,
+                                        serde_json::json!({
+                                            "data_hex": hex::encode(&data),
+                                            "data_length": n,
+                                            "source_addr": peer_addr.to_string(),
+                                        }),
+                                    );
 
                                     // Call LLM
                                     match call_llm_for_client(
@@ -161,8 +175,12 @@ impl IgmpClient {
                                         protocol.as_ref(),
                                         &status_tx_clone,
                                     )
-                                    .await {
-                                        Ok(ClientLlmResult { actions, memory_updates }) => {
+                                    .await
+                                    {
+                                        Ok(ClientLlmResult {
+                                            actions,
+                                            memory_updates,
+                                        }) => {
                                             // Update memory
                                             if let Some(mem) = memory_updates {
                                                 client_data_clone.lock().await.memory = mem;
@@ -171,25 +189,43 @@ impl IgmpClient {
                                             // Execute actions
                                             for action in actions {
                                                 match protocol.as_ref().execute_action(action) {
-                                                    Ok(ClientActionResult::Custom { name, data }) => {
+                                                    Ok(ClientActionResult::Custom {
+                                                        name,
+                                                        data,
+                                                    }) => {
                                                         if name == "join_multicast_group" {
                                                             if let (Some(mcast), Some(iface)) = (
                                                                 data["multicast_addr"].as_str(),
                                                                 data["interface_addr"].as_str(),
                                                             ) {
-                                                                if let Ok(mcast_ip) = mcast.parse::<Ipv4Addr>() {
-                                                                    if let Ok(iface_ip) = iface.parse::<Ipv4Addr>() {
+                                                                if let Ok(mcast_ip) =
+                                                                    mcast.parse::<Ipv4Addr>()
+                                                                {
+                                                                    if let Ok(iface_ip) =
+                                                                        iface.parse::<Ipv4Addr>()
+                                                                    {
                                                                         // Use socket2 to join multicast group
                                                                         let socket2 = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))
                                                                             .context("Failed to create socket2");
 
                                                                         if let Ok(sock) = socket2 {
-                                                                            if let Err(e) = sock.join_multicast_v4(&mcast_ip, &iface_ip) {
+                                                                            if let Err(e) = sock
+                                                                                .join_multicast_v4(
+                                                                                    &mcast_ip,
+                                                                                    &iface_ip,
+                                                                                )
+                                                                            {
                                                                                 error!("Failed to join multicast group {}: {}", mcast_ip, e);
                                                                                 let _ = status_tx_clone.send(format!("[CLIENT] Failed to join multicast group {}: {}", mcast_ip, e));
                                                                             } else {
                                                                                 info!("IGMP client {} joined multicast group {}", client_id, mcast_ip);
-                                                                                client_data_clone.lock().await.joined_groups.insert(mcast_ip);
+                                                                                client_data_clone
+                                                                                    .lock()
+                                                                                    .await
+                                                                                    .joined_groups
+                                                                                    .insert(
+                                                                                        mcast_ip,
+                                                                                    );
                                                                                 let _ = status_tx_clone.send(format!("[CLIENT] Joined multicast group {}", mcast_ip));
                                                                             }
                                                                         }
@@ -201,19 +237,34 @@ impl IgmpClient {
                                                                 data["multicast_addr"].as_str(),
                                                                 data["interface_addr"].as_str(),
                                                             ) {
-                                                                if let Ok(mcast_ip) = mcast.parse::<Ipv4Addr>() {
-                                                                    if let Ok(iface_ip) = iface.parse::<Ipv4Addr>() {
+                                                                if let Ok(mcast_ip) =
+                                                                    mcast.parse::<Ipv4Addr>()
+                                                                {
+                                                                    if let Ok(iface_ip) =
+                                                                        iface.parse::<Ipv4Addr>()
+                                                                    {
                                                                         // Use socket2 to leave multicast group
                                                                         let socket2 = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))
                                                                             .context("Failed to create socket2");
 
                                                                         if let Ok(sock) = socket2 {
-                                                                            if let Err(e) = sock.leave_multicast_v4(&mcast_ip, &iface_ip) {
+                                                                            if let Err(e) = sock
+                                                                                .leave_multicast_v4(
+                                                                                    &mcast_ip,
+                                                                                    &iface_ip,
+                                                                                )
+                                                                            {
                                                                                 error!("Failed to leave multicast group {}: {}", mcast_ip, e);
                                                                                 let _ = status_tx_clone.send(format!("[CLIENT] Failed to leave multicast group {}: {}", mcast_ip, e));
                                                                             } else {
                                                                                 info!("IGMP client {} left multicast group {}", client_id, mcast_ip);
-                                                                                client_data_clone.lock().await.joined_groups.remove(&mcast_ip);
+                                                                                client_data_clone
+                                                                                    .lock()
+                                                                                    .await
+                                                                                    .joined_groups
+                                                                                    .remove(
+                                                                                        &mcast_ip,
+                                                                                    );
                                                                                 let _ = status_tx_clone.send(format!("[CLIENT] Left multicast group {}", mcast_ip));
                                                                             }
                                                                         }
@@ -221,18 +272,31 @@ impl IgmpClient {
                                                                 }
                                                             }
                                                         } else if name == "send_multicast" {
-                                                            if let (Some(mcast), Some(port), Some(data_vec)) = (
+                                                            if let (
+                                                                Some(mcast),
+                                                                Some(port),
+                                                                Some(data_vec),
+                                                            ) = (
                                                                 data["multicast_addr"].as_str(),
                                                                 data["port"].as_u64(),
                                                                 data["data"].as_array(),
                                                             ) {
-                                                                let bytes: Vec<u8> = data_vec.iter()
-                                                                    .filter_map(|v| v.as_u64().map(|n| n as u8))
+                                                                let bytes: Vec<u8> = data_vec
+                                                                    .iter()
+                                                                    .filter_map(|v| {
+                                                                        v.as_u64().map(|n| n as u8)
+                                                                    })
                                                                     .collect();
 
-                                                                let dest = format!("{}:{}", mcast, port);
-                                                                if let Ok(dest_addr) = dest.parse::<SocketAddr>() {
-                                                                    match socket_clone.send_to(&bytes, dest_addr).await {
+                                                                let dest =
+                                                                    format!("{}:{}", mcast, port);
+                                                                if let Ok(dest_addr) =
+                                                                    dest.parse::<SocketAddr>()
+                                                                {
+                                                                    match socket_clone
+                                                                        .send_to(&bytes, dest_addr)
+                                                                        .await
+                                                                    {
                                                                         Ok(n) => {
                                                                             trace!("IGMP client {} sent {} bytes to {}", client_id, n, dest_addr);
                                                                             let _ = status_tx_clone.send(format!("[CLIENT] Sent {} bytes to multicast {}", n, dest_addr));
@@ -247,7 +311,10 @@ impl IgmpClient {
                                                         }
                                                     }
                                                     Ok(ClientActionResult::WaitForMore) => {
-                                                        trace!("IGMP client {} waiting for more data", client_id);
+                                                        trace!(
+                                                            "IGMP client {} waiting for more data",
+                                                            client_id
+                                                        );
                                                     }
                                                     Err(e) => {
                                                         warn!("Action execution error for IGMP client {}: {}", client_id, e);
@@ -257,7 +324,10 @@ impl IgmpClient {
                                             }
                                         }
                                         Err(e) => {
-                                            error!("LLM error for IGMP client {}: {}", client_id, e);
+                                            error!(
+                                                "LLM error for IGMP client {}: {}",
+                                                client_id, e
+                                            );
                                         }
                                     }
                                 }
@@ -277,14 +347,20 @@ impl IgmpClient {
                             ClientState::Accumulating => {
                                 // Already accumulating, just add to queue
                                 client_data_lock.queued_data.push((data, peer_addr));
-                                trace!("IGMP client {} queued data (accumulating state)", client_id);
+                                trace!(
+                                    "IGMP client {} queued data (accumulating state)",
+                                    client_id
+                                );
                             }
                         }
                     }
                     Err(e) => {
                         error!("IGMP client {} read error: {}", client_id, e);
-                        app_state_clone.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
-                        let _ = status_tx_clone.send(format!("[CLIENT] IGMP client {} error: {}", client_id, e));
+                        app_state_clone
+                            .update_client_status(client_id, ClientStatus::Error(e.to_string()))
+                            .await;
+                        let _ = status_tx_clone
+                            .send(format!("[CLIENT] IGMP client {} error: {}", client_id, e));
                         let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         break;
                     }

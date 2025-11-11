@@ -14,13 +14,13 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
 
+use crate::client::isis::actions::ISIS_PDU_RECEIVED_EVENT;
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::isis::actions::ISIS_PDU_RECEIVED_EVENT;
 
 /// IS-IS PDU types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,11 +143,19 @@ impl IsisClient {
         status_tx: mpsc::UnboundedSender<String>,
         client_id: ClientId,
     ) -> Result<SocketAddr> {
-        info!("ISIS client {} starting capture on interface: {}", client_id, interface_name);
+        info!(
+            "ISIS client {} starting capture on interface: {}",
+            client_id, interface_name
+        );
 
         // Update client state
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] ISIS client {} capturing on {}", client_id, interface_name));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] ISIS client {} capturing on {}",
+            client_id, interface_name
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         let protocol = Arc::new(crate::client::isis::actions::IsisClientProtocol::new());
@@ -161,7 +169,10 @@ impl IsisClient {
                 Err(e) => {
                     error!("ISIS client {} failed to find device: {}", client_id, e);
                     let runtime = tokio::runtime::Handle::current();
-                    let _ = runtime.block_on(app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())));
+                    let _ = runtime.block_on(
+                        app_state
+                            .update_client_status(client_id, ClientStatus::Error(e.to_string())),
+                    );
                     let _ = status_tx.send("__UPDATE_UI__".to_string());
                     return;
                 }
@@ -176,7 +187,10 @@ impl IsisClient {
                 Err(e) => {
                     error!("ISIS client {} failed to open capture: {}", client_id, e);
                     let runtime = tokio::runtime::Handle::current();
-                    let _ = runtime.block_on(app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())));
+                    let _ = runtime.block_on(
+                        app_state
+                            .update_client_status(client_id, ClientStatus::Error(e.to_string())),
+                    );
                     let _ = status_tx.send("__UPDATE_UI__".to_string());
                     return;
                 }
@@ -211,12 +225,17 @@ impl IsisClient {
                             if let Some(header) = parse_isis_header(isis_data) {
                                 debug!(
                                     "ISIS client {} captured PDU: type={}, version={}, length={}",
-                                    client_id, header.pdu_type.as_str(), header.version, header.pdu_length
+                                    client_id,
+                                    header.pdu_type.as_str(),
+                                    header.version,
+                                    header.pdu_length
                                 );
 
                                 // Get instruction
                                 let runtime = tokio::runtime::Handle::current();
-                                let instruction = match runtime.block_on(app_state.get_instruction_for_client(client_id)) {
+                                let instruction = match runtime
+                                    .block_on(app_state.get_instruction_for_client(client_id))
+                                {
                                     Some(i) => i,
                                     None => continue,
                                 };
@@ -246,7 +265,10 @@ impl IsisClient {
                                     protocol.as_ref(),
                                     &status_tx,
                                 )) {
-                                    Ok(ClientLlmResult { actions: _, memory_updates }) => {
+                                    Ok(ClientLlmResult {
+                                        actions: _,
+                                        memory_updates,
+                                    }) => {
                                         // Update memory
                                         if let Some(mem) = memory_updates {
                                             memory = mem;
@@ -269,7 +291,11 @@ impl IsisClient {
                     Err(e) => {
                         error!("ISIS client {} capture error: {}", client_id, e);
                         let runtime = tokio::runtime::Handle::current();
-                        let _ = runtime.block_on(app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())));
+                        let _ =
+                            runtime.block_on(app_state.update_client_status(
+                                client_id,
+                                ClientStatus::Error(e.to_string()),
+                            ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         break;
                     }
@@ -278,7 +304,10 @@ impl IsisClient {
                 // Check if client is still active
                 let runtime = tokio::runtime::Handle::current();
                 if let Some(client) = runtime.block_on(app_state.get_client(client_id)) {
-                    if matches!(client.status, ClientStatus::Disconnected | ClientStatus::Error(_)) {
+                    if matches!(
+                        client.status,
+                        ClientStatus::Disconnected | ClientStatus::Error(_)
+                    ) {
                         info!("ISIS client {} stopping capture", client_id);
                         break;
                     }

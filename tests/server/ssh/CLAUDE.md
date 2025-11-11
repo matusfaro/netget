@@ -1,9 +1,13 @@
 # SSH Protocol E2E Tests
 
 ## Test Overview
-Tests SSH server implementation with authentication, shell sessions, and SFTP operations. Validates that the LLM can control SSH authentication decisions, generate shell responses, and provide SFTP filesystem operations. Includes extensive testing of Python script-based auth handling.
+
+Tests SSH server implementation with authentication, shell sessions, and SFTP operations. Validates that the LLM can
+control SSH authentication decisions, generate shell responses, and provide SFTP filesystem operations. Includes
+extensive testing of Python script-based auth handling.
 
 ## Test Strategy
+
 - **Isolated test servers**: Each test spawns separate NetGet instance with specific instructions
 - **Real SSH client**: Uses `ssh2` Rust library (libssh2 bindings) for authentic SSH protocol testing
 - **Raw TCP for basic tests**: Some tests use raw TCP to verify SSH banner (lower-level validation)
@@ -13,6 +17,7 @@ Tests SSH server implementation with authentication, shell sessions, and SFTP op
 ## LLM Call Budget
 
 ### Non-Scripted Tests (Action-Based)
+
 - `test_ssh_banner()`: 0 LLM calls (just TCP banner check)
 - `test_ssh_version_exchange()`: 1 LLM call (handshake setup)
 - `test_ssh_connection_attempt()`: 1 LLM call (auth attempt)
@@ -20,6 +25,7 @@ Tests SSH server implementation with authentication, shell sessions, and SFTP op
 - `test_sftp_basic_operations()`: 5-6 LLM calls (auth + 4-5 SFTP operations)
 
 ### Scripted Tests (Python Script Generation)
+
 - `test_ssh_python_auth_script()`: 1 LLM call (server setup with script) + 0 for auth events
 - `test_ssh_script_update()`: 1-2 LLM calls (setup + optional update) + 0 for auth events
 - `test_ssh_script_fallback_to_llm()`: 1 LLM call (setup) + 2 fallback calls (eve, frank)
@@ -27,22 +33,27 @@ Tests SSH server implementation with authentication, shell sessions, and SFTP op
 **Total: ~15-18 LLM calls** (exceeds 10 target but acceptable given comprehensive coverage)
 
 **Why Higher Budget?**:
+
 1. SSH protocol complexity requires multiple integration points (auth, shell, SFTP)
 2. Script tests validate critical feature (Python script generation) across multiple scenarios
 3. Each test validates different aspect (banner, auth, shell, SFTP, script fallback)
 4. Could consolidate but would lose test isolation and failure diagnosis clarity
 
-**Optimization Opportunity**: Could consolidate non-scripted tests (banner, version exchange, connection attempt) into single server. Scripted tests must remain separate to validate different script behaviors.
+**Optimization Opportunity**: Could consolidate non-scripted tests (banner, version exchange, connection attempt) into
+single server. Scripted tests must remain separate to validate different script behaviors.
 
 ## Scripting Usage
 
 ### Scripted Tests
+
 ✅ **Scripting Enabled** for authentication in these tests:
+
 - `test_ssh_python_auth_script()` - Basic script auth (allow alice, deny others)
 - `test_ssh_script_update()` - Script update capability (initially deny all, then allow charlie)
 - `test_ssh_script_fallback_to_llm()` - Script + LLM fallback (script handles dave, LLM handles eve/frank)
 
 **How Scripting Works**:
+
 1. Prompt asks for script-based authentication
 2. LLM returns `open_server` action with `script_inline` parameter (Python code)
 3. Server stores script and marks event types as script-handled
@@ -50,7 +61,9 @@ Tests SSH server implementation with authentication, shell sessions, and SFTP op
 5. Script can return `fallback_to_llm` to delegate to LLM for specific cases
 
 ### Non-Scripted Tests
+
 ❌ **Scripting Disabled** for these tests:
+
 - `test_ssh_banner()` - TCP-level test (no LLM)
 - `test_ssh_version_exchange()` - Protocol-level test
 - `test_ssh_connection_attempt()` - Simple auth test
@@ -60,54 +73,61 @@ Tests SSH server implementation with authentication, shell sessions, and SFTP op
 **Rationale**: These tests focus on specific protocol behaviors and LLM action generation, not script execution.
 
 ## Client Library
+
 - **ssh2 v0.9** - Rust bindings to libssh2 (SSH client library)
-  - Full SSH protocol support (handshake, auth, channels, SFTP)
-  - Blocking API (wrapped in tokio for async tests)
-  - Used for authentication and SFTP tests
+    - Full SSH protocol support (handshake, auth, channels, SFTP)
+    - Blocking API (wrapped in tokio for async tests)
+    - Used for authentication and SFTP tests
 
 - **tokio::net::TcpStream** - Raw TCP for banner tests
-  - Lower-level validation (SSH version string)
-  - Faster than full SSH handshake
-  - Used for basic connectivity tests
+    - Lower-level validation (SSH version string)
+    - Faster than full SSH handshake
+    - Used for basic connectivity tests
 
 **Why ssh2?**:
+
 1. Industry-standard SSH client library (libssh2 used by OpenSSH, git, curl)
 2. Validates real-world SSH protocol compliance
 3. Supports all SSH features (auth, shell, SFTP)
 4. Well-tested and reliable
 
 **Why raw TCP for some tests?**:
+
 1. Banner test only needs to read version string (no handshake needed)
 2. Faster than full SSH connection (no key exchange overhead)
 3. Tests low-level protocol behavior
 
 ## Expected Runtime
+
 - Model: qwen3-coder:30b
 - Runtime: ~2-3 minutes for full test suite
 - Breakdown:
-  - Non-scripted tests: ~60-90s (5-6 tests × 10-15s each)
-  - Scripted tests: ~60-90s (3 tests × 20-30s each, script generation is slow)
-  - SFTP test: ~60-90s (multiple SFTP operations)
+    - Non-scripted tests: ~60-90s (5-6 tests × 10-15s each)
+    - Scripted tests: ~60-90s (3 tests × 20-30s each, script generation is slow)
+    - SFTP test: ~60-90s (multiple SFTP operations)
 
 **Why Slower Than Other Protocols?**:
+
 1. SSH handshake overhead (key exchange, encryption negotiation)
 2. Multiple operations per test (auth + shell/SFTP)
 3. Script generation is slow (LLM generates Python code)
 4. ssh2 library has blocking API (adds latency)
 
 ## Failure Rate
+
 - **Medium** (~10-15%) - SSH protocol complexity and script generation
 - Common failures:
-  - Script not generated (LLM doesn't include `script_inline`)
-  - SSH handshake timeout (russh or ssh2 compatibility issue)
-  - SFTP response format (LLM returns wrong JSON structure)
+    - Script not generated (LLM doesn't include `script_inline`)
+    - SSH handshake timeout (russh or ssh2 compatibility issue)
+    - SFTP response format (LLM returns wrong JSON structure)
 - Rare failures:
-  - Authentication always succeeds/fails (LLM ignores instructions)
-  - Script syntax error (invalid Python generated by LLM)
+    - Authentication always succeeds/fails (LLM ignores instructions)
+    - Script syntax error (invalid Python generated by LLM)
 
 ## Test Cases
 
 ### 1. SSH Banner (`test_ssh_banner`)
+
 - **LLM Calls**: 0
 - **Prompt**: Send SSH protocol banner
 - **Client**: Raw TCP connection
@@ -115,6 +135,7 @@ Tests SSH server implementation with authentication, shell sessions, and SFTP op
 - **Purpose**: Verify SSH server responds with valid version string
 
 ### 2. SSH Version Exchange (`test_ssh_version_exchange`)
+
 - **LLM Calls**: 1 (handshake setup)
 - **Prompt**: Implement SSH-2.0 protocol, send banner
 - **Client**: ssh2 handshake
@@ -122,6 +143,7 @@ Tests SSH server implementation with authentication, shell sessions, and SFTP op
 - **Purpose**: Test SSH protocol negotiation (version exchange phase)
 
 ### 3. SSH Connection Attempt (`test_ssh_connection_attempt`)
+
 - **LLM Calls**: 1 (auth attempt)
 - **Prompt**: Accept SSH connections, handle version exchange and key exchange
 - **Client**: ssh2 handshake + auth attempt
@@ -129,6 +151,7 @@ Tests SSH server implementation with authentication, shell sessions, and SFTP op
 - **Purpose**: Validate full SSH connection flow up to authentication
 
 ### 4. SSH Multiple Connections (`test_ssh_multiple_connections`)
+
 - **LLM Calls**: 3 (3 connections)
 - **Prompt**: Handle multiple concurrent SSH connections
 - **Client**: 3 sequential TCP connections
@@ -136,61 +159,66 @@ Tests SSH server implementation with authentication, shell sessions, and SFTP op
 - **Purpose**: Test concurrent connection handling
 
 ### 5. SSH Python Auth Script (`test_ssh_python_auth_script`)
+
 - **LLM Calls**: 1 (setup) + 0 (auth via script)
 - **Prompt**: Allow user 'alice', deny others, use script
 - **Client**: ssh2 auth as alice (should succeed), bob (should fail)
 - **Validation**:
-  - Output contains "script_inline" (script was generated)
-  - Only 1 LLM request total (setup, no LLM for auth events)
-  - Alice authenticates successfully
-  - Bob authentication denied
+    - Output contains "script_inline" (script was generated)
+    - Only 1 LLM request total (setup, no LLM for auth events)
+    - Alice authenticates successfully
+    - Bob authentication denied
 - **Purpose**: Validate script generation and execution for authentication
 
 ### 6. SSH Script Update (`test_ssh_script_update`)
+
 - **LLM Calls**: 1-2 (setup + optional update) + 0 (auth via script)
 - **Prompt**: Initially deny all, then update script to allow 'charlie'
 - **Client**: ssh2 auth as charlie (should succeed after update)
 - **Validation**:
-  - Output contains "script_inline" (initial script)
-  - May contain "update_script" (if LLM used update action)
-  - At most 2 LLM requests (setup + optional update, no LLM for auth)
-  - Charlie authenticates successfully
+    - Output contains "script_inline" (initial script)
+    - May contain "update_script" (if LLM used update action)
+    - At most 2 LLM requests (setup + optional update, no LLM for auth)
+    - Charlie authenticates successfully
 - **Purpose**: Test script update capability (modifying running server's script)
 
 ### 7. SSH Script Fallback to LLM (`test_ssh_script_fallback_to_llm`)
+
 - **LLM Calls**: 1 (setup) + 2 (fallback for eve and frank)
 - **Prompt**: Script allows dave, falls back to LLM for others. LLM allows eve, denies frank.
 - **Client**: ssh2 auth as dave (script), eve (LLM fallback), frank (LLM fallback)
 - **Validation**:
-  - Output contains "script_inline" (script was generated)
-  - Output may contain "fallback_to_llm" (script returned fallback)
-  - At least 1 LLM request, possibly 3 (setup + 2 fallbacks)
-  - Dave authenticates (script handled)
-  - Eve authenticates (LLM fallback handled)
-  - Frank denied (LLM fallback handled)
+    - Output contains "script_inline" (script was generated)
+    - Output may contain "fallback_to_llm" (script returned fallback)
+    - At least 1 LLM request, possibly 3 (setup + 2 fallbacks)
+    - Dave authenticates (script handled)
+    - Eve authenticates (LLM fallback handled)
+    - Frank denied (LLM fallback handled)
 - **Purpose**: Validate script + LLM hybrid mode (script handles common cases, LLM handles edge cases)
 
 ### 8. SFTP Basic Operations (`test_sftp_basic_operations`)
+
 - **LLM Calls**: 5-6 (auth + readdir + open + read + stat)
 - **Prompt**: Enable SFTP, virtual filesystem with readme.txt, data.json, logs/
 - **Client**: ssh2 SFTP client
 - **Operations**:
-  1. Authenticate as 'test'
-  2. List root directory (/)
-  3. Read file (/readme.txt)
-  4. Get file attributes (stat /readme.txt)
+    1. Authenticate as 'test'
+    2. List root directory (/)
+    3. Read file (/readme.txt)
+    4. Get file attributes (stat /readme.txt)
 - **Validation**:
-  - Authentication succeeds
-  - SFTP channel opens
-  - Directory listing returns entries
-  - File open succeeds
-  - File read returns content
-  - File stat returns metadata
+    - Authentication succeeds
+    - SFTP channel opens
+    - Directory listing returns entries
+    - File open succeeds
+    - File read returns content
+    - File stat returns metadata
 - **Purpose**: Comprehensive SFTP subsystem test (auth, directories, files, metadata)
 
 ## Known Issues
 
 ### 1. SSH Handshake Flakiness
+
 **Symptom**: Occasional handshake failures with "KEX error" or timeout
 
 **Cause**: Compatibility between russh (server) and ssh2/libssh2 (client) on key exchange algorithms
@@ -200,6 +228,7 @@ Tests SSH server implementation with authentication, shell sessions, and SFTP op
 **Status**: Acceptable for testing - shows protocol is partially implemented
 
 ### 2. Script Not Generated
+
 **Symptom**: Test fails with "Server should have been configured with a script"
 
 **Cause**: LLM doesn't generate `script_inline` in response (misunderstands prompt)
@@ -209,6 +238,7 @@ Tests SSH server implementation with authentication, shell sessions, and SFTP op
 **Workaround**: Retry test or adjust prompt to be more explicit about script requirement
 
 ### 3. SFTP Response Format Errors
+
 **Symptom**: SFTP operations fail with parse errors
 
 **Cause**: LLM returns wrong JSON structure for SFTP responses (e.g., missing "entries" field)
@@ -218,6 +248,7 @@ Tests SSH server implementation with authentication, shell sessions, and SFTP op
 **Workaround**: Test uses lenient validation (checks for any entries, not specific format)
 
 ### 4. Long Runtime for Script Tests
+
 **Symptom**: Script tests take 20-30s each (longer than other tests)
 
 **Cause**: Python script generation is slow (LLM generates code, not just JSON)
@@ -229,21 +260,27 @@ Tests SSH server implementation with authentication, shell sessions, and SFTP op
 ## Performance Notes
 
 ### Why Script Tests Take Longer
+
 Script tests are slower because:
+
 1. LLM generates Python code (more tokens than simple JSON actions)
 2. Script execution adds minimal overhead (<1ms)
 3. But initial script generation is slow (~5-10s vs 2-5s for action)
 
 However, script tests demonstrate **massive performance improvement** once script is generated:
+
 - Action-based: 1 LLM call per auth attempt (~5s each)
 - Script-based: 0 LLM calls per auth attempt (<1ms each)
 
 Example: 100 authentication attempts:
+
 - Action-based: 100 × 5s = 500s (8 minutes)
 - Script-based: 1 × 10s (setup) + 100 × 0.001s = 10.1s
 
 ### SSH Handshake Overhead
+
 SSH handshake adds ~1-2s overhead per connection:
+
 1. Version exchange (~100ms)
 2. Key exchange (~500ms)
 3. Encryption negotiation (~100ms)
@@ -252,7 +289,9 @@ SSH handshake adds ~1-2s overhead per connection:
 This is why `test_ssh_banner` (raw TCP) is faster than `test_ssh_version_exchange` (full SSH).
 
 ### SFTP Operation Overhead
+
 Each SFTP operation requires:
+
 1. SFTP packet serialization (~10ms)
 2. SSH channel send/receive (~50ms)
 3. LLM processing (~5s)
@@ -263,6 +302,7 @@ Total: ~5s per operation (LLM dominates)
 ## Future Enhancements
 
 ### Test Coverage Gaps
+
 1. **Shell commands**: No tests for interactive shell (ls, pwd, cd, etc.)
 2. **SFTP writes**: No tests for file upload or modification
 3. **Public key auth**: Only password auth tested
@@ -270,6 +310,7 @@ Total: ~5s per operation (LLM dominates)
 5. **Connection close**: No tests for LLM-initiated connection close
 
 ### Consolidation Opportunities
+
 Non-scripted tests could be consolidated:
 
 ```rust
@@ -290,13 +331,16 @@ let prompt = format!(
 However, this loses test isolation - one failure affects all validations.
 
 ### Script Test Variations
+
 Additional script scenarios to test:
+
 1. **Script error handling**: What if script has syntax error?
 2. **Script timeout**: What if script hangs?
 3. **Script state persistence**: Can script maintain state across auth attempts?
 4. **Multiple event types**: Can one script handle both auth and shell commands?
 
 ## References
+
 - [RFC 4253: SSH Transport Layer Protocol](https://datatracker.ietf.org/doc/html/rfc4253)
 - [RFC 4254: SSH Connection Protocol](https://datatracker.ietf.org/doc/html/rfc4254)
 - [ssh2-rs Documentation](https://docs.rs/ssh2/latest/ssh2/)

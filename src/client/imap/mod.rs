@@ -13,6 +13,7 @@ use tokio::sync::{mpsc, Mutex};
 use tokio_util::compat::TokioAsyncReadCompatExt;
 use tracing::{debug, error, info, trace};
 
+use crate::client::imap::actions::IMAP_CLIENT_CONNECTED_EVENT;
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::actions::client_trait::{Client, ClientActionResult};
 use crate::llm::ollama_client::OllamaClient;
@@ -20,7 +21,6 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::imap::actions::IMAP_CLIENT_CONNECTED_EVENT;
 
 /// IMAP client that connects to an IMAP server
 pub struct ImapClient;
@@ -41,7 +41,9 @@ impl ImapClient {
             let password = params.get_string("password");
             (username, password)
         } else {
-            return Err(anyhow::anyhow!("IMAP client requires startup parameters: username, password"));
+            return Err(anyhow::anyhow!(
+                "IMAP client requires startup parameters: username, password"
+            ));
         };
 
         info!(
@@ -78,11 +80,15 @@ impl ImapClient {
         app_state
             .update_client_status(client_id, ClientStatus::Connected)
             .await;
-        let _ = status_tx.send(format!("[CLIENT] IMAP client {} connected and authenticated", client_id));
+        let _ = status_tx.send(format!(
+            "[CLIENT] IMAP client {} connected and authenticated",
+            client_id
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Get initial instruction
-        let instruction = if let Some(inst) = app_state.get_instruction_for_client(client_id).await {
+        let instruction = if let Some(inst) = app_state.get_instruction_for_client(client_id).await
+        {
             inst
         } else {
             return Err(anyhow::anyhow!("No instruction for IMAP client"));
@@ -102,7 +108,10 @@ impl ImapClient {
                 }),
             );
 
-            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+            let memory = app_state
+                .get_memory_for_client(client_id)
+                .await
+                .unwrap_or_default();
 
             match call_llm_for_client(
                 &llm_client,
@@ -164,14 +173,7 @@ impl ImapClient {
         match protocol.execute_action(action)? {
             ClientActionResult::Custom { name, data } => {
                 Self::handle_custom_action(
-                    client_id,
-                    session,
-                    &name,
-                    &data,
-                    protocol,
-                    llm_client,
-                    app_state,
-                    status_tx,
+                    client_id, session, &name, &data, protocol, llm_client, app_state, status_tx,
                 )
                 .await?;
             }
@@ -256,7 +258,11 @@ impl ImapClient {
                 drop(session_guard);
 
                 // Note: Follow-up LLM call with search results could be added here
-                debug!("IMAP client {} completed search_messages action, found {} messages", client_id, id_list.len());
+                debug!(
+                    "IMAP client {} completed search_messages action, found {} messages",
+                    client_id,
+                    id_list.len()
+                );
             }
             "fetch_message" => {
                 let message_id = action_data
@@ -328,7 +334,11 @@ impl ImapClient {
                     .and_then(|v| v.as_str())
                     .context("Missing message_id")?;
 
-                trace!("IMAP client {} marking message {} as read", client_id, message_id);
+                trace!(
+                    "IMAP client {} marking message {} as read",
+                    client_id,
+                    message_id
+                );
 
                 let mut session_guard = session.lock().await;
                 let _ = session_guard
@@ -336,7 +346,10 @@ impl ImapClient {
                     .await
                     .context("Failed to mark message as read")?;
 
-                info!("IMAP client {} marked message {} as read", client_id, message_id);
+                info!(
+                    "IMAP client {} marked message {} as read",
+                    client_id, message_id
+                );
             }
             "mark_as_unread" => {
                 let message_id = action_data
@@ -344,7 +357,11 @@ impl ImapClient {
                     .and_then(|v| v.as_str())
                     .context("Missing message_id")?;
 
-                trace!("IMAP client {} marking message {} as unread", client_id, message_id);
+                trace!(
+                    "IMAP client {} marking message {} as unread",
+                    client_id,
+                    message_id
+                );
 
                 let mut session_guard = session.lock().await;
                 let _ = session_guard
@@ -352,7 +369,10 @@ impl ImapClient {
                     .await
                     .context("Failed to mark message as unread")?;
 
-                info!("IMAP client {} marked message {} as unread", client_id, message_id);
+                info!(
+                    "IMAP client {} marked message {} as unread",
+                    client_id, message_id
+                );
             }
             "delete_message" => {
                 let message_id = action_data
@@ -393,10 +413,8 @@ impl ImapClient {
                     mailbox_list.push(mailbox);
                 }
 
-                let mailbox_names: Vec<String> = mailbox_list
-                    .iter()
-                    .map(|m| m.name().to_string())
-                    .collect();
+                let mailbox_names: Vec<String> =
+                    mailbox_list.iter().map(|m| m.name().to_string()).collect();
 
                 info!(
                     "IMAP client {} listed {} mailboxes",

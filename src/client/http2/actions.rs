@@ -15,23 +15,21 @@ use std::sync::LazyLock;
 pub static HTTP2_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "http2_connected",
-        "HTTP/2 client initialized and ready to send requests"
+        "HTTP/2 client initialized and ready to send requests",
     )
-    .with_parameters(vec![
-        Parameter {
-            name: "base_url".to_string(),
-            type_hint: "string".to_string(),
-            description: "Base URL for HTTP/2 requests".to_string(),
-            required: true,
-        },
-    ])
+    .with_parameters(vec![Parameter {
+        name: "base_url".to_string(),
+        type_hint: "string".to_string(),
+        description: "Base URL for HTTP/2 requests".to_string(),
+        required: true,
+    }])
 });
 
 /// HTTP/2 client response received event
 pub static HTTP2_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "http2_response_received",
-        "HTTP/2 response received from server"
+        "HTTP/2 response received from server",
     )
     .with_parameters(vec![
         Parameter {
@@ -73,220 +71,221 @@ impl Http2ClientProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for Http2ClientProtocol {
-        fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-            vec![
-                ParameterDefinition {
-                    name: "default_headers".to_string(),
-                    description: "Default headers to include in all requests".to_string(),
-                    type_hint: "object".to_string(),
-                    required: false,
-                    example: json!({
-                        "User-Agent": "NetGet/1.0",
+    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
+        vec![ParameterDefinition {
+            name: "default_headers".to_string(),
+            description: "Default headers to include in all requests".to_string(),
+            type_hint: "object".to_string(),
+            required: false,
+            example: json!({
+                "User-Agent": "NetGet/1.0",
+                "Accept": "application/json"
+            }),
+        }]
+    }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        vec![
+            ActionDefinition {
+                name: "send_http2_request".to_string(),
+                description: "Send an HTTP/2 request to the server".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "method".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "HTTP method (GET, POST, PUT, DELETE, etc.)".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "path".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Request path (e.g., /api/users)".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "headers".to_string(),
+                        type_hint: "object".to_string(),
+                        description: "Request headers".to_string(),
+                        required: false,
+                    },
+                    Parameter {
+                        name: "body".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Request body".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({
+                    "type": "send_http2_request",
+                    "method": "GET",
+                    "path": "/api/status",
+                    "headers": {
                         "Accept": "application/json"
-                    }),
+                    }
+                }),
+            },
+            ActionDefinition {
+                name: "disconnect".to_string(),
+                description: "Disconnect from the HTTP/2 server".to_string(),
+                parameters: vec![],
+                example: json!({
+                    "type": "disconnect"
+                }),
+            },
+        ]
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![ActionDefinition {
+            name: "send_http2_request".to_string(),
+            description: "Send another HTTP/2 request in response to received data".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "method".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "HTTP method".to_string(),
+                    required: true,
                 },
-            ]
-        }
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            vec![
-                ActionDefinition {
-                    name: "send_http2_request".to_string(),
-                    description: "Send an HTTP/2 request to the server".to_string(),
-                    parameters: vec![
-                        Parameter {
-                            name: "method".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "HTTP method (GET, POST, PUT, DELETE, etc.)".to_string(),
-                            required: true,
-                        },
-                        Parameter {
-                            name: "path".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "Request path (e.g., /api/users)".to_string(),
-                            required: true,
-                        },
-                        Parameter {
-                            name: "headers".to_string(),
-                            type_hint: "object".to_string(),
-                            description: "Request headers".to_string(),
-                            required: false,
-                        },
-                        Parameter {
-                            name: "body".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "Request body".to_string(),
-                            required: false,
-                        },
-                    ],
-                    example: json!({
-                        "type": "send_http2_request",
-                        "method": "GET",
-                        "path": "/api/status",
-                        "headers": {
-                            "Accept": "application/json"
-                        }
-                    }),
+                Parameter {
+                    name: "path".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Request path".to_string(),
+                    required: true,
                 },
-                ActionDefinition {
-                    name: "disconnect".to_string(),
-                    description: "Disconnect from the HTTP/2 server".to_string(),
-                    parameters: vec![],
-                    example: json!({
-                        "type": "disconnect"
-                    }),
+                Parameter {
+                    name: "headers".to_string(),
+                    type_hint: "object".to_string(),
+                    description: "Request headers".to_string(),
+                    required: false,
                 },
-            ]
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                ActionDefinition {
-                    name: "send_http2_request".to_string(),
-                    description: "Send another HTTP/2 request in response to received data".to_string(),
-                    parameters: vec![
-                        Parameter {
-                            name: "method".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "HTTP method".to_string(),
-                            required: true,
-                        },
-                        Parameter {
-                            name: "path".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "Request path".to_string(),
-                            required: true,
-                        },
-                        Parameter {
-                            name: "headers".to_string(),
-                            type_hint: "object".to_string(),
-                            description: "Request headers".to_string(),
-                            required: false,
-                        },
-                        Parameter {
-                            name: "body".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "Request body".to_string(),
-                            required: false,
-                        },
-                    ],
-                    example: json!({
-                        "type": "send_http2_request",
-                        "method": "POST",
-                        "path": "/api/data",
-                        "body": "{\"key\": \"value\"}"
-                    }),
+                Parameter {
+                    name: "body".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Request body".to_string(),
+                    required: false,
                 },
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "HTTP2"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            vec![
-                EventType {
-                    id: "http2_connected".to_string(),
-                    description: "Triggered when HTTP/2 client is initialized".to_string(),
-                    actions: vec![],
-                    parameters: vec![],
-                },
-                EventType {
-                    id: "http2_response_received".to_string(),
-                    description: "Triggered when HTTP/2 client receives a response".to_string(),
-                    actions: vec![],
-                    parameters: vec![],
-                },
-            ]
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>TCP>HTTP/2"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["http2", "http/2", "http 2", "http2 client", "connect to http2"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Experimental)
-                .implementation("reqwest HTTP/2 client library with http2_prior_knowledge")
-                .llm_control("Full control over requests (method, path, headers, body)")
-                .e2e_testing("HTTP/2 test server or nghttp2.org")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "HTTP/2 client for making multiplexed web requests"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Connect to https://http2.golang.org and fetch /reqinfo"
-        }
-        fn group_name(&self) -> &'static str {
-            "Core"
-        }
+            ],
+            example: json!({
+                "type": "send_http2_request",
+                "method": "POST",
+                "path": "/api/data",
+                "body": "{\"key\": \"value\"}"
+            }),
+        }]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "HTTP2"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        vec![
+            EventType {
+                id: "http2_connected".to_string(),
+                description: "Triggered when HTTP/2 client is initialized".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+            EventType {
+                id: "http2_response_received".to_string(),
+                description: "Triggered when HTTP/2 client receives a response".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+        ]
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>HTTP/2"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec![
+            "http2",
+            "http/2",
+            "http 2",
+            "http2 client",
+            "connect to http2",
+        ]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("reqwest HTTP/2 client library with http2_prior_knowledge")
+            .llm_control("Full control over requests (method, path, headers, body)")
+            .e2e_testing("HTTP/2 test server or nghttp2.org")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "HTTP/2 client for making multiplexed web requests"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Connect to https://http2.golang.org and fetch /reqinfo"
+    }
+    fn group_name(&self) -> &'static str {
+        "Core"
+    }
 }
 
 // Implement Client trait (client-specific functionality)
 impl Client for Http2ClientProtocol {
-        fn connect(
-            &self,
-            ctx: crate::protocol::ConnectContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::client::http2::Http2Client;
-                Http2Client::connect_with_llm_actions(
-                    ctx.remote_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.client_id,
-                )
-                .await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "send_http2_request" => {
-                    let method = action
-                        .get("method")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'method' field")?
-                        .to_string();
-    
-                    let path = action
-                        .get("path")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'path' field")?
-                        .to_string();
-    
-                    let headers = action
-                        .get("headers")
-                        .and_then(|v| v.as_object())
-                        .cloned();
-    
-                    let body = action
-                        .get("body")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-    
-                    // Return custom result with request data
-                    Ok(ClientActionResult::Custom {
-                        name: "http2_request".to_string(),
-                        data: json!({
-                            "method": method,
-                            "path": path,
-                            "headers": headers,
-                            "body": body,
-                        }),
-                    })
-                }
-                "disconnect" => Ok(ClientActionResult::Disconnect),
-                _ => Err(anyhow::anyhow!("Unknown HTTP/2 client action: {}", action_type)),
-            }
-        }
-}
+    fn connect(
+        &self,
+        ctx: crate::protocol::ConnectContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::client::http2::Http2Client;
+            Http2Client::connect_with_llm_actions(
+                ctx.remote_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.client_id,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
 
+        match action_type {
+            "send_http2_request" => {
+                let method = action
+                    .get("method")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'method' field")?
+                    .to_string();
+
+                let path = action
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'path' field")?
+                    .to_string();
+
+                let headers = action.get("headers").and_then(|v| v.as_object()).cloned();
+
+                let body = action
+                    .get("body")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                // Return custom result with request data
+                Ok(ClientActionResult::Custom {
+                    name: "http2_request".to_string(),
+                    data: json!({
+                        "method": method,
+                        "path": path,
+                        "headers": headers,
+                        "body": body,
+                    }),
+                })
+            }
+            "disconnect" => Ok(ClientActionResult::Disconnect),
+            _ => Err(anyhow::anyhow!(
+                "Unknown HTTP/2 client action: {}",
+                action_type
+            )),
+        }
+    }
+}

@@ -155,7 +155,10 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
 
             // Check if pip successfully found the package
             // pip index versions will show available versions if it can fetch the simple API
-            if stdout.contains("hello-world") || stdout.contains("Available versions") || stderr.contains("1.0.0") {
+            if stdout.contains("hello-world")
+                || stdout.contains("Available versions")
+                || stderr.contains("1.0.0")
+            {
                 println!("✓ pip successfully queried hello-world from PyPI server");
             } else {
                 println!("! pip query completed but may not have found package metadata");
@@ -170,7 +173,10 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
 
     // Test 5: Test 404 for non-existent package
     println!("\n[Test 5] Test 404 for non-existent package");
-    let nonexistent_url = format!("http://127.0.0.1:{}/simple/nonexistent-package/", test_state.port);
+    let nonexistent_url = format!(
+        "http://127.0.0.1:{}/simple/nonexistent-package/",
+        test_state.port
+    );
     let output = Command::new("curl")
         .arg("-s")
         .arg("-w")
@@ -184,7 +190,10 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
     let status_code = String::from_utf8_lossy(&output.stdout);
     println!("HTTP status code: {}", status_code);
     // Note: The LLM might not return 404 reliably, so we just check it responds
-    println!("✓ Server responded to non-existent package request (status: {})", status_code);
+    println!(
+        "✓ Server responded to non-existent package request (status: {})",
+        status_code
+    );
 
     // Cleanup
     std::fs::remove_dir_all(&temp_dir).ok();

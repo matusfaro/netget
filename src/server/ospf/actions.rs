@@ -45,10 +45,7 @@ impl OspfProtocol {
             .and_then(|v| v.as_u64())
             .unwrap_or(40) as u32;
 
-        let priority = action
-            .get("priority")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1) as u8;
+        let priority = action.get("priority").and_then(|v| v.as_u64()).unwrap_or(1) as u8;
 
         let _dr = action
             .get("dr")
@@ -66,7 +63,10 @@ impl OspfProtocol {
             .unwrap_or("multicast")
             .to_string();
 
-        debug!("OSPF sending Hello: router_id={}, area={}, priority={}, dest={}", router_id, area_id, priority, destination);
+        debug!(
+            "OSPF sending Hello: router_id={}, area={}, priority={}, dest={}",
+            router_id, area_id, priority, destination
+        );
 
         // Return structured action data - packet will be built in mod.rs
         Ok(ActionResult::Custom {
@@ -86,14 +86,20 @@ impl OspfProtocol {
             .and_then(|v| v.as_str())
             .unwrap_or("0.0.0.0");
 
-        let sequence = action
-            .get("sequence")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u32;
+        let sequence = action.get("sequence").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
 
-        let init = action.get("init").and_then(|v| v.as_bool()).unwrap_or(false);
-        let more = action.get("more").and_then(|v| v.as_bool()).unwrap_or(false);
-        let master = action.get("master").and_then(|v| v.as_bool()).unwrap_or(false);
+        let init = action
+            .get("init")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let more = action
+            .get("more")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let master = action
+            .get("master")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         let destination = action
             .get("destination")
@@ -101,7 +107,10 @@ impl OspfProtocol {
             .unwrap_or("multicast")
             .to_string();
 
-        debug!("OSPF sending Database Description: seq={}, init={}, more={}, master={}, dest={}", sequence, init, more, master, destination);
+        debug!(
+            "OSPF sending Database Description: seq={}, init={}, more={}, master={}, dest={}",
+            sequence, init, more, master, destination
+        );
 
         // Return structured action data - packet will be built in mod.rs
         Ok(ActionResult::Custom {
@@ -190,10 +199,7 @@ impl OspfProtocol {
 
     // Helper: Parse IPv4 address string to bytes
     fn parse_ipv4(ip: &str) -> Result<[u8; 4]> {
-        let parts: Vec<u8> = ip
-            .split('.')
-            .filter_map(|s| s.parse::<u8>().ok())
-            .collect();
+        let parts: Vec<u8> = ip.split('.').filter_map(|s| s.parse::<u8>().ok()).collect();
 
         if parts.len() == 4 {
             Ok([parts[0], parts[1], parts[2], parts[3]])
@@ -225,14 +231,35 @@ impl OspfProtocol {
 
     /// Build OSPF Hello packet from action data
     pub fn build_hello_packet(action: &serde_json::Value) -> Result<Vec<u8>> {
-        let router_id = action.get("router_id").and_then(|v| v.as_str()).unwrap_or("0.0.0.0");
-        let area_id = action.get("area_id").and_then(|v| v.as_str()).unwrap_or("0.0.0.0");
-        let network_mask = action.get("network_mask").and_then(|v| v.as_str()).unwrap_or("255.255.255.0");
-        let hello_interval = action.get("hello_interval").and_then(|v| v.as_u64()).unwrap_or(10) as u16;
-        let router_dead_interval = action.get("router_dead_interval").and_then(|v| v.as_u64()).unwrap_or(40) as u32;
+        let router_id = action
+            .get("router_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0.0.0.0");
+        let area_id = action
+            .get("area_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0.0.0.0");
+        let network_mask = action
+            .get("network_mask")
+            .and_then(|v| v.as_str())
+            .unwrap_or("255.255.255.0");
+        let hello_interval = action
+            .get("hello_interval")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(10) as u16;
+        let router_dead_interval = action
+            .get("router_dead_interval")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(40) as u32;
         let priority = action.get("priority").and_then(|v| v.as_u64()).unwrap_or(1) as u8;
-        let dr = action.get("dr").and_then(|v| v.as_str()).unwrap_or("0.0.0.0");
-        let bdr = action.get("bdr").and_then(|v| v.as_str()).unwrap_or("0.0.0.0");
+        let dr = action
+            .get("dr")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0.0.0.0");
+        let bdr = action
+            .get("bdr")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0.0.0.0");
 
         let mut msg = Vec::new();
 
@@ -275,12 +302,27 @@ impl OspfProtocol {
 
     /// Build OSPF Database Description packet from action data
     pub fn build_database_description_packet(action: &serde_json::Value) -> Result<Vec<u8>> {
-        let router_id = action.get("router_id").and_then(|v| v.as_str()).unwrap_or("0.0.0.0");
-        let area_id = action.get("area_id").and_then(|v| v.as_str()).unwrap_or("0.0.0.0");
+        let router_id = action
+            .get("router_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0.0.0.0");
+        let area_id = action
+            .get("area_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0.0.0.0");
         let sequence = action.get("sequence").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-        let init = action.get("init").and_then(|v| v.as_bool()).unwrap_or(false);
-        let more = action.get("more").and_then(|v| v.as_bool()).unwrap_or(false);
-        let master = action.get("master").and_then(|v| v.as_bool()).unwrap_or(false);
+        let init = action
+            .get("init")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let more = action
+            .get("more")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let master = action
+            .get("master")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         let mut msg = Vec::new();
 
@@ -298,9 +340,15 @@ impl OspfProtocol {
         msg.extend_from_slice(&[0, 0]); // Interface MTU
         msg.push(0); // Options
         let mut flags: u8 = 0;
-        if init { flags |= 0x04; }
-        if more { flags |= 0x02; }
-        if master { flags |= 0x01; }
+        if init {
+            flags |= 0x04;
+        }
+        if more {
+            flags |= 0x02;
+        }
+        if master {
+            flags |= 0x01;
+        }
         msg.push(flags);
         msg.extend_from_slice(&sequence.to_be_bytes());
 
@@ -317,8 +365,14 @@ impl OspfProtocol {
 
     /// Build OSPF Link State Request packet from action data
     pub fn build_link_state_request_packet(action: &serde_json::Value) -> Result<Vec<u8>> {
-        let router_id = action.get("router_id").and_then(|v| v.as_str()).unwrap_or("0.0.0.0");
-        let area_id = action.get("area_id").and_then(|v| v.as_str()).unwrap_or("0.0.0.0");
+        let router_id = action
+            .get("router_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0.0.0.0");
+        let area_id = action
+            .get("area_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0.0.0.0");
 
         let mut msg = Vec::new();
 
@@ -345,8 +399,14 @@ impl OspfProtocol {
 
     /// Build OSPF Link State Update packet from action data
     pub fn build_link_state_update_packet(action: &serde_json::Value) -> Result<Vec<u8>> {
-        let router_id = action.get("router_id").and_then(|v| v.as_str()).unwrap_or("0.0.0.0");
-        let area_id = action.get("area_id").and_then(|v| v.as_str()).unwrap_or("0.0.0.0");
+        let router_id = action
+            .get("router_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0.0.0.0");
+        let area_id = action
+            .get("area_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0.0.0.0");
 
         let mut msg = Vec::new();
 
@@ -376,8 +436,14 @@ impl OspfProtocol {
 
     /// Build OSPF Link State Acknowledgment packet from action data
     pub fn build_link_state_ack_packet(action: &serde_json::Value) -> Result<Vec<u8>> {
-        let router_id = action.get("router_id").and_then(|v| v.as_str()).unwrap_or("0.0.0.0");
-        let area_id = action.get("area_id").and_then(|v| v.as_str()).unwrap_or("0.0.0.0");
+        let router_id = action
+            .get("router_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0.0.0.0");
+        let area_id = action
+            .get("area_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0.0.0.0");
 
         let mut msg = Vec::new();
 
@@ -441,28 +507,28 @@ pub static OSPF_LINK_STATE_ACK_EVENT: LazyLock<EventType> = LazyLock::new(|| Eve
 
 // Implement Protocol trait (common functionality)
 impl Protocol for OspfProtocol {
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            vec![
-                ActionDefinition {
-                    name: "list_neighbors".to_string(),
-                    description: "List all OSPF neighbors and their states".to_string(),
-                    parameters: vec![],
-                    example: json!({
-                        "type": "list_neighbors"
-                    }),
-                },
-                ActionDefinition {
-                    name: "list_lsdb".to_string(),
-                    description: "List Link State Database entries".to_string(),
-                    parameters: vec![],
-                    example: json!({
-                        "type": "list_lsdb"
-                    }),
-                },
-            ]
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        vec![
+            ActionDefinition {
+                name: "list_neighbors".to_string(),
+                description: "List all OSPF neighbors and their states".to_string(),
+                parameters: vec![],
+                example: json!({
+                    "type": "list_neighbors"
+                }),
+            },
+            ActionDefinition {
+                name: "list_lsdb".to_string(),
+                description: "List Link State Database entries".to_string(),
+                parameters: vec![],
+                example: json!({
+                    "type": "list_lsdb"
+                }),
+            },
+        ]
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
                 ActionDefinition {
                     name: "send_hello".to_string(),
                     description: "Send OSPF Hello packet to discover/maintain neighbors".to_string(),
@@ -693,29 +759,31 @@ impl Protocol for OspfProtocol {
                     }),
                 },
             ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "OSPF"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            vec![
-                OSPF_HELLO_EVENT.clone(),
-                OSPF_DATABASE_DESCRIPTION_EVENT.clone(),
-                OSPF_LINK_STATE_REQUEST_EVENT.clone(),
-                OSPF_LINK_STATE_UPDATE_EVENT.clone(),
-                OSPF_LINK_STATE_ACK_EVENT.clone(),
-            ]
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP(89)>OSPF"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["ospf", "open shortest path first"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState, PrivilegeRequirement};
-    
-            ProtocolMetadataV2::builder()
+    }
+    fn protocol_name(&self) -> &'static str {
+        "OSPF"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        vec![
+            OSPF_HELLO_EVENT.clone(),
+            OSPF_DATABASE_DESCRIPTION_EVENT.clone(),
+            OSPF_LINK_STATE_REQUEST_EVENT.clone(),
+            OSPF_LINK_STATE_UPDATE_EVENT.clone(),
+            OSPF_LINK_STATE_ACK_EVENT.clone(),
+        ]
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP(89)>OSPF"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["ospf", "open shortest path first"]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{
+            DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2,
+        };
+
+        ProtocolMetadataV2::builder()
                 .state(DevelopmentState::Experimental)
                 .privilege_requirement(PrivilegeRequirement::Root)
                 .implementation("Manual OSPFv2 (RFC 2328), IP protocol 89, raw sockets")
@@ -723,99 +791,99 @@ impl Protocol for OspfProtocol {
                 .e2e_testing("Integration with real OSPF routers (FRR, BIRD)")
                 .notes("Requires root for raw sockets. TODO: DR/BDR election, SPF calculation, routing table, LSA flooding")
                 .build()
-        }
-        fn description(&self) -> &'static str {
-            "OSPF routing protocol server"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Start an OSPF server on interface 192.168.1.100 as router 1.1.1.1 in area 0.0.0.0"
-        }
-        fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-            vec![
-                ParameterDefinition {
-                    name: "router_id".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "OSPF router ID in IPv4 address format (e.g., 1.1.1.1)".to_string(),
-                    required: false,
-                    example: json!("1.1.1.1"),
-                },
-                ParameterDefinition {
-                    name: "area_id".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "OSPF area ID in IPv4 format (0.0.0.0 = backbone area)".to_string(),
-                    required: false,
-                    example: json!("0.0.0.0"),
-                },
-                ParameterDefinition {
-                    name: "network_mask".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Network mask (e.g., 255.255.255.0)".to_string(),
-                    required: false,
-                    example: json!("255.255.255.0"),
-                },
-                ParameterDefinition {
-                    name: "hello_interval".to_string(),
-                    type_hint: "integer".to_string(),
-                    description: "Hello packet interval in seconds (default 10)".to_string(),
-                    required: false,
-                    example: json!(10),
-                },
-                ParameterDefinition {
-                    name: "router_dead_interval".to_string(),
-                    type_hint: "integer".to_string(),
-                    description: "Router dead interval in seconds (default 40)".to_string(),
-                    required: false,
-                    example: json!(40),
-                },
-                ParameterDefinition {
-                    name: "router_priority".to_string(),
-                    type_hint: "integer".to_string(),
-                    description: "Router priority for DR election (0-255, default 1)".to_string(),
-                    required: false,
-                    example: json!(1),
-                },
-            ]
-        }
-        fn group_name(&self) -> &'static str {
-            "VPN & Routing"
-        }
+    }
+    fn description(&self) -> &'static str {
+        "OSPF routing protocol server"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Start an OSPF server on interface 192.168.1.100 as router 1.1.1.1 in area 0.0.0.0"
+    }
+    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
+        vec![
+            ParameterDefinition {
+                name: "router_id".to_string(),
+                type_hint: "string".to_string(),
+                description: "OSPF router ID in IPv4 address format (e.g., 1.1.1.1)".to_string(),
+                required: false,
+                example: json!("1.1.1.1"),
+            },
+            ParameterDefinition {
+                name: "area_id".to_string(),
+                type_hint: "string".to_string(),
+                description: "OSPF area ID in IPv4 format (0.0.0.0 = backbone area)".to_string(),
+                required: false,
+                example: json!("0.0.0.0"),
+            },
+            ParameterDefinition {
+                name: "network_mask".to_string(),
+                type_hint: "string".to_string(),
+                description: "Network mask (e.g., 255.255.255.0)".to_string(),
+                required: false,
+                example: json!("255.255.255.0"),
+            },
+            ParameterDefinition {
+                name: "hello_interval".to_string(),
+                type_hint: "integer".to_string(),
+                description: "Hello packet interval in seconds (default 10)".to_string(),
+                required: false,
+                example: json!(10),
+            },
+            ParameterDefinition {
+                name: "router_dead_interval".to_string(),
+                type_hint: "integer".to_string(),
+                description: "Router dead interval in seconds (default 40)".to_string(),
+                required: false,
+                example: json!(40),
+            },
+            ParameterDefinition {
+                name: "router_priority".to_string(),
+                type_hint: "integer".to_string(),
+                description: "Router priority for DR election (0-255, default 1)".to_string(),
+                required: false,
+                example: json!(1),
+            },
+        ]
+    }
+    fn group_name(&self) -> &'static str {
+        "VPN & Routing"
+    }
 }
 
 // Implement Server trait (server-specific functionality)
 impl Server for OspfProtocol {
-        fn spawn(
-            &self,
-            ctx: crate::protocol::SpawnContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::server::ospf::OspfServer;
-                OspfServer::spawn_with_llm_actions(
-                    ctx.listen_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.server_id,
-                    ctx.startup_params,
-                ).await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing action type")?;
-    
-            match action_type {
-                "send_hello" => self.execute_send_hello(action),
-                "send_database_description" => self.execute_send_database_description(action),
-                "send_link_state_request" => self.execute_send_link_state_request(action),
-                "send_link_state_update" => self.execute_send_link_state_update(action),
-                "send_link_state_ack" => self.execute_send_link_state_ack(action),
-                "wait_for_more" => Ok(ActionResult::WaitForMore),
-                _ => Err(anyhow::anyhow!("Unknown OSPF action type: {}", action_type)),
-            }
-        }
-}
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::ospf::OspfServer;
+            OspfServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+                ctx.startup_params,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing action type")?;
 
+        match action_type {
+            "send_hello" => self.execute_send_hello(action),
+            "send_database_description" => self.execute_send_database_description(action),
+            "send_link_state_request" => self.execute_send_link_state_request(action),
+            "send_link_state_update" => self.execute_send_link_state_update(action),
+            "send_link_state_ack" => self.execute_send_link_state_ack(action),
+            "wait_for_more" => Ok(ActionResult::WaitForMore),
+            _ => Err(anyhow::anyhow!("Unknown OSPF action type: {}", action_type)),
+        }
+    }
+}

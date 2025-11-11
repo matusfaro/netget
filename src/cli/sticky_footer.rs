@@ -13,11 +13,13 @@ use crossterm::{
     terminal::{Clear, ClearType},
 };
 use std::io::Write;
-use tracing::debug;
 use tokio::sync::oneshot;
+use tracing::debug;
 
 use crate::state::app_state::{ConversationInfo, WebApprovalResponse, WebSearchMode};
-use crate::ui::app::{ClientDisplayInfo, ConnectionDisplayInfo, LogLevel, PacketStats, ServerDisplayInfo};
+use crate::ui::app::{
+    ClientDisplayInfo, ConnectionDisplayInfo, LogLevel, PacketStats, ServerDisplayInfo,
+};
 
 use super::input_state::InputState;
 use super::theme::ColorPalette;
@@ -106,7 +108,12 @@ pub struct StickyFooter {
 
 impl StickyFooter {
     /// Create a new sticky footer
-    pub fn new(width: u16, height: u16, system_capabilities: crate::privilege::SystemCapabilities, palette: ColorPalette) -> Result<Self> {
+    pub fn new(
+        width: u16,
+        height: u16,
+        system_capabilities: crate::privilege::SystemCapabilities,
+        palette: ColorPalette,
+    ) -> Result<Self> {
         let mut footer = Self {
             terminal_width: width,
             terminal_height: height,
@@ -235,7 +242,13 @@ impl StickyFooter {
         // Calculate inputs column height (User + Scripting conversations)
         let input_convs: Vec<_> = conversations
             .iter()
-            .filter(|c| matches!(&c.source, crate::state::app_state::ConversationSource::User | crate::state::app_state::ConversationSource::Scripting))
+            .filter(|c| {
+                matches!(
+                    &c.source,
+                    crate::state::app_state::ConversationSource::User
+                        | crate::state::app_state::ConversationSource::Scripting
+                )
+            })
             .collect();
 
         let mut inputs_height = 0u16;
@@ -268,7 +281,10 @@ impl StickyFooter {
                     servers_height += max_to_show.min(server_connections.len()) as u16;
 
                     // Add conversation sub-items for each connection
-                    for conn in server_connections.iter().take(max_to_show.min(server_connections.len())) {
+                    for conn in server_connections
+                        .iter()
+                        .take(max_to_show.min(server_connections.len()))
+                    {
                         // Count conversations for this specific connection
                         let conn_convs: Vec<_> = conversations
                             .iter()
@@ -340,10 +356,7 @@ impl StickyFooter {
         let footer_height = self.calculate_footer_height();
 
         // Ensure scroll region is at least 5 lines
-        self.scroll_region_height = self
-            .terminal_height
-            .saturating_sub(footer_height)
-            .max(5);
+        self.scroll_region_height = self.terminal_height.saturating_sub(footer_height).max(5);
     }
 
     /// Render the sticky footer (overlay at bottom of terminal)
@@ -389,7 +402,8 @@ impl StickyFooter {
 
             // Estimate how many lines the old footer took up after wrapping
             // Use last_footer_height (from before width change) and multiply by ratio
-            let estimated_wrapped_lines = (self.last_footer_height as f32 * width_ratio).ceil() as u16;
+            let estimated_wrapped_lines =
+                (self.last_footer_height as f32 * width_ratio).ceil() as u16;
 
             // Clear from terminal bottom up by this estimated amount
             let clear_start = self.terminal_height.saturating_sub(estimated_wrapped_lines);
@@ -444,10 +458,14 @@ impl StickyFooter {
                 connections,
                 expand_all,
                 conversations,
-            } => self.calculate_normal_content_lines(servers, clients, connections, *expand_all, conversations),
-            FooterContent::SlashCommands { suggestions } => {
-                suggestions.len().min(10) as u16
-            }
+            } => self.calculate_normal_content_lines(
+                servers,
+                clients,
+                connections,
+                *expand_all,
+                conversations,
+            ),
+            FooterContent::SlashCommands { suggestions } => suggestions.len().min(10) as u16,
         };
 
         // If we have content, render it directly above the input box
@@ -462,7 +480,15 @@ impl StickyFooter {
                     connections,
                     expand_all,
                     conversations,
-                } => self.render_normal_content(stdout, content_start, servers, clients, connections, *expand_all, conversations)?,
+                } => self.render_normal_content(
+                    stdout,
+                    content_start,
+                    servers,
+                    clients,
+                    connections,
+                    *expand_all,
+                    conversations,
+                )?,
                 FooterContent::SlashCommands { suggestions } => {
                     // Slash commands still need a separator
                     let separator_before_content = content_start - 1;
@@ -564,10 +590,14 @@ impl StickyFooter {
                 connections,
                 expand_all,
                 conversations,
-            } => self.calculate_normal_content_lines(servers, clients, connections, *expand_all, conversations),
-            FooterContent::SlashCommands { suggestions } => {
-                suggestions.len().min(10) as u16
-            }
+            } => self.calculate_normal_content_lines(
+                servers,
+                clients,
+                connections,
+                *expand_all,
+                conversations,
+            ),
+            FooterContent::SlashCommands { suggestions } => suggestions.len().min(10) as u16,
         };
 
         let input_lines = self.calculate_input_lines();
@@ -617,18 +647,35 @@ impl StickyFooter {
         // Filter conversations for inputs column
         let input_convs: Vec<_> = conversations
             .iter()
-            .filter(|c| matches!(&c.source, crate::state::app_state::ConversationSource::User | crate::state::app_state::ConversationSource::Scripting))
+            .filter(|c| {
+                matches!(
+                    &c.source,
+                    crate::state::app_state::ConversationSource::User
+                        | crate::state::app_state::ConversationSource::Scripting
+                )
+            })
             .collect();
 
         // Calculate heights for each column
-        let inputs_height = if input_convs.is_empty() { 0 } else { 1 + input_convs.len() as u16 };
+        let inputs_height = if input_convs.is_empty() {
+            0
+        } else {
+            1 + input_convs.len() as u16
+        };
         let mut servers_height = 0u16;
         if !servers.is_empty() {
             servers_height = 1; // Header
             for server in servers {
                 servers_height += 1; // Server line
-                let server_conns: Vec<_> = connections.iter().filter(|c| c.server_id == server.id).collect();
-                let max_to_show = if expand_all { server_conns.len() } else { 10.min(server_conns.len()) };
+                let server_conns: Vec<_> = connections
+                    .iter()
+                    .filter(|c| c.server_id == server.id)
+                    .collect();
+                let max_to_show = if expand_all {
+                    server_conns.len()
+                } else {
+                    10.min(server_conns.len())
+                };
                 servers_height += max_to_show as u16;
 
                 // Add conversation sub-items for each connection
@@ -652,7 +699,11 @@ impl StickyFooter {
         }
 
         // Calculate clients height
-        let clients_height = if clients.is_empty() { 0 } else { 1 + clients.len() as u16 };
+        let clients_height = if clients.is_empty() {
+            0
+        } else {
+            1 + clients.len() as u16
+        };
 
         // If all columns are empty, don't render anything
         if inputs_height == 0 && servers_height == 0 && clients_height == 0 {
@@ -680,7 +731,11 @@ impl StickyFooter {
             let render_clients = line_offset >= clients_start_offset;
 
             // Clear the line first
-            execute!(stdout, cursor::MoveTo(0, current_line), Clear(ClearType::CurrentLine))?;
+            execute!(
+                stdout,
+                cursor::MoveTo(0, current_line),
+                Clear(ClearType::CurrentLine)
+            )?;
 
             // Render inputs column
             if render_inputs {
@@ -738,8 +793,12 @@ impl StickyFooter {
                     for server in servers {
                         if content_line_idx == 0 {
                             // This is the server line
-                            let text = format!("#{} {} :{} - {}", server.id, server.protocol, server.port, server.status);
-                            let is_inactive = server.status == "Stopped" || server.status.starts_with("Error:");
+                            let text = format!(
+                                "#{} {} :{} - {}",
+                                server.id, server.protocol, server.port, server.status
+                            );
+                            let is_inactive =
+                                server.status == "Stopped" || server.status.starts_with("Error:");
                             execute!(
                                 stdout,
                                 cursor::MoveTo(servers_column_start, current_line),
@@ -756,15 +815,23 @@ impl StickyFooter {
                         content_line_idx -= 1;
 
                         // Check connections for this server
-                        let server_conns: Vec<_> = connections.iter().filter(|c| c.server_id == server.id).collect();
-                        let max_to_show = if expand_all { server_conns.len() } else { 10.min(server_conns.len()) };
+                        let server_conns: Vec<_> = connections
+                            .iter()
+                            .filter(|c| c.server_id == server.id)
+                            .collect();
+                        let max_to_show = if expand_all {
+                            server_conns.len()
+                        } else {
+                            10.min(server_conns.len())
+                        };
 
                         // Check if this is a connection line or a conversation sub-item
                         let mut found = false;
                         for (conn_idx, conn) in server_conns.iter().take(max_to_show).enumerate() {
                             if conn_idx as u16 == content_line_idx {
                                 // This is the connection line
-                                let text = format!("  #{} {} {}", conn.id, conn.address, conn.state);
+                                let text =
+                                    format!("  #{} {} {}", conn.id, conn.address, conn.state);
                                 let is_closed = conn.state == "Closed";
                                 execute!(
                                     stdout,
@@ -812,7 +879,11 @@ impl StickyFooter {
                                 if is_completed {
                                     execute!(stdout, SetForegroundColor(self.palette.dimmed))?;
                                 }
-                                execute!(stdout, Print(format!("    {}", conv.details)), ResetColor)?;
+                                execute!(
+                                    stdout,
+                                    Print(format!("    {}", conv.details)),
+                                    ResetColor
+                                )?;
                                 found = true;
                                 break;
                             }
@@ -862,8 +933,12 @@ impl StickyFooter {
                     let client_idx = (clients_line_idx - 1) as usize;
                     if client_idx < clients.len() {
                         let client = &clients[client_idx];
-                        let text = format!("{} {} → {} ({})", client.id, client.protocol, client.remote_addr, client.status);
-                        let is_inactive = client.status == "Disconnected" || client.status.starts_with("Error:");
+                        let text = format!(
+                            "{} {} → {} ({})",
+                            client.id, client.protocol, client.remote_addr, client.status
+                        );
+                        let is_inactive =
+                            client.status == "Disconnected" || client.status.starts_with("Error:");
                         execute!(
                             stdout,
                             cursor::MoveTo(clients_column_start, current_line),
@@ -948,7 +1023,12 @@ impl StickyFooter {
     }
 
     /// Render top border of input box with column connections (┌──┴──┐)
-    fn render_input_box_top_with_columns(&self, stdout: &mut impl Write, line: u16, content: &FooterContent) -> Result<u16> {
+    fn render_input_box_top_with_columns(
+        &self,
+        stdout: &mut impl Write,
+        line: u16,
+        content: &FooterContent,
+    ) -> Result<u16> {
         // Start with the left corner
         execute!(
             stdout,
@@ -960,11 +1040,22 @@ impl StickyFooter {
         // Determine where to place ┴ join characters based on content type
         let mut join_positions = Vec::new();
 
-        if let FooterContent::Normal { servers, conversations, .. } = content {
+        if let FooterContent::Normal {
+            servers,
+            conversations,
+            ..
+        } = content
+        {
             // Filter conversations for inputs column
             let input_convs: Vec<_> = conversations
                 .iter()
-                .filter(|c| matches!(&c.source, crate::state::app_state::ConversationSource::User | crate::state::app_state::ConversationSource::Scripting))
+                .filter(|c| {
+                    matches!(
+                        &c.source,
+                        crate::state::app_state::ConversationSource::User
+                            | crate::state::app_state::ConversationSource::Scripting
+                    )
+                })
                 .collect();
 
             // Add ┴ at inputs column position if inputs exist
@@ -1012,7 +1103,6 @@ impl StickyFooter {
         )?;
         Ok(line + 1)
     }
-
 
     /// Render input field with rectangular box
     fn render_input(&self, stdout: &mut impl Write, start_line: u16) -> Result<u16> {
@@ -1075,11 +1165,17 @@ impl StickyFooter {
         // Check how many protocols are excluded
         tracing::debug!("get_dependency_status: Accessing server registry...");
         let server_excluded = registry().get_excluded_protocols(&self.system_capabilities);
-        tracing::debug!("get_dependency_status: Server registry accessed, {} excluded", server_excluded.len());
+        tracing::debug!(
+            "get_dependency_status: Server registry accessed, {} excluded",
+            server_excluded.len()
+        );
 
         tracing::debug!("get_dependency_status: Accessing client registry...");
         let client_excluded = CLIENT_REGISTRY.get_excluded_protocols(&self.system_capabilities);
-        tracing::debug!("get_dependency_status: Client registry accessed, {} excluded", client_excluded.len());
+        tracing::debug!(
+            "get_dependency_status: Client registry accessed, {} excluded",
+            client_excluded.len()
+        );
 
         let total_excluded = server_excluded.len() + client_excluded.len();
 
@@ -1088,7 +1184,7 @@ impl StickyFooter {
         } else {
             (
                 format!("{} excluded (/env)", total_excluded),
-                self.palette.ask
+                self.palette.ask,
             )
         }
     }
@@ -1102,10 +1198,15 @@ impl StickyFooter {
 
         // Determine script status and color based on scripting_env value
         // scripting_env contains the mode: "Off", "On", "Python", "JavaScript", "Go", "Perl"
-        let (script_status, script_color) = if self.connection_info.scripting_env == "Off" || self.connection_info.scripting_env.is_empty() {
+        let (script_status, script_color) = if self.connection_info.scripting_env == "Off"
+            || self.connection_info.scripting_env.is_empty()
+        {
             ("OFF", self.palette.failure)
         } else {
-            (self.connection_info.scripting_env.as_str(), self.palette.success)
+            (
+                self.connection_info.scripting_env.as_str(),
+                self.palette.success,
+            )
         };
 
         // Determine handler color: green for ANY, yellow for others
@@ -1157,7 +1258,10 @@ impl StickyFooter {
         // Add dependency status indicator
         tracing::debug!("render_status_bar: Getting dependency status...");
         let (dep_status, dep_color) = self.get_dependency_status();
-        tracing::debug!("render_status_bar: Dependency status retrieved: '{}'", dep_status);
+        tracing::debug!(
+            "render_status_bar: Dependency status retrieved: '{}'",
+            dep_status
+        );
         if !dep_status.is_empty() {
             execute!(
                 stdout,
@@ -1178,9 +1282,7 @@ impl StickyFooter {
         let (cursor_row, cursor_col) = self.input.cursor_position();
 
         // Calculate visual position considering wrapping, box borders, and "> " prefix
-        let input_start_line = self.terminal_height
-            - self.calculate_input_lines()
-            - 2; // -2 for status bar and input_box_bottom
+        let input_start_line = self.terminal_height - self.calculate_input_lines() - 2; // -2 for status bar and input_box_bottom
 
         let mut visual_row = input_start_line;
         let mut visual_col = 2; // Start at column 2 to account for "│ " left border
@@ -1254,11 +1356,17 @@ impl StickyFooter {
     }
 
     /// Render approval prompt when web search approval is pending
-    fn render_approval_prompt(&self, stdout: &mut impl Write, start_line: u16, url: &str) -> Result<u16> {
+    fn render_approval_prompt(
+        &self,
+        stdout: &mut impl Write,
+        start_line: u16,
+        url: &str,
+    ) -> Result<u16> {
         let mut current_line = start_line;
 
         // Parse URL to extract protocol, domain and path
-        let (protocol, domain, path) = if url.starts_with("http://") || url.starts_with("https://") {
+        let (protocol, domain, path) = if url.starts_with("http://") || url.starts_with("https://")
+        {
             // Parse as URL
             if let Ok(parsed_url) = url::Url::parse(url) {
                 let protocol = parsed_url.scheme().to_string() + "://";

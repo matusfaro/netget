@@ -9,6 +9,7 @@
 ## Test Execution
 
 ### Prerequisites
+
 ```bash
 # Build release binary
 ./cargo-isolated.sh build --release --no-default-features --features torrent-peer
@@ -22,6 +23,7 @@ pip3 install bencode.py
 ```
 
 ### Running Tests
+
 ```bash
 # Run peer E2E tests only
 ./cargo-isolated.sh test --no-default-features --features torrent-peer --test torrent_peer_e2e
@@ -36,6 +38,7 @@ pip3 install bencode.py
 
 **Target**: < 10 LLM calls per test suite
 **Actual Breakdown**:
+
 - **Server startup**: 1 call (parse prompt)
 - **First handshake**: 1 call (new event type)
 - **Subsequent handshakes**: 0 calls (pattern reuse)
@@ -49,6 +52,7 @@ pip3 install bencode.py
 ## Runtime Expectations
 
 **Per Test**:
+
 - Server startup: 5-10s (LLM parses instruction)
 - Handshake exchange: 0.5-2s (first slower, subsequent faster)
 - Per piece request: 0.5-2s
@@ -63,10 +67,13 @@ pip3 install bencode.py
 **Objective**: Verify peer handshake protocol
 
 **Setup**:
+
 1. Start NetGet peer on port {AVAILABLE_PORT}
-2. Prompt: "Start a BitTorrent peer. Respond to handshakes with peer ID '-NT0001-xxxxxxxxxxxx'. Echo back the received info_hash."
+2. Prompt: "Start a BitTorrent peer. Respond to handshakes with peer ID '-NT0001-xxxxxxxxxxxx'. Echo back the received
+   info_hash."
 
 **Test Steps**:
+
 1. Create test info_hash (20 bytes): `0123456789abcdef0123456789abcdef01234567`
 2. Connect via TCP to NetGet peer
 3. Send handshake:
@@ -81,12 +88,13 @@ pip3 install bencode.py
    ```
 4. Read response handshake (68 bytes)
 5. Verify response:
-   - pstrlen == 19
-   - pstr == "BitTorrent protocol"
-   - info_hash matches (bytes 28-48)
-   - peer_id present (bytes 48-68)
+    - pstrlen == 19
+    - pstr == "BitTorrent protocol"
+    - info_hash matches (bytes 28-48)
+    - peer_id present (bytes 48-68)
 
 **Validation**:
+
 ```rust
 let mut response = vec![0u8; 68];
 stream.read_exact(&mut response).await?;
@@ -106,9 +114,11 @@ println!("Peer ID: {}", peer_id_resp);
 **Objective**: Test bitfield message (seeder announces pieces)
 
 **Setup**:
+
 1. Prompt: "Start a BitTorrent seeder. After handshake, send bitfield 'ff' (all 8 pieces available)."
 
 **Test Steps**:
+
 1. Connect and complete handshake
 2. Wait for bitfield message:
    ```
@@ -129,6 +139,7 @@ println!("Peer ID: {}", peer_id_resp);
    ```
 
 **Bitfield Verification**:
+
 ```rust
 // Parse bitfield bits
 fn parse_bitfield(bitfield: &[u8]) -> Vec<bool> {
@@ -150,9 +161,11 @@ println!("Pieces: {:?}", pieces);  // [true, true, true, ...]
 **Objective**: Test connection state management
 
 **Setup**:
+
 1. Prompt: "Start a BitTorrent peer. After handshake, send unchoke message. If peer sends request, choke them."
 
 **Test Steps**:
+
 1. Complete handshake
 2. Wait for unchoke message:
    ```
@@ -179,6 +192,7 @@ println!("Pieces: {:?}", pieces);  // [true, true, true, ...]
    ```
 
 **Validation**:
+
 ```rust
 let mut msg_buf = vec![0u8; 5];
 stream.read_exact(&mut msg_buf).await?;
@@ -192,9 +206,12 @@ assert_eq!(msg_buf[4], 0, "Expected choke message");
 **Objective**: Test actual piece data transfer
 
 **Setup**:
-1. Prompt: "Start a BitTorrent seeder. You have all pieces. For piece requests, send fake data '48656c6c6f' (hex for 'Hello'). Keep peers unchoked."
+
+1. Prompt: "Start a BitTorrent seeder. You have all pieces. For piece requests, send fake data '48656c6c6f' (hex for '
+   Hello'). Keep peers unchoked."
 
 **Test Steps**:
+
 1. Complete handshake
 2. Wait for unchoke (if seeder sends it)
 3. Send interested:
@@ -219,6 +236,7 @@ assert_eq!(msg_buf[4], 0, "Expected choke message");
 6. Verify block data
 
 **Validation**:
+
 ```rust
 // Read length
 let mut len_buf = [0u8; 4];
@@ -246,9 +264,11 @@ println!("Received: {}", String::from_utf8_lossy(block));  // "Hello"
 **Objective**: Test piece availability announcements
 
 **Setup**:
+
 1. Prompt: "Start a BitTorrent leecher. After handshake, send have messages for pieces 0, 1, 2."
 
 **Test Steps**:
+
 1. Complete handshake
 2. Read have messages:
    ```
@@ -258,6 +278,7 @@ println!("Received: {}", String::from_utf8_lossy(block));  // "Hello"
    ```
 
 **Validation**:
+
 ```rust
 for expected_piece in 0..3 {
     let mut msg = vec![0u8; 9];
@@ -275,15 +296,19 @@ for expected_piece in 0..3 {
 **Objective**: Test concurrent peer connections
 
 **Setup**:
-1. Prompt: "Start a BitTorrent seeder. Handle multiple peer connections simultaneously. Track each peer's state independently."
+
+1. Prompt: "Start a BitTorrent seeder. Handle multiple peer connections simultaneously. Track each peer's state
+   independently."
 
 **Test Steps**:
+
 1. Open 3 TCP connections simultaneously
 2. Each sends handshake with different peer_id
 3. Verify each receives independent responses
 4. Send requests on connection 1, verify only connection 1 gets pieces
 
 **Validation**:
+
 ```rust
 let mut handles = Vec::new();
 
@@ -309,9 +334,11 @@ for handle in handles {
 **Objective**: Test connection maintenance
 
 **Setup**:
+
 1. Prompt: "Start a BitTorrent peer. Send keepalive messages every 5 seconds."
 
 **Test Steps**:
+
 1. Complete handshake
 2. Wait up to 10 seconds
 3. Verify keepalive received:
@@ -320,6 +347,7 @@ for handle in handles {
    ```
 
 **Validation**:
+
 ```rust
 tokio::select! {
     result = stream.read_exact(&mut buf) => {
@@ -337,6 +365,7 @@ tokio::select! {
 ### Using transmission-cli
 
 **Create Test Torrent and Seeder**:
+
 ```bash
 # Create dummy file
 dd if=/dev/zero of=test.dat bs=1M count=10
@@ -352,6 +381,7 @@ transmission-cli test.torrent --peer 127.0.0.1:51413
 ```
 
 **Verify**:
+
 - transmission connects to NetGet
 - Handshake exchanged
 - Bitfield/pieces transferred
@@ -360,6 +390,7 @@ transmission-cli test.torrent --peer 127.0.0.1:51413
 ### Using aria2
 
 **Download from NetGet Seeder**:
+
 ```bash
 aria2c --bt-enable-lpd=false --enable-dht=false \
        --bt-external-ip=127.0.0.1 \
@@ -369,6 +400,7 @@ aria2c --bt-enable-lpd=false --enable-dht=false \
 ```
 
 **Add NetGet as peer** (manual connection):
+
 ```bash
 # aria2 doesn't support manual peer addition easily
 # Use transmission or custom Python client instead
@@ -377,6 +409,7 @@ aria2c --bt-enable-lpd=false --enable-dht=false \
 ### Custom Python Client
 
 **Simple Peer Client**:
+
 ```python
 #!/usr/bin/env python3
 import socket
@@ -422,6 +455,7 @@ sock.close()
 ## Test Helpers
 
 **Custom Helpers Needed**:
+
 ```rust
 /// Build handshake message
 fn build_handshake(info_hash: &str, peer_id: &str) -> Vec<u8> {
@@ -480,7 +514,8 @@ fn build_request(index: u32, begin: u32, length: u32) -> Vec<u8> {
 
 ## Known Issues
 
-1. **Fake Piece Data**: LLM doesn't have real torrent files, so piece data is random/fake. This is expected for testing protocol compliance, not actual file transfer.
+1. **Fake Piece Data**: LLM doesn't have real torrent files, so piece data is random/fake. This is expected for testing
+   protocol compliance, not actual file transfer.
 
 2. **No Piece Verification**: SHA-1 hashes not checked. Real clients may reject pieces.
 
@@ -493,11 +528,13 @@ fn build_request(index: u32, begin: u32, length: u32) -> Vec<u8> {
 ## Debugging
 
 **Enable TRACE logging**:
+
 ```bash
 RUST_LOG=trace ./target/release/netget
 ```
 
 **Wireshark Capture**:
+
 ```bash
 sudo tcpdump -i lo -n -X 'tcp port 51413' -w peer_traffic.pcap
 
@@ -506,6 +543,7 @@ wireshark peer_traffic.pcap
 ```
 
 **Hex Dump Messages**:
+
 ```bash
 # In tests, log all messages
 println!("Sent: {}", hex::encode(&message));
@@ -515,17 +553,20 @@ println!("Received: {}", hex::encode(&response));
 ## Performance Benchmarks
 
 **Single Connection**:
+
 - Handshake: ~1-3s (first, with LLM)
 - Piece request: ~1-2s (first, then faster)
 - 10 sequential piece requests: ~5-10s (pattern reuse)
 
 **Multiple Connections** (3 simultaneous):
+
 - Handshakes: ~3-5s (processed concurrently)
 - Requests: ~10-15s (serialized per connection)
 
 ## Success Criteria
 
 ✅ **Pass Criteria**:
+
 - Handshake exchange successful with real clients
 - Bitfield/Have messages parsed correctly
 - Piece requests receive valid responses
@@ -533,6 +574,7 @@ println!("Received: {}", hex::encode(&response));
 - < 10 LLM calls total
 
 ❌ **Failure Indicators**:
+
 - Handshake parse errors
 - Invalid message formats (wrong length, bad encoding)
 - Connection drops immediately after handshake

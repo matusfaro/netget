@@ -2,7 +2,8 @@
 
 ## Overview
 
-Tests for the WebDAV client protocol verify LLM-controlled WebDAV operations including PROPFIND, MKCOL, COPY, MOVE, DELETE, PUT, and GET.
+Tests for the WebDAV client protocol verify LLM-controlled WebDAV operations including PROPFIND, MKCOL, COPY, MOVE,
+DELETE, PUT, and GET.
 
 ## Test Approach
 
@@ -11,29 +12,30 @@ Tests for the WebDAV client protocol verify LLM-controlled WebDAV operations inc
 ### Test Categories
 
 1. **Basic Connectivity**
-   - Test client initialization
-   - Verify protocol registration
-   - Check connection establishment
+    - Test client initialization
+    - Verify protocol registration
+    - Check connection establishment
 
 2. **WebDAV Operations**
-   - PROPFIND (directory listing)
-   - MKCOL (create collection/directory)
-   - PUT (upload file)
-   - GET (download file)
-   - COPY (copy resource)
-   - MOVE (move/rename resource)
-   - DELETE (delete resource)
+    - PROPFIND (directory listing)
+    - MKCOL (create collection/directory)
+    - PUT (upload file)
+    - GET (download file)
+    - COPY (copy resource)
+    - MOVE (move/rename resource)
+    - DELETE (delete resource)
 
 3. **LLM Control**
-   - Verify LLM interprets WebDAV instructions
-   - Check LLM constructs proper WebDAV requests
-   - Validate LLM processes XML responses
+    - Verify LLM interprets WebDAV instructions
+    - Check LLM constructs proper WebDAV requests
+    - Validate LLM processes XML responses
 
 ## LLM Call Budget
 
 **Target: < 10 LLM calls per test suite**
 
 Current test plan:
+
 1. `test_webdav_client_propfind`: 2 LLM calls (server + client)
 2. `test_webdav_client_llm_controlled`: 2 LLM calls (server + client)
 
@@ -51,6 +53,7 @@ Current test plan:
 - **Full suite**: 5-10 seconds
 
 Fast execution due to:
+
 - Local connections (127.0.0.1)
 - Simple WebDAV operations
 - Minimal LLM calls
@@ -58,6 +61,7 @@ Fast execution due to:
 ## Test Server
 
 Tests use NetGet's built-in WebDAV server:
+
 - Listens on `{AVAILABLE_PORT}` (dynamically allocated)
 - Responds to WebDAV methods
 - LLM-controlled responses
@@ -92,12 +96,14 @@ Tests use NetGet's built-in WebDAV server:
 ## Test Validation
 
 Tests validate:
+
 - ✅ Client protocol is "WebDAV"
 - ✅ Client output contains WebDAV-related keywords
 - ✅ Client connects successfully
 - ✅ LLM generates appropriate WebDAV actions
 
 Tests do NOT validate:
+
 - ❌ Exact XML structure (LLM-dependent)
 - ❌ Server response correctness (tested in server tests)
 - ❌ Complex WebDAV features (versioning, ACL, etc.)

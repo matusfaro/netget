@@ -74,8 +74,7 @@ impl Drop for OllamaLockGuard {
 }
 
 /// Structured response from the LLM
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct LlmResponse {
     /// Data to send over the connection (None = no output)
     #[serde(default)]
@@ -105,7 +104,6 @@ pub struct LlmResponse {
     #[serde(default)]
     pub append_memory: Option<String>,
 }
-
 
 impl LlmResponse {
     /// Parse from JSON string with fallback to legacy text format
@@ -435,7 +433,10 @@ impl OllamaClient {
         // This allows tests to inject predetermined responses without requiring Ollama
         match std::env::var("NETGET_TEST_MOCK_LLM_RESPONSE") {
             Ok(mock_response) => {
-                info!("🔧 TEST MODE: Using mock LLM response (length: {} chars)", mock_response.len());
+                info!(
+                    "🔧 TEST MODE: Using mock LLM response (length: {} chars)",
+                    mock_response.len()
+                );
                 debug!("Mock response: {}", mock_response);
                 return Ok(mock_response);
             }
@@ -515,7 +516,10 @@ impl OllamaClient {
         // TEST-ONLY: Check for mock response environment variable
         match std::env::var("NETGET_TEST_MOCK_LLM_RESPONSE") {
             Ok(mock_response) => {
-                info!("🔧 TEST MODE: Using mock LLM response (length: {} chars)", mock_response.len());
+                info!(
+                    "🔧 TEST MODE: Using mock LLM response (length: {} chars)",
+                    mock_response.len()
+                );
                 debug!("Mock response: {}", mock_response);
                 return Ok(mock_response);
             }
@@ -526,7 +530,11 @@ impl OllamaClient {
 
         let url = format!("{}/api/chat", self.base_url);
 
-        debug!("Sending chat request to Ollama (model: {}, {} messages)", model, messages.len());
+        debug!(
+            "Sending chat request to Ollama (model: {}, {} messages)",
+            model,
+            messages.len()
+        );
         if let Some(ref schema) = format {
             debug!("Using structured output with JSON schema");
             debug!(
@@ -535,7 +543,10 @@ impl OllamaClient {
             );
         }
         for (i, msg) in messages.iter().enumerate() {
-            debug!("Message {}: [{}] {}", i + 1, msg.role,
+            debug!(
+                "Message {}: [{}] {}",
+                i + 1,
+                msg.role,
                 if msg.content.len() > 200 {
                     format!("{}...", &msg.content[..200])
                 } else {
@@ -642,7 +653,9 @@ impl OllamaClient {
         model: &str,
         prompt_builder: F,
         max_iterations: usize,
-        approval_tx: Option<tokio::sync::mpsc::UnboundedSender<crate::state::app_state::WebApprovalRequest>>,
+        approval_tx: Option<
+            tokio::sync::mpsc::UnboundedSender<crate::state::app_state::WebApprovalRequest>,
+        >,
         web_search_mode: crate::state::app_state::WebSearchMode,
     ) -> Result<Vec<serde_json::Value>>
     where
@@ -703,7 +716,9 @@ impl OllamaClient {
                 match ToolAction::from_json(&tool_json) {
                     Ok(tool_action) => {
                         info!("→ Executing tool: {}", tool_action.describe());
-                        let result = execute_tool(&tool_action, approval_tx.as_ref(), web_search_mode, None).await;
+                        let result =
+                            execute_tool(&tool_action, approval_tx.as_ref(), web_search_mode, None)
+                                .await;
                         info!("  Result: {}", result.summary());
                         tool_results.push(result);
                     }

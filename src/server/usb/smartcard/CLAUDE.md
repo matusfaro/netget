@@ -2,7 +2,9 @@
 
 ## Overview
 
-The USB Smart Card Reader (CCID) server creates a virtual smart card reader using the USB/IP protocol. This allows an LLM to control a virtual smart card that can be accessed by applications through PC/SC (Personal Computer/Smart Card) middleware, enabling smart card authentication, digital signatures, and secure storage operations.
+The USB Smart Card Reader (CCID) server creates a virtual smart card reader using the USB/IP protocol. This allows an
+LLM to control a virtual smart card that can be accessed by applications through PC/SC (Personal Computer/Smart Card)
+middleware, enabling smart card authentication, digital signatures, and secure storage operations.
 
 ## Architecture
 
@@ -43,6 +45,7 @@ The USB Smart Card Reader (CCID) server creates a virtual smart card reader usin
 **bcdCCID**: 0x0110 (CCID version 1.10)
 
 **Supported Features:**
+
 - Automatic parameter configuration
 - Automatic activation on insert
 - Automatic ICC voltage selection
@@ -81,6 +84,7 @@ The USB Smart Card Reader (CCID) server creates a virtual smart card reader usin
 ### ISO 7816-4 APDU Format
 
 **Command APDU** (host → card):
+
 ```
 CLA  INS  P1   P2   [Lc] [Data] [Le]
 1B   1B   1B   1B   [1B] [Lc]   [1B]
@@ -94,6 +98,7 @@ Le: Maximum length of response data (optional)
 ```
 
 **Response APDU** (card → host):
+
 ```
 [Data] SW1  SW2
 [...]  1B   1B
@@ -105,6 +110,7 @@ SW1, SW2: Status words (e.g., 0x90 0x00 = success)
 ### ISO 7816-3 ATR (Answer To Reset)
 
 When a card is powered on, it responds with an ATR (Answer To Reset) that describes:
+
 - Supported transmission protocols (T=0, T=1)
 - Supported voltage levels
 - Clock frequency
@@ -112,11 +118,13 @@ When a card is powered on, it responds with an ATR (Answer To Reset) that descri
 - Historical bytes (card type, manufacturer)
 
 Example ATR (minimal):
+
 ```
 3B 00  (T=0 protocol, no historical bytes)
 ```
 
 Example ATR (typical):
+
 ```
 3B 9F 95 80 1F C7 80 31 E0 73 FE 21 1B 66 D0 01 83 07 90 00 80
 (T=1 protocol, historical bytes indicate card type)
@@ -127,6 +135,7 @@ Example ATR (typical):
 ### What's Required
 
 #### Phase 1: USB CCID Device Handler (High Priority)
+
 - ❌ Custom `UsbInterfaceHandler` for CCID
 - ❌ CCID class-specific descriptors
 - ❌ Bulk IN endpoint (0x81) for responses
@@ -134,6 +143,7 @@ Example ATR (typical):
 - ❌ Interrupt IN endpoint (0x83) for notifications
 
 #### Phase 2: CCID Protocol (High Priority)
+
 - ❌ PC_to_RDR_IccPowerOn (send ATR)
 - ❌ PC_to_RDR_IccPowerOff
 - ❌ PC_to_RDR_GetSlotStatus
@@ -145,12 +155,14 @@ Example ATR (typical):
 - ❌ RDR_to_PC_NotifySlotChange (card insertion)
 
 #### Phase 3: ISO 7816-3 Transmission Protocol (Medium Priority)
+
 - ❌ ATR (Answer To Reset) generation
 - ❌ T=0 protocol (byte-oriented)
 - ❌ T=1 protocol (block-oriented, optional)
 - ❌ PPS (Protocol and Parameters Selection)
 
 #### Phase 4: ISO 7816-4 APDU Handler (High Priority)
+
 - ❌ APDU parsing (CLA, INS, P1, P2, Lc, Data, Le)
 - ❌ APDU response formatting (Data, SW1, SW2)
 - ❌ Status word generation
@@ -158,6 +170,7 @@ Example ATR (typical):
 - ❌ Extended APDU support (optional)
 
 #### Phase 5: Virtual Smart Card (High Priority)
+
 - ❌ File system (MF, DF, EF per ISO 7816-4)
 - ❌ SELECT command (0xA4)
 - ❌ READ BINARY command (0xB0)
@@ -167,12 +180,14 @@ Example ATR (typical):
 - ❌ Security state management
 
 #### Phase 6: Card Applications (Medium Priority)
+
 - ❌ PIV (Personal Identity Verification) card
 - ❌ OpenPGP card
 - ❌ Generic PKI card
 - ❌ Custom card applications
 
 #### Phase 7: Cryptography (Optional)
+
 - ❌ RSA key generation and operations
 - ❌ ECC key generation and operations
 - ❌ INTERNAL AUTHENTICATE command (0x88)
@@ -180,12 +195,14 @@ Example ATR (typical):
 - ❌ GENERATE ASYMMETRIC KEY PAIR command (0x46)
 
 #### Phase 8: LLM Integration (Low Priority)
+
 - ❌ Card insertion/removal events
 - ❌ PIN verification prompts
 - ❌ APDU logging and interpretation
 - ❌ Actions (insert_card, remove_card, set_pin, load_applet)
 
 #### Phase 9: Testing (Deferred)
+
 - ❌ E2E tests with real PC/SC applications
 - ❌ pcscd daemon integration
 - ❌ OpenSC tools testing
@@ -210,6 +227,7 @@ Example ATR (typical):
 ### Complexity Rating: **VERY HIGH**
 
 **Reasons:**
+
 1. **Dual Protocol**: CCID (USB) + ISO 7816-4 (card)
 2. **File System**: Must implement ISO 7816-4 file hierarchy
 3. **Security**: PIN verification, access controls, crypto operations
@@ -227,16 +245,19 @@ Example ATR (typical):
 - **Purpose**: CCID communication to USB host
 
 **Features:**
+
 - Implements CCID device-side protocol
 - Sends APDUs to an Interchange
 - USB device framework integration
 
 **Pros:**
+
 - ✅ Rust implementation of CCID
 - ✅ Device-side (what we need!)
 - ✅ Available on crates.io
 
 **Cons:**
+
 - ⚠️ Designed for embedded USB device framework
 - ⚠️ May need adaptation for USB/IP
 - ⚠️ Documentation sparse
@@ -250,16 +271,19 @@ Example ATR (typical):
 - **Purpose**: Connect to vpcd daemon and implement virtual smart card
 
 **Features:**
+
 - Implements `VSmartCard` trait
 - Connects to vsmartcard's vpcd daemon
 - Handles APDU exchange
 
 **Pros:**
+
 - ✅ Pure Rust smart card implementation
 - ✅ Works with existing vsmartcard infrastructure
 - ✅ Mature protocol (vpcd)
 
 **Cons:**
+
 - ⚠️ Requires vpcd daemon (separate process)
 - ⚠️ Not USB/IP based (uses TCP to vpcd)
 - ⚠️ Additional dependency (vsmartcard)
@@ -274,16 +298,19 @@ Example ATR (typical):
 - **Purpose**: Client-side PC/SC communication
 
 **Features:**
+
 - Bindings to PC/SC lite (Linux), WinSCard (Windows), PCSC framework (macOS)
 - APDU transmission to cards
 - Reader enumeration
 
 **Pros:**
+
 - ✅ Cross-platform
 - ✅ Well-maintained
 - ✅ Safe Rust API
 
 **Cons:**
+
 - ❌ **CLIENT-SIDE** (for using cards, not emulating readers)
 - ❌ Not for device implementation
 - ❌ Wrong direction (we're the device, not the client)
@@ -297,10 +324,12 @@ Example ATR (typical):
 - **Features**: `TransmissionBuilder` for no_std environments
 
 **Pros:**
+
 - ✅ Handles T=1 protocol (block transmission)
 - ✅ Embedded-friendly (no_std)
 
 **Cons:**
+
 - ⚠️ Only T=1, not T=0
 - ⚠️ Low-level, needs integration
 
@@ -313,15 +342,18 @@ Example ATR (typical):
 - **Purpose**: APDU command/response types
 
 **Features:**
+
 - High-level APDU API
 - Helper functions for command composition
 - Cross-platform
 
 **Pros:**
+
 - ✅ Simplifies APDU handling
 - ✅ Type-safe APDU construction
 
 **Cons:**
+
 - ⚠️ Just types, not full protocol
 
 **Verdict:** ⭐⭐⭐ Useful utility crate
@@ -332,14 +364,17 @@ Example ATR (typical):
 - **Purpose**: Client library for OpenPGP cards
 
 **Features:**
+
 - OpenPGP card 3.4 specification
 - Works with Gnuk, Nitrokey, YubiKey
 
 **Pros:**
+
 - ✅ Good reference for OpenPGP card commands
 - ✅ Rust implementation
 
 **Cons:**
+
 - ❌ Client-side (for using cards)
 - ❌ Not for card emulation
 
@@ -354,6 +389,7 @@ Example ATR (typical):
 - **Status**: Production-quality, widely used
 
 **Architecture:**
+
 ```
 ┌──────────┐     TCP      ┌──────┐     PC/SC    ┌─────────┐
 │  vpicc   │ ◄────────────► vpcd  │ ◄───────────► pcscd   │
@@ -362,11 +398,13 @@ Example ATR (typical):
 ```
 
 **Pros:**
+
 - ✅ Complete virtual smart card solution
 - ✅ Works with real PC/SC stack
 - ✅ Mature and tested
 
 **Cons:**
+
 - ❌ C/Python implementation
 - ❌ Requires vpcd daemon
 - ❌ Not USB/IP based
@@ -376,6 +414,7 @@ Example ATR (typical):
 ### C Library - Not Recommended
 
 **libccid** (Official CCID driver):
+
 - ❌ Reader driver (wrong direction)
 - ❌ For reading cards, not emulating readers
 - ⭐ Not suitable
@@ -389,6 +428,7 @@ Based on research findings, **two viable approaches exist**:
 This avoids implementing USB CCID entirely by using the existing vsmartcard infrastructure.
 
 **Architecture:**
+
 ```
 ┌───────────┐    TCP     ┌──────┐    PC/SC    ┌─────────┐
 │  NetGet   │ ◄─────────► vpcd  │ ◄──────────► pcscd   │
@@ -397,6 +437,7 @@ This avoids implementing USB CCID entirely by using the existing vsmartcard infr
 ```
 
 **Steps:**
+
 1. Use `vpicc` crate to implement smart card logic (2-3 days)
 2. Implement card filesystem (ISO 7816-4) (3-4 days)
 3. Add basic APDU commands (SELECT, READ, VERIFY) (2-3 days)
@@ -406,12 +447,14 @@ This avoids implementing USB CCID entirely by using the existing vsmartcard infr
 **Total Effort**: 12-18 days (no USB/IP needed!)
 
 **Pros:**
+
 - ✅ Reuses mature vsmartcard infrastructure
 - ✅ No USB CCID implementation needed
 - ✅ Works with real PC/SC stack
 - ✅ Pure Rust card logic via vpicc crate
 
 **Cons:**
+
 - ⚠️ Requires vpcd daemon (external dependency)
 - ⚠️ Not true USB device (uses TCP proxy)
 - ⚠️ Less integrated with NetGet's USB/IP approach
@@ -423,6 +466,7 @@ This avoids implementing USB CCID entirely by using the existing vsmartcard infr
 This implements true USB CCID device like other NetGet USB protocols.
 
 **Steps:**
+
 1. Evaluate `usbd-ccid` for USB/IP compatibility (1 day)
 2. Adapt usbd-ccid to work with USB/IP (3-4 days)
 3. Implement ISO 7816-3 (ATR, T=0/T=1) (2-3 days)
@@ -433,11 +477,13 @@ This implements true USB CCID device like other NetGet USB protocols.
 **Total Effort**: 14-20 days
 
 **Pros:**
+
 - ✅ Consistent with NetGet's USB/IP approach
 - ✅ True USB device (no external daemon)
 - ✅ Rust implementation via usbd-ccid
 
 **Cons:**
+
 - ⚠️ usbd-ccid designed for embedded, may need adaptation
 - ⚠️ More complex than vpicc approach
 - ⚠️ Less tested path
@@ -471,6 +517,7 @@ openpgp-card = "*"         # Reference implementation (client-side)
 ```
 
 **System Requirements:**
+
 ```bash
 # Install vsmartcard's vpcd daemon
 sudo apt-get install vpcd  # Ubuntu/Debian
@@ -626,17 +673,19 @@ MF (Master File, 3F00)
 ```
 
 **File Types:**
+
 - **MF**: Root of file system (one per card)
 - **DF**: Directory file (can contain DFs and EFs)
 - **EF**: Elementary file (contains actual data)
-  - **Transparent**: Binary data
-  - **Linear Fixed**: Fixed-size records
-  - **Linear Variable**: Variable-size records
-  - **Cyclic**: Ring buffer of records
+    - **Transparent**: Binary data
+    - **Linear Fixed**: Fixed-size records
+    - **Linear Variable**: Variable-size records
+    - **Cyclic**: Ring buffer of records
 
 ## Limitations
 
 ### Server Side (Implementation)
+
 - **No Built-in Support**: usbip crate has no CCID handlers
 - **Extremely Complex**: CCID + ISO 7816 + card apps
 - **Binary Protocols**: CCID messages, APDU parsing
@@ -644,12 +693,14 @@ MF (Master File, 3F00)
 - **Very High Effort**: 18-28+ days implementation time
 
 ### Client Side (Same as other USB protocols)
+
 - **Linux Only**: Requires vhci-hcd kernel module
 - **Root Access**: Client must run `sudo usbip attach`
 - **pcscd Required**: PC/SC daemon must be running
 - **No Windows/macOS Client**: Limited to Linux hosts
 
 ### Protocol
+
 - **Single Card**: One card per reader
 - **No Multi-App**: Complex to support multiple applets
 - **No Real Crypto**: Cryptographic operations simulated
@@ -658,27 +709,35 @@ MF (Master File, 3F00)
 ## LLM Integration Challenges
 
 ### Challenge 1: Card Insertion
+
 CCID requires card insertion/removal events. LLM must:
+
 - Trigger `insert_card` action to make card available
 - Trigger `remove_card` action to eject card
 - Handle hot-plug notifications
 
 ### Challenge 2: PIN Verification
+
 Smart cards require PIN entry. LLM should:
+
 - Intercept VERIFY APDUs
 - Prompt user for PIN (or use stored PIN)
 - Handle PIN retry counters
 - Block card after failed attempts
 
 ### Challenge 3: APDU Interpretation
+
 LLM receives raw APDUs. To be useful:
+
 - Parse APDU structure (CLA, INS, etc.)
 - Interpret command meaning (SELECT, READ, SIGN)
 - Provide human-readable descriptions
 - Log operations for transparency
 
 ### Challenge 4: Application Logic
+
 Card applications have complex logic:
+
 - PIV: Authentication, digital signature, key management
 - OpenPGP: Encryption, signing, decryption
 - Custom apps: Application-specific commands
@@ -725,6 +784,7 @@ Card applications have complex logic:
 ### E2E Tests (Deferred)
 
 **Not yet implemented** due to extreme complexity. Future tests should:
+
 - Test card insertion/removal
 - Test SELECT, READ, VERIFY APDUs
 - Test PIV authentication workflow
@@ -761,24 +821,28 @@ usb-smartcard = ["usb-common"]  # Add crypto crates if implementing card apps
 ## Security Considerations
 
 ### PIN Protection
+
 - Hash PINs before storage (SHA-256)
 - Implement retry counters (3-5 attempts)
 - Block card permanently after exhaustion
 - Support PIN change operations
 
 ### File Access Control
+
 - Implement security attributes per ISO 7816-4
 - CHV (Card Holder Verification) required for sensitive files
 - Read/write permissions per file
 - Secure messaging (optional)
 
 ### Cryptographic Operations
+
 - Use secure random for key generation
 - Never expose private keys
 - Implement proper key usage restrictions
 - Support key backup (encrypted)
 
 ### Transport Security
+
 - USB/IP is unencrypted (local network only)
 - Consider TLS wrapper for remote scenarios
 - Validate all APDU parameters
@@ -787,24 +851,28 @@ usb-smartcard = ["usb-common"]  # Add crypto crates if implementing card apps
 ## Future Enhancements
 
 ### Phase 2: Advanced Features
+
 - Multiple card slots
 - Contactless card support (ISO 14443)
 - T=1 protocol support
 - Extended APDU (up to 65535 bytes)
 
 ### Phase 3: Card Applications
+
 - Complete PIV implementation (NIST SP 800-73)
 - Complete OpenPGP card (OpenPGP Card spec)
 - Banking cards (EMV)
 - eID cards (national ID)
 
 ### Phase 4: Cryptography
+
 - RSA 2048/4096 key generation
 - ECC P-256/P-384 operations
 - AES encryption/decryption
 - Secure key storage (hardware-backed)
 
 ### Phase 5: LLM Features
+
 - Automatic card provisioning
 - Certificate enrollment
 - Key backup and recovery
@@ -829,6 +897,7 @@ usb-smartcard = ["usb-common"]  # Add crypto crates if implementing card apps
 **Implementation Priority**: **MEDIUM-LOW** (upgraded from LOW)
 
 **Rationale for Upgrade:**
+
 - **vpicc crate exists** - Rust interface to mature vsmartcard
 - Effort reduced from 18-28+ days to **12-18 days** with vpicc
 - Can reuse vpcd daemon (no USB CCID needed)
@@ -837,6 +906,7 @@ usb-smartcard = ["usb-common"]  # Add crypto crates if implementing card apps
 **Updated Assessment:**
 
 **WITH vpicc + vsmartcard (Approach A):**
+
 - ✅ Feasible in moderate timeframe (12-18 days)
 - ✅ Mature vsmartcard infrastructure
 - ✅ No USB CCID implementation needed
@@ -845,6 +915,7 @@ usb-smartcard = ["usb-common"]  # Add crypto crates if implementing card apps
 - ⚠️ Different architecture than USB/IP
 
 **WITH usbd-ccid (Approach B):**
+
 - ⚠️ More complex (14-20 days)
 - ⚠️ usbd-ccid adaptation needed
 - ✅ Consistent with NetGet's USB/IP approach
@@ -853,11 +924,13 @@ usb-smartcard = ["usb-common"]  # Add crypto crates if implementing card apps
 **Implementation Recommendation:**
 
 **Phase 1: Verify approach viability** (1-2 days)
+
 1. Test vpicc crate with vpcd daemon
 2. Evaluate usbd-ccid for USB/IP compatibility
 3. Choose approach based on compatibility
 
 **Phase 2A: If using vpicc** (11-16 days)
+
 1. Implement basic virtual card with vpicc (2-3 days)
 2. Add ISO 7816-4 file system (3-4 days)
 3. Implement core APDU commands (2-3 days)
@@ -865,12 +938,14 @@ usb-smartcard = ["usb-common"]  # Add crypto crates if implementing card apps
 5. LLM integration and testing (1-2 days)
 
 **Phase 2B: If using usbd-ccid** (13-18 days)
+
 1. Adapt usbd-ccid for USB/IP (3-4 days)
 2. Implement ISO 7816-3/7816-4 (5-7 days)
 3. Add card application (4-6 days)
 4. LLM integration and testing (1-2 days)
 
 **Best suited for:**
+
 - PKI and certificate management demos
 - Smart card protocol education
 - Secure authentication workflows

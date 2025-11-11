@@ -16,7 +16,7 @@ mod saml_client_tests {
         // It only tests that the client initializes correctly
 
         let client_config = NetGetConfig::new(
-            "Connect to https://idp.example.com/saml/sso via SAML for authentication"
+            "Connect to https://idp.example.com/saml/sso via SAML for authentication",
         );
 
         let client = start_netget_client(client_config).await?;
@@ -26,9 +26,9 @@ mod saml_client_tests {
 
         // Verify client output shows SAML protocol or connection message
         assert!(
-            client.output_contains("SAML").await ||
-            client.output_contains("connected").await ||
-            client.output_contains("initialized").await,
+            client.output_contains("SAML").await
+                || client.output_contains("connected").await
+                || client.output_contains("initialized").await,
             "Client should show SAML protocol or connection message. Output: {:?}",
             client.get_output().await
         );
@@ -50,7 +50,7 @@ mod saml_client_tests {
     async fn test_saml_client_sso_url_generation() -> E2EResult<()> {
         // Initialize SAML client
         let client_config = NetGetConfig::new(
-            "Connect to https://idp.example.com/saml/sso via SAML and initiate SSO authentication"
+            "Connect to https://idp.example.com/saml/sso via SAML and initiate SSO authentication",
         );
 
         let client = start_netget_client(client_config).await?;
@@ -61,10 +61,10 @@ mod saml_client_tests {
         // Verify SSO URL was generated
         // The SSO URL should contain SAMLRequest parameter
         assert!(
-            client.output_contains("SAMLRequest").await ||
-            client.output_contains("sso").await ||
-            client.output_contains("SSO").await ||
-            client.output_contains("authentication").await,
+            client.output_contains("SAMLRequest").await
+                || client.output_contains("sso").await
+                || client.output_contains("SSO").await
+                || client.output_contains("authentication").await,
             "Client should generate SSO URL or mention authentication. Output: {:?}",
             client.get_output().await
         );

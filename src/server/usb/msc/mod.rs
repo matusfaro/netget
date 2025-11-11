@@ -107,7 +107,8 @@ impl UsbMscServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
                         info!(
                             "USB/IP connection {} from {} (USB MSC device)",
@@ -247,12 +248,11 @@ impl UsbMscServer {
         );
 
         // Create MSC handler with BOT protocol and SCSI support
-        let handler = Arc::new(std::sync::Mutex::new(
-            Box::new(handler::UsbMscHandler::new(
-                disk_image_obj.clone(),
-                write_protect,
-            )) as Box<dyn usbip::UsbInterfaceHandler + Send>,
-        ));
+        let handler = Arc::new(std::sync::Mutex::new(Box::new(handler::UsbMscHandler::new(
+            disk_image_obj.clone(),
+            write_protect,
+        ))
+            as Box<dyn usbip::UsbInterfaceHandler + Send>));
 
         // Store handler in protocol for LLM action execution
         protocol.set_handler(connection_id, handler.clone()).await;
@@ -266,16 +266,16 @@ impl UsbMscServer {
                 "NetGet Virtual Disk",
                 vec![
                     usbip::UsbEndpoint {
-                        address: 0x81,         // EP1 IN (Bulk)
-                        attributes: 0x02,      // Bulk transfer
-                        max_packet_size: 512,  // 512 bytes
-                        interval: 0,           // Not used for bulk
+                        address: 0x81,        // EP1 IN (Bulk)
+                        attributes: 0x02,     // Bulk transfer
+                        max_packet_size: 512, // 512 bytes
+                        interval: 0,          // Not used for bulk
                     },
                     usbip::UsbEndpoint {
-                        address: 0x02,         // EP2 OUT (Bulk)
-                        attributes: 0x02,      // Bulk transfer
-                        max_packet_size: 512,  // 512 bytes
-                        interval: 0,           // Not used for bulk
+                        address: 0x02,        // EP2 OUT (Bulk)
+                        attributes: 0x02,     // Bulk transfer
+                        max_packet_size: 512, // 512 bytes
+                        interval: 0,          // Not used for bulk
                     },
                 ],
                 handler.clone(),
@@ -364,7 +364,10 @@ impl UsbMscServer {
 
             // Mark as processing
             conn_data.state = ConnectionState::Processing;
-            connections.lock().await.insert(connection_id, conn_data.clone());
+            connections
+                .lock()
+                .await
+                .insert(connection_id, conn_data.clone());
 
             // Call LLM
             match call_llm(

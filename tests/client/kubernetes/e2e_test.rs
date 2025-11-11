@@ -90,7 +90,9 @@ mod kubernetes_client_tests {
         );
 
         // Get the protocol and verify metadata
-        let protocol = CLIENT_REGISTRY.get("Kubernetes").expect("Should get Kubernetes protocol");
+        let protocol = CLIENT_REGISTRY
+            .get("Kubernetes")
+            .expect("Should get Kubernetes protocol");
         assert_eq!(protocol.protocol_name(), "Kubernetes");
         assert_eq!(protocol.stack_name(), "ETH>IP>TCP>TLS>HTTP>K8s API");
         assert!(protocol.keywords().contains(&"kubernetes"));
@@ -107,30 +109,58 @@ mod kubernetes_client_tests {
         let rt = Runtime::new().unwrap();
         let state = rt.block_on(async { AppState::new(None, None, None, None, None) });
 
-        let protocol = CLIENT_REGISTRY.get("Kubernetes").expect("Should get Kubernetes protocol");
+        let protocol = CLIENT_REGISTRY
+            .get("Kubernetes")
+            .expect("Should get Kubernetes protocol");
 
         // Verify async actions exist
         let async_actions = protocol.get_async_actions(&state);
         let action_names: Vec<&str> = async_actions.iter().map(|a| a.name.as_str()).collect();
 
-        assert!(action_names.contains(&"k8s_list_pods"), "Should have k8s_list_pods action");
-        assert!(action_names.contains(&"k8s_get_pod"), "Should have k8s_get_pod action");
-        assert!(action_names.contains(&"k8s_get_logs"), "Should have k8s_get_logs action");
-        assert!(action_names.contains(&"k8s_create_pod"), "Should have k8s_create_pod action");
-        assert!(action_names.contains(&"k8s_delete_pod"), "Should have k8s_delete_pod action");
-        assert!(action_names.contains(&"k8s_list_deployments"), "Should have k8s_list_deployments action");
-        assert!(action_names.contains(&"k8s_list_services"), "Should have k8s_list_services action");
-        assert!(action_names.contains(&"disconnect"), "Should have disconnect action");
+        assert!(
+            action_names.contains(&"k8s_list_pods"),
+            "Should have k8s_list_pods action"
+        );
+        assert!(
+            action_names.contains(&"k8s_get_pod"),
+            "Should have k8s_get_pod action"
+        );
+        assert!(
+            action_names.contains(&"k8s_get_logs"),
+            "Should have k8s_get_logs action"
+        );
+        assert!(
+            action_names.contains(&"k8s_create_pod"),
+            "Should have k8s_create_pod action"
+        );
+        assert!(
+            action_names.contains(&"k8s_delete_pod"),
+            "Should have k8s_delete_pod action"
+        );
+        assert!(
+            action_names.contains(&"k8s_list_deployments"),
+            "Should have k8s_list_deployments action"
+        );
+        assert!(
+            action_names.contains(&"k8s_list_services"),
+            "Should have k8s_list_services action"
+        );
+        assert!(
+            action_names.contains(&"disconnect"),
+            "Should have disconnect action"
+        );
     }
 
     /// Unit test: Verify Kubernetes client action execution
     #[test]
     fn test_kubernetes_action_execution() {
-        use netget::protocol::CLIENT_REGISTRY;
         use netget::llm::actions::client_trait::Client;
+        use netget::protocol::CLIENT_REGISTRY;
         use serde_json::json;
 
-        let protocol = CLIENT_REGISTRY.get("Kubernetes").expect("Should get Kubernetes protocol");
+        let protocol = CLIENT_REGISTRY
+            .get("Kubernetes")
+            .expect("Should get Kubernetes protocol");
 
         // Test k8s_list_pods action
         let action = json!({
@@ -139,7 +169,10 @@ mod kubernetes_client_tests {
         });
 
         let result = protocol.execute_action(action);
-        assert!(result.is_ok(), "k8s_list_pods action should execute successfully");
+        assert!(
+            result.is_ok(),
+            "k8s_list_pods action should execute successfully"
+        );
 
         // Test k8s_get_pod action
         let action = json!({
@@ -149,7 +182,10 @@ mod kubernetes_client_tests {
         });
 
         let result = protocol.execute_action(action);
-        assert!(result.is_ok(), "k8s_get_pod action should execute successfully");
+        assert!(
+            result.is_ok(),
+            "k8s_get_pod action should execute successfully"
+        );
 
         // Test disconnect action
         let action = json!({
@@ -157,6 +193,9 @@ mod kubernetes_client_tests {
         });
 
         let result = protocol.execute_action(action);
-        assert!(result.is_ok(), "disconnect action should execute successfully");
+        assert!(
+            result.is_ok(),
+            "disconnect action should execute successfully"
+        );
     }
 }

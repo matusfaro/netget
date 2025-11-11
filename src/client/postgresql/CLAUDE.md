@@ -2,11 +2,13 @@
 
 ## Overview
 
-The PostgreSQL client implementation provides LLM-controlled access to PostgreSQL databases. The LLM can execute SQL queries, manage transactions, and interpret results.
+The PostgreSQL client implementation provides LLM-controlled access to PostgreSQL databases. The LLM can execute SQL
+queries, manage transactions, and interpret results.
 
 ## Implementation Details
 
 ### Library Choice
+
 - **tokio-postgres v0.7** - Official async PostgreSQL client
 - Full PostgreSQL wire protocol implementation
 - TLS support (using NoTls for now)
@@ -37,11 +39,13 @@ The PostgreSQL client implementation provides LLM-controlled access to PostgreSQ
 ### Connection Parameters
 
 The client accepts startup parameters:
+
 - `database` - Database name (default: "postgres")
 - `user` - Username (default: "postgres")
 - `password` - Password (default: empty)
 
 Connection string format:
+
 ```
 host=127.0.0.1:5432 user=postgres password=secret dbname=mydb
 ```
@@ -49,31 +53,36 @@ host=127.0.0.1:5432 user=postgres password=secret dbname=mydb
 ### LLM Control
 
 **Async Actions** (user-triggered):
+
 - `execute_query` - Execute SQL query
-  - Parameter: query (string)
-  - Examples: "SELECT * FROM users", "INSERT INTO logs VALUES (...)"
+    - Parameter: query (string)
+    - Examples: "SELECT * FROM users", "INSERT INTO logs VALUES (...)"
 - `begin_transaction` - Begin a transaction
 - `commit_transaction` - Commit current transaction
 - `rollback_transaction` - Roll back current transaction
 - `disconnect` - Close connection
 
 **Sync Actions** (in response to query results):
+
 - `execute_query` - Execute follow-up query based on results
 
 **Events:**
+
 - `postgresql_connected` - Fired when connection established
-  - Data includes: remote_addr, database, user
+    - Data includes: remote_addr, database, user
 - `postgresql_query_result` - Fired when query results received
-  - Data includes: query, rows (array), row_count
+    - Data includes: query, rows (array), row_count
 
 ### Query Execution
 
 Queries are executed via `tokio_postgres::Client::query()`:
+
 ```rust
 let rows = pg_client.query("SELECT * FROM users", &[]).await?;
 ```
 
 Results are converted to JSON:
+
 ```json
 [
   {"id": "1", "name": "Alice", "email": "alice@example.com"},
@@ -134,6 +143,7 @@ status_tx.send("[CLIENT] PostgreSQL client connected");      // → TUI
 **User**: "Connect to PostgreSQL and select all users"
 
 **LLM Action**:
+
 ```json
 {
   "type": "execute_query",
@@ -146,6 +156,7 @@ status_tx.send("[CLIENT] PostgreSQL client connected");      // → TUI
 **User**: "Insert a new user named Alice"
 
 **LLM Action**:
+
 ```json
 {
   "type": "execute_query",
@@ -158,6 +169,7 @@ status_tx.send("[CLIENT] PostgreSQL client connected");      // → TUI
 **User**: "Begin a transaction, update user 123, and commit"
 
 **LLM Actions**:
+
 ```json
 [
   {
@@ -178,6 +190,7 @@ status_tx.send("[CLIENT] PostgreSQL client connected");      // → TUI
 **User**: "Create a table named logs"
 
 **LLM Action**:
+
 ```json
 {
   "type": "execute_query",

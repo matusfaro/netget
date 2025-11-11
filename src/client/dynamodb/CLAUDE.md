@@ -2,11 +2,13 @@
 
 ## Overview
 
-The DynamoDB client implementation provides LLM-controlled access to AWS DynamoDB or local DynamoDB instances (DynamoDB Local, LocalStack). The LLM can execute DynamoDB operations and interpret responses.
+The DynamoDB client implementation provides LLM-controlled access to AWS DynamoDB or local DynamoDB instances (DynamoDB
+Local, LocalStack). The LLM can execute DynamoDB operations and interpret responses.
 
 ## Implementation Details
 
 ### Library Choice
+
 - **aws-sdk-dynamodb** - Official AWS SDK for Rust
 - Supports all standard DynamoDB operations
 - AWS Signature v4 authentication
@@ -36,6 +38,7 @@ The DynamoDB client implementation provides LLM-controlled access to AWS DynamoD
 ### Connection Model
 
 Unlike TCP (persistent connection), DynamoDB client is **request/response** based:
+
 - "Connection" = initialization of AWS SDK client with credentials
 - Each operation is independent
 - LLM triggers operations via actions
@@ -44,28 +47,31 @@ Unlike TCP (persistent connection), DynamoDB client is **request/response** base
 ### LLM Control
 
 **Async Actions** (user-triggered):
+
 - `put_item` - Put an item into a table
-  - Parameters: table_name, item (with DynamoDB types)
+    - Parameters: table_name, item (with DynamoDB types)
 - `get_item` - Get an item by primary key
-  - Parameters: table_name, key (with DynamoDB types)
+    - Parameters: table_name, key (with DynamoDB types)
 - `query` - Query items using key conditions
-  - Parameters: table_name, key_condition_expression, expression_attribute_values
+    - Parameters: table_name, key_condition_expression, expression_attribute_values
 - `scan` - Scan all items in a table
-  - Parameters: table_name, filter_expression (optional), expression_attribute_values (optional)
+    - Parameters: table_name, filter_expression (optional), expression_attribute_values (optional)
 - `update_item` - Update an item
-  - Parameters: table_name, key, update_expression, expression_attribute_values
+    - Parameters: table_name, key, update_expression, expression_attribute_values
 - `delete_item` - Delete an item
-  - Parameters: table_name, key
+    - Parameters: table_name, key
 - `disconnect` - Stop DynamoDB client
 
 **Sync Actions** (in response to DynamoDB responses):
+
 - `put_item` - Put another item based on response data
 - `query` - Query based on response data
 
 **Events:**
+
 - `dynamodb_connected` - Fired when client initialized
 - `dynamodb_response_received` - Fired when response received
-  - Data includes: operation, success (boolean), data (optional), error (optional)
+    - Data includes: operation, success (boolean), data (optional), error (optional)
 
 ### Structured Actions (CRITICAL)
 
@@ -124,6 +130,7 @@ DynamoDB client uses **structured data with DynamoDB types**, NOT raw bytes:
 ### DynamoDB Type System
 
 DynamoDB uses typed attributes:
+
 - **S** - String
 - **N** - Number (stored as string)
 - **B** - Binary (base64-encoded)
@@ -140,14 +147,14 @@ The LLM constructs typed attribute maps, and NetGet converts them to AWS SDK typ
 ### Startup Parameters
 
 - `region` (optional) - AWS region (default: "us-east-1")
-  - Example: "us-west-2", "eu-west-1"
+    - Example: "us-west-2", "eu-west-1"
 - `endpoint_url` (optional) - Custom endpoint for local testing
-  - Example: "http://localhost:8000" (DynamoDB Local)
-  - Example: "http://localhost:4566" (LocalStack)
+    - Example: "http://localhost:8000" (DynamoDB Local)
+    - Example: "http://localhost:4566" (LocalStack)
 - `access_key_id` (optional) - AWS access key ID
-  - Defaults to environment variable AWS_ACCESS_KEY_ID
+    - Defaults to environment variable AWS_ACCESS_KEY_ID
 - `secret_access_key` (optional) - AWS secret access key
-  - Defaults to environment variable AWS_SECRET_ACCESS_KEY
+    - Defaults to environment variable AWS_SECRET_ACCESS_KEY
 
 ### Dual Logging
 
@@ -166,6 +173,7 @@ status_tx.send("[CLIENT] DynamoDB PutItem succeeded");                    // →
 ## Features
 
 ### Supported Operations
+
 - ✅ PutItem
 - ✅ GetItem
 - ✅ Query
@@ -177,6 +185,7 @@ status_tx.send("[CLIENT] DynamoDB PutItem succeeded");                    // →
 - ⏸ TransactWriteItems (future)
 
 ### Authentication
+
 - ✅ AWS credentials from environment variables
 - ✅ Explicit credentials via startup parameters
 - ✅ Custom endpoint for local testing
@@ -198,6 +207,7 @@ status_tx.send("[CLIENT] DynamoDB PutItem succeeded");                    // →
 **User**: "Connect to DynamoDB Local at localhost:8000"
 
 **Startup Parameters**:
+
 ```json
 {
   "region": "us-east-1",
@@ -212,6 +222,7 @@ status_tx.send("[CLIENT] DynamoDB PutItem succeeded");                    // →
 **User**: "Put a user with id=user123, name=Alice, age=30"
 
 **LLM Action**:
+
 ```json
 {
   "type": "put_item",
@@ -229,6 +240,7 @@ status_tx.send("[CLIENT] DynamoDB PutItem succeeded");                    // →
 **User**: "Get the user with id=user123"
 
 **LLM Action**:
+
 ```json
 {
   "type": "get_item",
@@ -244,6 +256,7 @@ status_tx.send("[CLIENT] DynamoDB PutItem succeeded");                    // →
 **User**: "Query all users with id=user123"
 
 **LLM Action**:
+
 ```json
 {
   "type": "query",
@@ -260,6 +273,7 @@ status_tx.send("[CLIENT] DynamoDB PutItem succeeded");                    // →
 **User**: "Scan all users older than 21"
 
 **LLM Action**:
+
 ```json
 {
   "type": "scan",
@@ -276,6 +290,7 @@ status_tx.send("[CLIENT] DynamoDB PutItem succeeded");                    // →
 **User**: "Update user123's age to 31"
 
 **LLM Action**:
+
 ```json
 {
   "type": "update_item",
@@ -295,6 +310,7 @@ status_tx.send("[CLIENT] DynamoDB PutItem succeeded");                    // →
 **User**: "Delete user with id=user123"
 
 **LLM Action**:
+
 ```json
 {
   "type": "delete_item",
@@ -310,13 +326,14 @@ status_tx.send("[CLIENT] DynamoDB PutItem succeeded");                    // →
 See `tests/client/dynamodb/CLAUDE.md` for E2E testing approach.
 
 Recommended test setup:
+
 - **DynamoDB Local** - Standalone Java application
-  - Download: https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/DynamoDBLocal.html
-  - Run: `java -Djava.library.path=./DynamoDBLocal_lib -jar DynamoDBLocal.jar -sharedDb`
-  - Endpoint: http://localhost:8000
+    - Download: https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/DynamoDBLocal.html
+    - Run: `java -Djava.library.path=./DynamoDBLocal_lib -jar DynamoDBLocal.jar -sharedDb`
+    - Endpoint: http://localhost:8000
 - **LocalStack** - AWS service emulator
-  - Docker: `docker run -p 4566:4566 localstack/localstack`
-  - Endpoint: http://localhost:4566
+    - Docker: `docker run -p 4566:4566 localstack/localstack`
+    - Endpoint: http://localhost:4566
 
 ## Future Enhancements
 

@@ -9,8 +9,7 @@ use std::path::PathBuf;
 use tracing::{debug, warn};
 
 /// Log level for output verbosity
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum LogLevel {
     /// ERROR: Critical errors only
     Error,
@@ -24,7 +23,6 @@ pub enum LogLevel {
     #[default]
     Trace,
 }
-
 
 impl LogLevel {
     pub fn parse(s: &str) -> Option<Self> {
@@ -281,8 +279,7 @@ impl App {
     /// Add command to history (deduplicates)
     pub fn add_to_history(&mut self, command: String) {
         if !command.trim().is_empty()
-            && (self.command_history.is_empty()
-                || self.command_history.last() != Some(&command))
+            && (self.command_history.is_empty() || self.command_history.last() != Some(&command))
         {
             self.command_history.push(command);
         }
@@ -349,4 +346,3 @@ impl App {
         // This method exists for compatibility with event handler
     }
 }
-

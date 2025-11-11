@@ -12,15 +12,12 @@ use std::sync::LazyLock;
 
 /// Beacon started event
 pub static BEACON_STARTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "beacon_started",
-        "BLE beacon advertising started",
-    )
-    .with_parameters(vec![
+    EventType::new("beacon_started", "BLE beacon advertising started").with_parameters(vec![
         Parameter {
             name: "beacon_type".to_string(),
             type_hint: "string".to_string(),
-            description: "Type of beacon (ibeacon, eddystone-uid, eddystone-url, eddystone-tlm)".to_string(),
+            description: "Type of beacon (ibeacon, eddystone-uid, eddystone-url, eddystone-tlm)"
+                .to_string(),
             required: true,
         },
     ])
@@ -28,11 +25,7 @@ pub static BEACON_STARTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// Beacon stopped event
 pub static BEACON_STOPPED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "beacon_stopped",
-        "BLE beacon advertising stopped",
-    )
-    .with_parameters(vec![])
+    EventType::new("beacon_stopped", "BLE beacon advertising stopped").with_parameters(vec![])
 });
 
 /// BLE Beacon protocol handler
@@ -68,10 +61,7 @@ impl Protocol for BluetoothBleBeaconProtocol {
     }
 
     fn get_event_types(&self) -> Vec<EventType> {
-        vec![
-            BEACON_STARTED_EVENT.clone(),
-            BEACON_STOPPED_EVENT.clone(),
-        ]
+        vec![BEACON_STARTED_EVENT.clone(), BEACON_STOPPED_EVENT.clone()]
     }
 
     fn stack_name(&self) -> &'static str {
@@ -79,11 +69,17 @@ impl Protocol for BluetoothBleBeaconProtocol {
     }
 
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["bluetooth", "beacon", "ibeacon", "eddystone", "bluetooth_ble_beacon"]
+        vec![
+            "bluetooth",
+            "beacon",
+            "ibeacon",
+            "eddystone",
+            "bluetooth_ble_beacon",
+        ]
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
@@ -111,12 +107,14 @@ impl Server for BluetoothBleBeaconProtocol {
     fn spawn(
         &self,
         ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>,
-    > {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>>
+    {
         Box::pin(async move {
             // Get instruction from server instance
-            let instruction = ctx.state.get_server(ctx.server_id).await
+            let instruction = ctx
+                .state
+                .get_server(ctx.server_id)
+                .await
                 .map(|s| s.instruction)
                 .unwrap_or_default();
 
@@ -131,22 +129,20 @@ impl Server for BluetoothBleBeaconProtocol {
         })
     }
 
-    fn execute_action(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action["type"]
             .as_str()
             .context("Action must have 'type' field")?;
 
         match action_type {
-            "advertise_ibeacon" | "advertise_eddystone_uid" | "advertise_eddystone_url" |
-            "advertise_eddystone_tlm" | "stop_beacon" => {
-                Ok(ActionResult::Custom {
-                    name: action_type.to_string(),
-                    data: action,
-                })
-            }
+            "advertise_ibeacon"
+            | "advertise_eddystone_uid"
+            | "advertise_eddystone_url"
+            | "advertise_eddystone_tlm"
+            | "stop_beacon" => Ok(ActionResult::Custom {
+                name: action_type.to_string(),
+                data: action,
+            }),
             _ => Err(anyhow::anyhow!("Unknown beacon action: {}", action_type)),
         }
     }
@@ -160,7 +156,8 @@ fn advertise_ibeacon_action() -> ActionDefinition {
             Parameter {
                 name: "uuid".to_string(),
                 type_hint: "string".to_string(),
-                description: "128-bit UUID (e.g., '12345678-1234-5678-1234-567812345678')".to_string(),
+                description: "128-bit UUID (e.g., '12345678-1234-5678-1234-567812345678')"
+                    .to_string(),
                 required: true,
             },
             Parameter {
@@ -182,7 +179,7 @@ fn advertise_ibeacon_action() -> ActionDefinition {
                 required: false,
             },
         ],
-    example: json!({
+        example: json!({
             "type": "advertise_ibeacon",
             "uuid": "example_uuid",
             "major": 42,
@@ -215,7 +212,7 @@ fn advertise_eddystone_uid_action() -> ActionDefinition {
                 required: false,
             },
         ],
-    example: json!({
+        example: json!({
             "type": "advertise_eddystone_uid",
             "namespace": "example_namespace",
             "instance": "example_instance"
@@ -241,7 +238,7 @@ fn advertise_eddystone_url_action() -> ActionDefinition {
                 required: false,
             },
         ],
-    example: json!({
+        example: json!({
             "type": "advertise_eddystone_url",
             "url": "example_url"
         }),
@@ -278,7 +275,7 @@ fn advertise_eddystone_tlm_action() -> ActionDefinition {
                 required: false,
             },
         ],
-    example: json!({
+        example: json!({
             "type": "advertise_eddystone_tlm"
         }),
     }
@@ -289,7 +286,7 @@ fn stop_beacon_action() -> ActionDefinition {
         name: "stop_beacon".to_string(),
         description: "Stop beacon advertising".to_string(),
         parameters: vec![],
-    example: json!({
+        example: json!({
             "type": "stop_beacon"
         }),
     }

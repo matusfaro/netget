@@ -2,7 +2,9 @@
 
 ## Overview
 
-The Ollama server provides an LLM-controlled Ollama-compatible API server. Unlike the OpenAI server which passes through to the real Ollama backend, this Ollama server acts as a mock/test server where the LLM decides how to respond to Ollama API requests.
+The Ollama server provides an LLM-controlled Ollama-compatible API server. Unlike the OpenAI server which passes through
+to the real Ollama backend, this Ollama server acts as a mock/test server where the LLM decides how to respond to Ollama
+API requests.
 
 ## Architecture
 
@@ -70,12 +72,13 @@ A more sophisticated version would:
 1. Receive Ollama API request (e.g., `/api/generate`)
 2. Call NetGet LLM with event: "ollama_generate_request_received"
 3. LLM decides how to respond (via actions):
-   - `ollama_generate_response` - Return text
-   - `ollama_error_response` - Return error
-   - `ollama_models_response` - Return model list
+    - `ollama_generate_response` - Return text
+    - `ollama_error_response` - Return error
+    - `ollama_models_response` - Return model list
 4. Execute action and send HTTP response
 
 This would allow the LLM to:
+
 - Return custom/fake responses for testing
 - Simulate errors or edge cases
 - Act as a honeypot with controllable behavior
@@ -84,10 +87,12 @@ This would allow the LLM to:
 ### Dual Logging
 
 All operations use dual logging pattern:
+
 - `tracing` macros → `netget.log`
 - `status_tx.send()` → TUI
 
 Example:
+
 ```rust
 debug!("Chat: model={}, {} messages", model, messages.len());
 let _ = status_tx.send(format!("[DEBUG] Chat: model={}, {} messages", model, messages.len()));
@@ -103,6 +108,7 @@ Each HTTP request is treated as a separate connection:
 4. Mark connection as closed when done
 
 Connection state includes:
+
 - Remote address
 - Bytes sent/received
 - Packets sent/received
@@ -127,17 +133,20 @@ Ollama API supports streaming responses (newline-delimited JSON):
 Current implementation uses `"stream": false` and returns full response at once.
 
 **Future**: Could implement streaming by:
+
 - Using `hyper::body::Body` with `SyncSender<Result<Bytes, Infallible>>`
 - LLM generates chunks via actions
 - Stream chunks back to client
 
 ### 2. Mock Model Management
 
-Model management endpoints (`/api/pull`, `/api/create`, `/api/delete`) return success without actually doing anything. This is fine for a mock server but clients may expect model persistence.
+Model management endpoints (`/api/pull`, `/api/create`, `/api/delete`) return success without actually doing anything.
+This is fine for a mock server but clients may expect model persistence.
 
 ### 3. Static Embeddings
 
 `/api/embeddings` returns mock embeddings (sequential floats). Real embeddings would require:
+
 - Actual embedding model
 - Or LLM-controlled embedding generation
 
@@ -150,6 +159,7 @@ Real Ollama has no auth, but a production mock server might want API keys for ac
 See `tests/server/ollama/CLAUDE.md` for E2E testing approach.
 
 Key test scenarios:
+
 - List models
 - Generate text
 - Chat completion

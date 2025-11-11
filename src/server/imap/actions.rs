@@ -45,9 +45,15 @@ impl ImapProtocol {
             })
             .unwrap_or_else(|| "IMAP4rev1".to_string());
 
-        debug!("IMAP sending greeting: hostname={}, capabilities={}", hostname, capabilities);
+        debug!(
+            "IMAP sending greeting: hostname={}, capabilities={}",
+            hostname, capabilities
+        );
 
-        let greeting = format!("* OK [CAPABILITY {}] {} IMAP4rev1 Service Ready\r\n", capabilities, hostname);
+        let greeting = format!(
+            "* OK [CAPABILITY {}] {} IMAP4rev1 Service Ready\r\n",
+            capabilities, hostname
+        );
         Ok(ActionResult::Output(greeting.into_bytes()))
     }
 
@@ -62,16 +68,14 @@ impl ImapProtocol {
             .and_then(|v| v.as_str())
             .unwrap_or("OK");
 
-        let message = action
-            .get("message")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let message = action.get("message").and_then(|v| v.as_str()).unwrap_or("");
 
-        let code = action
-            .get("code")
-            .and_then(|v| v.as_str());
+        let code = action.get("code").and_then(|v| v.as_str());
 
-        debug!("IMAP sending response: tag={}, status={}, message={}", tag, status, message);
+        debug!(
+            "IMAP sending response: tag={}, status={}, message={}",
+            tag, status, message
+        );
 
         let response = if let Some(code) = code {
             format!("{} {} [{}] {}\r\n", tag, status, code, message)
@@ -90,12 +94,12 @@ impl ImapProtocol {
             .and_then(|v| v.as_str())
             .context("Missing 'response_type' field in send_imap_untagged")?;
 
-        let data = action
-            .get("data")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let data = action.get("data").and_then(|v| v.as_str()).unwrap_or("");
 
-        debug!("IMAP sending untagged response: type={}, data={}", response_type, data);
+        debug!(
+            "IMAP sending untagged response: type={}, data={}",
+            response_type, data
+        );
 
         let response = if data.is_empty() {
             format!("* {}\r\n", response_type)
@@ -209,9 +213,8 @@ impl ImapProtocol {
             match key.to_uppercase().as_str() {
                 "FLAGS" => {
                     if let Some(flags_arr) = value.as_array() {
-                        let flags: Vec<&str> = flags_arr.iter()
-                            .filter_map(|v| v.as_str())
-                            .collect();
+                        let flags: Vec<&str> =
+                            flags_arr.iter().filter_map(|v| v.as_str()).collect();
                         items.push(format!("FLAGS ({})", flags.join(" ")));
                     }
                 }
@@ -227,7 +230,12 @@ impl ImapProtocol {
                 }
                 "BODY[]" | "RFC822" => {
                     if let Some(body) = value.as_str() {
-                        items.push(format!("{} {{{}}}\r\n{}", key.to_uppercase(), body.len(), body));
+                        items.push(format!(
+                            "{} {{{}}}\r\n{}",
+                            key.to_uppercase(),
+                            body.len(),
+                            body
+                        ));
                     }
                 }
                 "ENVELOPE" => {
@@ -282,10 +290,7 @@ impl ImapProtocol {
     }
 
     fn execute_send_imap_exists(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let count = action
-            .get("count")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
+        let count = action.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
 
         debug!("IMAP sending EXISTS response: {} messages", count);
 
@@ -294,10 +299,7 @@ impl ImapProtocol {
     }
 
     fn execute_send_imap_recent(&self, action: serde_json::Value) -> Result<ActionResult> {
-        let count = action
-            .get("count")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
+        let count = action.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
 
         debug!("IMAP sending RECENT response: {} messages", count);
 
@@ -338,107 +340,107 @@ impl ImapProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for ImapProtocol {
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            // IMAP doesn't need async actions for now (all commands are synchronous request/response)
-            Vec::new()
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                send_imap_greeting_action(),
-                send_imap_response_action(),
-                send_imap_untagged_action(),
-                send_imap_capability_action(),
-                send_imap_list_action(),
-                send_imap_status_action(),
-                send_imap_fetch_action(),
-                send_imap_search_action(),
-                send_imap_exists_action(),
-                send_imap_recent_action(),
-                send_imap_flags_action(),
-                send_imap_expunge_action(),
-                wait_for_more_action(),
-                close_connection_action(),
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "IMAP"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            get_imap_event_types()
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>TCP>IMAP"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["imap"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Experimental)
-                .implementation("Manual IMAP4rev1 parsing")
-                .llm_control("Authentication + mailbox ops + FETCH")
-                .e2e_testing("async-imap client")
-                .notes("Session state machine, no persistence")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "IMAP mail server"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Start an IMAP mail server on port 143"
-        }
-        fn group_name(&self) -> &'static str {
-            "Application"
-        }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        // IMAP doesn't need async actions for now (all commands are synchronous request/response)
+        Vec::new()
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            send_imap_greeting_action(),
+            send_imap_response_action(),
+            send_imap_untagged_action(),
+            send_imap_capability_action(),
+            send_imap_list_action(),
+            send_imap_status_action(),
+            send_imap_fetch_action(),
+            send_imap_search_action(),
+            send_imap_exists_action(),
+            send_imap_recent_action(),
+            send_imap_flags_action(),
+            send_imap_expunge_action(),
+            wait_for_more_action(),
+            close_connection_action(),
+        ]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "IMAP"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_imap_event_types()
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>IMAP"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["imap"]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("Manual IMAP4rev1 parsing")
+            .llm_control("Authentication + mailbox ops + FETCH")
+            .e2e_testing("async-imap client")
+            .notes("Session state machine, no persistence")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "IMAP mail server"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Start an IMAP mail server on port 143"
+    }
+    fn group_name(&self) -> &'static str {
+        "Application"
+    }
 }
 
 // Implement Server trait (server-specific functionality)
 impl Server for ImapProtocol {
-        fn spawn(
-            &self,
-            ctx: crate::protocol::SpawnContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::server::imap::ImapServer;
-                ImapServer::spawn_with_llm_actions(
-                    ctx.listen_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.server_id,
-                ).await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "send_imap_greeting" => self.execute_send_imap_greeting(action),
-                "send_imap_response" => self.execute_send_imap_response(action),
-                "send_imap_untagged" => self.execute_send_imap_untagged(action),
-                "send_imap_capability" => self.execute_send_imap_capability(action),
-                "send_imap_list" => self.execute_send_imap_list(action),
-                "send_imap_status" => self.execute_send_imap_status(action),
-                "send_imap_fetch" => self.execute_send_imap_fetch(action),
-                "send_imap_search" => self.execute_send_imap_search(action),
-                "send_imap_exists" => self.execute_send_imap_exists(action),
-                "send_imap_recent" => self.execute_send_imap_recent(action),
-                "send_imap_flags" => self.execute_send_imap_flags(action),
-                "send_imap_expunge" => self.execute_send_imap_expunge(action),
-                "wait_for_more" => Ok(ActionResult::WaitForMore),
-                "close_connection" => Ok(ActionResult::CloseConnection),
-                _ => Err(anyhow::anyhow!("Unknown IMAP action: {}", action_type)),
-            }
-        }
-}
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::imap::ImapServer;
+            ImapServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
 
+        match action_type {
+            "send_imap_greeting" => self.execute_send_imap_greeting(action),
+            "send_imap_response" => self.execute_send_imap_response(action),
+            "send_imap_untagged" => self.execute_send_imap_untagged(action),
+            "send_imap_capability" => self.execute_send_imap_capability(action),
+            "send_imap_list" => self.execute_send_imap_list(action),
+            "send_imap_status" => self.execute_send_imap_status(action),
+            "send_imap_fetch" => self.execute_send_imap_fetch(action),
+            "send_imap_search" => self.execute_send_imap_search(action),
+            "send_imap_exists" => self.execute_send_imap_exists(action),
+            "send_imap_recent" => self.execute_send_imap_recent(action),
+            "send_imap_flags" => self.execute_send_imap_flags(action),
+            "send_imap_expunge" => self.execute_send_imap_expunge(action),
+            "wait_for_more" => Ok(ActionResult::WaitForMore),
+            "close_connection" => Ok(ActionResult::CloseConnection),
+            _ => Err(anyhow::anyhow!("Unknown IMAP action: {}", action_type)),
+        }
+    }
+}
 
 // ============================================================================
 // Action Definitions
@@ -496,7 +498,8 @@ fn send_imap_response_action() -> ActionDefinition {
             Parameter {
                 name: "code".to_string(),
                 type_hint: "string".to_string(),
-                description: "Optional response code in brackets (e.g., READ-WRITE, READ-ONLY)".to_string(),
+                description: "Optional response code in brackets (e.g., READ-WRITE, READ-ONLY)"
+                    .to_string(),
                 required: false,
             },
         ],
@@ -518,7 +521,8 @@ fn send_imap_untagged_action() -> ActionDefinition {
             Parameter {
                 name: "response_type".to_string(),
                 type_hint: "string".to_string(),
-                description: "Type of untagged response (e.g., OK, BYE, NO, BAD, CAPABILITY)".to_string(),
+                description: "Type of untagged response (e.g., OK, BYE, NO, BAD, CAPABILITY)"
+                    .to_string(),
                 required: true,
             },
             Parameter {
@@ -540,14 +544,12 @@ fn send_imap_capability_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_imap_capability".to_string(),
         description: "Send IMAP CAPABILITY response".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "capabilities".to_string(),
-                type_hint: "array".to_string(),
-                description: "Array of capability strings".to_string(),
-                required: false,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "capabilities".to_string(),
+            type_hint: "array".to_string(),
+            description: "Array of capability strings".to_string(),
+            required: false,
+        }],
         example: json!({
             "type": "send_imap_capability",
             "capabilities": ["IMAP4rev1", "IDLE", "NAMESPACE", "UIDPLUS"]
@@ -559,14 +561,12 @@ fn send_imap_list_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_imap_list".to_string(),
         description: "Send IMAP LIST response with mailbox list".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "mailboxes".to_string(),
-                type_hint: "array".to_string(),
-                description: "Array of mailbox objects with name, delimiter, and flags".to_string(),
-                required: true,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "mailboxes".to_string(),
+            type_hint: "array".to_string(),
+            description: "Array of mailbox objects with name, delimiter, and flags".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "send_imap_list",
             "mailboxes": [
@@ -599,7 +599,8 @@ fn send_imap_status_action() -> ActionDefinition {
             Parameter {
                 name: "items".to_string(),
                 type_hint: "object".to_string(),
-                description: "Status items (MESSAGES, RECENT, UIDNEXT, UIDVALIDITY, UNSEEN)".to_string(),
+                description: "Status items (MESSAGES, RECENT, UIDNEXT, UIDVALIDITY, UNSEEN)"
+                    .to_string(),
                 required: true,
             },
         ],
@@ -631,7 +632,8 @@ fn send_imap_fetch_action() -> ActionDefinition {
             Parameter {
                 name: "data".to_string(),
                 type_hint: "object".to_string(),
-                description: "Message data (FLAGS, UID, RFC822.SIZE, BODY[], ENVELOPE, etc.)".to_string(),
+                description: "Message data (FLAGS, UID, RFC822.SIZE, BODY[], ENVELOPE, etc.)"
+                    .to_string(),
                 required: true,
             },
         ],
@@ -652,14 +654,12 @@ fn send_imap_search_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_imap_search".to_string(),
         description: "Send IMAP SEARCH response with matching message IDs".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "results".to_string(),
-                type_hint: "array".to_string(),
-                description: "Array of message sequence numbers matching search criteria".to_string(),
-                required: true,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "results".to_string(),
+            type_hint: "array".to_string(),
+            description: "Array of message sequence numbers matching search criteria".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "send_imap_search",
             "results": [1, 3, 5]
@@ -670,15 +670,14 @@ fn send_imap_search_action() -> ActionDefinition {
 fn send_imap_exists_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_imap_exists".to_string(),
-        description: "Send IMAP EXISTS response indicating number of messages in mailbox".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "count".to_string(),
-                type_hint: "number".to_string(),
-                description: "Number of messages that exist".to_string(),
-                required: true,
-            },
-        ],
+        description: "Send IMAP EXISTS response indicating number of messages in mailbox"
+            .to_string(),
+        parameters: vec![Parameter {
+            name: "count".to_string(),
+            type_hint: "number".to_string(),
+            description: "Number of messages that exist".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "send_imap_exists",
             "count": 5
@@ -690,14 +689,12 @@ fn send_imap_recent_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_imap_recent".to_string(),
         description: "Send IMAP RECENT response indicating number of recent messages".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "count".to_string(),
-                type_hint: "number".to_string(),
-                description: "Number of recent messages".to_string(),
-                required: true,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "count".to_string(),
+            type_hint: "number".to_string(),
+            description: "Number of recent messages".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "send_imap_recent",
             "count": 2
@@ -709,14 +706,12 @@ fn send_imap_flags_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_imap_flags".to_string(),
         description: "Send IMAP FLAGS response with available message flags".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "flags".to_string(),
-                type_hint: "array".to_string(),
-                description: "Array of available flags".to_string(),
-                required: true,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "flags".to_string(),
+            type_hint: "array".to_string(),
+            description: "Array of available flags".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "send_imap_flags",
             "flags": ["\\Seen", "\\Answered", "\\Flagged", "\\Deleted", "\\Draft"]
@@ -727,15 +722,14 @@ fn send_imap_flags_action() -> ActionDefinition {
 fn send_imap_expunge_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_imap_expunge".to_string(),
-        description: "Send IMAP EXPUNGE response indicating a message was permanently removed".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "sequence".to_string(),
-                type_hint: "number".to_string(),
-                description: "Sequence number of the expunged message".to_string(),
-                required: true,
-            },
-        ],
+        description: "Send IMAP EXPUNGE response indicating a message was permanently removed"
+            .to_string(),
+        parameters: vec![Parameter {
+            name: "sequence".to_string(),
+            type_hint: "number".to_string(),
+            description: "Sequence number of the expunged message".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "send_imap_expunge",
             "sequence": 3
@@ -772,18 +766,16 @@ fn close_connection_action() -> ActionDefinition {
 pub static IMAP_CONNECTION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "imap_connection",
-        "Initial IMAP connection established - send greeting"
+        "Initial IMAP connection established - send greeting",
     )
     .with_parameters(vec![])
-    .with_actions(vec![
-        send_imap_greeting_action(),
-    ])
+    .with_actions(vec![send_imap_greeting_action()])
 });
 
 pub static IMAP_AUTH_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "imap_auth",
-        "IMAP LOGIN command received - authenticate user"
+        "IMAP LOGIN command received - authenticate user",
     )
     .with_parameters(vec![
         Parameter {
@@ -805,70 +797,66 @@ pub static IMAP_AUTH_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: true,
         },
     ])
-    .with_actions(vec![
-        send_imap_response_action(),
-        close_connection_action(),
-    ])
+    .with_actions(vec![send_imap_response_action(), close_connection_action()])
 });
 
 pub static IMAP_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "imap_command",
-        "IMAP command received from client"
-    )
-    .with_parameters(vec![
-        Parameter {
-            name: "tag".to_string(),
-            type_hint: "string".to_string(),
-            description: "Command tag".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "command".to_string(),
-            type_hint: "string".to_string(),
-            description: "IMAP command (CAPABILITY, SELECT, LIST, FETCH, etc.)".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "args".to_string(),
-            type_hint: "string".to_string(),
-            description: "Command arguments".to_string(),
-            required: false,
-        },
-        Parameter {
-            name: "session_state".to_string(),
-            type_hint: "string".to_string(),
-            description: "Current session state (NotAuthenticated, Authenticated, Selected, Logout)".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "authenticated_user".to_string(),
-            type_hint: "string".to_string(),
-            description: "Authenticated username (if any)".to_string(),
-            required: false,
-        },
-        Parameter {
-            name: "selected_mailbox".to_string(),
-            type_hint: "string".to_string(),
-            description: "Currently selected mailbox (if any)".to_string(),
-            required: false,
-        },
-    ])
-    .with_actions(vec![
-        send_imap_response_action(),
-        send_imap_untagged_action(),
-        send_imap_capability_action(),
-        send_imap_list_action(),
-        send_imap_status_action(),
-        send_imap_fetch_action(),
-        send_imap_search_action(),
-        send_imap_exists_action(),
-        send_imap_recent_action(),
-        send_imap_flags_action(),
-        send_imap_expunge_action(),
-        wait_for_more_action(),
-        close_connection_action(),
-    ])
+    EventType::new("imap_command", "IMAP command received from client")
+        .with_parameters(vec![
+            Parameter {
+                name: "tag".to_string(),
+                type_hint: "string".to_string(),
+                description: "Command tag".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "command".to_string(),
+                type_hint: "string".to_string(),
+                description: "IMAP command (CAPABILITY, SELECT, LIST, FETCH, etc.)".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "args".to_string(),
+                type_hint: "string".to_string(),
+                description: "Command arguments".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "session_state".to_string(),
+                type_hint: "string".to_string(),
+                description:
+                    "Current session state (NotAuthenticated, Authenticated, Selected, Logout)"
+                        .to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "authenticated_user".to_string(),
+                type_hint: "string".to_string(),
+                description: "Authenticated username (if any)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "selected_mailbox".to_string(),
+                type_hint: "string".to_string(),
+                description: "Currently selected mailbox (if any)".to_string(),
+                required: false,
+            },
+        ])
+        .with_actions(vec![
+            send_imap_response_action(),
+            send_imap_untagged_action(),
+            send_imap_capability_action(),
+            send_imap_list_action(),
+            send_imap_status_action(),
+            send_imap_fetch_action(),
+            send_imap_search_action(),
+            send_imap_exists_action(),
+            send_imap_recent_action(),
+            send_imap_flags_action(),
+            send_imap_expunge_action(),
+            wait_for_more_action(),
+            close_connection_action(),
+        ])
 });
 
 pub fn get_imap_event_types() -> Vec<EventType> {

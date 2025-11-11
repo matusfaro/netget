@@ -7,9 +7,8 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, ServerConfig, E2EResult};
+use super::super::super::helpers::{self, E2EResult, ServerConfig};
 use std::process::Command;
-use std::time::Duration;
 
 #[tokio::test]
 async fn test_arp_responder() -> E2EResult<()> {
@@ -30,7 +29,6 @@ async fn test_arp_responder() -> E2EResult<()> {
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
-
 
     // VALIDATION: Use arp command or arping to verify
     println!("Sending ARP request for 192.168.100.50...");
@@ -81,7 +79,10 @@ async fn test_datalink_interface_detection() -> E2EResult<()> {
     println!("Testing with interface: {}", interface);
 
     // PROMPT: Simple DataLink setup
-    let prompt = format!("Set up a DataLink layer 2 server on interface {}", interface);
+    let prompt = format!(
+        "Set up a DataLink layer 2 server on interface {}",
+        interface
+    );
 
     println!("Prompt constructed: {}", prompt);
     println!("✓ Interface detection and prompt construction working");

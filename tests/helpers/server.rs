@@ -5,7 +5,6 @@ use tokio::process::Child;
 use tokio::time::sleep;
 
 use super::common::*;
-use super::netget::{NetGetConfig, NetGetServer as ParsedNetGetServer};
 
 /// A running NetGet server process (backward compatible)
 /// This wrapper maintains compatibility with the original NetGetServer struct
@@ -90,6 +89,7 @@ impl NetGetServer {
 
 /// Configuration for a server test (re-export for backward compatibility)
 pub use super::netget::NetGetConfig as ServerConfig;
+
 
 /// Start a NetGet server with the given configuration (backward compatible wrapper)
 /// Asserts exactly 1 server and 0 clients were started

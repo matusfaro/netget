@@ -2,19 +2,24 @@
 
 ## Test Overview
 
-End-to-end tests for SOCKS5 proxy functionality. Tests spawn NetGet SOCKS5 proxy and validate protocol operations using a custom SOCKS5 client implementation. Covers handshake, authentication, CONNECT requests, data relay, and filtering.
+End-to-end tests for SOCKS5 proxy functionality. Tests spawn NetGet SOCKS5 proxy and validate protocol operations using
+a custom SOCKS5 client implementation. Covers handshake, authentication, CONNECT requests, data relay, and filtering.
 
-**Protocols Tested**: SOCKS5 handshake, username/password authentication (RFC 1929), CONNECT command, IPv4/domain targets
+**Protocols Tested**: SOCKS5 handshake, username/password authentication (RFC 1929), CONNECT command, IPv4/domain
+targets
 
 ## Test Strategy
 
-**Custom SOCKS5 Client**: Implemented from scratch in test code (`Socks5Client` struct) for precise protocol control and debugging visibility. This allows:
+**Custom SOCKS5 Client**: Implemented from scratch in test code (`Socks5Client` struct) for precise protocol control and
+debugging visibility. This allows:
+
 - Testing exact SOCKS5 message formats
 - Validating binary protocol compliance
 - Triggering edge cases and error conditions
 - Avoiding library behavior masking protocol issues
 
 **Local Target Server**: Tests spawn simple HTTP server on localhost as CONNECT target. This ensures:
+
 - No external dependencies (tests work offline)
 - Predictable responses for validation
 - Fast test execution (<100ms server startup)
@@ -30,7 +35,8 @@ End-to-end tests for SOCKS5 proxy functionality. Tests spawn NetGet SOCKS5 proxy
 3. **`test_socks5_reject_connection`**: 1 server startup + 1 CONNECT = **2 LLM calls**
 4. **`test_socks5_connect_domain`**: 1 server startup + 1 CONNECT = **2 LLM calls**
 5. **`test_socks5_multiple_connections`**: 1 server startup + 3 CONNECTs = **4 LLM calls**
-6. **`test_socks5_data_relay`**: 1 server startup + 1 CONNECT + HTTP request/response = **2 LLM calls** (pass-through, no MITM)
+6. **`test_socks5_data_relay`**: 1 server startup + 1 CONNECT + HTTP request/response = **2 LLM calls** (pass-through,
+   no MITM)
 7. **`test_socks5_mitm_inspection`** (if implemented): 1 server startup + 1 CONNECT + N data chunks = **~10 LLM calls**
 
 **Total: 15-25 LLM calls** (depending on MITM test inclusion)
@@ -40,17 +46,21 @@ End-to-end tests for SOCKS5 proxy functionality. Tests spawn NetGet SOCKS5 proxy
 **Current Issue**: Each test creates separate proxy server with specific behavior.
 
 **Potential Improvement**: Consolidate into 2-3 comprehensive tests:
-1. **Basic Operations**: No auth, allow all, test IPv4 + domain + multiple connections in one server (**~4-5 LLM calls**)
+
+1. **Basic Operations**: No auth, allow all, test IPv4 + domain + multiple connections in one server (**~4-5 LLM calls
+   **)
 2. **Authentication & Filtering**: Username/password auth, selective blocking (**~3-4 LLM calls**)
 3. **MITM Inspection**: Enable MITM for specific target, test data modification (**~10 LLM calls**)
 
 This could reduce to **~17-19 LLM calls total**, closer to the 10 call target.
 
-**Challenge**: SOCKS5 requires state across connections (auth, then CONNECT), making consolidation more complex than stateless protocols.
+**Challenge**: SOCKS5 requires state across connections (auth, then CONNECT), making consolidation more complex than
+stateless protocols.
 
 ## Scripting Usage
 
 **Scripting NOT Used**: SOCKS5 requires dynamic LLM decisions based on:
+
 - Authentication credentials (username/password validation)
 - Connection targets (domain-based filtering)
 - Data content (MITM inspection)
@@ -60,16 +70,18 @@ Scripting mode doesn't provide sufficient context for these decisions. Per-conne
 ## Client Library
 
 **Custom Implementation** - `Socks5Client` struct in test code
+
 - Manual binary protocol construction for SOCKS5 messages
 - Uses `tokio::io::AsyncReadExt` / `AsyncWriteExt` for raw TCP
 - Methods:
-  - `handshake_no_auth()` - Phase 1 negotiation
-  - `handshake_with_auth(username, password)` - Phase 1+2 with credentials
-  - `connect_ipv4(ip, port)` - Phase 3 CONNECT to IPv4
-  - `connect_domain(domain, port)` - Phase 3 CONNECT to domain
-  - `into_stream()` - Convert to raw TcpStream for Phase 4 data relay
+    - `handshake_no_auth()` - Phase 1 negotiation
+    - `handshake_with_auth(username, password)` - Phase 1+2 with credentials
+    - `connect_ipv4(ip, port)` - Phase 3 CONNECT to IPv4
+    - `connect_domain(domain, port)` - Phase 3 CONNECT to domain
+    - `into_stream()` - Convert to raw TcpStream for Phase 4 data relay
 
 **Why Not Use SOCKS5 Library?**:
+
 - No mature async Rust SOCKS5 client library (most are sync or unmaintained)
 - Custom implementation provides test clarity and debugging control
 - ~200 lines of code, well worth the flexibility
@@ -81,6 +93,7 @@ Scripting mode doesn't provide sufficient context for these decisions. Per-conne
 **Model**: qwen3-coder:30b (default NetGet model)
 
 **Runtime**: ~60-90 seconds for full test suite (6-7 tests, 15-25 LLM calls)
+
 - Per-test average: ~10-15 seconds
 - LLM call latency: ~2-5 seconds per call
 - SOCKS5 handshake: ~5-10ms (fast binary protocol)
@@ -95,30 +108,32 @@ Scripting mode doesn't provide sufficient context for these decisions. Per-conne
 **Common Failure Modes**:
 
 1. **Timeout on CONNECT** (~5% of runs)
-   - Symptom: Client receives no response after CONNECT request
-   - Cause: LLM slow to decide on connection policy, client times out
-   - Mitigation: Increase read timeout to 10 seconds
+    - Symptom: Client receives no response after CONNECT request
+    - Cause: LLM slow to decide on connection policy, client times out
+    - Mitigation: Increase read timeout to 10 seconds
 
 2. **Authentication Rejection** (~2% of runs)
-   - Symptom: LLM rejects valid credentials
-   - Cause: Model misinterprets authentication prompt or applies overly strict policy
-   - Usually self-corrects on retry
+    - Symptom: LLM rejects valid credentials
+    - Cause: Model misinterprets authentication prompt or applies overly strict policy
+    - Usually self-corrects on retry
 
 3. **Domain Resolution Failure** (~1% of runs)
-   - Symptom: CONNECT to domain name fails with "host unreachable"
-   - Cause: DNS resolution failure on CI runner, or NetGet can't resolve localhost domains
-   - Mitigation: Use 127.0.0.1 instead of "localhost" when possible
+    - Symptom: CONNECT to domain name fails with "host unreachable"
+    - Cause: DNS resolution failure on CI runner, or NetGet can't resolve localhost domains
+    - Mitigation: Use 127.0.0.1 instead of "localhost" when possible
 
 4. **Binary Protocol Mismatch** (<1% of runs)
-   - Symptom: Protocol parsing error (invalid SOCKS version, unexpected message format)
-   - Cause: LLM generates malformed SOCKS5 response (rare)
-   - Indicates LLM hallucination on binary protocol structure
+    - Symptom: Protocol parsing error (invalid SOCKS version, unexpected message format)
+    - Cause: LLM generates malformed SOCKS5 response (rare)
+    - Indicates LLM hallucination on binary protocol structure
 
 **Most Stable Tests**:
+
 - `test_socks5_basic_connect`: Simple allow-all policy, no auth complexity
 - `test_socks5_data_relay`: Pass-through mode, no LLM per-packet inspection
 
 **Occasionally Flaky**:
+
 - `test_socks5_auth_username_password`: LLM may be overly strict or lenient
 - `test_socks5_connect_domain`: DNS resolution timing issues
 
@@ -127,55 +142,56 @@ Scripting mode doesn't provide sufficient context for these decisions. Per-conne
 ### Handshake and Authentication
 
 1. **Basic CONNECT (No Auth)** (`test_socks5_basic_connect`)
-   - Tests handshake with method 0x00 (no authentication)
-   - Validates CONNECT to IPv4 target
-   - Checks SOCKS5 reply format and success code (0x00)
+    - Tests handshake with method 0x00 (no authentication)
+    - Validates CONNECT to IPv4 target
+    - Checks SOCKS5 reply format and success code (0x00)
 
 2. **Username/Password Authentication** (`test_socks5_auth_username_password`)
-   - Tests handshake with method 0x02 (username/password)
-   - Sends authentication credentials
-   - Validates LLM accepts correct credentials
-   - Attempts CONNECT after successful auth
+    - Tests handshake with method 0x02 (username/password)
+    - Sends authentication credentials
+    - Validates LLM accepts correct credentials
+    - Attempts CONNECT after successful auth
 
 3. **Auth Rejection** (if implemented)
-   - Tests LLM rejects invalid credentials
-   - Validates auth status code 0x01 (failure)
-   - Ensures connection closes after auth failure
+    - Tests LLM rejects invalid credentials
+    - Validates auth status code 0x01 (failure)
+    - Ensures connection closes after auth failure
 
 ### Connection Handling
 
 4. **CONNECT Domain Name** (`test_socks5_connect_domain`)
-   - Tests CONNECT with ATYP=0x03 (domain name)
-   - Validates proxy resolves domain
-   - Checks connection establishment to resolved IP
+    - Tests CONNECT with ATYP=0x03 (domain name)
+    - Validates proxy resolves domain
+    - Checks connection establishment to resolved IP
 
 5. **Multiple Concurrent Connections** (`test_socks5_multiple_connections`)
-   - Spawns 3 concurrent SOCKS5 clients
-   - Each performs handshake + CONNECT to same proxy
-   - Validates proxy handles concurrent connections correctly
+    - Spawns 3 concurrent SOCKS5 clients
+    - Each performs handshake + CONNECT to same proxy
+    - Validates proxy handles concurrent connections correctly
 
 6. **Connection Rejection** (`test_socks5_reject_connection`)
-   - Tests LLM blocks connection based on target
-   - Validates SOCKS5 reply code 0x02 (connection not allowed)
-   - Ensures rejected connections close gracefully
+    - Tests LLM blocks connection based on target
+    - Validates SOCKS5 reply code 0x02 (connection not allowed)
+    - Ensures rejected connections close gracefully
 
 ### Data Relay
 
 7. **Data Relay (Pass-Through)** (`test_socks5_data_relay`)
-   - Establishes SOCKS5 tunnel to HTTP server
-   - Sends HTTP GET request through tunnel
-   - Validates response received correctly
-   - Tests bidirectional data flow
+    - Establishes SOCKS5 tunnel to HTTP server
+    - Sends HTTP GET request through tunnel
+    - Validates response received correctly
+    - Tests bidirectional data flow
 
 8. **MITM Inspection** (if implemented)
-   - Enables MITM mode for specific target
-   - Sends data through tunnel
-   - Validates LLM receives data inspection events
-   - Tests data modification and forwarding
+    - Enables MITM mode for specific target
+    - Sends data through tunnel
+    - Validates LLM receives data inspection events
+    - Tests data modification and forwarding
 
 ### Coverage Gaps
 
 **Not Yet Tested**:
+
 - IPv6 targets (ATYP=0x04)
 - BIND command (not implemented in NetGet)
 - UDP ASSOCIATE command (not implemented)
@@ -191,6 +207,7 @@ Scripting mode doesn't provide sufficient context for these decisions. Per-conne
 ### Custom SOCKS5 Client
 
 **`Socks5Client` Implementation**:
+
 ```rust
 struct Socks5Client {
     stream: TcpStream,
@@ -207,6 +224,7 @@ impl Socks5Client {
 ```
 
 **Binary Protocol Construction**:
+
 - Uses byte slices and manual serialization for precise message format
 - Example: `[SOCKS5_VERSION, CMD_CONNECT, 0x00, ATYP_IPV4, ...ip_bytes, ...port_bytes]`
 - Validates response fields (version, reply code, address type)
@@ -214,11 +232,13 @@ impl Socks5Client {
 ### Test Helper Functions
 
 **`start_test_http_server()`**:
+
 - Spawns simple HTTP server on random port
 - Returns single-response server (accepts one connection, sends 200 OK)
 - Used as CONNECT target for data relay tests
 
 **Test Execution Pattern**:
+
 ```rust
 // 1. Start target HTTP server
 let (http_port, _handle) = start_test_http_server().await?;

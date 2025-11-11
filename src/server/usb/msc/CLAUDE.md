@@ -2,7 +2,8 @@
 
 ## Overview
 
-The USB Mass Storage Class (MSC) server creates a virtual USB flash drive or hard disk using the USB/IP protocol. This allows an LLM to control a virtual disk device that appears as a real storage device to the host operating system.
+The USB Mass Storage Class (MSC) server creates a virtual USB flash drive or hard disk using the USB/IP protocol. This
+allows an LLM to control a virtual disk device that appears as a real storage device to the host operating system.
 
 ## Architecture
 
@@ -37,6 +38,7 @@ The USB Mass Storage Class (MSC) server creates a virtual USB flash drive or har
 ### What's Implemented
 
 #### Phase 1: USB/IP Device Handler ✅ COMPLETE
+
 - ✅ Custom `UsbInterfaceHandler` trait implementation for MSC (`handler.rs`)
 - ✅ Bulk OUT endpoint handler (receive CBW + data)
 - ✅ Bulk IN endpoint handler (send data + CSW)
@@ -44,6 +46,7 @@ The USB Mass Storage Class (MSC) server creates a virtual USB flash drive or har
 - ✅ Class-specific control requests (Mass Storage Reset, Get Max LUN)
 
 #### Phase 2: SCSI Command Implementation ✅ COMPLETE
+
 - ✅ **INQUIRY** (0x12): Return device information
 - ✅ **TEST_UNIT_READY** (0x00): Check device readiness
 - ✅ **READ_CAPACITY(10)** (0x25): Return total sectors and block size
@@ -56,6 +59,7 @@ The USB Mass Storage Class (MSC) server creates a virtual USB flash drive or har
 - ✅ SCSI sense data management (error reporting)
 
 #### Phase 3: Disk Image Management ✅ COMPLETE
+
 - ✅ Disk image file creation and validation (`disk.rs`)
 - ✅ Sector read/write operations (512-byte blocks)
 - ✅ Memory-mapped I/O for performance (using memmap2)
@@ -64,6 +68,7 @@ The USB Mass Storage Class (MSC) server creates a virtual USB flash drive or har
 - ✅ Unit tests for disk I/O
 
 #### Phase 4: LLM Integration ✅ COMPLETE
+
 - ✅ USB/IP server spawning with device export
 - ✅ Event generation (usb_msc_attached, read, write)
 - ✅ Connection state tracking
@@ -71,6 +76,7 @@ The USB Mass Storage Class (MSC) server creates a virtual USB flash drive or har
 - ⚠️ LLM actions (mount_disk, eject_disk, set_write_protect) - Framework ready, not yet implemented
 
 #### Phase 5: Testing ⚠️ NOT YET TESTED
+
 - ❌ E2E tests with real usbip client (requires manual testing)
 - ❌ Disk mounting verification
 - ❌ File read/write tests
@@ -79,16 +85,20 @@ The USB Mass Storage Class (MSC) server creates a virtual USB flash drive or har
 ### Known Limitations
 
 #### Not Yet Implemented
-- **LLM Actions**: The framework exists in `actions.rs` but `execute_action()` doesn't handle mount_disk, eject_disk, set_write_protect yet
+
+- **LLM Actions**: The framework exists in `actions.rs` but `execute_action()` doesn't handle mount_disk, eject_disk,
+  set_write_protect yet
 - **E2E Testing**: No automated E2E tests exist (see `tests/server/usb_msc/CLAUDE.md`)
 - **Dynamic Disk Switching**: Cannot swap disk images at runtime
 - **Multiple LUNs**: Only single LUN (logical unit) supported
 
 #### Implementation Notes
+
 - **Write Protection**: Defaults to `true` for safety, preventing accidental writes until explicitly disabled
 - **Disk Size**: Defaults to 10MB, currently not configurable via startup parameters
 - **SCSI Compliance**: Implements minimal SCSI-2 command set for basic storage operations
-- **Blocking in async**: Uses `tokio::runtime::Handle::current().block_on()` in UsbInterfaceHandler methods (required because trait is sync)
+- **Blocking in async**: Uses `tokio::runtime::Handle::current().block_on()` in UsbInterfaceHandler methods (required
+  because trait is sync)
 
 ## Implementation Guide
 
@@ -355,7 +365,9 @@ fatfs = { version = "0.3", optional = true }  # FAT32 filesystem support
 
 **Status**: ⚠️ **No built-in MSC support**
 
-The usbip crate provides the USB/IP server framework but does **NOT** include Mass Storage Class handlers. You must implement:
+The usbip crate provides the USB/IP server framework but does **NOT** include Mass Storage Class handlers. You must
+implement:
+
 - Custom `UsbInterfaceHandler` for MSC
 - BOT protocol (CBW/CSW parsing and generation)
 - SCSI command dispatcher
@@ -364,12 +376,14 @@ The usbip crate provides the USB/IP server framework but does **NOT** include Ma
 ### Disk Image: memmap2 crate (v0.9)
 
 **Why chosen**:
+
 - Fast sector-based random access
 - Kernel manages page cache
 - Zero-copy reads
 - Simple API
 
 **Limitations**:
+
 - Requires 32-bit or 64-bit virtual address space
 - May cause page faults on first access
 - File size limited by available virtual memory
@@ -377,6 +391,7 @@ The usbip crate provides the USB/IP server framework but does **NOT** include Ma
 ### Filesystem (Optional): fatfs crate (v0.3)
 
 **Why useful**:
+
 - Create FAT32 filesystems
 - Add/modify files from Rust
 - No need for external mkfs.vfat
@@ -387,18 +402,21 @@ The usbip crate provides the USB/IP server framework but does **NOT** include Ma
 ## Limitations
 
 ### Server Side (Implementation)
+
 - **No Built-in Support**: usbip crate lacks MSC handlers
 - **Complex Implementation**: BOT + SCSI requires ~1000+ lines of code
 - **Binary Protocol**: LLM cannot construct SCSI commands directly
 - **Performance**: Memory-mapped I/O limited to files < 4GB (32-bit systems)
 
 ### Client Side (Same as other USB protocols)
+
 - **Linux Only**: Requires vhci-hcd kernel module (Linux 3.17+)
 - **Root Access**: Client must run `sudo usbip attach`
 - **Manual Import**: User must run attach command
 - **No Windows/macOS Client**: Limited to Linux hosts
 
 ### Protocol
+
 - **Boot Only**: SCSI-2 subset, no advanced features
 - **Single LUN**: One logical unit per device
 - **No Hot-Swap**: Requires remount after disk change
@@ -442,6 +460,7 @@ The usbip crate provides the USB/IP server framework but does **NOT** include Ma
 ### E2E Tests (Deferred)
 
 **Not yet implemented** due to SCSI complexity. Future E2E tests should:
+
 - Create minimal disk image (1MB)
 - Verify device attachment
 - Test read operations
@@ -464,18 +483,21 @@ Based on complexity analysis:
 ## Future Enhancements
 
 ### Phase 2: Advanced Features
+
 - Multi-LUN support (multiple disks)
 - Hot-swap disk images
 - Read-only media emulation (CD-ROM)
 - Disk image formats (VHD, QCOW2)
 
 ### Phase 3: Performance
+
 - Async disk I/O
 - Write-back caching
 - Sector buffering
 - Zero-copy transfers
 
 ### Phase 4: LLM Features
+
 - File listing (without mounting)
 - Direct file injection
 - Filesystem analysis

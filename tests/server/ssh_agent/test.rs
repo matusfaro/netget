@@ -69,7 +69,10 @@ async fn test_ssh_agent_protocol_parsing() -> Result<(), Box<dyn std::error::Err
 
     let (length, msg_type) = parse_message_header(&msg).expect("Failed to parse header");
     assert_eq!(length, 1, "Length should be 1 (just the type byte)");
-    assert_eq!(msg_type, 11, "Message type should be 11 (REQUEST_IDENTITIES)");
+    assert_eq!(
+        msg_type, 11,
+        "Message type should be 11 (REQUEST_IDENTITIES)"
+    );
 
     println!("✓ REQUEST_IDENTITIES format validated");
 
@@ -167,8 +170,7 @@ async fn test_ssh_agent_sign_response_parsing() -> Result<(), Box<dyn std::error
     assert_eq!(length, total_len as u32, "Length mismatch");
 
     // Parse signature length
-    let sig_len =
-        u32::from_be_bytes([response[5], response[6], response[7], response[8]]) as usize;
+    let sig_len = u32::from_be_bytes([response[5], response[6], response[7], response[8]]) as usize;
     assert_eq!(sig_len, signature.len(), "Signature length mismatch");
 
     // Verify signature data
@@ -238,12 +240,7 @@ async fn example_integration_test_with_netget_server() -> Result<(), Box<dyn std
     println!("Attempting to connect to: {}", socket_path);
 
     // Connect to NetGet server
-    match tokio::time::timeout(
-        Duration::from_secs(5),
-        UnixStream::connect(socket_path),
-    )
-    .await
-    {
+    match tokio::time::timeout(Duration::from_secs(5), UnixStream::connect(socket_path)).await {
         Ok(Ok(mut stream)) => {
             println!("✓ Connected to NetGet SSH Agent server");
 
@@ -255,8 +252,7 @@ async fn example_integration_test_with_netget_server() -> Result<(), Box<dyn std
 
             // Read response
             let mut response = vec![0u8; 8192];
-            match tokio::time::timeout(Duration::from_secs(10), stream.read(&mut response)).await
-            {
+            match tokio::time::timeout(Duration::from_secs(10), stream.read(&mut response)).await {
                 Ok(Ok(n)) if n >= 5 => {
                     let (length, msg_type) =
                         parse_message_header(&response).expect("Failed to parse response");

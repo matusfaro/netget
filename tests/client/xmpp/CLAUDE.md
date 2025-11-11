@@ -2,7 +2,8 @@
 
 ## Overview
 
-End-to-end tests for the XMPP (Jabber) client implementation. These tests verify that NetGet can successfully connect to XMPP servers, send messages, update presence, and receive events.
+End-to-end tests for the XMPP (Jabber) client implementation. These tests verify that NetGet can successfully connect to
+XMPP servers, send messages, update presence, and receive events.
 
 ## Test Strategy
 
@@ -13,6 +14,7 @@ End-to-end tests for the XMPP (Jabber) client implementation. These tests verify
 ## Test Categories
 
 ### 1. Connection Tests
+
 - **Test:** `test_xmpp_client_connect`
 - **Purpose:** Verify basic connection and authentication
 - **LLM Calls:** 1 (on connect)
@@ -20,6 +22,7 @@ End-to-end tests for the XMPP (Jabber) client implementation. These tests verify
 - **Validation:** Client status is Connected
 
 ### 2. Message Tests
+
 - **Test:** `test_xmpp_client_send_message`
 - **Purpose:** Verify sending messages to another JID
 - **LLM Calls:** 2 (connect + message action)
@@ -27,6 +30,7 @@ End-to-end tests for the XMPP (Jabber) client implementation. These tests verify
 - **Validation:** Manual verification on receiving client
 
 ### 3. Presence Tests
+
 - **Test:** `test_xmpp_client_presence`
 - **Purpose:** Verify presence updates
 - **LLM Calls:** 2 (connect + presence action)
@@ -38,6 +42,7 @@ End-to-end tests for the XMPP (Jabber) client implementation. These tests verify
 ### Local XMPP Server (Prosody - Recommended)
 
 **Installation:**
+
 ```bash
 # Ubuntu/Debian
 sudo apt install prosody
@@ -47,6 +52,7 @@ brew install prosody
 ```
 
 **Configuration** (`/etc/prosody/prosody.cfg.lua`):
+
 ```lua
 VirtualHost "localhost"
 
@@ -76,6 +82,7 @@ log = {
 ```
 
 **Create Test Accounts:**
+
 ```bash
 # Create alice@localhost
 sudo prosodyctl adduser alice@localhost
@@ -87,6 +94,7 @@ sudo prosodyctl adduser bob@localhost
 ```
 
 **Start Server:**
+
 ```bash
 sudo systemctl start prosody
 # Or
@@ -94,6 +102,7 @@ sudo prosodyctl start
 ```
 
 **Verify Server:**
+
 ```bash
 # Check if running on port 5222
 netstat -ln | grep 5222
@@ -105,17 +114,20 @@ tail -f /var/log/prosody/prosody.log
 ### Alternative: ejabberd
 
 **Installation:**
+
 ```bash
 sudo apt install ejabberd
 ```
 
 **Create Test Accounts:**
+
 ```bash
 sudo ejabberdctl register alice localhost password
 sudo ejabberdctl register bob localhost password
 ```
 
 **Start Server:**
+
 ```bash
 sudo systemctl start ejabberd
 ```
@@ -123,16 +135,19 @@ sudo systemctl start ejabberd
 ## Running Tests
 
 ### All Tests (Ignored by Default)
+
 ```bash
 ./cargo-isolated.sh test --no-default-features --features xmpp --test client::xmpp::e2e_test -- --ignored
 ```
 
 ### Specific Test
+
 ```bash
 ./cargo-isolated.sh test --no-default-features --features xmpp test_xmpp_client_connect -- --ignored
 ```
 
 ### With Logging
+
 ```bash
 RUST_LOG=debug ./cargo-isolated.sh test --no-default-features --features xmpp --test client::xmpp::e2e_test -- --ignored --nocapture
 ```
@@ -142,11 +157,13 @@ RUST_LOG=debug ./cargo-isolated.sh test --no-default-features --features xmpp --
 ### Using Another XMPP Client
 
 **Desktop Clients:**
+
 - **Gajim** (Linux): `sudo apt install gajim`
 - **Psi** (Cross-platform): https://psi-im.org/
 - **Swift** (Cross-platform): https://swift.im/
 
 **Console Client (for quick testing):**
+
 ```bash
 # Install profanity
 sudo apt install profanity
@@ -175,6 +192,7 @@ tail -f /var/log/ejabberd/ejabberd.log
 **Total Budget:** < 10 LLM calls
 
 **Breakdown:**
+
 - Connection test: 1 call (connect event)
 - Message test: 2 calls (connect + send message)
 - Presence test: 2 calls (connect + send presence)
@@ -185,26 +203,31 @@ tail -f /var/log/ejabberd/ejabberd.log
 ## Known Issues
 
 ### 1. Authentication Failures
+
 **Symptom:** Connection fails with SASL error
 **Cause:** Incorrect password or account doesn't exist
 **Fix:** Recreate test account with correct password
 
 ### 2. TLS Errors
+
 **Symptom:** TLS handshake failed
 **Cause:** Server requires TLS but client doesn't support it
 **Fix:** Disable TLS requirement in server config for testing
 
 ### 3. Connection Timeout
+
 **Symptom:** Test times out after 10 seconds
 **Cause:** Server not running or firewall blocking port 5222
 **Fix:** Check server status and firewall rules
 
 ### 4. Message Not Received
+
 **Symptom:** Message sent but not received by bob@localhost
 **Cause:** bob is not online or server isn't routing messages
 **Fix:** Ensure receiving client is connected and check server logs
 
 ### 5. Roster Not Loading
+
 **Symptom:** Cannot see contacts
 **Cause:** Roster management not implemented yet
 **Fix:** This is a known limitation, manually add contacts via server admin
@@ -223,6 +246,7 @@ tail -f /var/log/ejabberd/ejabberd.log
 **Current Status:** Tests are ignored by default (require local server)
 
 **Options for CI:**
+
 1. **Docker Prosody:** Run server in container, connect in tests
 2. **Public Test Server:** Use `test.xmpp.jp` (requires internet)
 3. **Mock Server:** Implement simple XMPP mock for testing

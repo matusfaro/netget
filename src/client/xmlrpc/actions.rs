@@ -15,23 +15,21 @@ use std::sync::LazyLock;
 pub static XMLRPC_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "xmlrpc_connected",
-        "XML-RPC client initialized and ready to call methods"
+        "XML-RPC client initialized and ready to call methods",
     )
-    .with_parameters(vec![
-        Parameter {
-            name: "server_url".to_string(),
-            type_hint: "string".to_string(),
-            description: "XML-RPC server URL".to_string(),
-            required: true,
-        },
-    ])
+    .with_parameters(vec![Parameter {
+        name: "server_url".to_string(),
+        type_hint: "string".to_string(),
+        description: "XML-RPC server URL".to_string(),
+        required: true,
+    }])
 });
 
 /// XML-RPC client response received event
 pub static XMLRPC_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "xmlrpc_response_received",
-        "XML-RPC response received from server"
+        "XML-RPC response received from server",
     )
     .with_parameters(vec![
         Parameter {
@@ -43,7 +41,8 @@ pub static XMLRPC_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock
         Parameter {
             name: "result".to_string(),
             type_hint: "any".to_string(),
-            description: "Method call result (can be string, number, array, struct, etc.)".to_string(),
+            description: "Method call result (can be string, number, array, struct, etc.)"
+                .to_string(),
             required: false,
         },
         Parameter {
@@ -66,19 +65,17 @@ impl XmlRpcClientProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for XmlRpcClientProtocol {
-        fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-            vec![
-                ParameterDefinition {
-                    name: "timeout_secs".to_string(),
-                    description: "Request timeout in seconds (default: 30)".to_string(),
-                    type_hint: "number".to_string(),
-                    required: false,
-                    example: json!(30),
-                },
-            ]
-        }
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            vec![
+    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
+        vec![ParameterDefinition {
+            name: "timeout_secs".to_string(),
+            description: "Request timeout in seconds (default: 30)".to_string(),
+            type_hint: "number".to_string(),
+            required: false,
+            example: json!(30),
+        }]
+    }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        vec![
                 ActionDefinition {
                     name: "call_xmlrpc_method".to_string(),
                     description: "Call an XML-RPC method on the server".to_string(),
@@ -111,132 +108,132 @@ impl Protocol for XmlRpcClientProtocol {
                     }),
                 },
             ]
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                ActionDefinition {
-                    name: "call_xmlrpc_method".to_string(),
-                    description: "Call another XML-RPC method in response to received data".to_string(),
-                    parameters: vec![
-                        Parameter {
-                            name: "method_name".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "Name of the XML-RPC method to call".to_string(),
-                            required: true,
-                        },
-                        Parameter {
-                            name: "params".to_string(),
-                            type_hint: "array".to_string(),
-                            description: "Array of parameters for the method call".to_string(),
-                            required: false,
-                        },
-                    ],
-                    example: json!({
-                        "type": "call_xmlrpc_method",
-                        "method_name": "system.listMethods",
-                        "params": []
-                    }),
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![ActionDefinition {
+            name: "call_xmlrpc_method".to_string(),
+            description: "Call another XML-RPC method in response to received data".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "method_name".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Name of the XML-RPC method to call".to_string(),
+                    required: true,
                 },
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "XML-RPC"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            vec![
-                EventType {
-                    id: "xmlrpc_connected".to_string(),
-                    description: "Triggered when XML-RPC client is initialized".to_string(),
-                    actions: vec![],
-                    parameters: vec![],
+                Parameter {
+                    name: "params".to_string(),
+                    type_hint: "array".to_string(),
+                    description: "Array of parameters for the method call".to_string(),
+                    required: false,
                 },
-                EventType {
-                    id: "xmlrpc_response_received".to_string(),
-                    description: "Triggered when XML-RPC client receives a response".to_string(),
-                    actions: vec![],
-                    parameters: vec![],
-                },
-            ]
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>TCP>HTTP>XML-RPC"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["xmlrpc", "xml-rpc", "xml rpc", "rpc", "connect to xmlrpc"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Experimental)
-                .implementation("xmlrpc crate for method calls")
-                .llm_control("Full control over method calls with structured parameters")
-                .e2e_testing("Public XML-RPC test servers or local implementation")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "XML-RPC client for calling remote procedures"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Connect to http://example.com/xmlrpc and call system.listMethods"
-        }
-        fn group_name(&self) -> &'static str {
-            "RPC & API"
-        }
+            ],
+            example: json!({
+                "type": "call_xmlrpc_method",
+                "method_name": "system.listMethods",
+                "params": []
+            }),
+        }]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "XML-RPC"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        vec![
+            EventType {
+                id: "xmlrpc_connected".to_string(),
+                description: "Triggered when XML-RPC client is initialized".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+            EventType {
+                id: "xmlrpc_response_received".to_string(),
+                description: "Triggered when XML-RPC client receives a response".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+        ]
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>HTTP>XML-RPC"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["xmlrpc", "xml-rpc", "xml rpc", "rpc", "connect to xmlrpc"]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("xmlrpc crate for method calls")
+            .llm_control("Full control over method calls with structured parameters")
+            .e2e_testing("Public XML-RPC test servers or local implementation")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "XML-RPC client for calling remote procedures"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Connect to http://example.com/xmlrpc and call system.listMethods"
+    }
+    fn group_name(&self) -> &'static str {
+        "RPC & API"
+    }
 }
 
 // Implement Client trait (client-specific functionality)
 impl Client for XmlRpcClientProtocol {
-        fn connect(
-            &self,
-            ctx: crate::protocol::ConnectContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::client::xmlrpc::XmlRpcClient;
-                XmlRpcClient::connect_with_llm_actions(
-                    ctx.remote_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.client_id,
-                )
-                .await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "call_xmlrpc_method" => {
-                    let method_name = action
-                        .get("method_name")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'method_name' field")?
-                        .to_string();
-    
-                    let params = action
-                        .get("params")
-                        .and_then(|v| v.as_array())
-                        .cloned()
-                        .unwrap_or_default();
-    
-                    // Return custom result with method call data
-                    Ok(ClientActionResult::Custom {
-                        name: "xmlrpc_call".to_string(),
-                        data: json!({
-                            "method_name": method_name,
-                            "params": params,
-                        }),
-                    })
-                }
-                "disconnect" => Ok(ClientActionResult::Disconnect),
-                _ => Err(anyhow::anyhow!("Unknown XML-RPC client action: {}", action_type)),
-            }
-        }
-}
+    fn connect(
+        &self,
+        ctx: crate::protocol::ConnectContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::client::xmlrpc::XmlRpcClient;
+            XmlRpcClient::connect_with_llm_actions(
+                ctx.remote_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.client_id,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
 
+        match action_type {
+            "call_xmlrpc_method" => {
+                let method_name = action
+                    .get("method_name")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'method_name' field")?
+                    .to_string();
+
+                let params = action
+                    .get("params")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+
+                // Return custom result with method call data
+                Ok(ClientActionResult::Custom {
+                    name: "xmlrpc_call".to_string(),
+                    data: json!({
+                        "method_name": method_name,
+                        "params": params,
+                    }),
+                })
+            }
+            "disconnect" => Ok(ClientActionResult::Disconnect),
+            _ => Err(anyhow::anyhow!(
+                "Unknown XML-RPC client action: {}",
+                action_type
+            )),
+        }
+    }
+}

@@ -2,17 +2,20 @@
 
 ## Overview
 
-The UDP client provides LLM-controlled connectionless datagram communication. Unlike TCP, UDP has no persistent connection - the client binds a local socket and sends/receives datagrams to/from any address.
+The UDP client provides LLM-controlled connectionless datagram communication. Unlike TCP, UDP has no persistent
+connection - the client binds a local socket and sends/receives datagrams to/from any address.
 
 ## Library Choices
 
 **Core Library:** `tokio::net::UdpSocket`
+
 - Part of Tokio async runtime
 - Provides `send_to()` and `recv_from()` for datagram I/O
 - No external dependencies beyond Tokio
 - Connectionless - can send to any address, receive from any source
 
 **Encoding:** `hex` crate for LLM-friendly data representation
+
 - LLMs work with hex strings, not raw bytes
 - Ensures reliable data transmission without binary confusion
 
@@ -21,12 +24,14 @@ The UDP client provides LLM-controlled connectionless datagram communication. Un
 ### Connection Model
 
 **"Connection" is a misnomer for UDP:**
+
 - UDP is connectionless - no handshake, no stream, no guaranteed delivery
 - "Connecting" means binding a local socket and setting a default target address
 - Client can send to any address, not just the default target
 - Client receives from any source that sends to the bound port
 
 **Lifecycle:**
+
 1. **Bind:** `UdpSocket::bind("0.0.0.0:0")` binds to any available local port
 2. **Active:** Socket remains open, listening for incoming datagrams
 3. **Send:** LLM can send datagrams to any address via `send_udp_datagram` action
@@ -36,6 +41,7 @@ The UDP client provides LLM-controlled connectionless datagram communication. Un
 ### State Management
 
 **Per-Client State Machine:**
+
 ```
 Idle → (datagram received) → Processing → (LLM responds) → Idle
                               ↓
@@ -45,12 +51,14 @@ Idle → (datagram received) → Processing → (LLM responds) → Idle
 ```
 
 **State Fields:**
+
 - `state`: Idle, Processing, or Accumulating
 - `queued_datagrams`: Vec of (data, source_addr) tuples for datagrams received during Processing
 - `memory`: LLM's persistent memory across events
 - `default_target`: Default address for sending (from initial remote_addr)
 
 **Queueing Strategy:**
+
 - **Idle:** Process datagram immediately
 - **Processing:** Queue datagram for later processing
 - **Accumulating:** Queue datagram and wait for LLM decision (wait_for_more or respond)
@@ -137,7 +145,7 @@ LLM interprets the data and decides how to respond.
 **Sync Actions (Response to Events):**
 
 1. **send_udp_datagram** (same as async)
-   - If `target_addr` omitted, defaults to `source_addr` of received datagram
+    - If `target_addr` omitted, defaults to `source_addr` of received datagram
 
 2. **wait_for_more**
    ```json
@@ -150,7 +158,8 @@ LLM interprets the data and decides how to respond.
 ### Action Execution
 
 **Custom Action Pattern:**
-UDP uses `ClientActionResult::Custom` for `send_udp_datagram` and `change_target` because these actions need additional parameters beyond just sending bytes.
+UDP uses `ClientActionResult::Custom` for `send_udp_datagram` and `change_target` because these actions need additional
+parameters beyond just sending bytes.
 
 ```rust
 ClientActionResult::Custom {
@@ -166,24 +175,26 @@ The `handle_llm_result` function parses this and calls `socket.send_to()`.
 
 ## UDP vs TCP Differences
 
-| Aspect | TCP Client | UDP Client |
-|--------|-----------|-----------|
-| **Connection** | Stream-oriented, persistent | Connectionless, datagram-based |
-| **State** | Connected/Disconnected | Socket bound/closed |
-| **Send** | `write()` to stream | `send_to(addr)` for each datagram |
-| **Receive** | `read()` from stream | `recv_from()` returns (data, source) |
-| **Target** | Fixed remote address | Can send to any address |
-| **Reliability** | Guaranteed delivery, ordered | Best-effort, unordered |
-| **LLM Actions** | send_tcp_data, disconnect | send_udp_datagram, change_target, close_socket |
-| **Events** | tcp_connected, tcp_data_received | udp_connected, udp_datagram_received |
+| Aspect          | TCP Client                       | UDP Client                                     |
+|-----------------|----------------------------------|------------------------------------------------|
+| **Connection**  | Stream-oriented, persistent      | Connectionless, datagram-based                 |
+| **State**       | Connected/Disconnected           | Socket bound/closed                            |
+| **Send**        | `write()` to stream              | `send_to(addr)` for each datagram              |
+| **Receive**     | `read()` from stream             | `recv_from()` returns (data, source)           |
+| **Target**      | Fixed remote address             | Can send to any address                        |
+| **Reliability** | Guaranteed delivery, ordered     | Best-effort, unordered                         |
+| **LLM Actions** | send_tcp_data, disconnect        | send_udp_datagram, change_target, close_socket |
+| **Events**      | tcp_connected, tcp_data_received | udp_connected, udp_datagram_received           |
 
 ## Limitations
 
 1. **No Connection State:** UDP has no connection, so "disconnect" events don't exist. Socket is either bound or closed.
 
-2. **Unreliable Delivery:** Datagrams may be lost, duplicated, or reordered. LLM must handle this (e.g., retries, sequence numbers).
+2. **Unreliable Delivery:** Datagrams may be lost, duplicated, or reordered. LLM must handle this (e.g., retries,
+   sequence numbers).
 
-3. **Size Limit:** UDP datagrams are limited to 65,535 bytes (minus IP/UDP headers). In practice, stay under ~1400 bytes to avoid IP fragmentation.
+3. **Size Limit:** UDP datagrams are limited to 65,535 bytes (minus IP/UDP headers). In practice, stay under ~1400 bytes
+   to avoid IP fragmentation.
 
 4. **Multiple Sources:** Client may receive from multiple sources. LLM must track `source_addr` to respond correctly.
 
@@ -194,6 +205,7 @@ The `handle_llm_result` function parses this and calls `socket.send_to()`.
 ## Example Prompts
 
 **Simple Echo Client:**
+
 ```
 Connect to UDP at localhost:8080
 Send datagram containing "HELLO"
@@ -201,6 +213,7 @@ When you receive a response, send it back
 ```
 
 **DNS Query Client:**
+
 ```
 Connect to UDP at 8.8.8.8:53
 Send a DNS query for example.com (A record)
@@ -208,6 +221,7 @@ Parse the response and extract the IP address
 ```
 
 **NTP Client:**
+
 ```
 Connect to UDP at time.nist.gov:123
 Send an NTP request
@@ -215,6 +229,7 @@ Parse the response and display the current time
 ```
 
 **Multi-Target Client:**
+
 ```
 Connect to UDP at localhost:8080
 Send "PING" to localhost:8080
@@ -229,6 +244,7 @@ See `tests/client/udp/CLAUDE.md` for E2E test details.
 **Test Server:** `nc -u -l localhost 8080` (netcat in UDP mode)
 
 **Manual Test:**
+
 ```bash
 # Terminal 1: Start UDP echo server
 nc -u -l 8080
@@ -254,15 +270,18 @@ nc -u -l 8080
 ## Implementation Notes
 
 **Thread Safety:**
+
 - `UdpSocket` wrapped in `Arc` for shared access
 - Client data wrapped in `Arc<Mutex>` for state management
 - Never hold Mutex during I/O operations (deadlock risk)
 
 **Dual Logging:**
+
 - All logs go through `tracing` macros (trace!, debug!, info!, warn!, error!)
 - Important events also sent via `status_tx` for TUI display
 
 **Error Handling:**
+
 - Socket errors (ECONNREFUSED, ENETUNREACH) logged and client marked as Error status
 - LLM errors reset client to Idle state and continue listening
 - Invalid action parameters return errors without affecting socket state

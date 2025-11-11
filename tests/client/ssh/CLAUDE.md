@@ -9,6 +9,7 @@ E2E tests for the SSH client verify LLM-controlled command execution against a r
 **Strategy:** Black-box testing using the NetGet binary with a test SSH server.
 
 **Test Environment:**
+
 - SSH server: OpenSSH server (dockerized recommended)
 - Host: localhost (127.0.0.1)
 - Port: 2222 (configurable via SSH_TEST_PORT)
@@ -83,35 +84,36 @@ jobs:
 ### Test Cases
 
 1. **Connection & Authentication** (`test_ssh_client_connect_and_authenticate`)
-   - Verify client can connect to SSH server
-   - Verify password authentication works
-   - **LLM calls:** 1
+    - Verify client can connect to SSH server
+    - Verify password authentication works
+    - **LLM calls:** 1
 
 2. **Command Execution** (`test_ssh_client_execute_command`)
-   - Execute simple command (`uname -s`)
-   - Verify output is received
-   - **LLM calls:** 2
+    - Execute simple command (`uname -s`)
+    - Verify output is received
+    - **LLM calls:** 2
 
 3. **Multiple Commands** (`test_ssh_client_multiple_commands`)
-   - Execute sequence of commands (pwd, whoami, echo)
-   - Verify all commands execute in order
-   - **LLM calls:** 4
+    - Execute sequence of commands (pwd, whoami, echo)
+    - Verify all commands execute in order
+    - **LLM calls:** 4
 
 4. **Authentication Failure** (`test_ssh_client_auth_failure`)
-   - Test with incorrect password
-   - Verify graceful error handling
-   - **LLM calls:** 1
+    - Test with incorrect password
+    - Verify graceful error handling
+    - **LLM calls:** 1
 
 5. **Disconnect** (`test_ssh_client_disconnect`)
-   - Connect, execute command, disconnect
-   - Verify clean disconnect
-   - **LLM calls:** 2
+    - Connect, execute command, disconnect
+    - Verify clean disconnect
+    - **LLM calls:** 2
 
 ### Total LLM Budget
 
 **Total LLM calls:** 10 (within budget)
 
 **Breakdown:**
+
 - Connection: 1 call
 - Command execution: 2 calls
 - Multiple commands: 4 calls
@@ -144,11 +146,13 @@ jobs:
 ./cargo-isolated.sh test --no-default-features --features ssh --test client::ssh::e2e_test
 ```
 
-**Note:** Tests are marked with `#[ignore]` because they require an external SSH server. Use `--ignored` flag to run them.
+**Note:** Tests are marked with `#[ignore]` because they require an external SSH server. Use `--ignored` flag to run
+them.
 
 ## Expected Runtime
 
 **Per-test timing:**
+
 - Connection test: ~2 seconds
 - Command execution test: ~3 seconds
 - Multiple commands test: ~5 seconds
@@ -166,6 +170,7 @@ jobs:
 **Problem:** SSH server may not be ready immediately after container start.
 
 **Workaround:** Add delay before running tests:
+
 ```bash
 docker run -d --name test-ssh ...
 sleep 2
@@ -195,6 +200,7 @@ cargo test --features ssh ...
 **⚠️ IMPORTANT:** These tests use weak credentials and disabled security features.
 
 **For Testing Only:**
+
 - Host key verification disabled
 - Weak password (testpass)
 - Password authentication enabled
@@ -204,21 +210,25 @@ cargo test --features ssh ...
 ## Future Test Enhancements
 
 ### Phase 1 (Current)
+
 - ✅ Password authentication
 - ✅ Command execution
 - ✅ Output capture
 
 ### Phase 2 (Next)
+
 - [ ] Public key authentication tests
 - [ ] PTY allocation tests
 - [ ] Long-running command tests
 
 ### Phase 3 (Advanced)
+
 - [ ] SFTP file transfer tests
 - [ ] Port forwarding tests
 - [ ] Interactive shell tests
 
 ### Phase 4 (Expert)
+
 - [ ] Multiple concurrent connections
 - [ ] Connection timeout tests
 - [ ] Large output handling

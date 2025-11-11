@@ -11,12 +11,14 @@ pub mod summary;
 pub mod tools;
 
 // Re-export commonly used functions and types
-pub use client_trait::Client; // Export the Client trait
+pub use client_trait::Client;
+// Export the Client trait
 pub use common::{
     generate_base_stack_documentation, get_network_event_common_actions,
     get_user_input_common_actions,
 };
-pub use protocol_trait::{Protocol, Server}; // Export the Protocol and Server traits
+pub use protocol_trait::{Protocol, Server};
+// Export the Protocol and Server traits
 pub use summary::{summarize_action, summarize_actions};
 pub use tools::{execute_tool, get_all_tool_actions, ToolAction, ToolResult};
 
@@ -85,7 +87,15 @@ pub struct ActionDefinition {
 impl ActionDefinition {
     /// Check if this is a tool action (returns information and triggers LLM re-invocation)
     pub fn is_tool(&self) -> bool {
-        matches!(self.name.as_str(), "read_file" | "web_search" | "read_base_stack_docs" | "list_network_interfaces" | "list_models" | "generate_random")
+        matches!(
+            self.name.as_str(),
+            "read_file"
+                | "web_search"
+                | "read_base_stack_docs"
+                | "list_network_interfaces"
+                | "list_models"
+                | "generate_random"
+        )
     }
 
     /// Convert to prompt text format for LLM
@@ -161,8 +171,13 @@ impl ActionResponse {
         let json_start = json_str.find('{').unwrap_or(0);
         let clean_json = &json_str[json_start..];
 
-        serde_json::from_str::<ActionResponse>(clean_json)
-            .map_err(|e| anyhow::anyhow!("Failed to parse action response: {}. Input: {}", e, clean_json))
+        serde_json::from_str::<ActionResponse>(clean_json).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to parse action response: {}. Input: {}",
+                e,
+                clean_json
+            )
+        })
     }
 
     /// Create empty action response

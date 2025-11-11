@@ -15,23 +15,21 @@ use std::sync::LazyLock;
 pub static PYPI_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "pypi_connected",
-        "PyPI client initialized and ready to interact with Python Package Index"
+        "PyPI client initialized and ready to interact with Python Package Index",
     )
-    .with_parameters(vec![
-        Parameter {
-            name: "index_url".to_string(),
-            type_hint: "string".to_string(),
-            description: "PyPI index URL".to_string(),
-            required: true,
-        },
-    ])
+    .with_parameters(vec![Parameter {
+        name: "index_url".to_string(),
+        type_hint: "string".to_string(),
+        description: "PyPI index URL".to_string(),
+        required: true,
+    }])
 });
 
 /// PyPI package info received event
 pub static PYPI_PACKAGE_INFO_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "pypi_package_info_received",
-        "Package information received from PyPI"
+        "Package information received from PyPI",
     )
     .with_parameters(vec![
         Parameter {
@@ -53,7 +51,7 @@ pub static PYPI_PACKAGE_INFO_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 pub static PYPI_SEARCH_RESULTS_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "pypi_search_results_received",
-        "Search results received from PyPI"
+        "Search results received from PyPI",
     )
     .with_parameters(vec![
         Parameter {
@@ -73,24 +71,22 @@ pub static PYPI_SEARCH_RESULTS_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// PyPI file downloaded event
 pub static PYPI_FILE_DOWNLOADED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "pypi_file_downloaded",
-        "Package file downloaded from PyPI"
+    EventType::new("pypi_file_downloaded", "Package file downloaded from PyPI").with_parameters(
+        vec![
+            Parameter {
+                name: "filename".to_string(),
+                type_hint: "string".to_string(),
+                description: "Downloaded filename".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "size".to_string(),
+                type_hint: "number".to_string(),
+                description: "File size in bytes".to_string(),
+                required: true,
+            },
+        ],
     )
-    .with_parameters(vec![
-        Parameter {
-            name: "filename".to_string(),
-            type_hint: "string".to_string(),
-            description: "Downloaded filename".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "size".to_string(),
-            type_hint: "number".to_string(),
-            description: "File size in bytes".to_string(),
-            required: true,
-        },
-    ])
 });
 
 /// PyPI client protocol action handler
@@ -105,308 +101,299 @@ impl PypiClientProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for PypiClientProtocol {
-        fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-            vec![
-                ParameterDefinition {
-                    name: "index_url".to_string(),
-                    description: "PyPI index URL (default: https://pypi.org)".to_string(),
+    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
+        vec![ParameterDefinition {
+            name: "index_url".to_string(),
+            description: "PyPI index URL (default: https://pypi.org)".to_string(),
+            type_hint: "string".to_string(),
+            required: false,
+            example: json!("https://pypi.org"),
+        }]
+    }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        vec![
+            ActionDefinition {
+                name: "get_package_info".to_string(),
+                description: "Get information about a package from PyPI".to_string(),
+                parameters: vec![Parameter {
+                    name: "package_name".to_string(),
                     type_hint: "string".to_string(),
-                    required: false,
-                    example: json!("https://pypi.org"),
-                },
-            ]
-        }
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            vec![
-                ActionDefinition {
-                    name: "get_package_info".to_string(),
-                    description: "Get information about a package from PyPI".to_string(),
-                    parameters: vec![
-                        Parameter {
-                            name: "package_name".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "Name of the package to query".to_string(),
-                            required: true,
-                        },
-                    ],
-                    example: json!({
-                        "type": "get_package_info",
-                        "package_name": "requests"
-                    }),
-                },
-                ActionDefinition {
-                    name: "search_packages".to_string(),
-                    description: "Search for packages on PyPI".to_string(),
-                    parameters: vec![
-                        Parameter {
-                            name: "query".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "Search query".to_string(),
-                            required: true,
-                        },
-                        Parameter {
-                            name: "limit".to_string(),
-                            type_hint: "number".to_string(),
-                            description: "Maximum number of results (default: 20)".to_string(),
-                            required: false,
-                        },
-                    ],
-                    example: json!({
-                        "type": "search_packages",
-                        "query": "web framework",
-                        "limit": 10
-                    }),
-                },
-                ActionDefinition {
-                    name: "download_package".to_string(),
-                    description: "Download a package file (wheel or sdist) from PyPI".to_string(),
-                    parameters: vec![
-                        Parameter {
-                            name: "package_name".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "Package name".to_string(),
-                            required: true,
-                        },
-                        Parameter {
-                            name: "version".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "Package version (latest if not specified)".to_string(),
-                            required: false,
-                        },
-                        Parameter {
-                            name: "filename".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "Specific filename to download".to_string(),
-                            required: false,
-                        },
-                    ],
-                    example: json!({
-                        "type": "download_package",
-                        "package_name": "requests",
-                        "version": "2.31.0"
-                    }),
-                },
-                ActionDefinition {
-                    name: "list_package_files".to_string(),
-                    description: "List available files for a package version".to_string(),
-                    parameters: vec![
-                        Parameter {
-                            name: "package_name".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "Package name".to_string(),
-                            required: true,
-                        },
-                        Parameter {
-                            name: "version".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "Package version (latest if not specified)".to_string(),
-                            required: false,
-                        },
-                    ],
-                    example: json!({
-                        "type": "list_package_files",
-                        "package_name": "requests",
-                        "version": "2.31.0"
-                    }),
-                },
-                ActionDefinition {
-                    name: "disconnect".to_string(),
-                    description: "Disconnect from PyPI".to_string(),
-                    parameters: vec![],
-                    example: json!({
-                        "type": "disconnect"
-                    }),
-                },
-            ]
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                ActionDefinition {
-                    name: "get_package_info".to_string(),
-                    description: "Get package info in response to received data".to_string(),
-                    parameters: vec![
-                        Parameter {
-                            name: "package_name".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "Package name".to_string(),
-                            required: true,
-                        },
-                    ],
-                    example: json!({
-                        "type": "get_package_info",
-                        "package_name": "numpy"
-                    }),
-                },
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "PyPI"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            vec![
-                EventType {
-                    id: "pypi_connected".to_string(),
-                    description: "Triggered when PyPI client is initialized".to_string(),
-                    actions: vec![],
-                    parameters: vec![],
-                },
-                EventType {
-                    id: "pypi_package_info_received".to_string(),
-                    description: "Triggered when package info is received".to_string(),
-                    actions: vec![],
-                    parameters: vec![],
-                },
-                EventType {
-                    id: "pypi_search_results_received".to_string(),
-                    description: "Triggered when search results are received".to_string(),
-                    actions: vec![],
-                    parameters: vec![],
-                },
-                EventType {
-                    id: "pypi_file_downloaded".to_string(),
-                    description: "Triggered when a file is downloaded".to_string(),
-                    actions: vec![],
-                    parameters: vec![],
-                },
-            ]
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>TCP>HTTP>PyPI"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["pypi", "pip", "python", "package", "python package index"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Experimental)
-                .implementation("reqwest HTTP client with PyPI JSON API")
-                .llm_control("Search, download packages, query metadata via JSON API")
-                .e2e_testing("Real PyPI API (pypi.org)")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "PyPI client for interacting with Python Package Index"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Connect to PyPI and search for web framework packages"
-        }
-        fn group_name(&self) -> &'static str {
-            "Package Registries"
-        }
+                    description: "Name of the package to query".to_string(),
+                    required: true,
+                }],
+                example: json!({
+                    "type": "get_package_info",
+                    "package_name": "requests"
+                }),
+            },
+            ActionDefinition {
+                name: "search_packages".to_string(),
+                description: "Search for packages on PyPI".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "query".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Search query".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "limit".to_string(),
+                        type_hint: "number".to_string(),
+                        description: "Maximum number of results (default: 20)".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({
+                    "type": "search_packages",
+                    "query": "web framework",
+                    "limit": 10
+                }),
+            },
+            ActionDefinition {
+                name: "download_package".to_string(),
+                description: "Download a package file (wheel or sdist) from PyPI".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "package_name".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Package name".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "version".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Package version (latest if not specified)".to_string(),
+                        required: false,
+                    },
+                    Parameter {
+                        name: "filename".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Specific filename to download".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({
+                    "type": "download_package",
+                    "package_name": "requests",
+                    "version": "2.31.0"
+                }),
+            },
+            ActionDefinition {
+                name: "list_package_files".to_string(),
+                description: "List available files for a package version".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "package_name".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Package name".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "version".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Package version (latest if not specified)".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({
+                    "type": "list_package_files",
+                    "package_name": "requests",
+                    "version": "2.31.0"
+                }),
+            },
+            ActionDefinition {
+                name: "disconnect".to_string(),
+                description: "Disconnect from PyPI".to_string(),
+                parameters: vec![],
+                example: json!({
+                    "type": "disconnect"
+                }),
+            },
+        ]
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![ActionDefinition {
+            name: "get_package_info".to_string(),
+            description: "Get package info in response to received data".to_string(),
+            parameters: vec![Parameter {
+                name: "package_name".to_string(),
+                type_hint: "string".to_string(),
+                description: "Package name".to_string(),
+                required: true,
+            }],
+            example: json!({
+                "type": "get_package_info",
+                "package_name": "numpy"
+            }),
+        }]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "PyPI"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        vec![
+            EventType {
+                id: "pypi_connected".to_string(),
+                description: "Triggered when PyPI client is initialized".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+            EventType {
+                id: "pypi_package_info_received".to_string(),
+                description: "Triggered when package info is received".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+            EventType {
+                id: "pypi_search_results_received".to_string(),
+                description: "Triggered when search results are received".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+            EventType {
+                id: "pypi_file_downloaded".to_string(),
+                description: "Triggered when a file is downloaded".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+        ]
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>HTTP>PyPI"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["pypi", "pip", "python", "package", "python package index"]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("reqwest HTTP client with PyPI JSON API")
+            .llm_control("Search, download packages, query metadata via JSON API")
+            .e2e_testing("Real PyPI API (pypi.org)")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "PyPI client for interacting with Python Package Index"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Connect to PyPI and search for web framework packages"
+    }
+    fn group_name(&self) -> &'static str {
+        "Package Registries"
+    }
 }
 
 // Implement Client trait (client-specific functionality)
 impl Client for PypiClientProtocol {
-        fn connect(
-            &self,
-            ctx: crate::protocol::ConnectContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::client::pypi::PypiClient;
-                PypiClient::connect_with_llm_actions(
-                    ctx.remote_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.client_id,
-                )
-                .await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "get_package_info" => {
-                    let package_name = action
-                        .get("package_name")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'package_name' field")?
-                        .to_string();
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "pypi_get_package_info".to_string(),
-                        data: json!({
-                            "package_name": package_name,
-                        }),
-                    })
-                }
-                "search_packages" => {
-                    let query = action
-                        .get("query")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'query' field")?
-                        .to_string();
-    
-                    let limit = action
-                        .get("limit")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(20);
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "pypi_search_packages".to_string(),
-                        data: json!({
-                            "query": query,
-                            "limit": limit,
-                        }),
-                    })
-                }
-                "download_package" => {
-                    let package_name = action
-                        .get("package_name")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'package_name' field")?
-                        .to_string();
-    
-                    let version = action
-                        .get("version")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-    
-                    let filename = action
-                        .get("filename")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "pypi_download_package".to_string(),
-                        data: json!({
-                            "package_name": package_name,
-                            "version": version,
-                            "filename": filename,
-                        }),
-                    })
-                }
-                "list_package_files" => {
-                    let package_name = action
-                        .get("package_name")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'package_name' field")?
-                        .to_string();
-    
-                    let version = action
-                        .get("version")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-    
-                    Ok(ClientActionResult::Custom {
-                        name: "pypi_list_package_files".to_string(),
-                        data: json!({
-                            "package_name": package_name,
-                            "version": version,
-                        }),
-                    })
-                }
-                "disconnect" => Ok(ClientActionResult::Disconnect),
-                _ => Err(anyhow::anyhow!("Unknown PyPI client action: {}", action_type)),
-            }
-        }
-}
+    fn connect(
+        &self,
+        ctx: crate::protocol::ConnectContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::client::pypi::PypiClient;
+            PypiClient::connect_with_llm_actions(
+                ctx.remote_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.client_id,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
 
+        match action_type {
+            "get_package_info" => {
+                let package_name = action
+                    .get("package_name")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'package_name' field")?
+                    .to_string();
+
+                Ok(ClientActionResult::Custom {
+                    name: "pypi_get_package_info".to_string(),
+                    data: json!({
+                        "package_name": package_name,
+                    }),
+                })
+            }
+            "search_packages" => {
+                let query = action
+                    .get("query")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'query' field")?
+                    .to_string();
+
+                let limit = action.get("limit").and_then(|v| v.as_u64()).unwrap_or(20);
+
+                Ok(ClientActionResult::Custom {
+                    name: "pypi_search_packages".to_string(),
+                    data: json!({
+                        "query": query,
+                        "limit": limit,
+                    }),
+                })
+            }
+            "download_package" => {
+                let package_name = action
+                    .get("package_name")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'package_name' field")?
+                    .to_string();
+
+                let version = action
+                    .get("version")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                let filename = action
+                    .get("filename")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                Ok(ClientActionResult::Custom {
+                    name: "pypi_download_package".to_string(),
+                    data: json!({
+                        "package_name": package_name,
+                        "version": version,
+                        "filename": filename,
+                    }),
+                })
+            }
+            "list_package_files" => {
+                let package_name = action
+                    .get("package_name")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'package_name' field")?
+                    .to_string();
+
+                let version = action
+                    .get("version")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                Ok(ClientActionResult::Custom {
+                    name: "pypi_list_package_files".to_string(),
+                    data: json!({
+                        "package_name": package_name,
+                        "version": version,
+                    }),
+                })
+            }
+            "disconnect" => Ok(ClientActionResult::Disconnect),
+            _ => Err(anyhow::anyhow!(
+                "Unknown PyPI client action: {}",
+                action_type
+            )),
+        }
+    }
+}

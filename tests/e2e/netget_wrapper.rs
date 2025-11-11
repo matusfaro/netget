@@ -71,7 +71,8 @@ impl NetGetWrapper {
             .stderr(Stdio::piped());
 
         // Start process
-        let mut child = cmd.spawn()
+        let mut child = cmd
+            .spawn()
             .with_context(|| format!("Failed to start NetGet binary at {:?}", self.binary_path))?;
 
         // Take stdin
@@ -115,19 +116,24 @@ impl NetGetWrapper {
 
     /// Send user input to NetGet
     pub async fn send_user_input(&mut self, input: &str) -> Result<()> {
-        let stdin = self.stdin.as_mut()
+        let stdin = self
+            .stdin
+            .as_mut()
             .context("NetGet not started or stdin not available")?;
 
-        stdin.write_all(input.as_bytes()).await
+        stdin
+            .write_all(input.as_bytes())
+            .await
             .context("Failed to write to stdin")?;
 
         if !input.ends_with('\n') {
-            stdin.write_all(b"\n").await
+            stdin
+                .write_all(b"\n")
+                .await
                 .context("Failed to write newline")?;
         }
 
-        stdin.flush().await
-            .context("Failed to flush stdin")?;
+        stdin.flush().await.context("Failed to flush stdin")?;
 
         Ok(())
     }
@@ -230,13 +236,17 @@ impl NetGetWrapper {
             // Force kill if still running
             match process.try_wait() {
                 Ok(None) => {
-                    process.kill().await
+                    process
+                        .kill()
+                        .await
                         .context("Failed to kill NetGet process")?;
                 }
                 _ => {} // Already stopped
             }
 
-            process.wait().await
+            process
+                .wait()
+                .await
                 .context("Failed to wait for process exit")?;
         }
 
@@ -249,8 +259,7 @@ impl NetGetWrapper {
         let pattern = format!(r"Server #{}:.*port\s+(\d+)", server_id);
         let re = Regex::new(&pattern).ok()?;
 
-        re.captures(&output)
-            .and_then(|caps| caps[1].parse().ok())
+        re.captures(&output).and_then(|caps| caps[1].parse().ok())
     }
 
     /// Send a command and wait for completion

@@ -5,10 +5,9 @@
 
 #![cfg(all(test, feature = "npm"))]
 
-use crate::server::helpers::{self, ServerConfig, E2EResult};
+use crate::server::helpers::{self, E2EResult, ServerConfig};
 use serde_json::{json, Value};
 use std::fs;
-use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 use tempfile::TempDir;
@@ -48,8 +47,10 @@ For any other package, return a 404 error with: {"error": "Package not found"}"#
         Duration::from_secs(15),
         client
             .get(format!("http://127.0.0.1:{}/express", server.port))
-            .send()
-    ).await {
+            .send(),
+    )
+    .await
+    {
         Ok(Ok(resp)) => {
             println!("✓ Received HTTP response: {}", resp.status());
             resp
@@ -71,17 +72,27 @@ For any other package, return a 404 error with: {"error": "Package not found"}"#
     println!("Package metadata: {}", serde_json::to_string_pretty(&json)?);
 
     // Validate package metadata format
-    assert_eq!(json.get("name").and_then(|v| v.as_str()), Some("express"),
-               "Expected package name to be 'express'");
+    assert_eq!(
+        json.get("name").and_then(|v| v.as_str()),
+        Some("express"),
+        "Expected package name to be 'express'"
+    );
 
-    assert_eq!(json.get("version").and_then(|v| v.as_str()), Some("4.18.2"),
-               "Expected version to be '4.18.2'");
+    assert_eq!(
+        json.get("version").and_then(|v| v.as_str()),
+        Some("4.18.2"),
+        "Expected version to be '4.18.2'"
+    );
 
-    assert!(json.get("description").and_then(|v| v.as_str()).is_some(),
-            "Expected description field");
+    assert!(
+        json.get("description").and_then(|v| v.as_str()).is_some(),
+        "Expected description field"
+    );
 
-    assert!(json.get("dist").and_then(|v| v.get("tarball")).is_some(),
-            "Expected dist.tarball field");
+    assert!(
+        json.get("dist").and_then(|v| v.get("tarball")).is_some(),
+        "Expected dist.tarball field"
+    );
 
     println!("✓ NPM Package Metadata test completed\n");
     Ok(())
@@ -106,8 +117,10 @@ When a client requests any package, return a 404 error with JSON: {"error": "Pac
         Duration::from_secs(15),
         client
             .get(format!("http://127.0.0.1:{}/nonexistent-pkg", server.port))
-            .send()
-    ).await {
+            .send(),
+    )
+    .await
+    {
         Ok(Ok(resp)) => {
             println!("✓ Received HTTP response: {}", resp.status());
             resp
@@ -127,8 +140,10 @@ When a client requests any package, return a 404 error with JSON: {"error": "Pac
     let json: Value = response.json().await?;
     println!("Error response: {}", serde_json::to_string_pretty(&json)?);
 
-    assert!(json.get("error").and_then(|v| v.as_str()).is_some(),
-            "Expected error field in response");
+    assert!(
+        json.get("error").and_then(|v| v.as_str()).is_some(),
+        "Expected error field in response"
+    );
 
     println!("✓ NPM Package Not Found test completed\n");
     Ok(())
@@ -158,11 +173,14 @@ async fn test_npm_with_real_cli() -> E2EResult<()> {
     });
     fs::write(
         pkg_dir.join("package.json"),
-        serde_json::to_string_pretty(&package_json)?
+        serde_json::to_string_pretty(&package_json)?,
     )?;
 
     // Create index.js
-    fs::write(pkg_dir.join("index.js"), "module.exports = 'Hello from NetGet';\n")?;
+    fs::write(
+        pkg_dir.join("index.js"),
+        "module.exports = 'Hello from NetGet';\n",
+    )?;
 
     // Create tarball using tar command
     let tarball_path = temp_dir.path().join("netget-test-pkg-1.0.0.tgz");
@@ -182,11 +200,15 @@ async fn test_npm_with_real_cli() -> E2EResult<()> {
     // Read tarball and encode as base64
     let tarball_data = fs::read(&tarball_path)?;
     let tarball_base64 = base64::encode(&tarball_data);
-    println!("✓ Created test tarball: {} bytes (base64: {} chars)",
-             tarball_data.len(), tarball_base64.len());
+    println!(
+        "✓ Created test tarball: {} bytes (base64: {} chars)",
+        tarball_data.len(),
+        tarball_base64.len()
+    );
 
     // Start NPM registry server with the tarball
-    let prompt = format!(r#"Open NPM registry on port {{AVAILABLE_PORT}}.
+    let prompt = format!(
+        r#"Open NPM registry on port {{AVAILABLE_PORT}}.
 
 When a client requests package metadata for "netget-test-pkg", return:
 {{
@@ -203,7 +225,9 @@ When a client requests the tarball at /netget-test-pkg/-/netget-test-pkg-1.0.0.t
 use action npm_package_tarball with this base64 data:
 {}
 
-For any other package, return 404 error."#, tarball_base64);
+For any other package, return 404 error."#,
+        tarball_base64
+    );
 
     let server = helpers::start_netget_server(ServerConfig::new(&prompt)).await?;
     println!("NPM registry started on port {}", server.port);
@@ -246,10 +270,25 @@ For any other package, return 404 error."#, tarball_base64);
     if view_output.status.success() {
         let view_json: Value = serde_json::from_slice(&view_output.stdout)?;
         println!("✓ npm view succeeded");
-        println!("  Package: {}", view_json.get("name").and_then(|v| v.as_str()).unwrap_or("unknown"));
-        println!("  Version: {}", view_json.get("version").and_then(|v| v.as_str()).unwrap_or("unknown"));
+        println!(
+            "  Package: {}",
+            view_json
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+        );
+        println!(
+            "  Version: {}",
+            view_json
+                .get("version")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+        );
     } else {
-        println!("✗ npm view failed: {}", String::from_utf8_lossy(&view_output.stderr));
+        println!(
+            "✗ npm view failed: {}",
+            String::from_utf8_lossy(&view_output.stderr)
+        );
     }
 
     // Test: npm install
@@ -266,7 +305,10 @@ For any other package, return 404 error."#, tarball_base64);
         println!("✓ npm install succeeded");
 
         // Verify package was installed
-        let node_modules = npm_test_dir.path().join("node_modules").join("netget-test-pkg");
+        let node_modules = npm_test_dir
+            .path()
+            .join("node_modules")
+            .join("netget-test-pkg");
         if node_modules.exists() {
             println!("✓ Package installed to node_modules/");
 
@@ -280,7 +322,10 @@ For any other package, return 404 error."#, tarball_base64);
         }
     } else {
         println!("⚠️  npm install failed (expected - tarball serving may need refinement)");
-        println!("   stderr: {}", String::from_utf8_lossy(&install_output.stderr));
+        println!(
+            "   stderr: {}",
+            String::from_utf8_lossy(&install_output.stderr)
+        );
     }
 
     println!("✓ NPM with Real CLI test completed\n");
@@ -330,9 +375,14 @@ For any other search query, return empty results: {"objects": [], "total": 0}"#;
     let response = match tokio::time::timeout(
         Duration::from_secs(15),
         client
-            .get(format!("http://127.0.0.1:{}/-/v1/search?text=express", server.port))
-            .send()
-    ).await {
+            .get(format!(
+                "http://127.0.0.1:{}/-/v1/search?text=express",
+                server.port
+            ))
+            .send(),
+    )
+    .await
+    {
         Ok(Ok(resp)) => {
             println!("✓ Received HTTP response: {}", resp.status());
             resp
@@ -353,15 +403,18 @@ For any other search query, return empty results: {"objects": [], "total": 0}"#;
     println!("Search results: {}", serde_json::to_string_pretty(&json)?);
 
     // Validate search results format
-    assert!(json.get("objects").and_then(|v| v.as_array()).is_some(),
-            "Expected 'objects' array");
+    assert!(
+        json.get("objects").and_then(|v| v.as_array()).is_some(),
+        "Expected 'objects' array"
+    );
 
     let objects = json["objects"].as_array().unwrap();
     assert_eq!(objects.len(), 1, "Expected 1 search result");
 
     let first_result = &objects[0];
     assert_eq!(
-        first_result.get("package")
+        first_result
+            .get("package")
             .and_then(|p| p.get("name"))
             .and_then(|v| v.as_str()),
         Some("express"),

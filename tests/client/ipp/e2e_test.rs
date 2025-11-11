@@ -14,8 +14,8 @@
 #[cfg(all(test, feature = "ipp"))]
 mod ipp_client_tests {
     use netget::cli::Cli;
-    use netget::state::app_state::AppState;
     use netget::llm::OllamaClient;
+    use netget::state::app_state::AppState;
     use std::sync::Arc;
     use tokio::sync::mpsc;
 
@@ -27,7 +27,8 @@ mod ipp_client_tests {
         let (status_tx, mut status_rx) = mpsc::unbounded_channel();
         let app_state = Arc::new(AppState::new());
         let cli = Cli::default_for_tests();
-        let llm_client = OllamaClient::new(&cli.ollama_endpoint, &cli.ollama_model, cli.ollama_lock);
+        let llm_client =
+            OllamaClient::new(&cli.ollama_endpoint, &cli.ollama_model, cli.ollama_lock);
 
         // Start IPP client with LLM instruction
         let client_id = app_state
@@ -53,7 +54,10 @@ mod ipp_client_tests {
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
         // Verify client is connected
-        let client = app_state.get_client(client_id).await.expect("Client not found");
+        let client = app_state
+            .get_client(client_id)
+            .await
+            .expect("Client not found");
         assert_eq!(client.status, netget::state::ClientStatus::Connected);
 
         // Trigger get_printer_attributes action manually
@@ -77,7 +81,9 @@ mod ipp_client_tests {
             messages.push(msg);
         }
 
-        let has_response = messages.iter().any(|m| m.contains("IPP client") && m.contains("received response"));
+        let has_response = messages
+            .iter()
+            .any(|m| m.contains("IPP client") && m.contains("received response"));
         assert!(has_response, "Expected IPP response message");
 
         println!("✓ IPP client successfully queried printer attributes");
@@ -91,7 +97,8 @@ mod ipp_client_tests {
         let (status_tx, mut status_rx) = mpsc::unbounded_channel();
         let app_state = Arc::new(AppState::new());
         let cli = Cli::default_for_tests();
-        let llm_client = OllamaClient::new(&cli.ollama_endpoint, &cli.ollama_model, cli.ollama_lock);
+        let llm_client =
+            OllamaClient::new(&cli.ollama_endpoint, &cli.ollama_model, cli.ollama_lock);
 
         // Start IPP client with LLM instruction
         let client_id = app_state
@@ -140,7 +147,9 @@ mod ipp_client_tests {
             messages.push(msg);
         }
 
-        let has_print_response = messages.iter().any(|m| m.contains("Print-Job") || m.contains("print_job"));
+        let has_print_response = messages
+            .iter()
+            .any(|m| m.contains("Print-Job") || m.contains("print_job"));
         assert!(has_print_response, "Expected IPP Print-Job response");
 
         println!("✓ IPP client successfully submitted print job");
@@ -154,7 +163,8 @@ mod ipp_client_tests {
         let (status_tx, _status_rx) = mpsc::unbounded_channel();
         let app_state = Arc::new(AppState::new());
         let cli = Cli::default_for_tests();
-        let llm_client = OllamaClient::new(&cli.ollama_endpoint, &cli.ollama_model, cli.ollama_lock);
+        let llm_client =
+            OllamaClient::new(&cli.ollama_endpoint, &cli.ollama_model, cli.ollama_lock);
 
         // Start IPP client with comprehensive instruction
         let client_id = app_state
@@ -229,7 +239,10 @@ mod ipp_client_tests {
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
         // Verify client is still connected
-        let client = app_state.get_client(client_id).await.expect("Client not found");
+        let client = app_state
+            .get_client(client_id)
+            .await
+            .expect("Client not found");
         assert_eq!(client.status, netget::state::ClientStatus::Connected);
 
         println!("✓ IPP client completed full workflow");

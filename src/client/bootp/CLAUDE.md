@@ -2,17 +2,20 @@
 
 ## Overview
 
-BOOTP (Bootstrap Protocol, RFC 951) client implementation for diskless workstation boot discovery, PXE boot testing, and TFTP server location. BOOTP is a UDP-based protocol that predates DHCP and is primarily used for network boot scenarios.
+BOOTP (Bootstrap Protocol, RFC 951) client implementation for diskless workstation boot discovery, PXE boot testing, and
+TFTP server location. BOOTP is a UDP-based protocol that predates DHCP and is primarily used for network boot scenarios.
 
 ## Library Choice
 
 **Primary Library:** `dhcproto` v0.12
+
 - Pure Rust BOOTP/DHCP packet encoding and decoding
 - BOOTP is a subset of DHCP (DHCP packets without options)
 - Mature, well-maintained, used by many Rust networking projects
 - Supports both BOOTP and DHCP message formats
 
 **Why dhcproto:**
+
 - BOOTP uses the same packet format as DHCP (RFC 951 evolved into RFC 2131)
 - No need for separate BOOTP library - DHCP without options = BOOTP
 - Excellent packet parsing and validation
@@ -23,6 +26,7 @@ BOOTP (Bootstrap Protocol, RFC 951) client implementation for diskless workstati
 ### Connection Model
 
 BOOTP is connectionless (UDP-based):
+
 1. Client binds to UDP port 68 (BOOTP client port, requires elevated privileges)
 2. Fallback: If port 68 binding fails, bind to random port
 3. Enable broadcast socket option for broadcast replies
@@ -31,6 +35,7 @@ BOOTP is connectionless (UDP-based):
 6. LLM decides whether to send additional requests or terminate
 
 **Key Differences from TCP Clients:**
+
 - No persistent connection (UDP is stateless)
 - Each request/reply is independent
 - Binding to port 68 may require root/elevated privileges
@@ -39,6 +44,7 @@ BOOTP is connectionless (UDP-based):
 ### BOOTP Message Format
 
 BOOTP uses a fixed 300-byte packet structure:
+
 ```
 +---------------------+
 | op (1 byte)         | BOOTREQUEST (1) or BOOTREPLY (2)
@@ -60,6 +66,7 @@ BOOTP uses a fixed 300-byte packet structure:
 ```
 
 **BOOTP vs DHCP:**
+
 - BOOTP: Fixed format, no options field
 - DHCP: Same format + variable-length options (DHCP is backward compatible with BOOTP)
 - `dhcproto` handles both by treating BOOTP as DHCP with empty options
@@ -69,11 +76,13 @@ BOOTP uses a fixed 300-byte packet structure:
 ### Connection State Machine
 
 BOOTP client uses the same state machine as other clients:
+
 - **Idle**: Ready to process incoming replies
 - **Processing**: LLM is analyzing a reply and generating actions
 - **Accumulating**: Additional replies received during processing are queued
 
 **State Flow:**
+
 ```
 Idle → [Reply received] → Processing → [LLM complete] → Idle
                               ↓
@@ -85,6 +94,7 @@ Idle → [Reply received] → Processing → [LLM complete] → Idle
 ### Per-Client Data
 
 Each BOOTP client maintains:
+
 ```rust
 struct ClientData {
     state: ConnectionState,
@@ -96,6 +106,7 @@ struct ClientData {
 ### Parsed Reply Data
 
 BOOTP replies are parsed into structured data for LLM consumption:
+
 ```rust
 struct BootpReply {
     assigned_ip: Ipv4Addr,     // yiaddr - IP address assigned
@@ -110,65 +121,69 @@ struct BootpReply {
 ### Events
 
 **1. bootp_connected**
+
 - Triggered when UDP socket is bound and ready
 - Parameters:
-  - `server_addr` (string): BOOTP server address
+    - `server_addr` (string): BOOTP server address
 
 **2. bootp_reply_received**
+
 - Triggered when BOOTP reply is received from server
 - Parameters:
-  - `assigned_ip` (string): IP address assigned by server (yiaddr field)
-  - `server_ip` (string): Boot/TFTP server IP (siaddr field)
-  - `boot_filename` (string): Boot file name (file field, e.g., "pxelinux.0")
-  - `gateway_ip` (string): Gateway/relay agent IP (giaddr field)
+    - `assigned_ip` (string): IP address assigned by server (yiaddr field)
+    - `server_ip` (string): Boot/TFTP server IP (siaddr field)
+    - `boot_filename` (string): Boot file name (file field, e.g., "pxelinux.0")
+    - `gateway_ip` (string): Gateway/relay agent IP (giaddr field)
 
 ### Actions
 
 **Async Actions (User-Triggered):**
 
 1. **send_bootp_request**
-   - Send BOOTP request to discover boot server
-   - Parameters:
-     - `client_mac` (string, required): Client MAC address (format: `00:11:22:33:44:55`)
-     - `broadcast` (boolean, optional): Use broadcast (true) or unicast (false), default: true
-   - Example:
-     ```json
-     {
-       "type": "send_bootp_request",
-       "client_mac": "00:11:22:33:44:55",
-       "broadcast": true
-     }
-     ```
+    - Send BOOTP request to discover boot server
+    - Parameters:
+        - `client_mac` (string, required): Client MAC address (format: `00:11:22:33:44:55`)
+        - `broadcast` (boolean, optional): Use broadcast (true) or unicast (false), default: true
+    - Example:
+      ```json
+      {
+        "type": "send_bootp_request",
+        "client_mac": "00:11:22:33:44:55",
+        "broadcast": true
+      }
+      ```
 
 2. **disconnect**
-   - Close BOOTP client (for consistency, though UDP is connectionless)
-   - Parameters: none
-   - Example:
-     ```json
-     {
-       "type": "disconnect"
-     }
-     ```
+    - Close BOOTP client (for consistency, though UDP is connectionless)
+    - Parameters: none
+    - Example:
+      ```json
+      {
+        "type": "disconnect"
+      }
+      ```
 
 **Sync Actions (Network Event Response):**
 
 1. **send_bootp_request**
-   - Send another BOOTP request in response to a reply
-   - Same parameters as async version
+    - Send another BOOTP request in response to a reply
+    - Same parameters as async version
 
 2. **wait_for_more**
-   - Wait for more BOOTP replies before responding
-   - Parameters: none
+    - Wait for more BOOTP replies before responding
+    - Parameters: none
 
 ### LLM Flow
 
 **Initial Connection:**
+
 1. User: `open_client bootp 192.168.1.1:67 "Request IP for MAC 00:11:22:33:44:55"`
 2. System: Bind UDP socket, send `bootp_connected` event
 3. LLM: Receives connected event, returns `send_bootp_request` action
 4. System: Constructs and sends BOOTP request
 
 **Reply Processing:**
+
 1. System: Receives BOOTP reply, parses into structured data
 2. System: Checks state machine (Idle → Processing)
 3. System: Sends `bootp_reply_received` event to LLM
@@ -176,6 +191,7 @@ struct BootpReply {
 5. System: Executes action, returns to Idle state
 
 **Example LLM Reasoning:**
+
 ```
 Event: bootp_reply_received
   assigned_ip: 192.168.1.100
@@ -195,7 +211,9 @@ Action: disconnect (information retrieved successfully)
 ## Use Cases
 
 ### 1. PXE Boot Testing
+
 Test PXE boot server configuration:
+
 ```
 User: "Connect to BOOTP server 192.168.1.1:67 and request boot info for MAC 52:54:00:12:34:56"
 
@@ -207,7 +225,9 @@ LLM Actions:
 ```
 
 ### 2. Diskless Workstation Simulation
+
 Simulate diskless workstation boot:
+
 ```
 User: "Simulate diskless workstation boot discovery"
 
@@ -219,7 +239,9 @@ LLM Actions:
 ```
 
 ### 3. BOOTP Server Discovery
+
 Find BOOTP servers on network:
+
 ```
 User: "Discover BOOTP servers on network"
 
@@ -231,7 +253,9 @@ LLM Actions:
 ```
 
 ### 4. Legacy Network Testing
+
 Test compatibility with legacy BOOTP infrastructure:
+
 ```
 User: "Test legacy BOOTP compatibility"
 
@@ -246,6 +270,7 @@ LLM Actions:
 ### Port Binding
 
 BOOTP clients traditionally bind to port 68:
+
 ```rust
 match UdpSocket::bind("0.0.0.0:68").await {
     Ok(s) => s,
@@ -257,11 +282,13 @@ match UdpSocket::bind("0.0.0.0:68").await {
 ```
 
 **Why port 68 is preferred:**
+
 - BOOTP servers send replies to port 68 by default
 - Some servers may reject replies to non-standard ports
 - PXE boot requires port 68 for proper operation
 
 **Fallback to random port:**
+
 - Allows testing without elevated privileges
 - Works with servers that support unicast replies to any port
 - May not work with all BOOTP/DHCP server implementations
@@ -269,17 +296,20 @@ match UdpSocket::bind("0.0.0.0:68").await {
 ### Broadcast Support
 
 BOOTP requires broadcast capability:
+
 ```rust
 socket.set_broadcast(true)?;
 ```
 
 Broadcast is used for:
+
 - Sending requests when server address is unknown (255.255.255.255:67)
 - Receiving broadcast replies (flag 0x8000 in BOOTP request)
 
 ### MAC Address Parsing
 
 LLM provides MAC addresses as strings (e.g., `00:11:22:33:44:55`):
+
 ```rust
 fn parse_mac(mac_str: &str) -> Result<[u8; 6]> {
     let parts: Vec<&str> = mac_str.split(':').collect();
@@ -298,11 +328,13 @@ fn parse_mac(mac_str: &str) -> Result<[u8; 6]> {
 ### Transaction ID
 
 Each BOOTP request generates a random transaction ID (xid):
+
 ```rust
 msg.set_xid(rand::random::<u32>());
 ```
 
 This allows:
+
 - Matching replies to requests
 - Preventing reply spoofing (though BOOTP has minimal security)
 - Supporting concurrent requests (though typically only one is needed)
@@ -310,49 +342,56 @@ This allows:
 ## Limitations
 
 ### 1. Privilege Requirements
+
 - Binding to port 68 requires elevated privileges (root/administrator)
 - Fallback to random port works but may not be compatible with all servers
 
 ### 2. No Authentication
+
 - BOOTP has no authentication mechanism
 - Replies can be spoofed (rogue BOOTP servers)
 - Use in trusted networks only
 
 ### 3. Limited Information
+
 - BOOTP provides only basic boot information (IP, server, file name)
 - No subnet mask, DNS, NTP, or other options (use DHCP for that)
 - Server name field (sname) is often unused
 
 ### 4. Broadcast Dependency
+
 - Relies on broadcast for discovery
 - May not work across routed networks without BOOTP relay agents
 - Some network configurations block broadcast traffic
 
 ### 5. No Lease Management
+
 - BOOTP does not manage IP address leases
 - No concept of lease time, renewal, or release
 - Static IP assignment is assumed
 
 ## Comparison: BOOTP vs DHCP Client
 
-| Feature | BOOTP Client | DHCP Client |
-|---------|--------------|-------------|
-| **Protocol** | BOOTP (RFC 951) | DHCP (RFC 2131) |
-| **Options** | None (fixed format) | Many (subnet, DNS, NTP, etc.) |
-| **Use Case** | Diskless boot, PXE | General IP configuration |
-| **Lease Management** | No | Yes (lease time, renewal) |
-| **State Machine** | Simple (request/reply) | Complex (DISCOVER, OFFER, REQUEST, ACK) |
-| **Authentication** | None | Optional (Option 82, etc.) |
-| **Port** | 68 (client) | 68 (client) |
-| **Library** | dhcproto (no options) | dhcproto (with options) |
+| Feature              | BOOTP Client           | DHCP Client                             |
+|----------------------|------------------------|-----------------------------------------|
+| **Protocol**         | BOOTP (RFC 951)        | DHCP (RFC 2131)                         |
+| **Options**          | None (fixed format)    | Many (subnet, DNS, NTP, etc.)           |
+| **Use Case**         | Diskless boot, PXE     | General IP configuration                |
+| **Lease Management** | No                     | Yes (lease time, renewal)               |
+| **State Machine**    | Simple (request/reply) | Complex (DISCOVER, OFFER, REQUEST, ACK) |
+| **Authentication**   | None                   | Optional (Option 82, etc.)              |
+| **Port**             | 68 (client)            | 68 (client)                             |
+| **Library**          | dhcproto (no options)  | dhcproto (with options)                 |
 
 **When to use BOOTP client:**
+
 - Testing PXE boot servers
 - Simulating diskless workstations
 - Legacy network compatibility
 - Boot file discovery
 
 **When to use DHCP client:**
+
 - Full IP configuration (subnet, DNS, gateway)
 - Lease management and renewal
 - Modern network environments
@@ -363,6 +402,7 @@ This allows:
 See `tests/client/bootp/CLAUDE.md` for detailed testing approach.
 
 **Key Testing Scenarios:**
+
 1. Broadcast BOOTP request with synthetic MAC
 2. Parse BOOTP reply (IP, server, boot file)
 3. Verify LLM interprets reply correctly
@@ -370,6 +410,7 @@ See `tests/client/bootp/CLAUDE.md` for detailed testing approach.
 5. Privilege fallback (random port if 68 unavailable)
 
 **Test Server Options:**
+
 - `dnsmasq` (simple BOOTP/DHCP server)
 - `isc-dhcp-server` (full-featured)
 - Custom BOOTP responder (netget server in future)
@@ -377,23 +418,28 @@ See `tests/client/bootp/CLAUDE.md` for detailed testing approach.
 ## Future Enhancements
 
 ### 1. DHCP Options Support
+
 - Extend to support DHCP options (subnet mask, DNS, gateway)
 - Upgrade to full DHCP client (DISCOVER, OFFER, REQUEST, ACK state machine)
 
 ### 2. TFTP Integration
+
 - After receiving BOOTP reply, automatically connect TFTP client to download boot file
 - Simulate complete PXE boot sequence
 
 ### 3. Relay Agent Support
+
 - Support BOOTP relay agents (giaddr field)
 - Test relay agent behavior in routed networks
 
 ### 4. Multiple Request Strategies
+
 - Retry logic with exponential backoff
 - Broadcast then unicast fallback
 - Multiple MAC address probing
 
 ### 5. Reply Validation
+
 - Verify transaction ID matches request
 - Detect rogue BOOTP servers (multiple conflicting replies)
 - Sanity check assigned IP address
@@ -408,21 +454,25 @@ See `tests/client/bootp/CLAUDE.md` for detailed testing approach.
 ## Example Prompts
 
 ### Discovery
+
 ```
 "Connect to BOOTP server at 192.168.1.1:67 and discover boot information for MAC 00:11:22:33:44:55"
 ```
 
 ### Broadcast Discovery
+
 ```
 "Send broadcast BOOTP request to find boot servers on network"
 ```
 
 ### PXE Boot Testing
+
 ```
 "Test PXE boot server at 10.0.0.1 using MAC 52:54:00:12:34:56"
 ```
 
 ### Multiple Server Detection
+
 ```
 "Discover all BOOTP servers on network and compare their responses"
 ```

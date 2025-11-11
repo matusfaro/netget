@@ -2,13 +2,16 @@
 
 ## Test Strategy
 
-The socket file E2E tests validate Unix domain socket functionality using real UnixStream clients to ensure the LLM correctly handles IPC communication through filesystem socket files.
+The socket file E2E tests validate Unix domain socket functionality using real UnixStream clients to ensure the LLM
+correctly handles IPC communication through filesystem socket files.
 
 ## Test Approach
 
-**Black-box testing**: Tests use the NetGet binary as-is with LLM prompts. The LLM interprets prompts and generates protocol responses. Tests validate with real Unix socket clients (tokio::net::UnixStream).
+**Black-box testing**: Tests use the NetGet binary as-is with LLM prompts. The LLM interprets prompts and generates
+protocol responses. Tests validate with real Unix socket clients (tokio::net::UnixStream).
 
-**Focus**: Core socket file functionality (echo, PING/PONG, line-based protocol) using simple prompts that minimize LLM calls.
+**Focus**: Core socket file functionality (echo, PING/PONG, line-based protocol) using simple prompts that minimize LLM
+calls.
 
 ## LLM Call Budget
 
@@ -17,19 +20,19 @@ The socket file E2E tests validate Unix domain socket functionality using real U
 ### Test Breakdown
 
 1. **test_socket_echo** (1 LLM call)
-   - Prompt: Echo server on socket file
-   - Action: Send "Hello, Socket!" → receive "ACK: Hello, Socket!"
-   - Validation: Response contains "ACK" and echoes message
+    - Prompt: Echo server on socket file
+    - Action: Send "Hello, Socket!" → receive "ACK: Hello, Socket!"
+    - Validation: Response contains "ACK" and echoes message
 
 2. **test_socket_ping_pong** (1 LLM call)
-   - Prompt: PING/PONG server on socket file
-   - Action: Send "PING" → receive "PONG\n"
-   - Validation: Response contains "PONG"
+    - Prompt: PING/PONG server on socket file
+    - Action: Send "PING" → receive "PONG\n"
+    - Validation: Response contains "PONG"
 
 3. **test_socket_line_protocol** (1 LLM call)
-   - Prompt: Line-based protocol on socket file
-   - Action: Send "TEST COMMAND\n" → receive "OK: TEST COMMAND\n"
-   - Validation: Response starts with "OK:" and contains command
+    - Prompt: Line-based protocol on socket file
+    - Action: Send "TEST COMMAND\n" → receive "OK: TEST COMMAND\n"
+    - Validation: Response starts with "OK:" and contains command
 
 **Rationale**: Each test uses one LLM call (per connection). Total: 3 calls, well under the 10-call budget.
 
@@ -40,6 +43,7 @@ The socket file E2E tests validate Unix domain socket functionality using real U
 - **Model**: qwen3-coder:30b (default)
 
 **Breakdown**:
+
 - Server startup: ~1-2s
 - Socket file creation: ~0.5s
 - LLM response: ~3-10s (depends on model/load)
@@ -49,6 +53,7 @@ The socket file E2E tests validate Unix domain socket functionality using real U
 ## Running Tests
 
 ### Prerequisites
+
 ```bash
 # Build with socket_file feature
 ./cargo-isolated.sh build --release --no-default-features --features socket_file
@@ -57,6 +62,7 @@ The socket file E2E tests validate Unix domain socket functionality using real U
 ```
 
 ### Execution
+
 ```bash
 # Run socket file E2E tests
 ./cargo-isolated.sh test --no-default-features --features socket_file --test server::socket_file::test
@@ -66,6 +72,7 @@ The socket file E2E tests validate Unix domain socket functionality using real U
 ```
 
 ### Test Output
+
 ```
 === E2E Test: Socket File Echo Server ===
 Server started with socket file
@@ -80,26 +87,31 @@ Received: ACK: Hello, Socket!
 ## Known Issues
 
 ### 1. Platform Limitation
+
 - **Issue**: Unix domain sockets are not supported on Windows
 - **Impact**: Tests will fail on Windows
 - **Workaround**: Only run on Linux/macOS/Unix systems
 
 ### 2. Socket File Cleanup
+
 - **Issue**: If test crashes, socket file may remain in ./tmp
 - **Impact**: Next test may fail if socket file already exists
 - **Workaround**: Tests remove existing socket files before binding; manual cleanup with `rm ./tmp/netget-test-*.sock`
 
 ### 3. LLM Response Variability
+
 - **Issue**: LLM may respond slightly differently (e.g., "ACK:" vs "Ack:")
 - **Impact**: Assertion failures if case/format differs
 - **Workaround**: Tests use contains() checks instead of exact matches where reasonable
 
 ### 4. Timeout on Slow Systems
+
 - **Issue**: LLM may take longer than 10s timeout on slow systems or busy Ollama server
 - **Impact**: Test failure with "Response timeout" error
 - **Workaround**: Increase timeout or use faster model
 
 ### 5. Socket File Permissions
+
 - **Issue**: ./tmp directory may not exist or be writable in some environments
 - **Impact**: Socket file creation fails
 - **Workaround**: Ensure ./tmp directory exists and is writable, or modify socket paths in tests
@@ -107,6 +119,7 @@ Received: ACK: Hello, Socket!
 ## Test Coverage
 
 ### Covered Scenarios
+
 - ✓ Socket file creation and binding
 - ✓ Client connection to socket file
 - ✓ Data send/receive over Unix socket
@@ -115,6 +128,7 @@ Received: ACK: Hello, Socket!
 - ✓ Socket file cleanup
 
 ### Not Covered (Future Tests)
+
 - ✗ Multiple concurrent connections on same socket file
 - ✗ Socket file permissions and ownership
 - ✗ Large data transfer (>8KB buffer)
@@ -132,14 +146,14 @@ Received: ACK: Hello, Socket!
 
 ## Comparison to TCP Tests
 
-| Aspect | TCP Tests | Socket File Tests |
-|--------|-----------|-------------------|
-| **Client** | tokio::net::TcpStream | tokio::net::UnixStream |
-| **Address** | IP:port | Filesystem path |
-| **LLM Calls** | 4 tests, 1 call each | 3 tests, 1 call each |
-| **Runtime** | 20-60s | 15-45s |
-| **Platform** | Cross-platform | Unix/Linux only |
-| **Cleanup** | Port released | Socket file removal |
+| Aspect        | TCP Tests             | Socket File Tests      |
+|---------------|-----------------------|------------------------|
+| **Client**    | tokio::net::TcpStream | tokio::net::UnixStream |
+| **Address**   | IP:port               | Filesystem path        |
+| **LLM Calls** | 4 tests, 1 call each  | 3 tests, 1 call each   |
+| **Runtime**   | 20-60s                | 15-45s                 |
+| **Platform**  | Cross-platform        | Unix/Linux only        |
+| **Cleanup**   | Port released         | Socket file removal    |
 
 ## Future Enhancements
 

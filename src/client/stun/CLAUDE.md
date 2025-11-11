@@ -2,11 +2,13 @@
 
 ## Overview
 
-The STUN (Session Traversal Utilities for NAT) client implementation provides LLM-controlled NAT traversal discovery. The LLM can send binding requests to STUN servers and interpret the external IP address and port discovered.
+The STUN (Session Traversal Utilities for NAT) client implementation provides LLM-controlled NAT traversal discovery.
+The LLM can send binding requests to STUN servers and interpret the external IP address and port discovered.
 
 ## Implementation Details
 
 ### Library Choice
+
 - **stunclient** - Simple UDP-only STUN client for resolving external IP:port behind NAT
 - Supports both sync and async (Tokio) operations
 - Implements RFC 5389 (Session Traversal Utilities for NAT)
@@ -38,6 +40,7 @@ The STUN (Session Traversal Utilities for NAT) client implementation provides LL
 ### Connection Model
 
 STUN client is **request/response** based over UDP:
+
 - "Connection" = initialization and UDP socket binding
 - Each binding request is independent (new UDP socket)
 - LLM triggers binding requests via actions
@@ -47,20 +50,23 @@ STUN client is **request/response** based over UDP:
 ### LLM Control
 
 **Async Actions** (user-triggered):
+
 - `send_binding_request` - Send STUN binding request
-  - No parameters needed
-  - Returns Custom result triggering binding request
+    - No parameters needed
+    - Returns Custom result triggering binding request
 - `disconnect` - Stop STUN client
 
 **Sync Actions** (in response to binding responses):
+
 - `send_binding_request` - Send another binding request to refresh
 - `wait_for_more` - Wait before sending next request
 
 **Events:**
+
 - `stun_connected` - Fired when client initialized and UDP socket bound
-  - Data includes: local_addr, stun_server
+    - Data includes: local_addr, stun_server
 - `stun_binding_response` - Fired when binding response received
-  - Data includes: external_ip, external_port, external_addr, local_addr, stun_server
+    - Data includes: external_ip, external_port, external_addr, local_addr, stun_server
 
 ### Structured Actions (CRITICAL)
 
@@ -93,14 +99,14 @@ LLMs can request binding queries and interpret the NAT mapping information.
 2. **LLM Action**: `send_binding_request`
 3. **Action Execution**: Returns `ClientActionResult::Custom`
 4. **Binding Request**:
-   - Create new UDP socket
-   - Use `stunclient::StunClient::new(stun_server)`
-   - Call `query_external_address_async(&udp_socket)`
-   - Extract XOR-MAPPED-ADDRESS from response
+    - Create new UDP socket
+    - Use `stunclient::StunClient::new(stun_server)`
+    - Call `query_external_address_async(&udp_socket)`
+    - Extract XOR-MAPPED-ADDRESS from response
 5. **Response Handling**:
-   - Parse external IP and port
-   - Create `stun_binding_response` event
-   - Call LLM for interpretation
+    - Parse external IP and port
+    - Create `stun_binding_response` event
+    - Call LLM for interpretation
 6. **LLM Response**: May trigger follow-up binding requests or disconnect
 
 ### Startup Parameters
@@ -118,20 +124,22 @@ status_tx.send("[CLIENT] STUN binding request sent");                           
 
 - **Connection Failed**: UDP bind error, client not created
 - **Binding Request Failed**: Log error, return Err, don't crash client
-  - DNS resolution failure
-  - Network timeout
-  - Invalid STUN response
+    - DNS resolution failure
+    - Network timeout
+    - Invalid STUN response
 - **LLM Error**: Log, continue accepting actions
 
 ## Features
 
 ### Supported Operations
+
 - Binding requests (RFC 5389)
 - XOR-MAPPED-ADDRESS attribute parsing
 - IPv4 support (primary)
 - IPv6 support (if STUN server supports)
 
 ### Protocol Details
+
 - **Transport**: UDP
 - **Port**: STUN servers typically use port 3478 or 19302 (Google STUN)
 - **Message Type**: Binding Request (0x0001)
@@ -140,6 +148,7 @@ status_tx.send("[CLIENT] STUN binding request sent");                           
 ### Public STUN Servers
 
 Google STUN servers (free, reliable):
+
 - `stun.l.google.com:19302`
 - `stun1.l.google.com:19302`
 - `stun2.l.google.com:19302`
@@ -162,6 +171,7 @@ Google STUN servers (free, reliable):
 **User**: "Connect to stun.l.google.com:19302 and discover my external IP address"
 
 **Flow**:
+
 1. Client initializes, binds UDP socket
 2. LLM receives `stun_connected` event
 3. LLM sends `send_binding_request` action
@@ -170,6 +180,7 @@ Google STUN servers (free, reliable):
 6. LLM reports: "Your external IP is 203.0.113.45:54321"
 
 **LLM Actions**:
+
 ```json
 // Initial action after connection
 {
@@ -185,6 +196,7 @@ Google STUN servers (free, reliable):
 **User**: "Monitor my external IP every 30 seconds"
 
 **Flow**:
+
 1. LLM sends initial binding request
 2. Receives response with external address
 3. Waits (via scheduled task or LLM decision)
@@ -192,6 +204,7 @@ Google STUN servers (free, reliable):
 5. Compares addresses to detect NAT rebinding
 
 **LLM Actions**:
+
 ```json
 // First request
 { "type": "send_binding_request" }
@@ -208,11 +221,13 @@ Google STUN servers (free, reliable):
 **User**: "Determine my NAT type"
 
 **Flow**:
+
 1. Send binding request to STUN server
 2. Compare external vs local address
 3. Determine NAT type based on mapping
 
 **Analysis**:
+
 - External == Local: No NAT
 - External != Local: Behind NAT
 - (Advanced: RFC 5780 required for full NAT type detection)
@@ -222,6 +237,7 @@ Google STUN servers (free, reliable):
 See `tests/client/stun/CLAUDE.md` for E2E testing approach.
 
 Key points:
+
 - Use Google STUN servers (stun.l.google.com:19302)
 - Test binding request/response flow
 - Verify external address extraction
@@ -230,9 +246,9 @@ Key points:
 ## Future Enhancements
 
 - **RFC 5780 Support** - NAT Behavior Discovery
-  - Detect NAT type (Full Cone, Restricted, Port Restricted, Symmetric)
-  - CHANGE-REQUEST attribute
-  - OTHER-ADDRESS attribute
+    - Detect NAT type (Full Cone, Restricted, Port Restricted, Symmetric)
+    - CHANGE-REQUEST attribute
+    - OTHER-ADDRESS attribute
 - **Long-term Credentials** - MESSAGE-INTEGRITY support
 - **TCP STUN** - TCP transport option
 - **TURN Integration** - Relay functionality for WebRTC

@@ -2,7 +2,8 @@
 
 ## Overview
 
-The S3 client provides LLM-controlled access to AWS S3 and S3-compatible object storage services (MinIO, LocalStack, etc.). It uses the official AWS SDK for Rust (`aws-sdk-s3`) to perform bucket and object operations.
+The S3 client provides LLM-controlled access to AWS S3 and S3-compatible object storage services (MinIO, LocalStack,
+etc.). It uses the official AWS SDK for Rust (`aws-sdk-s3`) to perform bucket and object operations.
 
 ## Library Choice: AWS SDK for Rust
 
@@ -10,11 +11,13 @@ The S3 client provides LLM-controlled access to AWS S3 and S3-compatible object 
 **Why:** Official AWS SDK with comprehensive S3 API coverage, automatic authentication, and retry logic.
 
 **Alternatives Considered:**
+
 - `rusoto_s3` - Deprecated in favor of AWS SDK
 - Raw HTTP with AWS Signature v4 - Too complex, reinventing the wheel
 - `s3-rust` - Less mature, limited features
 
 **Dependency:**
+
 ```toml
 aws-config = "1.5"
 aws-sdk-s3 = "1.55"
@@ -25,6 +28,7 @@ aws-sdk-s3 = "1.55"
 ### Connection Model
 
 Unlike TCP-based protocols, S3 is HTTP-based and connectionless. The "connection" in this context means:
+
 1. **Configuration initialization** - AWS credentials, region, endpoint URL
 2. **Logical client creation** - Building the AWS SDK S3 client
 3. **On-demand operations** - Each action makes a separate HTTP(S) request
@@ -34,16 +38,19 @@ Unlike TCP-based protocols, S3 is HTTP-based and connectionless. The "connection
 ### State Management
 
 The client stores configuration in protocol_data:
+
 - `endpoint`: S3 endpoint URL (AWS or custom like MinIO)
 - `region`: AWS region (e.g., us-east-1)
 - `access_key_id`: AWS access key (from startup params)
 - `secret_access_key`: AWS secret key (from startup params)
 
-**No connection state machine** (Idle/Processing/Accumulating) is needed because operations are request-response style with no streaming or persistent connections.
+**No connection state machine** (Idle/Processing/Accumulating) is needed because operations are request-response style
+with no streaming or persistent connections.
 
 ### Authentication
 
 Uses AWS Signature Version 4 authentication, handled automatically by the SDK:
+
 - **Access Key ID** - Public identifier
 - **Secret Access Key** - Secret for signing requests
 - **Session Token** - Optional for temporary credentials (not implemented yet)
@@ -53,6 +60,7 @@ Credentials are passed via `Credentials::new()` to the SDK config builder.
 ### Custom Endpoints
 
 Supports S3-compatible services via `endpoint_url` parameter:
+
 ```rust
 let config = aws_sdk_s3::config::Builder::new()
     .region(Region::new("us-east-1"))
@@ -62,6 +70,7 @@ let config = aws_sdk_s3::config::Builder::new()
 ```
 
 **Use cases:**
+
 - MinIO (local object storage)
 - LocalStack (AWS emulator)
 - Ceph (open-source storage)
@@ -72,6 +81,7 @@ let config = aws_sdk_s3::config::Builder::new()
 ### Events
 
 **1. `s3_connected`** - Triggered after client initialization
+
 ```json
 {
   "endpoint": "s3.amazonaws.com",
@@ -80,6 +90,7 @@ let config = aws_sdk_s3::config::Builder::new()
 ```
 
 **2. `s3_response_received`** - Triggered after each S3 operation
+
 ```json
 {
   "operation": "s3_put_object",
@@ -93,6 +104,7 @@ let config = aws_sdk_s3::config::Builder::new()
 ```
 
 Or on error:
+
 ```json
 {
   "operation": "s3_get_object",
@@ -179,6 +191,7 @@ Or on error:
 #### Sync Actions (Response-triggered)
 
 Same as async actions, allowing the LLM to chain operations:
+
 - After uploading, list objects to verify
 - After getting an object, process and upload result
 - After listing, download specific objects
@@ -198,6 +211,7 @@ Same as async actions, allowing the LLM to chain operations:
 **Issue:** LLMs cannot directly work with binary data.
 
 **Solution:** For text files, pass content as-is. For binary files:
+
 - **Upload:** Accept base64-encoded body, decode before uploading (not implemented yet)
 - **Download:** Return base64-encoded body for binary content (not implemented yet)
 
@@ -208,6 +222,7 @@ Same as async actions, allowing the LLM to chain operations:
 **Issue:** AWS SDK loads entire object into memory.
 
 **Solution (not implemented):**
+
 - Streaming uploads via `ByteStream`
 - Multipart uploads for large files (>5MB)
 - Presigned URLs for direct client-side uploads/downloads
@@ -219,6 +234,7 @@ Same as async actions, allowing the LLM to chain operations:
 **Issue:** `list_objects` may be truncated for large buckets.
 
 **Solution (partially implemented):**
+
 - Check `is_truncated` in response
 - Use continuation tokens for next page (not implemented yet)
 
@@ -240,6 +256,7 @@ These can be added incrementally as needed.
 ## Error Handling
 
 AWS SDK errors are captured and returned via `s3_response_received` event:
+
 - **NoSuchBucket** - Bucket doesn't exist
 - **NoSuchKey** - Object doesn't exist
 - **AccessDenied** - Insufficient permissions
@@ -254,6 +271,7 @@ LLM sees the error and can decide to retry, create bucket, or report to user.
 See `tests/client/s3/CLAUDE.md` for E2E testing approach.
 
 **Recommended test setup:**
+
 - **Local:** MinIO or LocalStack (S3-compatible, no AWS costs)
 - **CI:** LocalStack in Docker container
 - **Prod:** Real AWS S3 with test bucket (use IAM role with limited permissions)
@@ -261,21 +279,25 @@ See `tests/client/s3/CLAUDE.md` for E2E testing approach.
 ## Example Prompts
 
 **1. Upload file:**
+
 ```
 Connect to S3 at localhost:9000 (MinIO) and upload a file to bucket "test-bucket" with key "hello.txt" and content "Hello, World!"
 ```
 
 **2. List and download:**
+
 ```
 Connect to AWS S3 in us-east-1, list all objects in bucket "my-data", then download the first object
 ```
 
 **3. Backup workflow:**
+
 ```
 Connect to S3, create bucket "backup-2024", upload three files: config.json, data.csv, and readme.txt
 ```
 
 **4. Cleanup:**
+
 ```
 Connect to S3, list all objects in bucket "temp-bucket", delete all objects, then delete the bucket
 ```

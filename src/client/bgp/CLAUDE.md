@@ -2,7 +2,9 @@
 
 ## Overview
 
-This BGP client connects to BGP peers to query routing information in passive monitoring mode. It implements RFC 4271 (Border Gateway Protocol 4) for session establishment and message exchange, but focuses on querying and monitoring rather than active route announcement.
+This BGP client connects to BGP peers to query routing information in passive monitoring mode. It implements RFC 4271 (
+Border Gateway Protocol 4) for session establishment and message exchange, but focuses on querying and monitoring rather
+than active route announcement.
 
 ## Library Choices
 
@@ -13,6 +15,7 @@ This BGP client connects to BGP peers to query routing information in passive mo
 ### Why Manual Implementation?
 
 The BGP client uses a manual implementation rather than an existing BGP library because:
+
 1. **LLM Control**: Full control over message construction and FSM state transitions
 2. **Query Mode**: Only needs OPEN, KEEPALIVE, UPDATE, and NOTIFICATION handling
 3. **Simplicity**: BGP message format is straightforward (fixed header + variable body)
@@ -71,11 +74,13 @@ The client uses a state machine to prevent concurrent LLM calls:
 - **Accumulating**: LLM is busy, queuing events
 
 Events trigger LLM calls:
+
 - `bgp_connected` - Peer session established (after OPEN handshake)
 - `bgp_update_received` - Route announcement/withdrawal received
 - `bgp_notification_received` - Error notification received
 
 The LLM can respond with actions:
+
 - `send_keepalive` - Send KEEPALIVE message
 - `send_notification` - Send NOTIFICATION and close
 - `disconnect` - Gracefully close connection
@@ -84,6 +89,7 @@ The LLM can respond with actions:
 ### Connection State Management
 
 Per-client state tracked:
+
 ```rust
 struct ClientData {
     state: ConnectionState,        // Idle/Processing/Accumulating
@@ -111,10 +117,12 @@ The read loop handles incoming BGP messages:
 ### Logging
 
 Dual logging strategy:
+
 - **Tracing macros**: `info!()`, `debug!()`, `trace!()`, `error!()` → `netget.log`
 - **Status channel**: `status_tx.send()` → TUI display
 
 Log levels:
+
 - `ERROR`: Protocol violations, connection errors
 - `INFO`: Session establishment, state transitions
 - `DEBUG`: KEEPALIVE messages, state changes
@@ -156,7 +164,8 @@ Just the header, no body (19 bytes total).
 
 ### UPDATE Message
 
-Contains withdrawn routes, path attributes, and NLRI (Network Layer Reachability Information). The client receives these but does not parse them fully - it passes the hex-encoded data to the LLM for analysis.
+Contains withdrawn routes, path attributes, and NLRI (Network Layer Reachability Information). The client receives these
+but does not parse them fully - it passes the hex-encoded data to the LLM for analysis.
 
 ### NOTIFICATION Message
 
@@ -179,6 +188,7 @@ The client accepts these startup parameters:
 - `hold_time` (integer, optional): BGP hold time in seconds (default: 180)
 
 Example:
+
 ```json
 {
   "local_as": 65001,
@@ -198,6 +208,7 @@ This BGP client is designed for:
 5. **Network Reconnaissance**: Discover network topology via BGP
 
 **NOT designed for:**
+
 - Active route announcement (use BGP server for that)
 - Full routing table (RIB) maintenance
 - Route propagation to other peers

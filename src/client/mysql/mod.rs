@@ -10,6 +10,9 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, trace};
 
+use crate::client::mysql::actions::{
+    MYSQL_CLIENT_CONNECTED_EVENT, MYSQL_CLIENT_RESULT_RECEIVED_EVENT,
+};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::actions::client_trait::Client;
 use crate::llm::ollama_client::OllamaClient;
@@ -17,7 +20,6 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::mysql::actions::{MYSQL_CLIENT_CONNECTED_EVENT, MYSQL_CLIENT_RESULT_RECEIVED_EVENT};
 
 /// MySQL client that connects to a MySQL server
 pub struct MysqlClient;
@@ -41,9 +43,7 @@ impl MysqlClient {
             .as_ref()
             .map(|p| p.get_string("password"))
             .unwrap_or_else(|| "".to_string());
-        let database: Option<String> = startup_params
-            .as_ref()
-            .map(|p| p.get_string("database"));
+        let database: Option<String> = startup_params.as_ref().map(|p| p.get_string("database"));
 
         // Parse remote_addr to get host and port
         let (host, port) = if let Some((h, p)) = remote_addr.split_once(':') {
@@ -77,8 +77,13 @@ impl MysqlClient {
             .context("Failed to parse socket address")?;
 
         // Update client state
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] MySQL client {} connected to {}", client_id, remote_addr));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] MySQL client {} connected to {}",
+            client_id, remote_addr
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Wrap connection in Arc<Mutex> for shared access
@@ -94,7 +99,10 @@ impl MysqlClient {
                 }),
             );
 
-            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+            let memory = app_state
+                .get_memory_for_client(client_id)
+                .await
+                .unwrap_or_default();
 
             let conn_clone = conn_arc.clone();
             let app_state_clone = app_state.clone();
@@ -110,8 +118,13 @@ impl MysqlClient {
                     Some(&event),
                     protocol.as_ref(),
                     &status_tx_clone,
-                ).await {
-                    Ok(ClientLlmResult { actions, memory_updates }) => {
+                )
+                .await
+                {
+                    Ok(ClientLlmResult {
+                        actions,
+                        memory_updates,
+                    }) => {
                         // Update memory
                         if let Some(mem) = memory_updates {
                             app_state_clone.set_memory_for_client(client_id, mem).await;
@@ -127,7 +140,9 @@ impl MysqlClient {
                                 &app_state_clone,
                                 &llm_client,
                                 &status_tx_clone,
-                            ).await {
+                            )
+                            .await
+                            {
                                 error!("Error executing MySQL action: {}", e);
                             }
                         }
@@ -153,14 +168,18 @@ impl MysqlClient {
         status_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         match protocol.execute_action(action)? {
-            crate::llm::actions::client_trait::ClientActionResult::Custom { name, data } if name == "mysql_query" => {
+            crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }
+                if name == "mysql_query" =>
+            {
                 if let Some(query_str) = data.get("query").and_then(|v| v.as_str()) {
                     trace!("MySQL client {} executing query: {}", client_id, query_str);
 
                     let mut conn_guard = conn.lock().await;
 
                     // Execute query
-                    let result: Result<Vec<Row>> = conn_guard.query(query_str).await
+                    let result: Result<Vec<Row>> = conn_guard
+                        .query(query_str)
+                        .await
                         .context("Failed to execute query");
 
                     drop(conn_guard);
@@ -168,15 +187,18 @@ impl MysqlClient {
                     match result {
                         Ok(rows) => {
                             // Convert rows to JSON
-                            let json_rows: Vec<serde_json::Value> = rows.iter()
+                            let json_rows: Vec<serde_json::Value> = rows
+                                .iter()
                                 .map(|row| {
                                     let mut obj = serde_json::Map::new();
                                     for (idx, col) in row.columns_ref().iter().enumerate() {
                                         let value = match row.as_ref(idx) {
-                                            Some(mysql_async::Value::NULL) => serde_json::Value::Null,
+                                            Some(mysql_async::Value::NULL) => {
+                                                serde_json::Value::Null
+                                            }
                                             Some(mysql_async::Value::Bytes(b)) => {
                                                 serde_json::Value::String(
-                                                    String::from_utf8_lossy(b).to_string()
+                                                    String::from_utf8_lossy(b).to_string(),
                                                 )
                                             }
                                             Some(mysql_async::Value::Int(i)) => {
@@ -195,13 +217,26 @@ impl MysqlClient {
                                                     .map(serde_json::Value::Number)
                                                     .unwrap_or(serde_json::Value::Null)
                                             }
-                                            Some(mysql_async::Value::Date(y, m, d, h, min, s, us)) => {
-                                                serde_json::Value::String(format!(
-                                                    "{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:06}",
-                                                    y, m, d, h, min, s, us
-                                                ))
-                                            }
-                                            Some(mysql_async::Value::Time(is_neg, d, h, m, s, us)) => {
+                                            Some(mysql_async::Value::Date(
+                                                y,
+                                                m,
+                                                d,
+                                                h,
+                                                min,
+                                                s,
+                                                us,
+                                            )) => serde_json::Value::String(format!(
+                                                "{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:06}",
+                                                y, m, d, h, min, s, us
+                                            )),
+                                            Some(mysql_async::Value::Time(
+                                                is_neg,
+                                                d,
+                                                h,
+                                                m,
+                                                s,
+                                                us,
+                                            )) => {
                                                 let sign = if *is_neg { "-" } else { "" };
                                                 serde_json::Value::String(format!(
                                                     "{}{} {:02}:{:02}:{:02}.{:06}",
@@ -216,10 +251,16 @@ impl MysqlClient {
                                 })
                                 .collect();
 
-                            info!("MySQL client {} query returned {} rows", client_id, json_rows.len());
+                            info!(
+                                "MySQL client {} query returned {} rows",
+                                client_id,
+                                json_rows.len()
+                            );
 
                             // Call LLM with result
-                            if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
+                            if let Some(instruction) =
+                                app_state.get_instruction_for_client(client_id).await
+                            {
                                 let event = Event::new(
                                     &MYSQL_CLIENT_RESULT_RECEIVED_EVENT,
                                     serde_json::json!({
@@ -228,7 +269,10 @@ impl MysqlClient {
                                     }),
                                 );
 
-                                let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                                let memory = app_state
+                                    .get_memory_for_client(client_id)
+                                    .await
+                                    .unwrap_or_default();
 
                                 match call_llm_for_client(
                                     llm_client,
@@ -239,8 +283,13 @@ impl MysqlClient {
                                     Some(&event),
                                     protocol.as_ref(),
                                     status_tx,
-                                ).await {
-                                    Ok(ClientLlmResult { actions, memory_updates }) => {
+                                )
+                                .await
+                                {
+                                    Ok(ClientLlmResult {
+                                        actions,
+                                        memory_updates,
+                                    }) => {
                                         // Update memory
                                         if let Some(mem) = memory_updates {
                                             app_state.set_memory_for_client(client_id, mem).await;
@@ -273,7 +322,9 @@ impl MysqlClient {
                         }
                         Err(e) => {
                             error!("MySQL client {} query error: {}", client_id, e);
-                            app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
+                            app_state
+                                .update_client_status(client_id, ClientStatus::Error(e.to_string()))
+                                .await;
                             let _ = status_tx.send("__UPDATE_UI__".to_string());
                         }
                     }
@@ -281,7 +332,9 @@ impl MysqlClient {
             }
             crate::llm::actions::client_trait::ClientActionResult::Disconnect => {
                 info!("MySQL client {} disconnecting", client_id);
-                app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
                 let _ = status_tx.send(format!("[CLIENT] MySQL client {} disconnected", client_id));
                 let _ = status_tx.send("__UPDATE_UI__".to_string());
             }

@@ -29,14 +29,12 @@ pub static USB_KEYBOARD_ATTACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "usb_keyboard_attached",
         "Host attached to USB keyboard device",
     )
-    .with_parameters(vec![
-        Parameter {
-            name: "connection_id".to_string(),
-            type_hint: "string".to_string(),
-            description: "Connection ID of the USB/IP session".to_string(),
-            required: true,
-        },
-    ])
+    .with_parameters(vec![Parameter {
+        name: "connection_id".to_string(),
+        type_hint: "string".to_string(),
+        description: "Connection ID of the USB/IP session".to_string(),
+        required: true,
+    }])
 });
 
 #[cfg(feature = "usb-keyboard")]
@@ -45,14 +43,12 @@ pub static USB_KEYBOARD_DETACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "usb_keyboard_detached",
         "Host detached from USB keyboard device",
     )
-    .with_parameters(vec![
-        Parameter {
-            name: "connection_id".to_string(),
-            type_hint: "string".to_string(),
-            description: "Connection ID of the USB/IP session".to_string(),
-            required: true,
-        },
-    ])
+    .with_parameters(vec![Parameter {
+        name: "connection_id".to_string(),
+        type_hint: "string".to_string(),
+        description: "Connection ID of the USB/IP session".to_string(),
+        required: true,
+    }])
 });
 
 #[cfg(feature = "usb-keyboard")]
@@ -96,7 +92,14 @@ pub struct UsbKeyboardProtocol {
     #[allow(dead_code)]
     connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
     /// Map of USB/IP keyboard handlers for each connection
-    handlers: Arc<Mutex<HashMap<ConnectionId, Arc<std::sync::Mutex<Box<dyn usbip::UsbInterfaceHandler + Send>>>>>>,
+    handlers: Arc<
+        Mutex<
+            HashMap<
+                ConnectionId,
+                Arc<std::sync::Mutex<Box<dyn usbip::UsbInterfaceHandler + Send>>>,
+            >,
+        >,
+    >,
 }
 
 #[cfg(feature = "usb-keyboard")]
@@ -205,9 +208,8 @@ impl Server for UsbKeyboardProtocol {
     fn spawn(
         &self,
         ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>,
-    > {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>>
+    {
         Box::pin(async move {
             crate::server::usb::keyboard::UsbKeyboardServer::spawn_with_llm_actions(
                 ctx.listen_addr,
@@ -220,10 +222,7 @@ impl Server for UsbKeyboardProtocol {
         })
     }
 
-    fn execute_action(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action["type"]
             .as_str()
             .context("Action must have 'type' field")?;
@@ -262,7 +261,9 @@ impl Server for UsbKeyboardProtocol {
                             hid.pending_key_events.push_back(report);
                             // Sleep between characters for natural typing
                             if typing_speed_ms > 0 {
-                                std::thread::sleep(std::time::Duration::from_millis(typing_speed_ms));
+                                std::thread::sleep(std::time::Duration::from_millis(
+                                    typing_speed_ms,
+                                ));
                             }
                         }
                     }
@@ -297,9 +298,14 @@ impl Server for UsbKeyboardProtocol {
                     .downcast_mut::<usbip::hid::UsbHidKeyboardHandler>()
                 {
                     if key.len() == 1 && key.is_ascii() {
-                        let report = usbip::hid::UsbHidKeyboardReport::from_ascii(key.as_bytes()[0]);
+                        let report =
+                            usbip::hid::UsbHidKeyboardReport::from_ascii(key.as_bytes()[0]);
                         hid.pending_key_events.push_back(report);
-                        tracing::info!("Queued key press '{}' for connection {}", key, connection_id);
+                        tracing::info!(
+                            "Queued key press '{}' for connection {}",
+                            key,
+                            connection_id
+                        );
                         Ok(ActionResult::NoAction)
                     } else {
                         Err(anyhow::anyhow!("Unsupported key: {}", key))
@@ -352,17 +358,17 @@ fn type_text_action() -> ActionDefinition {
         description: "Type text on the USB keyboard as if a user typed it".to_string(),
         parameters: vec![
             Parameter {
-            name: "text".to_string(),
-            type_hint: "string".to_string(),
-            description: "Text to type".to_string(),
-            required: true,
-        },
+                name: "text".to_string(),
+                type_hint: "string".to_string(),
+                description: "Text to type".to_string(),
+                required: true,
+            },
             Parameter {
-            name: "typing_speed_ms".to_string(),
-            type_hint: "number".to_string(),
-            description: "Delay between keypresses in milliseconds (default: 50ms)".to_string(),
-            required: false,
-        },
+                name: "typing_speed_ms".to_string(),
+                type_hint: "number".to_string(),
+                description: "Delay between keypresses in milliseconds (default: 50ms)".to_string(),
+                required: false,
+            },
         ],
         example: json!({
             "type": "type_text",
@@ -380,17 +386,18 @@ fn press_key_action() -> ActionDefinition {
             .to_string(),
         parameters: vec![
             Parameter {
-            name: "key".to_string(),
-            type_hint: "string".to_string(),
-            description: "Key to press (e.g., 'a', 'enter', 'f1')".to_string(),
-            required: true,
-        },
+                name: "key".to_string(),
+                type_hint: "string".to_string(),
+                description: "Key to press (e.g., 'a', 'enter', 'f1')".to_string(),
+                required: true,
+            },
             Parameter {
-            name: "modifiers".to_string(),
-            type_hint: "array".to_string(),
-            description: "Modifier keys: 'ctrl', 'shift', 'alt', 'gui' (Windows/Command key)".to_string(),
-            required: false,
-        },
+                name: "modifiers".to_string(),
+                type_hint: "array".to_string(),
+                description: "Modifier keys: 'ctrl', 'shift', 'alt', 'gui' (Windows/Command key)"
+                    .to_string(),
+                required: false,
+            },
         ],
         example: json!({
             "type": "press_key",

@@ -4,11 +4,11 @@
 
 use anyhow::{Context, Result};
 use rcgen::{Certificate, CertificateParams, DistinguishedName, DnType, KeyPair, SanType};
-use rustls::ServerConfig;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::ServerConfig;
 use std::sync::Arc;
-use tracing::{debug, info};
 use time::{Duration, OffsetDateTime};
+use tracing::{debug, info};
 
 /// Certificate specification from LLM or defaults
 #[derive(Debug, Clone)]
@@ -29,10 +29,7 @@ impl Default for CertificateSpec {
     fn default() -> Self {
         Self {
             common_name: "netget-dns-server".to_string(),
-            san_dns_names: vec![
-                "localhost".to_string(),
-                "*.local".to_string(),
-            ],
+            san_dns_names: vec!["localhost".to_string(), "*.local".to_string()],
             validity_days: 365,
             organization: Some("NetGet".to_string()),
             organizational_unit: Some("DNS Server".to_string()),
@@ -83,7 +80,8 @@ pub fn generate_self_signed_cert(spec: &CertificateSpec) -> Result<(Certificate,
     params.distinguished_name = dn;
 
     // Add Subject Alternative Names
-    params.subject_alt_names = spec.san_dns_names
+    params.subject_alt_names = spec
+        .san_dns_names
         .iter()
         .map(|name| SanType::DnsName(name.to_string().try_into().unwrap()))
         .collect();
@@ -94,19 +92,25 @@ pub fn generate_self_signed_cert(spec: &CertificateSpec) -> Result<(Certificate,
     params.not_after = now + Duration::days(spec.validity_days);
 
     // Generate key pair and self-sign
-    let key_pair = KeyPair::generate()
-        .context("Failed to generate key pair")?;
+    let key_pair = KeyPair::generate().context("Failed to generate key pair")?;
 
-    let cert = params.self_signed(&key_pair)
+    let cert = params
+        .self_signed(&key_pair)
         .context("Failed to create self-signed certificate")?;
 
-    info!("Successfully generated self-signed certificate for CN={}", spec.common_name);
+    info!(
+        "Successfully generated self-signed certificate for CN={}",
+        spec.common_name
+    );
 
     Ok((cert, key_pair))
 }
 
 /// Create a rustls ServerConfig from an rcgen Certificate and KeyPair
-pub fn create_rustls_server_config(cert: &Certificate, key_pair: &KeyPair) -> Result<Arc<ServerConfig>> {
+pub fn create_rustls_server_config(
+    cert: &Certificate,
+    key_pair: &KeyPair,
+) -> Result<Arc<ServerConfig>> {
     // Get the certificate DER
     let cert_der = cert.der();
     let cert_der_owned = CertificateDer::from(cert_der.to_vec());
@@ -210,13 +214,17 @@ pub fn create_tls_config(
             // Load from files
             load_tls_config_from_files(cert, key)
         }
-        (Some(_), None) | (None, Some(_)) => {
-            Err(anyhow::anyhow!("Both cert_path and key_path must be provided together"))
-        }
+        (Some(_), None) | (None, Some(_)) => Err(anyhow::anyhow!(
+            "Both cert_path and key_path must be provided together"
+        )),
         (None, None) => {
             // Generate self-signed certificate
-            if common_name.is_some() || san_dns_names.is_some() || validity_days.is_some()
-                || organization.is_some() || organizational_unit.is_some() {
+            if common_name.is_some()
+                || san_dns_names.is_some()
+                || validity_days.is_some()
+                || organization.is_some()
+                || organizational_unit.is_some()
+            {
                 // Use custom parameters
                 generate_custom_tls_config(
                     common_name,
@@ -302,8 +310,7 @@ pub fn extract_tls_config_from_params(
     params: &crate::protocol::StartupParams,
 ) -> Result<Option<Arc<ServerConfig>>> {
     // Check if TLS is enabled
-    let tls_enabled = params.get_optional_bool("tls_enabled")
-        .unwrap_or(false);
+    let tls_enabled = params.get_optional_bool("tls_enabled").unwrap_or(false);
 
     if !tls_enabled {
         return Ok(None);
@@ -313,8 +320,11 @@ pub fn extract_tls_config_from_params(
     let cert_path = params.get_optional_string("cert_path");
     let key_path = params.get_optional_string("key_path");
     let common_name = params.get_optional_string("common_name");
-    let san_dns_names = params.get_optional_array("san_dns_names")
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect());
+    let san_dns_names = params.get_optional_array("san_dns_names").map(|arr| {
+        arr.iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect()
+    });
     let validity_days = params.get_optional_i64("validity_days");
     let organization = params.get_optional_string("organization");
     let organizational_unit = params.get_optional_string("organizational_unit");
@@ -328,6 +338,6 @@ pub fn extract_tls_config_from_params(
         validity_days,
         organization,
         organizational_unit,
-    ).map(Some)
+    )
+    .map(Some)
 }
-

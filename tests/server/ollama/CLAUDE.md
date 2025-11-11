@@ -2,7 +2,8 @@
 
 ## Overview
 
-End-to-end tests for the Ollama server protocol. Tests spawn the actual NetGet binary with Ollama API prompts and validate responses using HTTP clients.
+End-to-end tests for the Ollama server protocol. Tests spawn the actual NetGet binary with Ollama API prompts and
+validate responses using HTTP clients.
 
 ## Test Strategy
 
@@ -28,12 +29,13 @@ End-to-end tests for the Ollama server protocol. Tests spawn the actual NetGet b
 **Purpose**: Verify `/api/tags` endpoint returns model list
 
 **Steps**:
+
 1. Start Ollama server on random port
 2. Send `GET /api/tags`
 3. Validate response format:
-   - HTTP 200 OK
-   - JSON with `models` array
-   - Each model has `name` field
+    - HTTP 200 OK
+    - JSON with `models` array
+    - Each model has `name` field
 
 **Runtime**: ~15 seconds (includes server startup)
 
@@ -44,16 +46,17 @@ End-to-end tests for the Ollama server protocol. Tests spawn the actual NetGet b
 **Purpose**: Verify `/api/generate` endpoint generates text
 
 **Steps**:
+
 1. Start Ollama server
 2. Send `POST /api/generate` with:
-   - `model`: "qwen2.5-coder:0.5b"
-   - `prompt`: "Say 'Hello from NetGet Ollama' and nothing else."
-   - `stream`: false
+    - `model`: "qwen2.5-coder:0.5b"
+    - `prompt`: "Say 'Hello from NetGet Ollama' and nothing else."
+    - `stream`: false
 3. Validate response:
-   - HTTP 200 OK
-   - JSON with `model`, `response`, `done` fields
-   - `response` is non-empty string
-   - `done` is true
+    - HTTP 200 OK
+    - JSON with `model`, `response`, `done` fields
+    - `response` is non-empty string
+    - `done` is true
 
 **Runtime**: ~30 seconds (includes LLM generation)
 
@@ -64,17 +67,18 @@ End-to-end tests for the Ollama server protocol. Tests spawn the actual NetGet b
 **Purpose**: Verify `/api/chat` endpoint works
 
 **Steps**:
+
 1. Start Ollama server
 2. Send `POST /api/chat` with:
-   - `model`: "qwen2.5-coder:0.5b"
-   - `messages`: Array with one user message
-   - `stream`: false
+    - `model`: "qwen2.5-coder:0.5b"
+    - `messages`: Array with one user message
+    - `stream`: false
 3. Validate response:
-   - HTTP 200 OK
-   - JSON with `model`, `message`, `done` fields
-   - `message.role` is "assistant"
-   - `message.content` is non-empty
-   - `done` is true
+    - HTTP 200 OK
+    - JSON with `model`, `message`, `done` fields
+    - `message.role` is "assistant"
+    - `message.content` is non-empty
+    - `done` is true
 
 **Runtime**: ~30 seconds
 
@@ -85,11 +89,12 @@ End-to-end tests for the Ollama server protocol. Tests spawn the actual NetGet b
 **Purpose**: Verify error handling for unknown endpoints
 
 **Steps**:
+
 1. Start Ollama server
 2. Send `GET /api/nonexistent`
 3. Validate response:
-   - HTTP 404 Not Found
-   - JSON with `error` field
+    - HTTP 404 Not Found
+    - JSON with `error` field
 
 **Runtime**: ~5 seconds
 
@@ -98,11 +103,13 @@ End-to-end tests for the Ollama server protocol. Tests spawn the actual NetGet b
 ## Running Tests
 
 **Feature-specific** (recommended):
+
 ```bash
 ./cargo-isolated.sh test --no-default-features --features ollama --test server::ollama::e2e_test
 ```
 
 **All features** (slow):
+
 ```bash
 ./cargo-isolated.sh test --all-features --test server::ollama::e2e_test
 ```
@@ -197,16 +204,19 @@ LLM generation can be slow. Tests use 30-second timeouts, which should be suffic
 ## Debugging
 
 **Enable verbose logging**:
+
 ```bash
 RUST_LOG=debug ./cargo-isolated.sh test --features ollama --test server::ollama::e2e_test -- --nocapture
 ```
 
 **Check NetGet logs**:
+
 ```bash
 tail -f netget.log
 ```
 
 **Manual testing**:
+
 ```bash
 # Start server
 ./target/debug/netget "Open Ollama on port 11435"

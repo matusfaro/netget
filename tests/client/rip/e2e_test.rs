@@ -62,7 +62,10 @@ mod rip_client_e2e_tests {
                     response.extend_from_slice(&Ipv4Addr::new(192, 168, 1, 1).octets());
                     response.extend_from_slice(&1u32.to_be_bytes());
 
-                    println!("[MOCK] Sending {} byte response with 3 routes", response.len());
+                    println!(
+                        "[MOCK] Sending {} byte response with 3 routes",
+                        response.len()
+                    );
                     if let Err(e) = socket.send_to(&response, peer).await {
                         eprintln!("[MOCK] Failed to send response: {}", e);
                     }
@@ -126,10 +129,7 @@ mod rip_client_e2e_tests {
             }
         }
 
-        assert!(
-            found_response,
-            "Should have received RIP response messages"
-        );
+        assert!(found_response, "Should have received RIP response messages");
 
         // Verify client is still connected
         let final_client = app_state.get_client(client_id).await.unwrap();

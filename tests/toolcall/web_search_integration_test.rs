@@ -266,10 +266,9 @@ async fn test_llm_search_and_extract_rfc2324_media_type() {
     // Verify the LLM used show_message to report the media type
     // Look for show_message in the LLM response (turn 2), not in the prompt examples
     // The pattern should be: LLM response contains show_message action with coffeepot
-    let show_message_in_response =
-        combined_output.contains("LLM response (turn 2)") &&
-        combined_output.contains("→ show_message") &&
-        combined_output.contains("coffeepot");
+    let show_message_in_response = combined_output.contains("LLM response (turn 2)")
+        && combined_output.contains("→ show_message")
+        && combined_output.contains("coffeepot");
 
     assert!(
         show_message_in_response,

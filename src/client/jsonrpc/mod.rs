@@ -9,6 +9,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
+use crate::client::jsonrpc::actions::JSONRPC_CLIENT_RESPONSE_RECEIVED_EVENT;
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::actions::client_trait::Client;
 use crate::llm::ollama_client::OllamaClient;
@@ -16,7 +17,6 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::jsonrpc::actions::JSONRPC_CLIENT_RESPONSE_RECEIVED_EVENT;
 
 /// JSON-RPC 2.0 client that makes RPC calls to remote servers
 pub struct JsonRpcClient;
@@ -33,7 +33,10 @@ impl JsonRpcClient {
         // JSON-RPC is HTTP-based, so "connection" is logical
         // We'll create an HTTP client and store it in protocol_data
 
-        info!("JSON-RPC client {} initialized for {}", client_id, remote_addr);
+        info!(
+            "JSON-RPC client {} initialized for {}",
+            client_id, remote_addr
+        );
 
         // Build reqwest client
         let _http_client = reqwest::Client::builder()
@@ -42,24 +45,28 @@ impl JsonRpcClient {
             .context("Failed to build HTTP client for JSON-RPC")?;
 
         // Store client in protocol_data
-        app_state.with_client_mut(client_id, |client| {
-            client.set_protocol_field(
-                "jsonrpc_client".to_string(),
-                serde_json::json!("initialized"),
-            );
-            client.set_protocol_field(
-                "endpoint".to_string(),
-                serde_json::json!(remote_addr.clone()),
-            );
-            client.set_protocol_field(
-                "next_id".to_string(),
-                serde_json::json!(1),
-            );
-        }).await;
+        app_state
+            .with_client_mut(client_id, |client| {
+                client.set_protocol_field(
+                    "jsonrpc_client".to_string(),
+                    serde_json::json!("initialized"),
+                );
+                client.set_protocol_field(
+                    "endpoint".to_string(),
+                    serde_json::json!(remote_addr.clone()),
+                );
+                client.set_protocol_field("next_id".to_string(), serde_json::json!(1));
+            })
+            .await;
 
         // Update status
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] JSON-RPC client {} ready for {}", client_id, remote_addr));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] JSON-RPC client {} ready for {}",
+            client_id, remote_addr
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Call LLM with initial connected event
@@ -72,7 +79,10 @@ impl JsonRpcClient {
                 }),
             );
 
-            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+            let memory = app_state
+                .get_memory_for_client(client_id)
+                .await
+                .unwrap_or_default();
 
             // Spawn task to process initial actions
             let app_state_clone = app_state.clone();
@@ -88,8 +98,13 @@ impl JsonRpcClient {
                     Some(&event),
                     protocol.as_ref(),
                     &status_tx_clone,
-                ).await {
-                    Ok(ClientLlmResult { actions, memory_updates }) => {
+                )
+                .await
+                {
+                    Ok(ClientLlmResult {
+                        actions,
+                        memory_updates,
+                    }) => {
                         // Update memory
                         if let Some(mem) = memory_updates {
                             app_state_clone.set_memory_for_client(client_id, mem).await;
@@ -171,11 +186,16 @@ impl JsonRpcClient {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         // Get endpoint from client
-        let endpoint = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("endpoint")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }).await.flatten().context("No endpoint found")?;
+        let endpoint = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("endpoint")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .await
+            .flatten()
+            .context("No endpoint found")?;
 
         info!("JSON-RPC client {} calling method: {}", client_id, method);
 
@@ -208,19 +228,26 @@ impl JsonRpcClient {
         let status_code = response.status().as_u16();
         let body_text = response.text().await.unwrap_or_default();
 
-        info!("JSON-RPC client {} received response: {}", client_id, status_code);
+        info!(
+            "JSON-RPC client {} received response: {}",
+            client_id, status_code
+        );
 
         // Parse JSON-RPC response
         if let Ok(response_json) = serde_json::from_str::<serde_json::Value>(&body_text) {
             // Call LLM with response
             if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                let protocol = Arc::new(crate::client::jsonrpc::actions::JsonRpcClientProtocol::new());
+                let protocol =
+                    Arc::new(crate::client::jsonrpc::actions::JsonRpcClientProtocol::new());
                 let event = Event::new(
                     &JSONRPC_CLIENT_RESPONSE_RECEIVED_EVENT,
                     response_json.clone(),
                 );
 
-                let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                let memory = app_state
+                    .get_memory_for_client(client_id)
+                    .await
+                    .unwrap_or_default();
 
                 match call_llm_for_client(
                     &llm_client,
@@ -231,8 +258,13 @@ impl JsonRpcClient {
                     Some(&event),
                     protocol.as_ref(),
                     &status_tx,
-                ).await {
-                    Ok(ClientLlmResult { actions: _, memory_updates }) => {
+                )
+                .await
+                {
+                    Ok(ClientLlmResult {
+                        actions: _,
+                        memory_updates,
+                    }) => {
                         // Update memory
                         if let Some(mem) = memory_updates {
                             app_state.set_memory_for_client(client_id, mem).await;
@@ -244,7 +276,10 @@ impl JsonRpcClient {
                 }
             }
         } else {
-            error!("JSON-RPC client {} received invalid JSON response", client_id);
+            error!(
+                "JSON-RPC client {} received invalid JSON response",
+                client_id
+            );
         }
 
         Ok(())
@@ -259,13 +294,22 @@ impl JsonRpcClient {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         // Get endpoint from client
-        let endpoint = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("endpoint")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }).await.flatten().context("No endpoint found")?;
+        let endpoint = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("endpoint")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .await
+            .flatten()
+            .context("No endpoint found")?;
 
-        info!("JSON-RPC client {} sending batch with {} requests", client_id, requests.len());
+        info!(
+            "JSON-RPC client {} sending batch with {} requests",
+            client_id,
+            requests.len()
+        );
 
         // Build batch request (array of JSON-RPC requests)
         let mut batch = Vec::new();
@@ -303,13 +347,17 @@ impl JsonRpcClient {
         let status_code = response.status().as_u16();
         let body_text = response.text().await.unwrap_or_default();
 
-        info!("JSON-RPC client {} received batch response: {}", client_id, status_code);
+        info!(
+            "JSON-RPC client {} received batch response: {}",
+            client_id, status_code
+        );
 
         // Parse JSON-RPC batch response
         if let Ok(response_json) = serde_json::from_str::<serde_json::Value>(&body_text) {
             // Call LLM with response
             if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                let protocol = Arc::new(crate::client::jsonrpc::actions::JsonRpcClientProtocol::new());
+                let protocol =
+                    Arc::new(crate::client::jsonrpc::actions::JsonRpcClientProtocol::new());
                 let event = Event::new(
                     &JSONRPC_CLIENT_RESPONSE_RECEIVED_EVENT,
                     serde_json::json!({
@@ -318,7 +366,10 @@ impl JsonRpcClient {
                     }),
                 );
 
-                let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                let memory = app_state
+                    .get_memory_for_client(client_id)
+                    .await
+                    .unwrap_or_default();
 
                 match call_llm_for_client(
                     &llm_client,
@@ -329,8 +380,13 @@ impl JsonRpcClient {
                     Some(&event),
                     protocol.as_ref(),
                     &status_tx,
-                ).await {
-                    Ok(ClientLlmResult { actions: _, memory_updates }) => {
+                )
+                .await
+                {
+                    Ok(ClientLlmResult {
+                        actions: _,
+                        memory_updates,
+                    }) => {
                         // Update memory
                         if let Some(mem) = memory_updates {
                             app_state.set_memory_for_client(client_id, mem).await;
@@ -342,7 +398,10 @@ impl JsonRpcClient {
                 }
             }
         } else {
-            error!("JSON-RPC client {} received invalid JSON batch response", client_id);
+            error!(
+                "JSON-RPC client {} received invalid JSON batch response",
+                client_id
+            );
         }
 
         Ok(())

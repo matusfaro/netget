@@ -7,7 +7,13 @@ use tokio::time::sleep;
 
 #[tokio::test]
 async fn test_running_server_startup() -> Result<()> {
-    let mut ctx = setup_test_server("BLUETOOTH_BLE_RUNNING", 8960, json!({}), "Running at 5 min/km").await?;
+    let mut ctx = setup_test_server(
+        "BLUETOOTH_BLE_RUNNING",
+        8960,
+        json!({}),
+        "Running at 5 min/km",
+    )
+    .await?;
     sleep(Duration::from_millis(500)).await;
     assert!(ctx.server_id.is_some());
     ctx.cleanup().await?;

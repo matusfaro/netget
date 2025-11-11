@@ -3,26 +3,28 @@ pub mod actions;
 
 pub use actions::SmbClientProtocol;
 
-use anyhow::{Context, Result};
 use crate::llm::actions::client_trait::Client;
+use anyhow::{Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{error, info, debug};
+use tracing::{debug, error, info};
 
+use crate::client::smb::actions::{
+    SMB_CLIENT_CONNECTED_EVENT, SMB_CLIENT_DIR_LISTED_EVENT, SMB_CLIENT_ERROR_EVENT,
+    SMB_CLIENT_FILE_READ_EVENT, SMB_CLIENT_FILE_WRITTEN_EVENT,
+};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::{Event, StartupParams};
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::smb::actions::{
-    SMB_CLIENT_CONNECTED_EVENT, SMB_CLIENT_DIR_LISTED_EVENT,
-    SMB_CLIENT_FILE_READ_EVENT, SMB_CLIENT_FILE_WRITTEN_EVENT,
-    SMB_CLIENT_ERROR_EVENT,
-};
 
-use pavao::{SmbClient as PavaoSmbClient, SmbCredentials, SmbOptions, SmbDirent, SmbDirentType, SmbOpenOptions};
+use pavao::{
+    SmbClient as PavaoSmbClient, SmbCredentials, SmbDirent, SmbDirentType, SmbOpenOptions,
+    SmbOptions,
+};
 use std::io::{Read as IoRead, Write as IoWrite};
 
 /// SMB client that connects to an SMB/CIFS server
@@ -38,7 +40,10 @@ impl SmbClient {
         client_id: ClientId,
         startup_params: Option<StartupParams>,
     ) -> Result<SocketAddr> {
-        info!("SMB client {} initializing connection to {}", client_id, remote_addr);
+        info!(
+            "SMB client {} initializing connection to {}",
+            client_id, remote_addr
+        );
 
         // Parse startup parameters for credentials
         let (username, password, domain, workgroup) = if let Some(params) = startup_params {
@@ -81,7 +86,9 @@ impl SmbClient {
         let local_addr = "127.0.0.1:0".parse::<SocketAddr>()?;
 
         // Update client state
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
         let _ = status_tx.send(format!("[CLIENT] SMB client {} connected", client_id));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
@@ -103,7 +110,10 @@ impl SmbClient {
                     }),
                 );
 
-                let memory = app_state_clone.get_memory_for_client(client_id).await.unwrap_or_default();
+                let memory = app_state_clone
+                    .get_memory_for_client(client_id)
+                    .await
+                    .unwrap_or_default();
 
                 match call_llm_for_client(
                     &llm_client,
@@ -114,8 +124,13 @@ impl SmbClient {
                     Some(&event),
                     protocol.as_ref(),
                     &status_tx_clone,
-                ).await {
-                    Ok(ClientLlmResult { actions, memory_updates }) => {
+                )
+                .await
+                {
+                    Ok(ClientLlmResult {
+                        actions,
+                        memory_updates,
+                    }) => {
                         // Update memory
                         if let Some(mem) = memory_updates {
                             app_state_clone.set_memory_for_client(client_id, mem).await;
@@ -131,7 +146,9 @@ impl SmbClient {
                                 &llm_client,
                                 &app_state_clone,
                                 &status_tx_clone,
-                            ).await {
+                            )
+                            .await
+                            {
                                 error!("SMB client {} action error: {}", client_id, e);
 
                                 // Send error event to LLM
@@ -151,7 +168,8 @@ impl SmbClient {
                                     &app_state_clone,
                                     &status_tx_clone,
                                     &smb_client,
-                                ).await;
+                                )
+                                .await;
                             }
                         }
                     }
@@ -211,7 +229,12 @@ impl SmbClient {
                                     })
                                     .collect();
 
-                                info!("SMB client {} listed {} entries in {}", client_id, entry_list.len(), path);
+                                info!(
+                                    "SMB client {} listed {} entries in {}",
+                                    client_id,
+                                    entry_list.len(),
+                                    path
+                                );
 
                                 let event = Event::new(
                                     &SMB_CLIENT_DIR_LISTED_EVENT,
@@ -222,14 +245,10 @@ impl SmbClient {
                                 );
 
                                 Self::call_llm_with_event(
-                                    &event,
-                                    client_id,
-                                    protocol,
-                                    llm_client,
-                                    app_state,
-                                    status_tx,
+                                    &event, client_id, protocol, llm_client, app_state, status_tx,
                                     smb_client,
-                                ).await?;
+                                )
+                                .await?;
                             }
                             Err(e) => {
                                 error!("SMB client {} list_dir error: {}", client_id, e);
@@ -249,7 +268,8 @@ impl SmbClient {
                                     app_state,
                                     status_tx,
                                     smb_client,
-                                ).await?;
+                                )
+                                .await?;
                             }
                         }
                     }
@@ -263,26 +283,29 @@ impl SmbClient {
 
                         // Open file for reading and immediately read contents
                         // We need to close the file before any await (SmbFile contains raw pointer, not Send)
-                        let read_result = smb_client.open_with(
-                            path,
-                            SmbOpenOptions::default().read(true)
-                        ).and_then(|mut file| {
-                            let mut content_bytes = Vec::new();
-                            file.read_to_end(&mut content_bytes)?;
-                            Ok(content_bytes)
-                        });
+                        let read_result = smb_client
+                            .open_with(path, SmbOpenOptions::default().read(true))
+                            .and_then(|mut file| {
+                                let mut content_bytes = Vec::new();
+                                file.read_to_end(&mut content_bytes)?;
+                                Ok(content_bytes)
+                            });
 
                         match read_result {
                             Ok(content_bytes) => {
                                 let size = content_bytes.len();
 
                                 // Try to convert to UTF-8 string, fallback to base64 for binary
-                                let content = if let Ok(text) = String::from_utf8(content_bytes.clone()) {
-                                    text
-                                } else {
-                                    use base64::{Engine as _, engine::general_purpose};
-                                    format!("base64:{}", general_purpose::STANDARD.encode(&content_bytes))
-                                };
+                                let content =
+                                    if let Ok(text) = String::from_utf8(content_bytes.clone()) {
+                                        text
+                                    } else {
+                                        use base64::{engine::general_purpose, Engine as _};
+                                        format!(
+                                            "base64:{}",
+                                            general_purpose::STANDARD.encode(&content_bytes)
+                                        )
+                                    };
 
                                 info!("SMB client {} read {} bytes from {}", client_id, size, path);
 
@@ -296,14 +319,10 @@ impl SmbClient {
                                 );
 
                                 Self::call_llm_with_event(
-                                    &event,
-                                    client_id,
-                                    protocol,
-                                    llm_client,
-                                    app_state,
-                                    status_tx,
+                                    &event, client_id, protocol, llm_client, app_state, status_tx,
                                     smb_client,
-                                ).await?;
+                                )
+                                .await?;
                             }
                             Err(e) => {
                                 error!("SMB client {} read_file error: {}", client_id, e);
@@ -323,7 +342,8 @@ impl SmbClient {
                                     app_state,
                                     status_tx,
                                     smb_client,
-                                ).await?;
+                                )
+                                .await?;
                             }
                         }
                     }
@@ -343,17 +363,25 @@ impl SmbClient {
 
                         // Open file for writing and immediately write contents
                         // We need to close the file before any await (SmbFile contains raw pointer, not Send)
-                        let write_result = smb_client.open_with(
-                            path,
-                            SmbOpenOptions::default().write(true).create(true).truncate(true)
-                        ).and_then(|mut file| {
-                            file.write_all(content_bytes)?;
-                            Ok(content_bytes.len())
-                        });
+                        let write_result = smb_client
+                            .open_with(
+                                path,
+                                SmbOpenOptions::default()
+                                    .write(true)
+                                    .create(true)
+                                    .truncate(true),
+                            )
+                            .and_then(|mut file| {
+                                file.write_all(content_bytes)?;
+                                Ok(content_bytes.len())
+                            });
 
                         match write_result {
                             Ok(bytes_written) => {
-                                info!("SMB client {} wrote {} bytes to {}", client_id, bytes_written, path);
+                                info!(
+                                    "SMB client {} wrote {} bytes to {}",
+                                    client_id, bytes_written, path
+                                );
 
                                 let event = Event::new(
                                     &SMB_CLIENT_FILE_WRITTEN_EVENT,
@@ -364,14 +392,10 @@ impl SmbClient {
                                 );
 
                                 Self::call_llm_with_event(
-                                    &event,
-                                    client_id,
-                                    protocol,
-                                    llm_client,
-                                    app_state,
-                                    status_tx,
+                                    &event, client_id, protocol, llm_client, app_state, status_tx,
                                     smb_client,
-                                ).await?;
+                                )
+                                .await?;
                             }
                             Err(e) => {
                                 error!("SMB client {} write_file error: {}", client_id, e);
@@ -391,7 +415,8 @@ impl SmbClient {
                                     app_state,
                                     status_tx,
                                     smb_client,
-                                ).await?;
+                                )
+                                .await?;
                             }
                         }
                     }
@@ -406,7 +431,10 @@ impl SmbClient {
                         match smb_client.mkdir(path, pavao::SmbMode::from(0o755)) {
                             Ok(()) => {
                                 info!("SMB client {} created directory {}", client_id, path);
-                                let _ = status_tx.send(format!("[CLIENT] SMB client {} created directory: {}", client_id, path));
+                                let _ = status_tx.send(format!(
+                                    "[CLIENT] SMB client {} created directory: {}",
+                                    client_id, path
+                                ));
                             }
                             Err(e) => {
                                 error!("SMB client {} mkdir error: {}", client_id, e);
@@ -426,7 +454,8 @@ impl SmbClient {
                                     app_state,
                                     status_tx,
                                     smb_client,
-                                ).await?;
+                                )
+                                .await?;
                             }
                         }
                     }
@@ -441,7 +470,10 @@ impl SmbClient {
                         match smb_client.unlink(path) {
                             Ok(()) => {
                                 info!("SMB client {} deleted file {}", client_id, path);
-                                let _ = status_tx.send(format!("[CLIENT] SMB client {} deleted file: {}", client_id, path));
+                                let _ = status_tx.send(format!(
+                                    "[CLIENT] SMB client {} deleted file: {}",
+                                    client_id, path
+                                ));
                             }
                             Err(e) => {
                                 error!("SMB client {} unlink error: {}", client_id, e);
@@ -461,7 +493,8 @@ impl SmbClient {
                                     app_state,
                                     status_tx,
                                     smb_client,
-                                ).await?;
+                                )
+                                .await?;
                             }
                         }
                     }
@@ -476,7 +509,10 @@ impl SmbClient {
                         match smb_client.rmdir(path) {
                             Ok(()) => {
                                 info!("SMB client {} deleted directory {}", client_id, path);
-                                let _ = status_tx.send(format!("[CLIENT] SMB client {} deleted directory: {}", client_id, path));
+                                let _ = status_tx.send(format!(
+                                    "[CLIENT] SMB client {} deleted directory: {}",
+                                    client_id, path
+                                ));
                             }
                             Err(e) => {
                                 error!("SMB client {} rmdir error: {}", client_id, e);
@@ -496,7 +532,8 @@ impl SmbClient {
                                     app_state,
                                     status_tx,
                                     smb_client,
-                                ).await?;
+                                )
+                                .await?;
                             }
                         }
                     }
@@ -507,7 +544,9 @@ impl SmbClient {
             }
             crate::llm::actions::client_trait::ClientActionResult::Disconnect => {
                 info!("SMB client {} disconnecting", client_id);
-                app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
                 let _ = status_tx.send(format!("[CLIENT] SMB client {} disconnected", client_id));
                 let _ = status_tx.send("__UPDATE_UI__".to_string());
             }
@@ -531,7 +570,10 @@ impl SmbClient {
         smb_client: &PavaoSmbClient,
     ) -> Result<()> {
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+            let memory = app_state
+                .get_memory_for_client(client_id)
+                .await
+                .unwrap_or_default();
 
             match call_llm_for_client(
                 llm_client,
@@ -542,8 +584,13 @@ impl SmbClient {
                 Some(event),
                 protocol.as_ref(),
                 status_tx,
-            ).await {
-                Ok(ClientLlmResult { actions, memory_updates }) => {
+            )
+            .await
+            {
+                Ok(ClientLlmResult {
+                    actions,
+                    memory_updates,
+                }) => {
                     // Update memory
                     if let Some(mem) = memory_updates {
                         app_state.set_memory_for_client(client_id, mem).await;
@@ -552,14 +599,10 @@ impl SmbClient {
                     // Execute actions
                     for action in actions {
                         Box::pin(Self::execute_smb_action(
-                            smb_client,
-                            action,
-                            client_id,
-                            protocol,
-                            llm_client,
-                            app_state,
+                            smb_client, action, client_id, protocol, llm_client, app_state,
                             status_tx,
-                        )).await?;
+                        ))
+                        .await?;
                     }
                 }
                 Err(e) => {

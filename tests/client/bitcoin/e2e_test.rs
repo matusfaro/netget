@@ -19,7 +19,7 @@ mod bitcoin_client_tests {
         let server_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via HTTP. \
              Respond to POST requests with JSON-RPC format. \
-             Return blockchain info when method is getblockchaininfo."
+             Return blockchain info when method is getblockchaininfo.",
         );
 
         let mut server = start_netget_server(server_config).await?;
@@ -64,7 +64,7 @@ mod bitcoin_client_tests {
         // Start a minimal HTTP server to simulate Bitcoin RPC
         let server_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via HTTP. \
-             Log all incoming POST requests."
+             Log all incoming POST requests.",
         );
 
         let mut server = start_netget_server(server_config).await?;
@@ -83,7 +83,10 @@ mod bitcoin_client_tests {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Verify the client is Bitcoin protocol
-        assert_eq!(client.protocol, "Bitcoin", "Client should be Bitcoin protocol");
+        assert_eq!(
+            client.protocol, "Bitcoin",
+            "Client should be Bitcoin protocol"
+        );
 
         println!("✅ Bitcoin RPC client executed command");
 

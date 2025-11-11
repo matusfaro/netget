@@ -25,7 +25,7 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::server::connection::ConnectionId;
 use crate::server::jsonrpc::actions::JsonRpcProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 
 /// JSON-RPC 2.0 standard error codes
 const PARSE_ERROR: i32 = -32700;
@@ -45,7 +45,8 @@ impl JsonRpcServer {
         _send_first: bool,
         server_id: crate::state::ServerId,
     ) -> anyhow::Result<SocketAddr> {
-        let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let listener =
+            crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         console_info!(status_tx, "JSON-RPC server listening on {}", local_addr);
 
@@ -56,13 +57,18 @@ impl JsonRpcServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
                         info!("JSON-RPC connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!("[INFO] JSON-RPC connection from {}", remote_addr));
+                        let _ = status_tx
+                            .send(format!("[INFO] JSON-RPC connection from {}", remote_addr));
 
                         // Add connection to ServerInstance
-                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -77,7 +83,9 @@ impl JsonRpcServer {
                             status_changed_at: now,
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
-                        app_state.add_connection_to_server(server_id, conn_state).await;
+                        app_state
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let llm_client_clone = llm_client.clone();
@@ -111,13 +119,20 @@ impl JsonRpcServer {
                             });
 
                             // Serve HTTP/1 on this connection
-                            if let Err(err) = http1::Builder::new().serve_connection(io, service).await {
+                            if let Err(err) =
+                                http1::Builder::new().serve_connection(io, service).await
+                            {
                                 error!("Error serving JSON-RPC connection: {:?}", err);
                             }
 
                             // Mark connection as closed
-                            app_state_clone.close_connection_on_server(server_id, connection_id).await;
-                            let _ = status_tx_clone.send(format!("[INFO] JSON-RPC connection {} closed", connection_id));
+                            app_state_clone
+                                .close_connection_on_server(server_id, connection_id)
+                                .await;
+                            let _ = status_tx_clone.send(format!(
+                                "[INFO] JSON-RPC connection {} closed",
+                                connection_id
+                            ));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
@@ -178,24 +193,31 @@ async fn handle_jsonrpc_request(
         Ok(json) => json,
         Err(e) => {
             console_error!(status_tx, "Failed to parse JSON: {}", e);
-            return Ok(build_error_response(
-                PARSE_ERROR,
-                "Parse error",
-                None,
-                None,
-            ));
+            return Ok(build_error_response(PARSE_ERROR, "Parse error", None, None));
         }
     };
 
-    trace!("JSON-RPC request body: {}", serde_json::to_string_pretty(&request_value).unwrap_or_default());
-    let _ = status_tx.send(format!("[TRACE] JSON-RPC request: {}", serde_json::to_string_pretty(&request_value).unwrap_or_default()));
+    trace!(
+        "JSON-RPC request body: {}",
+        serde_json::to_string_pretty(&request_value).unwrap_or_default()
+    );
+    let _ = status_tx.send(format!(
+        "[TRACE] JSON-RPC request: {}",
+        serde_json::to_string_pretty(&request_value).unwrap_or_default()
+    ));
 
     // Check if it's a batch request (array) or single request (object)
     match request_value {
         Value::Array(requests) if !requests.is_empty() => {
             // Batch request
-            debug!("Processing batch JSON-RPC request with {} items", requests.len());
-            let _ = status_tx.send(format!("[DEBUG] Batch JSON-RPC request with {} items", requests.len()));
+            debug!(
+                "Processing batch JSON-RPC request with {} items",
+                requests.len()
+            );
+            let _ = status_tx.send(format!(
+                "[DEBUG] Batch JSON-RPC request with {} items",
+                requests.len()
+            ));
 
             let mut responses = Vec::new();
             for request in requests {
@@ -207,7 +229,9 @@ async fn handle_jsonrpc_request(
                     &status_tx,
                     &protocol,
                     server_id,
-                ).await {
+                )
+                .await
+                {
                     responses.push(response);
                 }
             }
@@ -230,7 +254,9 @@ async fn handle_jsonrpc_request(
                 &status_tx,
                 &protocol,
                 server_id,
-            ).await {
+            )
+            .await
+            {
                 let response_json = response;
                 Ok(Response::builder()
                     .status(StatusCode::OK)
@@ -321,8 +347,14 @@ async fn process_single_request(
         }
     };
 
-    debug!("JSON-RPC method call: method={}, is_notification={}", method, is_notification);
-    let _ = status_tx.send(format!("[DEBUG] JSON-RPC method={}, notification={}", method, is_notification));
+    debug!(
+        "JSON-RPC method call: method={}, is_notification={}",
+        method, is_notification
+    );
+    let _ = status_tx.send(format!(
+        "[DEBUG] JSON-RPC method={}, notification={}",
+        method, is_notification
+    ));
 
     // Track method in connection state
     if let Err(e) = track_method_call(app_state, server_id, connection_id, method).await {
@@ -340,7 +372,9 @@ async fn process_single_request(
         protocol,
         connection_id,
         server_id,
-    ).await {
+    )
+    .await
+    {
         Ok(result) => result,
         Err(e) => {
             console_error!(status_tx, "LLM call failed: {}", e);
@@ -445,7 +479,7 @@ Handle this method call and respond appropriately."#,
         .generate_with_retry(
             &model_str,
             &prompt,
-            r#"[{"type": "jsonrpc_success" or "jsonrpc_error", ...}]"#
+            r#"[{"type": "jsonrpc_success" or "jsonrpc_error", ...}]"#,
         )
         .await?;
 
@@ -454,7 +488,8 @@ Handle this method call and respond appropriately."#,
 
     // Parse LLM response as actions
     let actions_result = serde_json::from_str::<Value>(&llm_response)?;
-    let actions = actions_result.get("actions")
+    let actions = actions_result
+        .get("actions")
         .and_then(|v| v.as_array())
         .ok_or_else(|| anyhow::anyhow!("LLM response missing 'actions' array"))?;
 
@@ -466,9 +501,7 @@ Handle this method call and respond appropriately."#,
         // Auto-fill the id if not provided by LLM
         let action_type = action.get("type").and_then(|v| v.as_str());
         if action_type == Some("jsonrpc_success") || action_type == Some("jsonrpc_error") {
-            let has_id = action.get("id")
-                .map(|v| !v.is_null())
-                .unwrap_or(false);
+            let has_id = action.get("id").map(|v| !v.is_null()).unwrap_or(false);
 
             if !has_id {
                 if let Some(action_obj) = action.as_object_mut() {
@@ -511,23 +544,27 @@ async fn track_method_call(
     connection_id: ConnectionId,
     method: &str,
 ) -> anyhow::Result<()> {
-    
-
-    app_state.with_server_mut(server_id, |server| {
-        if let Some(conn) = server.connections.get_mut(&connection_id) {
-            if let Some(obj) = conn.protocol_info.data.as_object_mut() {
-                let mut recent_methods: Vec<String> = obj.get("recent_methods")
-                    .and_then(|v| serde_json::from_value(v.clone()).ok())
-                    .unwrap_or_default();
-                recent_methods.push(method.to_string());
-                // Keep only last 10 methods
-                if recent_methods.len() > 10 {
-                    recent_methods.remove(0);
+    app_state
+        .with_server_mut(server_id, |server| {
+            if let Some(conn) = server.connections.get_mut(&connection_id) {
+                if let Some(obj) = conn.protocol_info.data.as_object_mut() {
+                    let mut recent_methods: Vec<String> = obj
+                        .get("recent_methods")
+                        .and_then(|v| serde_json::from_value(v.clone()).ok())
+                        .unwrap_or_default();
+                    recent_methods.push(method.to_string());
+                    // Keep only last 10 methods
+                    if recent_methods.len() > 10 {
+                        recent_methods.remove(0);
+                    }
+                    obj.insert(
+                        "recent_methods".to_string(),
+                        serde_json::to_value(&recent_methods).unwrap_or(serde_json::json!([])),
+                    );
                 }
-                obj.insert("recent_methods".to_string(), serde_json::to_value(&recent_methods).unwrap_or(serde_json::json!([])));
             }
-        }
-    }).await;
+        })
+        .await;
 
     Ok(())
 }
@@ -545,7 +582,10 @@ fn build_error_response(
     });
 
     if let Some(data_val) = data {
-        error.as_object_mut().unwrap().insert("data".to_string(), data_val);
+        error
+            .as_object_mut()
+            .unwrap()
+            .insert("data".to_string(), data_val);
     }
 
     let response = json!({

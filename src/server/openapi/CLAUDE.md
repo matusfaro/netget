@@ -2,7 +2,9 @@
 
 ## Overview
 
-OpenAPI 3.1 spec-driven HTTP server where the LLM provides an OpenAPI specification and generates responses based on validated requests. Supports route matching, path parameters, request validation, and intentionally non-compliant responses for testing/honeypot purposes.
+OpenAPI 3.1 spec-driven HTTP server where the LLM provides an OpenAPI specification and generates responses based on
+validated requests. Supports route matching, path parameters, request validation, and intentionally non-compliant
+responses for testing/honeypot purposes.
 
 ## Protocol Version
 
@@ -13,16 +15,18 @@ OpenAPI 3.1 spec-driven HTTP server where the LLM provides an OpenAPI specificat
 ## Library Choices
 
 ### Core Dependencies
+
 - **openapi-rs** v1.0 - OpenAPI 3.x parser
-  - Chosen for: Native Rust OpenAPI parsing, no code generation
-  - Used for: Parsing YAML/JSON specs
+    - Chosen for: Native Rust OpenAPI parsing, no code generation
+    - Used for: Parsing YAML/JSON specs
 - **matchit** v0.8 - Fast path router with parameter extraction
-  - Chosen for: High performance, path template support (`/users/{id}`)
-  - Used for: Route matching against OpenAPI paths
+    - Chosen for: High performance, path template support (`/users/{id}`)
+    - Used for: Route matching against OpenAPI paths
 - **hyper** v1 - HTTP/1.1 server
 - **serde_json** - JSON handling
 
 ### Why Not Use an OpenAPI Server Framework?
+
 - No Rust framework provides LLM-controlled responses
 - Need full control over spec compliance vs. intentional violations
 - OpenAPI validation libraries exist but don't fit dynamic LLM responses
@@ -30,36 +34,45 @@ OpenAPI 3.1 spec-driven HTTP server where the LLM provides an OpenAPI specificat
 ## Architecture Decisions
 
 ### Two Operating Modes
+
 **1. With Spec (Loaded)** - Fast path:
+
 - LLM provides OpenAPI spec during startup via `startup_params.spec`
 - Server builds route matcher from paths
 - Invalid requests (404/405/400) rejected immediately (no LLM call)
 - Matched requests receive only relevant operation spec, not full spec
 
 **2. Without Spec (Dynamic)** - Flexible mode:
+
 - Server starts without spec
 - First request calls LLM, which can load spec via `reload_spec` action
 - All requests call LLM (including 404/405)
 
 ### Route Matching System
+
 **Fast Router with matchit**:
+
 ```rust
 Router<RouteMetadata>  // Maps "METHOD:PATH" -> operation metadata
 ```
 
 **Match Results**:
+
 - `Found` - Route exists, extract path params
 - `MethodNotAllowed` - Path exists but wrong method (405)
 - `NotFound` - Path doesn't exist (404)
 
 ### LLM Control Points
+
 **Spec-Driven + LLM Responses**:
+
 1. **Startup**: LLM provides OpenAPI spec (optional)
 2. **Request Validation**: matchit validates path/method (if spec loaded)
 3. **Response Generation**: LLM generates response based on operation
 4. **Compliance Control**: LLM can intentionally violate spec (for testing)
 
 **Action-Based Responses**:
+
 ```json
 {
   "actions": [
@@ -74,6 +87,7 @@ Router<RouteMetadata>  // Maps "METHOD:PATH" -> operation metadata
 ```
 
 Or for spec loading:
+
 ```json
 {
   "actions": [
@@ -86,13 +100,16 @@ Or for spec loading:
 ```
 
 ### Error Handling Configuration
+
 **`llm_on_invalid` Flag**:
+
 - `false` (default) - Immediate 404/405/400 without LLM call (fast)
 - `true` - LLM handles all errors (flexible, allows custom error responses)
 
 Configurable via `configure_error_handling` action.
 
 ### Connection Management
+
 - Each HTTP connection spawned as tokio task
 - Connections tracked in `ProtocolConnectionInfo::OpenApi` with operation metadata
 - Route matching happens per-request
@@ -100,6 +117,7 @@ Configurable via `configure_error_handling` action.
 ## State Management
 
 ### Server State
+
 ```rust
 OpenApiState {
     spec: Option<String>,              // Raw YAML/JSON spec
@@ -111,6 +129,7 @@ OpenApiState {
 ```
 
 ### Per-Connection State
+
 ```rust
 ProtocolConnectionInfo::OpenApi {
     operation_id: Option<String>,  // Matched operation
@@ -123,6 +142,7 @@ ProtocolConnectionInfo::OpenApi {
 ## Limitations
 
 ### Not Implemented
+
 - **Request body validation** - Schema validation not enforced
 - **Response validation** - LLM can return non-compliant responses
 - **Parameter validation** - Types/formats not checked
@@ -131,9 +151,11 @@ ProtocolConnectionInfo::OpenApi {
 - **Multipart/form-data** - Only JSON supported
 
 ### Schema Validation
+
 Currently a no-op - LLM trusted to generate valid responses. Future enhancement: use `jsonschema` crate for validation.
 
 ### Performance Considerations
+
 - **Route matching overhead** - matchit is fast but still per-request
 - **Spec parsing** - YAML parsing on startup (5-50ms depending on spec size)
 - **No caching** - LLM generates fresh response each time
@@ -141,6 +163,7 @@ Currently a no-op - LLM trusted to generate valid responses. Future enhancement:
 ## Example Prompts and Responses
 
 ### Startup (Inline Spec)
+
 ```
 open_server port 3000 base_stack openapi.
 
@@ -172,13 +195,16 @@ When GET /todos is requested, return 3 sample todos.
 ```
 
 ### Startup (Spec File)
+
 ```
 open_server port 3000 base_stack openapi.
 Load OpenAPI spec from /path/to/openapi.yaml
 ```
 
 ### Network Event (Matched Request)
+
 **Event to LLM**:
+
 ```json
 {
   "event_type": "openapi_request",
@@ -201,6 +227,7 @@ Load OpenAPI spec from /path/to/openapi.yaml
 ```
 
 **LLM Response**:
+
 ```json
 {
   "actions": [
@@ -215,7 +242,9 @@ Load OpenAPI spec from /path/to/openapi.yaml
 ```
 
 ### Intentional Spec Violation
+
 **Event to LLM** (spec says 200, but LLM violates intentionally):
+
 ```json
 {
   "event_type": "openapi_request",
@@ -226,6 +255,7 @@ Load OpenAPI spec from /path/to/openapi.yaml
 ```
 
 **LLM Response** (returns 201 instead of 200 for testing):
+
 ```json
 {
   "actions": [

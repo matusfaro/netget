@@ -67,8 +67,12 @@ async fn test_nntp_basic_newsgroups() {
 
     // Connect to NNTP server
     let stream = TcpStream::connect(format!("127.0.0.1:{}", port)).unwrap();
-    stream.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
-    stream.set_write_timeout(Some(Duration::from_secs(10))).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    stream
+        .set_write_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
 
     let mut reader = BufReader::new(&stream);
     let mut stream_write = stream.try_clone().unwrap();
@@ -197,7 +201,9 @@ async fn test_nntp_article_overview() {
     tokio::time::sleep(Duration::from_secs(3)).await;
 
     let stream = TcpStream::connect(format!("127.0.0.1:{}", port)).unwrap();
-    stream.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
     let mut reader = BufReader::new(&stream);
     let mut stream_write = stream.try_clone().unwrap();
 

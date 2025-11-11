@@ -3,9 +3,9 @@ pub mod actions;
 
 pub use actions::SyslogClientProtocol;
 
+use crate::protocol::StartupParams;
 use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
-use crate::protocol::StartupParams;
 use serde_json::Value;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -125,15 +125,22 @@ impl SyslogClient {
 
         let transport = match protocol.as_str() {
             "tcp" => {
-                info!("Syslog client {} connecting via TCP to {}", client_id, remote_addr);
-                let stream = TcpStream::connect(&remote_addr)
-                    .await
-                    .context(format!("Failed to connect to syslog server at {}", remote_addr))?;
+                info!(
+                    "Syslog client {} connecting via TCP to {}",
+                    client_id, remote_addr
+                );
+                let stream = TcpStream::connect(&remote_addr).await.context(format!(
+                    "Failed to connect to syslog server at {}",
+                    remote_addr
+                ))?;
 
                 let local_addr = stream.local_addr()?;
                 let remote_sock_addr = stream.peer_addr()?;
 
-                info!("Syslog client {} connected via TCP to {} (local: {})", client_id, remote_sock_addr, local_addr);
+                info!(
+                    "Syslog client {} connected via TCP to {} (local: {})",
+                    client_id, remote_sock_addr, local_addr
+                );
 
                 SyslogTransport::Tcp(Arc::new(Mutex::new(stream)))
             }
@@ -141,7 +148,8 @@ impl SyslogClient {
                 info!("Syslog client {} using UDP to {}", client_id, remote_addr);
 
                 // Parse remote address
-                let remote_sock_addr: SocketAddr = remote_addr.parse()
+                let remote_sock_addr: SocketAddr = remote_addr
+                    .parse()
                     .context(format!("Invalid address: {}", remote_addr))?;
 
                 // Bind to local port (ephemeral)
@@ -157,12 +165,18 @@ impl SyslogClient {
 
                 let local_addr = socket.local_addr()?;
 
-                info!("Syslog client {} bound to UDP {} for remote {}", client_id, local_addr, remote_sock_addr);
+                info!(
+                    "Syslog client {} bound to UDP {} for remote {}",
+                    client_id, local_addr, remote_sock_addr
+                );
 
                 SyslogTransport::Udp(Arc::new(socket), remote_sock_addr)
             }
             _ => {
-                return Err(anyhow!("Invalid protocol: {}. Must be 'tcp' or 'udp'", protocol));
+                return Err(anyhow!(
+                    "Invalid protocol: {}. Must be 'tcp' or 'udp'",
+                    protocol
+                ));
             }
         };
 
@@ -172,8 +186,14 @@ impl SyslogClient {
         };
 
         // Update client state
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] Syslog client {} connected via {}", client_id, protocol.to_uppercase()));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] Syslog client {} connected via {}",
+            client_id,
+            protocol.to_uppercase()
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Call LLM with connected event
@@ -199,7 +219,10 @@ impl SyslogClient {
             )
             .await
             {
-                Ok(ClientLlmResult { actions, memory_updates: _ }) => {
+                Ok(ClientLlmResult {
+                    actions,
+                    memory_updates: _,
+                }) => {
                     // Execute actions
                     for action in actions {
                         if let Err(e) = Self::execute_syslog_action(
@@ -262,12 +285,16 @@ impl SyslogClient {
                     }
                     SyslogTransport::Udp(socket, remote_addr) => {
                         // UDP: send as datagram
-                        socket.send_to(formatted_message.as_bytes(), remote_addr).await?;
+                        socket
+                            .send_to(formatted_message.as_bytes(), remote_addr)
+                            .await?;
                     }
                 }
 
-                info!("Syslog client {} sent message: facility={}, severity={}, msg={}",
-                    client_id, facility, severity, message);
+                info!(
+                    "Syslog client {} sent message: facility={}, severity={}, msg={}",
+                    client_id, facility, severity, message
+                );
                 let _ = status_tx.send(format!(
                     "[CLIENT] Syslog {} sent: [{}:{}] {}",
                     client_id, facility, severity, message

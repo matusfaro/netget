@@ -7,7 +7,7 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, ServerConfig, E2EResult};
+use super::super::super::helpers::{self, E2EResult, ServerConfig};
 use redis::AsyncCommands;
 use std::time::Duration;
 
@@ -24,7 +24,6 @@ async fn test_redis_ping() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-
     // VALIDATION: Connect and execute PING using redis client
     println!("Connecting to Redis server...");
 
@@ -33,8 +32,10 @@ async fn test_redis_ping() -> E2EResult<()> {
 
     let mut con = match tokio::time::timeout(
         Duration::from_secs(10),
-        client.get_multiplexed_async_connection()
-    ).await {
+        client.get_multiplexed_async_connection(),
+    )
+    .await
+    {
         Ok(Ok(con)) => {
             println!("✓ Redis connected");
             con
@@ -53,8 +54,10 @@ async fn test_redis_ping() -> E2EResult<()> {
     println!("Executing PING...");
     let pong: String = match tokio::time::timeout(
         Duration::from_secs(10),
-        redis::cmd("PING").query_async(&mut con)
-    ).await {
+        redis::cmd("PING").query_async(&mut con),
+    )
+    .await
+    {
         Ok(Ok(pong)) => pong,
         Ok(Err(e)) => {
             println!("✗ PING error: {}", e);
@@ -83,7 +86,6 @@ async fn test_redis_get_set() -> E2EResult<()> {
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
-
 
     println!("Connecting to Redis server...");
     let redis_url = format!("redis://127.0.0.1:{}", server.port);
@@ -118,7 +120,6 @@ async fn test_redis_integer_response() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-
     println!("Connecting to Redis server...");
     let redis_url = format!("redis://127.0.0.1:{}", server.port);
     let client = redis::Client::open(redis_url.as_str())?;
@@ -145,7 +146,6 @@ async fn test_redis_array_response() -> E2EResult<()> {
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
-
 
     println!("Connecting to Redis server...");
     let redis_url = format!("redis://127.0.0.1:{}", server.port);
@@ -177,7 +177,6 @@ async fn test_redis_null_response() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-
     println!("Connecting to Redis server...");
     let redis_url = format!("redis://127.0.0.1:{}", server.port);
     let client = redis::Client::open(redis_url.as_str())?;
@@ -205,7 +204,6 @@ async fn test_redis_error_response() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-
     println!("Connecting to Redis server...");
     let redis_url = format!("redis://127.0.0.1:{}", server.port);
     let client = redis::Client::open(redis_url.as_str())?;
@@ -214,7 +212,8 @@ async fn test_redis_error_response() -> E2EResult<()> {
 
     // Test invalid command (should return error)
     println!("Executing INVALID command...");
-    let result: Result<String, redis::RedisError> = redis::cmd("INVALID").query_async(&mut con).await;
+    let result: Result<String, redis::RedisError> =
+        redis::cmd("INVALID").query_async(&mut con).await;
 
     match result {
         Ok(_) => {

@@ -2,7 +2,8 @@
 
 ## Test Approach
 
-USB client testing is **challenging** because it requires actual USB hardware. Unlike network protocols where we can use netcat or mock servers, USB testing requires:
+USB client testing is **challenging** because it requires actual USB hardware. Unlike network protocols where we can use
+netcat or mock servers, USB testing requires:
 
 1. **Physical USB device** connected to the test machine
 2. **Known VID/PID** of the test device
@@ -29,6 +30,7 @@ lsusb
 ```
 
 **Test scenarios**:
+
 - Connect to device and read device descriptor
 - Send control transfer to get string descriptors
 - Bulk data transfer (if device supports)
@@ -37,6 +39,7 @@ lsusb
 ### 2. Mock USB Device Testing (Future)
 
 Create a software-based USB device using Linux USB Gadget API:
+
 - Requires Linux system with USB gadget support
 - Can create virtual USB device that responds to transfers
 - Useful for CI/CD automation
@@ -46,6 +49,7 @@ Create a software-based USB device using Linux USB Gadget API:
 ### 3. Unit Testing (Limited)
 
 Test **parsing logic only** without actual USB access:
+
 - Device info parsing (VID:PID:INTERFACE string)
 - Hex encoding/decoding
 - Action parameter validation
@@ -76,6 +80,7 @@ mod usb_e2e_test {
 ```
 
 **Why ignored by default**:
+
 - Requires specific USB hardware
 - Not portable across test environments
 - May fail if device not connected
@@ -94,45 +99,48 @@ If E2E tests are implemented: **Target < 5 LLM calls**
 
 - **Unit tests**: < 1 second (no USB access)
 - **E2E tests**: 10-30 seconds (with --ignored flag)
-  - Device enumeration: 1-2 seconds
-  - Device opening: 1-2 seconds
-  - LLM calls: 5-10 seconds
-  - Transfers: 1-5 seconds
+    - Device enumeration: 1-2 seconds
+    - Device opening: 1-2 seconds
+    - LLM calls: 5-10 seconds
+    - Transfers: 1-5 seconds
 
 ## Known Issues
 
 1. **Platform-specific behavior**:
-   - Linux: May need udev rules for permissions
-   - macOS: Some device classes require entitlements
-   - Windows: Usually works without special setup
+    - Linux: May need udev rules for permissions
+    - macOS: Some device classes require entitlements
+    - Windows: Usually works without special setup
 
 2. **Device-specific quirks**:
-   - Some devices require specific initialization sequences
-   - Transfer timeouts vary by device
-   - Endpoint addresses are device-specific
+    - Some devices require specific initialization sequences
+    - Transfer timeouts vary by device
+    - Endpoint addresses are device-specific
 
 3. **Permission errors**:
-   - Tests may fail with "permission denied" if udev rules not configured
-   - Running as root is not recommended for security
+    - Tests may fail with "permission denied" if udev rules not configured
+    - Running as root is not recommended for security
 
 4. **No mock devices**:
-   - Cannot run E2E tests in CI without physical hardware
-   - Would require USB gadget setup (complex)
+    - Cannot run E2E tests in CI without physical hardware
+    - Would require USB gadget setup (complex)
 
 ## Testing Recommendations
 
 **For development**:
+
 1. Use a cheap USB device for testing (e.g., Arduino, USB-to-serial adapter)
 2. Test manually with NetGet CLI
 3. Verify LLM can read device descriptor and perform transfers
 4. Test with different device types (HID, bulk, etc.)
 
 **For CI/CD**:
+
 1. Skip USB E2E tests by default (use `#[ignore]`)
 2. Only run unit tests (parsing, validation)
 3. Document manual testing procedure for release validation
 
 **For production**:
+
 1. Test with target USB devices before deployment
 2. Verify permissions and device access
 3. Test on target platforms (Linux, macOS, Windows)
@@ -167,29 +175,30 @@ lsusb
 ## Test Coverage
 
 **What's tested**:
+
 - ✅ Device info parsing (VID:PID:INTERFACE)
 - ✅ Hex encoding/decoding
 - ✅ Action parameter validation
-- ⚠️  Device opening (manual only)
-- ⚠️  Control transfers (manual only)
-- ⚠️  Bulk transfers (manual only)
-- ⚠️  Interrupt transfers (manual only)
+- ⚠️ Device opening (manual only)
+- ⚠️ Control transfers (manual only)
+- ⚠️ Bulk transfers (manual only)
+- ⚠️ Interrupt transfers (manual only)
 - ❌ Hotplug events (not supported yet)
 - ❌ Isochronous transfers (not supported by nusb)
 
 ## Future Improvements
 
 1. **USB Gadget Test Harness**:
-   - Create Linux USB gadget that emulates test device
-   - Allows automated E2E testing in CI
-   - Requires USB gadget-capable Linux system
+    - Create Linux USB gadget that emulates test device
+    - Allows automated E2E testing in CI
+    - Requires USB gadget-capable Linux system
 
 2. **Device Emulator**:
-   - Software-only USB device emulator
-   - Faster than physical devices
-   - More portable across test environments
+    - Software-only USB device emulator
+    - Faster than physical devices
+    - More portable across test environments
 
 3. **Integration with USB Test Devices**:
-   - Use commercial USB test devices (e.g., Total Phase Beagle)
-   - Provides known-good test device
-   - Can be shared across test environments
+    - Use commercial USB test devices (e.g., Total Phase Beagle)
+    - Provides known-good test device
+    - Can be shared across test environments

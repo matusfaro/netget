@@ -2,7 +2,9 @@
 
 ## Overview
 
-WebRTC (Web Real-Time Communication) client implementation for NetGet. This implementation focuses on **data channels only** (no audio/video media), which is well-suited for LLM control. The client enables peer-to-peer text/binary messaging over WebRTC's reliable data channel transport.
+WebRTC (Web Real-Time Communication) client implementation for NetGet. This implementation focuses on **data channels
+only** (no audio/video media), which is well-suited for LLM control. The client enables peer-to-peer text/binary
+messaging over WebRTC's reliable data channel transport.
 
 ## Architecture
 
@@ -34,38 +36,43 @@ UDP
 **Rationale**: Pure Rust implementation of WebRTC stack
 
 **Pros**:
+
 - Complete WebRTC implementation (rewrite of Pion in Rust)
 - Data channel support without media complexity
 - Good API for creating/managing peer connections
 - Active development
 
 **Cons**:
+
 - Relatively complex setup (MediaEngine, InterceptorRegistry)
 - Manual SDP exchange required (no built-in signaling server)
 - Still in early development (v0.11)
 
-**Alternative Considered**: `datachannel-rs` (libdatachannel C++ wrapper) - rejected due to FFI complexity and external dependency
+**Alternative Considered**: `datachannel-rs` (libdatachannel C++ wrapper) - rejected due to FFI complexity and external
+dependency
 
 ## LLM Integration
 
 ### Events
 
 1. **`webrtc_connected`** - Triggered when data channel opens
-   - Provides channel label
-   - LLM can send initial message
+    - Provides channel label
+    - LLM can send initial message
 
 2. **`webrtc_message_received`** - Triggered when message arrives
-   - Provides message text and binary flag
-   - LLM decides response action
+    - Provides message text and binary flag
+    - LLM decides response action
 
 ### Actions
 
 #### User-Triggered (Async)
+
 - **`send_message`** - Send text message over data channel
 - **`apply_answer`** - Apply remote SDP answer to complete connection
 - **`disconnect`** - Close data channel and peer connection
 
 #### Event-Triggered (Sync)
+
 - **`send_message`** - Send reply message
 - **`disconnect`** - Close connection
 - **`wait_for_more`** - Don't respond yet
@@ -85,20 +92,24 @@ UDP
 ## State Management
 
 ### Connection States
+
 - **Idle**: No LLM processing in progress
 - **Processing**: LLM call active for current message
 - **Accumulating**: Messages queued while LLM processes
 
 ### Stored Data (protocol_data)
+
 - `sdp_offer`: Generated SDP offer (JSON)
 - `peer_connection_ptr`: Raw pointer to RTCPeerConnection (for lifecycle)
 - `data_channel_ptr`: Raw pointer to RTCDataChannel (for sending)
 
-**Safety Note**: Raw pointers are stored to maintain Arc references across async boundaries. Pointers are cleaned up when client is removed.
+**Safety Note**: Raw pointers are stored to maintain Arc references across async boundaries. Pointers are cleaned up
+when client is removed.
 
 ## Signaling Strategy
 
 **Current**: Manual SDP exchange
+
 - User copies SDP offer from NetGet
 - User pastes SDP offer to peer (web browser, another NetGet instance, etc.)
 - Peer generates SDP answer
@@ -128,6 +139,7 @@ UDP
 See `tests/client/webrtc/CLAUDE.md` for testing details.
 
 Key challenges:
+
 - Requires two peers (NetGet + browser or two NetGet instances)
 - Manual SDP exchange for E2E tests
 - Could use loopback connections for automated testing

@@ -3,8 +3,8 @@ pub mod actions;
 
 pub use actions::WhoisClientProtocol;
 
-use anyhow::{Context, Result};
 use crate::llm::actions::client_trait::Client;
+use anyhow::{Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -12,13 +12,15 @@ use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace};
 
+use crate::client::whois::actions::{
+    WHOIS_CLIENT_CONNECTED_EVENT, WHOIS_CLIENT_RESPONSE_RECEIVED_EVENT,
+};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::whois::actions::{WHOIS_CLIENT_CONNECTED_EVENT, WHOIS_CLIENT_RESPONSE_RECEIVED_EVENT};
 
 /// WHOIS client that connects to a WHOIS server
 pub struct WhoisClient;
@@ -33,17 +35,23 @@ impl WhoisClient {
         client_id: ClientId,
     ) -> Result<SocketAddr> {
         // Connect to WHOIS server
-        let stream = TcpStream::connect(&remote_addr)
-            .await
-            .context(format!("Failed to connect to WHOIS server at {}", remote_addr))?;
+        let stream = TcpStream::connect(&remote_addr).await.context(format!(
+            "Failed to connect to WHOIS server at {}",
+            remote_addr
+        ))?;
 
         let local_addr = stream.local_addr()?;
         let remote_sock_addr = stream.peer_addr()?;
 
-        info!("WHOIS client {} connected to {} (local: {})", client_id, remote_sock_addr, local_addr);
+        info!(
+            "WHOIS client {} connected to {} (local: {})",
+            client_id, remote_sock_addr, local_addr
+        );
 
         // Update client state
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
         let _ = status_tx.send(format!("[CLIENT] WHOIS client {} connected", client_id));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
@@ -63,7 +71,10 @@ impl WhoisClient {
                     }),
                 );
 
-                let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                let memory = app_state
+                    .get_memory_for_client(client_id)
+                    .await
+                    .unwrap_or_default();
 
                 match call_llm_for_client(
                     &llm_client,
@@ -74,8 +85,13 @@ impl WhoisClient {
                     Some(&event),
                     protocol.as_ref(),
                     &status_tx,
-                ).await {
-                    Ok(ClientLlmResult { actions, memory_updates }) => {
+                )
+                .await
+                {
+                    Ok(ClientLlmResult {
+                        actions,
+                        memory_updates,
+                    }) => {
                         // Update memory
                         if let Some(mem) = memory_updates {
                             app_state.set_memory_for_client(client_id, mem).await;
@@ -103,9 +119,19 @@ impl WhoisClient {
                             debug!("WHOIS client {} querying: {}", client_id, query);
                             let query_bytes = format!("{}\r\n", query);
 
-                            if let Err(e) = write_half_arc.lock().await.write_all(query_bytes.as_bytes()).await {
+                            if let Err(e) = write_half_arc
+                                .lock()
+                                .await
+                                .write_all(query_bytes.as_bytes())
+                                .await
+                            {
                                 error!("WHOIS client {} failed to send query: {}", client_id, e);
-                                app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
+                                app_state
+                                    .update_client_status(
+                                        client_id,
+                                        ClientStatus::Error(e.to_string()),
+                                    )
+                                    .await;
                                 let _ = status_tx.send("__UPDATE_UI__".to_string());
                                 return;
                             }
@@ -116,7 +142,10 @@ impl WhoisClient {
                             let mut response = String::new();
                             match read_half.read_to_string(&mut response).await {
                                 Ok(bytes_read) => {
-                                    debug!("WHOIS client {} received {} bytes", client_id, bytes_read);
+                                    debug!(
+                                        "WHOIS client {} received {} bytes",
+                                        client_id, bytes_read
+                                    );
                                     trace!("WHOIS response:\n{}", response);
 
                                     // Call LLM with response
@@ -128,7 +157,10 @@ impl WhoisClient {
                                         }),
                                     );
 
-                                    let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                                    let memory = app_state
+                                        .get_memory_for_client(client_id)
+                                        .await
+                                        .unwrap_or_default();
 
                                     match call_llm_for_client(
                                         &llm_client,
@@ -139,39 +171,66 @@ impl WhoisClient {
                                         Some(&event),
                                         protocol.as_ref(),
                                         &status_tx,
-                                    ).await {
-                                        Ok(ClientLlmResult { actions: _, memory_updates }) => {
+                                    )
+                                    .await
+                                    {
+                                        Ok(ClientLlmResult {
+                                            actions: _,
+                                            memory_updates,
+                                        }) => {
                                             // Update memory
                                             if let Some(mem) = memory_updates {
-                                                app_state.set_memory_for_client(client_id, mem).await;
+                                                app_state
+                                                    .set_memory_for_client(client_id, mem)
+                                                    .await;
                                             }
                                         }
                                         Err(e) => {
-                                            error!("LLM error for WHOIS client {}: {}", client_id, e);
+                                            error!(
+                                                "LLM error for WHOIS client {}: {}",
+                                                client_id, e
+                                            );
                                         }
                                     }
 
                                     // WHOIS is one-shot, connection closes after response
                                     info!("WHOIS client {} query complete", client_id);
-                                    app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                                    let _ = status_tx.send(format!("[CLIENT] WHOIS client {} disconnected", client_id));
+                                    app_state
+                                        .update_client_status(client_id, ClientStatus::Disconnected)
+                                        .await;
+                                    let _ = status_tx.send(format!(
+                                        "[CLIENT] WHOIS client {} disconnected",
+                                        client_id
+                                    ));
                                     let _ = status_tx.send("__UPDATE_UI__".to_string());
                                 }
                                 Err(e) => {
                                     error!("WHOIS client {} read error: {}", client_id, e);
-                                    app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
+                                    app_state
+                                        .update_client_status(
+                                            client_id,
+                                            ClientStatus::Error(e.to_string()),
+                                        )
+                                        .await;
                                     let _ = status_tx.send("__UPDATE_UI__".to_string());
                                 }
                             }
                         } else {
-                            info!("WHOIS client {} did not provide a query, closing", client_id);
-                            app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
+                            info!(
+                                "WHOIS client {} did not provide a query, closing",
+                                client_id
+                            );
+                            app_state
+                                .update_client_status(client_id, ClientStatus::Disconnected)
+                                .await;
                             let _ = status_tx.send("__UPDATE_UI__".to_string());
                         }
                     }
                     Err(e) => {
                         error!("LLM error for WHOIS client {}: {}", client_id, e);
-                        app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
+                        app_state
+                            .update_client_status(client_id, ClientStatus::Error(e.to_string()))
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                     }
                 }

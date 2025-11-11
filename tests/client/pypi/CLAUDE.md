@@ -3,19 +3,25 @@
 ## Test Strategy
 
 ### Black-Box Testing
+
 All tests treat NetGet as a black-box system, spawning the actual binary and observing behavior through:
+
 - Client output logs
 - Protocol detection
 - Error handling
 
 ### Real PyPI API
+
 Tests use the real PyPI API (https://pypi.org) instead of mocking:
+
 - **Pros**: Tests real-world behavior, network handling, API changes
 - **Cons**: Requires network access, slower, potential for flakiness
 - **Mitigation**: Use well-known stable packages (requests, flask, django)
 
 ### Test Packages
+
 Selected packages for testing:
+
 1. **requests** - Popular, stable, small metadata
 2. **flask** - Web framework, moderate size
 3. **django** - Large framework, extensive metadata
@@ -26,36 +32,40 @@ Selected packages for testing:
 Target: **< 5 LLM calls** total
 
 ### Call Breakdown
+
 1. **Package Info Query** - 1 LLM call
-   - Connect to PyPI
-   - Execute get_package_info action
-   - Process response
+    - Connect to PyPI
+    - Execute get_package_info action
+    - Process response
 
 2. **List Files** - 1 LLM call
-   - Connect to PyPI
-   - Execute list_package_files action
-   - Analyze file list
+    - Connect to PyPI
+    - Execute list_package_files action
+    - Analyze file list
 
 3. **Error Handling** - 1 LLM call
-   - Connect to PyPI
-   - Attempt invalid package query
-   - Handle error response
+    - Connect to PyPI
+    - Attempt invalid package query
+    - Handle error response
 
 4. **LLM Exploration** - 1 LLM call
-   - Connect to PyPI
-   - Follow instruction to explore package
-   - Analyze metadata
+    - Connect to PyPI
+    - Follow instruction to explore package
+    - Analyze metadata
 
 **Total**: 4 LLM calls (within budget)
 
 ## Test Cases
 
 ### 1. Package Info Query (`test_pypi_get_package_info`)
+
 **Purpose**: Verify client can fetch package metadata via JSON API
 
-**Instruction**: "Connect to PyPI and get information about the 'requests' package. Show the package description and latest version."
+**Instruction**: "Connect to PyPI and get information about the 'requests' package. Show the package description and
+latest version."
 
 **Expected Behavior**:
+
 - Client connects to https://pypi.org
 - LLM receives pypi_connected event
 - LLM executes get_package_info("requests")
@@ -64,6 +74,7 @@ Target: **< 5 LLM calls** total
 - Output contains: "PyPI", "requests", or "package"
 
 **Validation**:
+
 - Output mentions PyPI protocol or package info
 - No connection errors
 
@@ -72,11 +83,14 @@ Target: **< 5 LLM calls** total
 ---
 
 ### 2. List Package Files (`test_pypi_list_package_files`)
+
 **Purpose**: Verify client can list available distribution files
 
-**Instruction**: "Connect to PyPI and list all available distribution files (wheels and source distributions) for the 'flask' package."
+**Instruction**: "Connect to PyPI and list all available distribution files (wheels and source distributions) for the '
+flask' package."
 
 **Expected Behavior**:
+
 - Client connects to PyPI
 - LLM executes list_package_files("flask")
 - Client fetches package JSON and extracts URLs
@@ -84,6 +98,7 @@ Target: **< 5 LLM calls** total
 - Output shows wheel (.whl) and/or source (.tar.gz) files
 
 **Validation**:
+
 - Protocol is "PyPI"
 - Output mentions wheels, files, or tar.gz
 - No errors
@@ -93,11 +108,14 @@ Target: **< 5 LLM calls** total
 ---
 
 ### 3. Non-existent Package (`test_pypi_nonexistent_package`)
+
 **Purpose**: Verify error handling for invalid package names
 
-**Instruction**: "Connect to PyPI and try to get information about the package 'this-package-definitely-does-not-exist-12345678'."
+**Instruction**: "Connect to PyPI and try to get information about the package '
+this-package-definitely-does-not-exist-12345678'."
 
 **Expected Behavior**:
+
 - Client connects to PyPI
 - LLM attempts get_package_info for non-existent package
 - PyPI API returns 404 Not Found
@@ -106,6 +124,7 @@ Target: **< 5 LLM calls** total
 - Output shows error message
 
 **Validation**:
+
 - Output contains: "ERROR", "not found", "404", or "failed"
 - Client doesn't crash
 
@@ -114,11 +133,14 @@ Target: **< 5 LLM calls** total
 ---
 
 ### 4. LLM-Controlled Exploration (`test_pypi_llm_controlled_exploration`)
+
 **Purpose**: Verify LLM can autonomously explore packages
 
-**Instruction**: "Connect to PyPI and explore the 'django' package. Look at its metadata and determine if it's a web framework."
+**Instruction**: "Connect to PyPI and explore the 'django' package. Look at its metadata and determine if it's a web
+framework."
 
 **Expected Behavior**:
+
 - Client connects to PyPI
 - LLM decides to query django package info
 - LLM analyzes metadata (description, keywords, classifiers)
@@ -126,6 +148,7 @@ Target: **< 5 LLM calls** total
 - Output shows exploration results
 
 **Validation**:
+
 - Protocol is "PyPI"
 - Output mentions "django", "package", or "info"
 - LLM demonstrates autonomous decision-making
@@ -137,21 +160,25 @@ Target: **< 5 LLM calls** total
 ## Known Issues
 
 ### Network Dependency
+
 - Tests require internet access to pypi.org
 - May fail if PyPI is down or slow
 - **Mitigation**: Use well-known stable packages
 
 ### API Rate Limiting
+
 - PyPI has rate limits for anonymous requests
 - Running many tests quickly may trigger limits
 - **Mitigation**: Use delays between tests, < 5 total calls
 
 ### Response Size
+
 - Large packages (numpy, tensorflow) have large JSON responses
 - May cause timeouts or memory issues
 - **Mitigation**: Use smaller packages for basic tests
 
 ### Search API Deprecation
+
 - PyPI's XML-RPC search API is deprecated
 - search_packages action returns notice instead of results
 - **Mitigation**: Tests focus on get_package_info, not search
@@ -159,6 +186,7 @@ Target: **< 5 LLM calls** total
 ## Timeout Configuration
 
 All tests use appropriate timeouts:
+
 - **Connection timeout**: 30 seconds (reqwest default)
 - **Test timeout**: 5 seconds per test
 - **Sleep duration**: 3 seconds for LLM processing
@@ -168,20 +196,21 @@ All tests use appropriate timeouts:
 ### Common Failures
 
 1. **Network timeout**
-   - Symptom: Test hangs or times out
-   - Fix: Check internet connection, increase sleep duration
+    - Symptom: Test hangs or times out
+    - Fix: Check internet connection, increase sleep duration
 
 2. **Package not found**
-   - Symptom: 404 errors for test packages
-   - Fix: Use different stable package
+    - Symptom: 404 errors for test packages
+    - Fix: Use different stable package
 
 3. **LLM didn't trigger action**
-   - Symptom: No API request made
-   - Fix: Check LLM instruction clarity, verify protocol parsing
+    - Symptom: No API request made
+    - Fix: Check LLM instruction clarity, verify protocol parsing
 
 ### Output Inspection
 
 Tests use `client.get_output().await` to inspect:
+
 - Protocol detection ("PyPI")
 - Connection messages
 - Error messages

@@ -3,6 +3,7 @@
 ## Test Strategy
 
 Black-box E2E tests using NetGet binary. Tests verify PostgreSQL client functionality including:
+
 - Connection establishment
 - Query execution
 - Transaction support
@@ -12,6 +13,7 @@ Black-box E2E tests using NetGet binary. Tests verify PostgreSQL client function
 
 **Target:** < 10 calls
 **Actual:** 6 calls total across 3 tests
+
 - test_postgresql_client_connect_and_query: 2 calls (server + client)
 - test_postgresql_client_llm_controlled_queries: 2 calls (server + client)
 - test_postgresql_client_transactions: 2 calls (server + client)
@@ -29,6 +31,7 @@ docker run -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:latest
 ## Tests
 
 ### 1. test_postgresql_client_connect_and_query (2 LLM calls)
+
 - Start NetGet PostgreSQL server
 - Connect PostgreSQL client to server
 - Execute simple SELECT query
@@ -36,12 +39,14 @@ docker run -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:latest
 - **Validates:** Basic connectivity, query execution, result handling
 
 ### 2. test_postgresql_client_llm_controlled_queries (2 LLM calls)
+
 - Start NetGet PostgreSQL server
 - Client sends LLM-instructed query
 - Verify protocol detection
 - **Validates:** LLM control, query generation, protocol identification
 
 ### 3. test_postgresql_client_transactions (2 LLM calls)
+
 - Start NetGet PostgreSQL server
 - Client executes BEGIN/COMMIT transaction
 - Verify transaction control

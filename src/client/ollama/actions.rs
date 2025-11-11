@@ -19,23 +19,21 @@ use std::sync::LazyLock;
 pub static OLLAMA_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "ollama_connected",
-        "Ollama client initialized and ready to make API requests"
+        "Ollama client initialized and ready to make API requests",
     )
-    .with_parameters(vec![
-        Parameter {
-            name: "api_endpoint".to_string(),
-            type_hint: "string".to_string(),
-            description: "Ollama API endpoint URL".to_string(),
-            required: true,
-        },
-    ])
+    .with_parameters(vec![Parameter {
+        name: "api_endpoint".to_string(),
+        type_hint: "string".to_string(),
+        description: "Ollama API endpoint URL".to_string(),
+        required: true,
+    }])
 });
 
 /// Ollama client response received event
 pub static OLLAMA_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "ollama_response_received",
-        "Response received from Ollama API"
+        "Response received from Ollama API",
     )
     .with_parameters(vec![
         Parameter {
@@ -96,7 +94,8 @@ impl Protocol for OllamaClientProtocol {
                     Parameter {
                         name: "model".to_string(),
                         type_hint: "string".to_string(),
-                        description: "Model to use (e.g., llama2, codellama) - REQUIRED".to_string(),
+                        description: "Model to use (e.g., llama2, codellama) - REQUIRED"
+                            .to_string(),
                         required: true,
                     },
                 ],
@@ -177,7 +176,8 @@ impl Protocol for OllamaClientProtocol {
         vec![
             ActionDefinition {
                 name: "send_generate_request".to_string(),
-                description: "Send another generation request in response to received data".to_string(),
+                description: "Send another generation request in response to received data"
+                    .to_string(),
                 parameters: vec![
                     Parameter {
                         name: "prompt".to_string(),
@@ -237,7 +237,7 @@ impl Protocol for OllamaClientProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
@@ -263,7 +263,10 @@ impl Protocol for OllamaClientProtocol {
 
 // Implement Client trait (client-specific functionality)
 impl Client for OllamaClientProtocol {
-    fn connect(&self, ctx: ConnectContext) -> Pin<Box<dyn Future<Output = Result<SocketAddr>> + Send>> {
+    fn connect(
+        &self,
+        ctx: ConnectContext,
+    ) -> Pin<Box<dyn Future<Output = Result<SocketAddr>> + Send>> {
         Box::pin(async move {
             use crate::client::ollama::OllamaClientImpl;
             OllamaClientImpl::connect_with_llm_actions(
@@ -273,7 +276,8 @@ impl Client for OllamaClientProtocol {
                 ctx.status_tx,
                 ctx.client_id,
                 ctx.startup_params,
-            ).await
+            )
+            .await
         })
     }
 
@@ -346,19 +350,16 @@ impl Client for OllamaClientProtocol {
                     }),
                 })
             }
-            "list_models" => {
-                Ok(ClientActionResult::Custom {
-                    name: "list_models".to_string(),
-                    data: json!({}),
-                })
-            }
-            "wait_for_more" => {
-                Ok(ClientActionResult::WaitForMore)
-            }
-            "disconnect" => {
-                Ok(ClientActionResult::Disconnect)
-            }
-            _ => Err(anyhow::anyhow!("Unknown Ollama client action: {}", action_type)),
+            "list_models" => Ok(ClientActionResult::Custom {
+                name: "list_models".to_string(),
+                data: json!({}),
+            }),
+            "wait_for_more" => Ok(ClientActionResult::WaitForMore),
+            "disconnect" => Ok(ClientActionResult::Disconnect),
+            _ => Err(anyhow::anyhow!(
+                "Unknown Ollama client action: {}",
+                action_type
+            )),
         }
     }
 }

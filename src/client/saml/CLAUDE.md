@@ -2,23 +2,28 @@
 
 ## Overview
 
-This implements a SAML 2.0 Service Provider (SP) client that can initiate authentication with a SAML Identity Provider (IdP). The client allows LLM-controlled Single Sign-On (SSO) operations including generating authentication requests and validating SAML assertions.
+This implements a SAML 2.0 Service Provider (SP) client that can initiate authentication with a SAML Identity Provider (
+IdP). The client allows LLM-controlled Single Sign-On (SSO) operations including generating authentication requests and
+validating SAML assertions.
 
 ## Library Choices
 
 ### XML Processing
+
 - **quick-xml** (v0.37) - Fast, lightweight XML parser and writer
-  - Used for generating AuthnRequest XML
-  - Used for parsing SAML Response and Assertion XML
-  - Provides streaming parser for efficient memory usage
-  - Already used in the codebase for XML-RPC
+    - Used for generating AuthnRequest XML
+    - Used for parsing SAML Response and Assertion XML
+    - Provides streaming parser for efficient memory usage
+    - Already used in the codebase for XML-RPC
 
 ### Encoding/Compression
+
 - **base64** (v0.22) - Base64 encoding/decoding for SAML messages
 - **flate2** (v1.0) - DEFLATE compression for HTTP-Redirect binding
 - **urlencoding** (v2.1) - URL encoding for redirect parameters
 
 ### Utilities
+
 - **uuid** (v1.11) - Generate unique request IDs
 - **chrono** (v0.4) - Timestamp generation for SAML requests
 
@@ -28,31 +33,32 @@ This implements a SAML 2.0 Service Provider (SP) client that can initiate authen
 
 1. **Initialization**: Client connects to IdP URL, stores configuration
 2. **SSO Initiation**:
-   - Generate SAML AuthnRequest with unique ID
-   - Encode request (deflate + base64 for HTTP-Redirect, or base64 for HTTP-POST)
-   - Build SSO URL with encoded request
-   - LLM receives SSO URL to direct user
+    - Generate SAML AuthnRequest with unique ID
+    - Encode request (deflate + base64 for HTTP-Redirect, or base64 for HTTP-POST)
+    - Build SSO URL with encoded request
+    - LLM receives SSO URL to direct user
 3. **Assertion Validation**:
-   - Receive base64-encoded SAML Response
-   - Decode and parse XML response
-   - Extract status code, subject, and attributes
-   - LLM processes authentication result
+    - Receive base64-encoded SAML Response
+    - Decode and parse XML response
+    - Extract status code, subject, and attributes
+    - LLM processes authentication result
 
 ### HTTP Bindings Supported
 
 1. **HTTP-Redirect** (Primary)
-   - AuthnRequest is DEFLATE-compressed, base64-encoded, URL-encoded
-   - Sent as query parameter: `?SAMLRequest=...&RelayState=...`
-   - Lightweight, suitable for browser redirects
+    - AuthnRequest is DEFLATE-compressed, base64-encoded, URL-encoded
+    - Sent as query parameter: `?SAMLRequest=...&RelayState=...`
+    - Lightweight, suitable for browser redirects
 
 2. **HTTP-POST** (Planned)
-   - AuthnRequest is base64-encoded (no compression)
-   - Sent as form POST parameter
-   - Supports larger requests
+    - AuthnRequest is base64-encoded (no compression)
+    - Sent as form POST parameter
+    - Supports larger requests
 
 ### State Management
 
 Client stores in `protocol_data`:
+
 - `idp_url`: Identity Provider endpoint URL
 - `entity_id`: Service Provider entity identifier (default: `urn:netget:sp`)
 - `acs_url`: Assertion Consumer Service URL (where IdP sends response)
@@ -63,7 +69,9 @@ Client stores in `protocol_data`:
 ## LLM Integration
 
 ### Connection Event
+
 Triggered when client is initialized:
+
 ```json
 {
   "event": "saml_connected",
@@ -76,7 +84,9 @@ Triggered when client is initialized:
 ```
 
 ### Response Event
+
 Triggered when assertion is validated:
+
 ```json
 {
   "event": "saml_response_received",
@@ -139,22 +149,22 @@ Triggered when assertion is validated:
 ### Security Considerations
 
 1. **No Signature Verification** - Current implementation does NOT verify XML signatures
-   - SAML responses should be signed by IdP
-   - Signature verification requires `xmlsec` integration (complex)
-   - **For testing/development only** - not production-ready without signature validation
+    - SAML responses should be signed by IdP
+    - Signature verification requires `xmlsec` integration (complex)
+    - **For testing/development only** - not production-ready without signature validation
 
 2. **No Certificate Management** - No handling of X.509 certificates
-   - Production SAML requires certificate-based trust
-   - Would need certificate storage and validation
+    - Production SAML requires certificate-based trust
+    - Would need certificate storage and validation
 
 3. **Basic XML Parsing** - Simple parsing without full SAML compliance
-   - Extracts essential fields (status, subject, attributes)
-   - Does not validate all SAML specification requirements
-   - May fail on complex SAML responses
+    - Extracts essential fields (status, subject, attributes)
+    - Does not validate all SAML specification requirements
+    - May fail on complex SAML responses
 
 4. **No Encryption** - SAML assertions are not encrypted
-   - Some IdPs require encrypted assertions
-   - Would need XML encryption support
+    - Some IdPs require encrypted assertions
+    - Would need XML encryption support
 
 ### Protocol Support
 
@@ -173,12 +183,14 @@ Triggered when assertion is validated:
 ## Testing Strategy
 
 ### Manual Testing
+
 1. Use a public SAML test IdP (e.g., samltest.id)
 2. Configure client with IdP metadata
 3. Initiate SSO and follow redirect
 4. Validate response manually
 
 ### E2E Testing
+
 - Requires running SAML IdP (e.g., SimpleSAMLphp)
 - Test successful authentication flow
 - Test failed authentication

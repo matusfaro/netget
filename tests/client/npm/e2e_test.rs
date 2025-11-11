@@ -33,13 +33,15 @@ async fn test_npm_client_get_package_info() {
 
     // Register client
     let client_id = ClientId::new(1);
-    app_state.register_client(
-        client_id,
-        "NPM".to_string(),
-        "https://registry.npmjs.org".to_string(),
-        "Get information about the lodash package".to_string(),
-        None,
-    ).await;
+    app_state
+        .register_client(
+            client_id,
+            "NPM".to_string(),
+            "https://registry.npmjs.org".to_string(),
+            "Get information about the lodash package".to_string(),
+            None,
+        )
+        .await;
 
     // Connect to NPM registry
     let result = NpmClient::connect_with_llm_actions(
@@ -48,7 +50,8 @@ async fn test_npm_client_get_package_info() {
         app_state.clone(),
         status_tx.clone(),
         client_id,
-    ).await;
+    )
+    .await;
 
     assert!(result.is_ok(), "Failed to connect NPM client: {:?}", result);
 
@@ -65,9 +68,14 @@ async fn test_npm_client_get_package_info() {
         app_state.clone(),
         llm_client.clone(),
         status_tx.clone(),
-    ).await;
+    )
+    .await;
 
-    assert!(get_result.is_ok(), "Failed to get package info: {:?}", get_result);
+    assert!(
+        get_result.is_ok(),
+        "Failed to get package info: {:?}",
+        get_result
+    );
 }
 
 #[tokio::test]
@@ -77,13 +85,15 @@ async fn test_npm_client_search_packages() {
 
     // Register client
     let client_id = ClientId::new(2);
-    app_state.register_client(
-        client_id,
-        "NPM".to_string(),
-        "https://registry.npmjs.org".to_string(),
-        "Search for http server packages".to_string(),
-        None,
-    ).await;
+    app_state
+        .register_client(
+            client_id,
+            "NPM".to_string(),
+            "https://registry.npmjs.org".to_string(),
+            "Search for http server packages".to_string(),
+            None,
+        )
+        .await;
 
     // Connect to NPM registry
     let result = NpmClient::connect_with_llm_actions(
@@ -92,7 +102,8 @@ async fn test_npm_client_search_packages() {
         app_state.clone(),
         status_tx.clone(),
         client_id,
-    ).await;
+    )
+    .await;
 
     assert!(result.is_ok(), "Failed to connect NPM client: {:?}", result);
 
@@ -104,9 +115,14 @@ async fn test_npm_client_search_packages() {
         app_state.clone(),
         llm_client.clone(),
         status_tx.clone(),
-    ).await;
+    )
+    .await;
 
-    assert!(search_result.is_ok(), "Failed to search packages: {:?}", search_result);
+    assert!(
+        search_result.is_ok(),
+        "Failed to search packages: {:?}",
+        search_result
+    );
 }
 
 #[tokio::test]
@@ -116,13 +132,15 @@ async fn test_npm_client_download_tarball() {
 
     // Register client
     let client_id = ClientId::new(3);
-    app_state.register_client(
-        client_id,
-        "NPM".to_string(),
-        "https://registry.npmjs.org".to_string(),
-        "Download the latest lodash package".to_string(),
-        None,
-    ).await;
+    app_state
+        .register_client(
+            client_id,
+            "NPM".to_string(),
+            "https://registry.npmjs.org".to_string(),
+            "Download the latest lodash package".to_string(),
+            None,
+        )
+        .await;
 
     // Connect to NPM registry
     let result = NpmClient::connect_with_llm_actions(
@@ -131,7 +149,8 @@ async fn test_npm_client_download_tarball() {
         app_state.clone(),
         status_tx.clone(),
         client_id,
-    ).await;
+    )
+    .await;
 
     assert!(result.is_ok(), "Failed to connect NPM client: {:?}", result);
 
@@ -146,9 +165,14 @@ async fn test_npm_client_download_tarball() {
         output_path_str.clone(),
         app_state.clone(),
         status_tx.clone(),
-    ).await;
+    )
+    .await;
 
-    assert!(download_result.is_ok(), "Failed to download tarball: {:?}", download_result);
+    assert!(
+        download_result.is_ok(),
+        "Failed to download tarball: {:?}",
+        download_result
+    );
 
     // Verify file exists
     assert!(output_path.exists(), "Tarball file was not created");
@@ -168,13 +192,15 @@ async fn test_npm_client_scoped_package() {
 
     // Register client
     let client_id = ClientId::new(4);
-    app_state.register_client(
-        client_id,
-        "NPM".to_string(),
-        "https://registry.npmjs.org".to_string(),
-        "Get information about @types/node package".to_string(),
-        None,
-    ).await;
+    app_state
+        .register_client(
+            client_id,
+            "NPM".to_string(),
+            "https://registry.npmjs.org".to_string(),
+            "Get information about @types/node package".to_string(),
+            None,
+        )
+        .await;
 
     // Connect to NPM registry
     let result = NpmClient::connect_with_llm_actions(
@@ -183,7 +209,8 @@ async fn test_npm_client_scoped_package() {
         app_state.clone(),
         status_tx.clone(),
         client_id,
-    ).await;
+    )
+    .await;
 
     assert!(result.is_ok(), "Failed to connect NPM client: {:?}", result);
 
@@ -195,7 +222,12 @@ async fn test_npm_client_scoped_package() {
         app_state.clone(),
         llm_client.clone(),
         status_tx.clone(),
-    ).await;
+    )
+    .await;
 
-    assert!(get_result.is_ok(), "Failed to get scoped package info: {:?}", get_result);
+    assert!(
+        get_result.is_ok(),
+        "Failed to get scoped package info: {:?}",
+        get_result
+    );
 }

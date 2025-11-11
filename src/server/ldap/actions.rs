@@ -30,14 +30,14 @@ impl LdapProtocol {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        let message = action
-            .get("message")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let message = action.get("message").and_then(|v| v.as_str()).unwrap_or("");
 
         let result_code = if success { 0 } else { 49 }; // 0 = success, 49 = invalidCredentials
 
-        debug!("LDAP sending bind response: success={}, message={}", success, message);
+        debug!(
+            "LDAP sending bind response: success={}, message={}",
+            success, message
+        );
 
         let response = encode_bind_response(message_id, result_code, message);
         Ok(ActionResult::Output(response))
@@ -60,17 +60,18 @@ impl LdapProtocol {
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u8;
 
-        debug!("LDAP sending search response: {} entries, result_code={}", entries.len(), result_code);
+        debug!(
+            "LDAP sending search response: {} entries, result_code={}",
+            entries.len(),
+            result_code
+        );
 
         // Build response with search entries + search done
         let mut response = Vec::new();
 
         // Send SearchResultEntry for each entry
         for entry in entries {
-            let dn = entry
-                .get("dn")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let dn = entry.get("dn").and_then(|v| v.as_str()).unwrap_or("");
 
             let attributes = entry
                 .get("attributes")
@@ -103,12 +104,12 @@ impl LdapProtocol {
             .and_then(|v| v.as_u64())
             .unwrap_or(if success { 0 } else { 68 }) as u8; // 68 = entryAlreadyExists
 
-        let message = action
-            .get("message")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let message = action.get("message").and_then(|v| v.as_str()).unwrap_or("");
 
-        debug!("LDAP sending add response: success={}, result_code={}", success, result_code);
+        debug!(
+            "LDAP sending add response: success={}, result_code={}",
+            success, result_code
+        );
 
         let response = encode_ldap_result(message_id, 0x69, result_code, message); // 0x69 = AddResponse
         Ok(ActionResult::Output(response))
@@ -130,12 +131,12 @@ impl LdapProtocol {
             .and_then(|v| v.as_u64())
             .unwrap_or(if success { 0 } else { 32 }) as u8; // 32 = noSuchObject
 
-        let message = action
-            .get("message")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let message = action.get("message").and_then(|v| v.as_str()).unwrap_or("");
 
-        debug!("LDAP sending modify response: success={}, result_code={}", success, result_code);
+        debug!(
+            "LDAP sending modify response: success={}, result_code={}",
+            success, result_code
+        );
 
         let response = encode_ldap_result(message_id, 0x67, result_code, message); // 0x67 = ModifyResponse
         Ok(ActionResult::Output(response))
@@ -157,12 +158,12 @@ impl LdapProtocol {
             .and_then(|v| v.as_u64())
             .unwrap_or(if success { 0 } else { 32 }) as u8; // 32 = noSuchObject
 
-        let message = action
-            .get("message")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let message = action.get("message").and_then(|v| v.as_str()).unwrap_or("");
 
-        debug!("LDAP sending delete response: success={}, result_code={}", success, result_code);
+        debug!(
+            "LDAP sending delete response: success={}, result_code={}",
+            success, result_code
+        );
 
         let response = encode_ldap_result(message_id, 0x6B, result_code, message); // 0x6B = DelResponse
         Ok(ActionResult::Output(response))
@@ -171,8 +172,8 @@ impl LdapProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for LdapProtocol {
-        fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
-            vec![
+    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        vec![
                 crate::llm::actions::ParameterDefinition {
                     name: "send_first".to_string(),
                     type_hint: "boolean".to_string(),
@@ -181,99 +182,100 @@ impl Protocol for LdapProtocol {
                     example: serde_json::json!(false),
                 },
             ]
-        }
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            // LDAP doesn't need async actions for now
-            Vec::new()
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                ldap_bind_response_action(),
-                ldap_search_response_action(),
-                ldap_add_response_action(),
-                ldap_modify_response_action(),
-                ldap_delete_response_action(),
-                wait_for_more_action(),
-                close_connection_action(),
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "LDAP"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            get_ldap_event_types()
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>TCP>LDAP"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["ldap", "directory server"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Experimental)
-                .implementation("Manual ASN.1 BER encoding/decoding")
-                .llm_control("Directory queries + authentication")
-                .e2e_testing("ldap3 client")
-                .notes("Lightweight directory")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "LDAP directory server"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Start an LDAP directory server on port 389"
-        }
-        fn group_name(&self) -> &'static str {
-            "Application"
-        }
+    }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        // LDAP doesn't need async actions for now
+        Vec::new()
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            ldap_bind_response_action(),
+            ldap_search_response_action(),
+            ldap_add_response_action(),
+            ldap_modify_response_action(),
+            ldap_delete_response_action(),
+            wait_for_more_action(),
+            close_connection_action(),
+        ]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "LDAP"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_ldap_event_types()
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>LDAP"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["ldap", "directory server"]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("Manual ASN.1 BER encoding/decoding")
+            .llm_control("Directory queries + authentication")
+            .e2e_testing("ldap3 client")
+            .notes("Lightweight directory")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "LDAP directory server"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Start an LDAP directory server on port 389"
+    }
+    fn group_name(&self) -> &'static str {
+        "Application"
+    }
 }
 
 // Implement Server trait (server-specific functionality)
 impl Server for LdapProtocol {
-        fn spawn(
-            &self,
-            ctx: crate::protocol::SpawnContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::server::ldap::LdapServer;
-                let _send_first = ctx.startup_params
-                    .as_ref()
-                    .and_then(|p| p.get_optional_bool("send_first"))
-                    .unwrap_or(false);
-    
-                LdapServer::spawn_with_llm_actions(
-                    ctx.listen_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.server_id,
-                ).await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "ldap_bind_response" => self.execute_ldap_bind_response(action),
-                "ldap_search_response" => self.execute_ldap_search_response(action),
-                "ldap_add_response" => self.execute_ldap_add_response(action),
-                "ldap_modify_response" => self.execute_ldap_modify_response(action),
-                "ldap_delete_response" => self.execute_ldap_delete_response(action),
-                "wait_for_more" => Ok(ActionResult::WaitForMore),
-                "close_connection" => Ok(ActionResult::CloseConnection),
-                _ => Err(anyhow::anyhow!("Unknown LDAP action: {}", action_type)),
-            }
-        }
-}
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::ldap::LdapServer;
+            let _send_first = ctx
+                .startup_params
+                .as_ref()
+                .and_then(|p| p.get_optional_bool("send_first"))
+                .unwrap_or(false);
 
+            LdapServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
+
+        match action_type {
+            "ldap_bind_response" => self.execute_ldap_bind_response(action),
+            "ldap_search_response" => self.execute_ldap_search_response(action),
+            "ldap_add_response" => self.execute_ldap_add_response(action),
+            "ldap_modify_response" => self.execute_ldap_modify_response(action),
+            "ldap_delete_response" => self.execute_ldap_delete_response(action),
+            "wait_for_more" => Ok(ActionResult::WaitForMore),
+            "close_connection" => Ok(ActionResult::CloseConnection),
+            _ => Err(anyhow::anyhow!("Unknown LDAP action: {}", action_type)),
+        }
+    }
+}
 
 // ============================================================================
 // Action Definitions
@@ -500,13 +502,20 @@ fn close_connection_action() -> ActionDefinition {
 // Action Constants
 // ============================================================================
 
-pub static LDAP_BIND_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| ldap_bind_response_action());
-pub static LDAP_SEARCH_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| ldap_search_response_action());
-pub static LDAP_ADD_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| ldap_add_response_action());
-pub static LDAP_MODIFY_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| ldap_modify_response_action());
-pub static LDAP_DELETE_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| ldap_delete_response_action());
-pub static WAIT_FOR_MORE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| wait_for_more_action());
-pub static CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| close_connection_action());
+pub static LDAP_BIND_RESPONSE_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| ldap_bind_response_action());
+pub static LDAP_SEARCH_RESPONSE_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| ldap_search_response_action());
+pub static LDAP_ADD_RESPONSE_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| ldap_add_response_action());
+pub static LDAP_MODIFY_RESPONSE_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| ldap_modify_response_action());
+pub static LDAP_DELETE_RESPONSE_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| ldap_delete_response_action());
+pub static WAIT_FOR_MORE_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| wait_for_more_action());
+pub static CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| close_connection_action());
 
 // ============================================================================
 // Event Type Constants
@@ -514,95 +523,84 @@ pub static CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|
 
 /// LDAP bind event - triggered when client attempts to authenticate
 pub static LDAP_BIND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "ldap_bind",
-        "LDAP bind (authentication) request received"
-    )
-    .with_parameters(vec![
-        Parameter {
-            name: "message_id".to_string(),
-            type_hint: "number".to_string(),
-            description: "LDAP message ID".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "version".to_string(),
-            type_hint: "number".to_string(),
-            description: "LDAP protocol version (typically 3)".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "dn".to_string(),
-            type_hint: "string".to_string(),
-            description: "Distinguished Name for authentication".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "password".to_string(),
-            type_hint: "string".to_string(),
-            description: "Password for simple authentication".to_string(),
-            required: true,
-        },
-    ])
-    .with_actions(vec![
-        LDAP_BIND_RESPONSE_ACTION.clone(),
-        CLOSE_CONNECTION_ACTION.clone(),
-    ])
+    EventType::new("ldap_bind", "LDAP bind (authentication) request received")
+        .with_parameters(vec![
+            Parameter {
+                name: "message_id".to_string(),
+                type_hint: "number".to_string(),
+                description: "LDAP message ID".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "version".to_string(),
+                type_hint: "number".to_string(),
+                description: "LDAP protocol version (typically 3)".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "dn".to_string(),
+                type_hint: "string".to_string(),
+                description: "Distinguished Name for authentication".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "password".to_string(),
+                type_hint: "string".to_string(),
+                description: "Password for simple authentication".to_string(),
+                required: true,
+            },
+        ])
+        .with_actions(vec![
+            LDAP_BIND_RESPONSE_ACTION.clone(),
+            CLOSE_CONNECTION_ACTION.clone(),
+        ])
 });
 
 /// LDAP search event - triggered when client performs a directory search
 pub static LDAP_SEARCH_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "ldap_search",
-        "LDAP search request received"
-    )
-    .with_parameters(vec![
-        Parameter {
-            name: "message_id".to_string(),
-            type_hint: "number".to_string(),
-            description: "LDAP message ID".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "base_dn".to_string(),
-            type_hint: "string".to_string(),
-            description: "Base DN for search (starting point)".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "authenticated".to_string(),
-            type_hint: "boolean".to_string(),
-            description: "Whether client is authenticated".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "bind_dn".to_string(),
-            type_hint: "string".to_string(),
-            description: "DN of authenticated user (empty if not authenticated)".to_string(),
-            required: true,
-        },
-    ])
-    .with_actions(vec![
-        LDAP_SEARCH_RESPONSE_ACTION.clone(),
-        CLOSE_CONNECTION_ACTION.clone(),
-    ])
+    EventType::new("ldap_search", "LDAP search request received")
+        .with_parameters(vec![
+            Parameter {
+                name: "message_id".to_string(),
+                type_hint: "number".to_string(),
+                description: "LDAP message ID".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "base_dn".to_string(),
+                type_hint: "string".to_string(),
+                description: "Base DN for search (starting point)".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "authenticated".to_string(),
+                type_hint: "boolean".to_string(),
+                description: "Whether client is authenticated".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "bind_dn".to_string(),
+                type_hint: "string".to_string(),
+                description: "DN of authenticated user (empty if not authenticated)".to_string(),
+                required: true,
+            },
+        ])
+        .with_actions(vec![
+            LDAP_SEARCH_RESPONSE_ACTION.clone(),
+            CLOSE_CONNECTION_ACTION.clone(),
+        ])
 });
 
 /// LDAP unbind event - triggered when client closes connection
 pub static LDAP_UNBIND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "ldap_unbind",
-        "LDAP unbind (disconnect) request received"
-    )
-    .with_parameters(vec![
-        Parameter {
+    EventType::new("ldap_unbind", "LDAP unbind (disconnect) request received")
+        .with_parameters(vec![Parameter {
             name: "bind_dn".to_string(),
             type_hint: "string".to_string(),
             description: "DN of authenticated user (empty if not authenticated)".to_string(),
             required: true,
-        },
-    ])
-    .with_actions(vec![])
+        }])
+        .with_actions(vec![])
 });
 
 /// Get LDAP event types
@@ -626,7 +624,12 @@ fn encode_ber_length(length: usize) -> Vec<u8> {
     } else if length < 65536 {
         vec![0x82, (length >> 8) as u8, length as u8]
     } else {
-        vec![0x83, (length >> 16) as u8, (length >> 8) as u8, length as u8]
+        vec![
+            0x83,
+            (length >> 16) as u8,
+            (length >> 8) as u8,
+            length as u8,
+        ]
     }
 }
 
@@ -687,7 +690,11 @@ fn encode_bind_response(msg_id: i32, result_code: u8, diagnostic_message: &str) 
     encode_ldap_message(msg_id, bind_msg)
 }
 
-fn encode_search_entry(msg_id: i32, dn: &str, attributes: serde_json::Map<String, serde_json::Value>) -> Vec<u8> {
+fn encode_search_entry(
+    msg_id: i32,
+    dn: &str,
+    attributes: serde_json::Map<String, serde_json::Value>,
+) -> Vec<u8> {
     // SearchResultEntry ::= [APPLICATION 4] SEQUENCE {
     //     objectName LDAPDN,
     //     attributes PartialAttributeList }
@@ -767,7 +774,12 @@ fn encode_search_done(msg_id: i32, result_code: u8, diagnostic_message: &str) ->
     encode_ldap_message(msg_id, search_msg)
 }
 
-fn encode_ldap_result(msg_id: i32, app_tag: u8, result_code: u8, diagnostic_message: &str) -> Vec<u8> {
+fn encode_ldap_result(
+    msg_id: i32,
+    app_tag: u8,
+    result_code: u8,
+    diagnostic_message: &str,
+) -> Vec<u8> {
     let mut result = Vec::new();
 
     // resultCode (ENUMERATED)

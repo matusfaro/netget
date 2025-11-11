@@ -5,17 +5,17 @@
 
 #![cfg(feature = "dot")]
 
-use super::super::super::helpers::{self, ServerConfig, E2EResult};
+use super::super::super::helpers::{self, E2EResult, ServerConfig};
 use hickory_proto::op::{Message as DnsMessage, Query};
 use hickory_proto::rr::{Name, RecordType};
+use rustls::{ClientConfig, RootCertStore};
 use std::net::SocketAddr;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
-use rustls::{ClientConfig, RootCertStore};
-use std::sync::Arc;
 
 /// Helper to query DoT server
 async fn query_dot(port: u16, domain: &str, record_type: RecordType) -> E2EResult<DnsMessage> {
@@ -32,7 +32,9 @@ async fn query_dot(port: u16, domain: &str, record_type: RecordType) -> E2EResul
         .with_no_client_auth();
 
     // Disable certificate verification for self-signed certs in tests
-    config.dangerous().set_certificate_verifier(Arc::new(NoCertificateVerification));
+    config
+        .dangerous()
+        .set_certificate_verifier(Arc::new(NoCertificateVerification));
 
     let tls_config = Arc::new(config);
     let connector = TlsConnector::from(tls_config);
@@ -123,9 +125,8 @@ async fn test_dot_server() -> E2EResult<()> {
     let prompt = r#"listen on port {AVAILABLE_PORT} via dot. Respond to all A record queries for example.com with IP 93.184.216.34 and TTL 300."#;
 
     // Start server (LLM will parse the prompt and create the script)
-    let server = helpers::start_netget_server(
-        ServerConfig::new(prompt).with_log_level("info")
-    ).await?;
+    let server =
+        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("info")).await?;
 
     println!("DoT server started on port {}", server.port);
 
@@ -135,12 +136,18 @@ async fn test_dot_server() -> E2EResult<()> {
     // Test multiple queries against the same server (script returns same response for all)
     println!("\n[Test 1] First query - example.com A record...");
     let response1 = query_dot(server.port, "example.com.", RecordType::A).await?;
-    assert!(!response1.answers().is_empty(), "Expected answer for example.com A");
+    assert!(
+        !response1.answers().is_empty(),
+        "Expected answer for example.com A"
+    );
     println!("✓ Got response: {:?}", response1.answers()[0]);
 
     println!("\n[Test 2] Second query - testing TLS connection reuse...");
     let response2 = query_dot(server.port, "test.com.", RecordType::A).await?;
-    assert!(!response2.answers().is_empty(), "Expected answer (script returns same for all)");
+    assert!(
+        !response2.answers().is_empty(),
+        "Expected answer (script returns same for all)"
+    );
     println!("✓ Got response: {:?}", response2.answers()[0]);
 
     println!("\n[Test 3] Third query - different domain...");

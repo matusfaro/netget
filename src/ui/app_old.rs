@@ -124,8 +124,8 @@ impl ServerDisplayInfo {
 /// Connection information for display in the UI
 #[derive(Debug, Clone)]
 pub struct ConnectionDisplayInfo {
-    pub id: u32,  // Global connection ID
-    pub server_id: String,  // Which server this connection belongs to
+    pub id: u32,           // Global connection ID
+    pub server_id: String, // Which server this connection belongs to
     pub address: String,
     pub state: String,
 }
@@ -392,13 +392,13 @@ impl App {
 
     /// Check if cursor is on the first line of the textarea
     pub fn is_cursor_on_first_line(&self) -> bool {
-        let (row, _) = self.textarea.cursor();  // cursor() returns (row, col)
+        let (row, _) = self.textarea.cursor(); // cursor() returns (row, col)
         row == 0
     }
 
     /// Check if cursor is on the last line of the textarea
     pub fn is_cursor_on_last_line(&self) -> bool {
-        let (row, _) = self.textarea.cursor();  // cursor() returns (row, col)
+        let (row, _) = self.textarea.cursor(); // cursor() returns (row, col)
         let total_lines = self.textarea.lines().len();
         row >= total_lines.saturating_sub(1)
     }
@@ -418,9 +418,9 @@ impl App {
         let input = self.get_input();
 
         // Add to history if not empty and different from last entry
-        if !input.trim().is_empty() &&
-           (self.command_history.is_empty() ||
-            self.command_history.last() != Some(&input)) {
+        if !input.trim().is_empty()
+            && (self.command_history.is_empty() || self.command_history.last() != Some(&input))
+        {
             self.command_history.push(input.clone());
         }
 
@@ -449,7 +449,12 @@ impl App {
                 // Go to most recent command
                 let pos = self.command_history.len() - 1;
                 self.history_position = Some(pos);
-                self.textarea = TextArea::from(self.command_history[pos].lines().map(|s| s.to_string()).collect::<Vec<_>>());
+                self.textarea = TextArea::from(
+                    self.command_history[pos]
+                        .lines()
+                        .map(|s| s.to_string())
+                        .collect::<Vec<_>>(),
+                );
                 // Move cursor to beginning of first line when going back in history
                 self.textarea.move_cursor(tui_textarea::CursorMove::Top);
             }
@@ -457,7 +462,12 @@ impl App {
                 // Go to older command
                 let new_pos = pos - 1;
                 self.history_position = Some(new_pos);
-                self.textarea = TextArea::from(self.command_history[new_pos].lines().map(|s| s.to_string()).collect::<Vec<_>>());
+                self.textarea = TextArea::from(
+                    self.command_history[new_pos]
+                        .lines()
+                        .map(|s| s.to_string())
+                        .collect::<Vec<_>>(),
+                );
                 // Move cursor to beginning of first line when going back in history
                 self.textarea.move_cursor(tui_textarea::CursorMove::Top);
             }
@@ -474,7 +484,12 @@ impl App {
                 // Go to newer command
                 let new_pos = pos + 1;
                 self.history_position = Some(new_pos);
-                self.textarea = TextArea::from(self.command_history[new_pos].lines().map(|s| s.to_string()).collect::<Vec<_>>());
+                self.textarea = TextArea::from(
+                    self.command_history[new_pos]
+                        .lines()
+                        .map(|s| s.to_string())
+                        .collect::<Vec<_>>(),
+                );
                 // Move cursor to end of last line when going forward in history
                 self.textarea.move_cursor(tui_textarea::CursorMove::Bottom);
                 self.textarea.move_cursor(tui_textarea::CursorMove::End);
@@ -483,7 +498,8 @@ impl App {
                 // At newest command, restore temp input or clear
                 self.history_position = None;
                 let temp = self.history_temp_input.take().unwrap_or_default();
-                self.textarea = TextArea::from(temp.lines().map(|s| s.to_string()).collect::<Vec<_>>());
+                self.textarea =
+                    TextArea::from(temp.lines().map(|s| s.to_string()).collect::<Vec<_>>());
                 // Move cursor to end of last line
                 self.textarea.move_cursor(tui_textarea::CursorMove::Bottom);
                 self.textarea.move_cursor(tui_textarea::CursorMove::End);
@@ -590,4 +606,3 @@ impl App {
         input.starts_with('/') && !self.slash_suggestions.is_empty()
     }
 }
-

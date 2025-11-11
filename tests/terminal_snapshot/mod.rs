@@ -33,8 +33,7 @@ fn spawn_netget_with_args(args: &[&str]) -> (pty_process::blocking::Pty, Child) 
     );
 
     // Create a PTY
-    let pty = pty_process::blocking::Pty::new()
-        .expect("Failed to create PTY");
+    let pty = pty_process::blocking::Pty::new().expect("Failed to create PTY");
 
     // Get the PTS (pseudo-terminal slave)
     let pts = pty.pts().expect("Failed to get PTS");
@@ -46,9 +45,7 @@ fn spawn_netget_with_args(args: &[&str]) -> (pty_process::blocking::Pty, Child) 
     for arg in args {
         cmd.arg(arg);
     }
-    let child = cmd
-        .spawn(&pts)
-        .expect("Failed to spawn netget in PTY");
+    let child = cmd.spawn(&pts).expect("Failed to spawn netget in PTY");
 
     (pty, child)
 }
@@ -179,14 +176,16 @@ fn capture_screen_with_height(pty: &mut pty_process::blocking::Pty, height: u16)
 
 /// Send input to the PTY
 fn send_input(pty: &mut pty_process::blocking::Pty, input: &str) {
-    pty.write_all(input.as_bytes()).expect("Failed to write to PTY");
+    pty.write_all(input.as_bytes())
+        .expect("Failed to write to PTY");
     std::thread::sleep(Duration::from_millis(150));
 }
 
 /// Send a control character (e.g., 'c' for Ctrl+C)
 fn send_ctrl(pty: &mut pty_process::blocking::Pty, ch: char) {
     let ctrl_byte = (ch.to_ascii_uppercase() as u8) - b'A' + 1;
-    pty.write_all(&[ctrl_byte]).expect("Failed to send control code");
+    pty.write_all(&[ctrl_byte])
+        .expect("Failed to send control code");
     std::thread::sleep(Duration::from_millis(100));
 }
 
@@ -209,8 +208,10 @@ mod tests {
         println!("===========================");
 
         // Verify we got SOME output (TUI is rendering)
-        assert!(!screen.is_empty() && screen != "(no output captured)",
-                "Expected terminal output from NetGet");
+        assert!(
+            !screen.is_empty() && screen != "(no output captured)",
+            "Expected terminal output from NetGet"
+        );
 
         // Create snapshot
         snapshot_util::assert_snapshot("initial_tui", SNAPSHOT_DIR, &screen);
@@ -350,9 +351,8 @@ mod tests {
         println!("=========================");
 
         // Should show idle state or no servers
-        let has_idle_state = screen.contains("Idle")
-            || screen.contains("No server")
-            || screen.contains("Input");
+        let has_idle_state =
+            screen.contains("Idle") || screen.contains("No server") || screen.contains("Input");
 
         assert!(has_idle_state, "Expected idle/no server state in footer");
 
@@ -443,7 +443,10 @@ mod tests {
         // Verify we see test output (only the most recent lines should be visible)
         assert!(screen.contains("Test line"), "Expected to see test output");
         // Footer should still be visible and sticky
-        assert!(screen.contains("Input:"), "Expected footer to remain visible");
+        assert!(
+            screen.contains("Input:"),
+            "Expected footer to remain visible"
+        );
 
         snapshot_util::assert_snapshot("overflow_heavy", SNAPSHOT_DIR, &screen);
 
@@ -464,7 +467,10 @@ mod tests {
         std::thread::sleep(Duration::from_millis(800));
 
         // Set multi-line footer status (3 lines)
-        send_input(&mut pty, "/footer_status Line 1 of status\\nLine 2 of status\\nLine 3 of status");
+        send_input(
+            &mut pty,
+            "/footer_status Line 1 of status\\nLine 2 of status\\nLine 3 of status",
+        );
         pty.write_all(b"\r").expect("Failed to send Enter");
         std::thread::sleep(Duration::from_millis(800));
 
@@ -477,12 +483,27 @@ mod tests {
 
         // Verify we see multi-line footer
         // NOTE: With simplified expansion logic, test output gets cleared during footer operations
-        assert!(screen.contains("Line 1 of status"), "Expected to see line 1 of status");
-        assert!(screen.contains("Line 2 of status"), "Expected to see line 2 of status");
-        assert!(screen.contains("Line 3 of status"), "Expected to see line 3 of status");
+        assert!(
+            screen.contains("Line 1 of status"),
+            "Expected to see line 1 of status"
+        );
+        assert!(
+            screen.contains("Line 2 of status"),
+            "Expected to see line 2 of status"
+        );
+        assert!(
+            screen.contains("Line 3 of status"),
+            "Expected to see line 3 of status"
+        );
         // Verify no double status line (the main bug we're fixing)
-        let status_count = screen.matches(" Idle | - | no connection | qwen3-coder:30b |").count();
-        assert_eq!(status_count, 1, "Should have exactly one status line, found {}", status_count);
+        let status_count = screen
+            .matches(" Idle | - | no connection | qwen3-coder:30b |")
+            .count();
+        assert_eq!(
+            status_count, 1,
+            "Should have exactly one status line, found {}",
+            status_count
+        );
 
         snapshot_util::assert_snapshot("dynamic_footer_growing", SNAPSHOT_DIR, &screen);
 
@@ -498,7 +519,10 @@ mod tests {
         let _ = capture_screen(&mut pty);
 
         // Set multi-line footer status first
-        send_input(&mut pty, "/footer_status Multi\\nLine\\nStatus\\nMany\\nLines");
+        send_input(
+            &mut pty,
+            "/footer_status Multi\\nLine\\nStatus\\nMany\\nLines",
+        );
         pty.write_all(b"\r").expect("Failed to send Enter");
         std::thread::sleep(Duration::from_millis(500));
 
@@ -520,9 +544,18 @@ mod tests {
         println!("=================================");
 
         // Verify we see test output and single-line footer
-        assert!(screen.contains("Test line 1 of 10"), "Expected to see test line 1 of output");
-        assert!(screen.contains("Test line 10 of 10"), "Expected to see test line 10 of output");
-        assert!(screen.contains("Single line status"), "Expected to see single line status");
+        assert!(
+            screen.contains("Test line 1 of 10"),
+            "Expected to see test line 1 of output"
+        );
+        assert!(
+            screen.contains("Test line 10 of 10"),
+            "Expected to see test line 10 of output"
+        );
+        assert!(
+            screen.contains("Single line status"),
+            "Expected to see single line status"
+        );
         // Should NOT contain the multi-line status anymore
         assert!(!screen.contains("Multi"), "Should not see 'Multi' anymore");
 
@@ -575,10 +608,20 @@ mod tests {
         assert!(screen.contains("Y"), "Should see Y in footer");
         assert!(screen.contains("Z"), "Should see Z in footer");
         // Verify no double status line
-        let status_count = screen.matches(" Idle | - | no connection | qwen3-coder:30b |").count();
-        assert_eq!(status_count, 1, "Should have exactly one status line, found {}", status_count);
+        let status_count = screen
+            .matches(" Idle | - | no connection | qwen3-coder:30b |")
+            .count();
+        assert_eq!(
+            status_count, 1,
+            "Should have exactly one status line, found {}",
+            status_count
+        );
 
-        snapshot_util::assert_snapshot("dynamic_footer_expand_shrink_expand", SNAPSHOT_DIR, &screen);
+        snapshot_util::assert_snapshot(
+            "dynamic_footer_expand_shrink_expand",
+            SNAPSHOT_DIR,
+            &screen,
+        );
 
         send_ctrl(&mut pty, 'c');
     }
@@ -614,12 +657,18 @@ mod tests {
         println!("=======================================");
 
         // Count blank lines at the top
-        let blank_lines = screen2.lines().take_while(|line| line.trim().is_empty()).count();
+        let blank_lines = screen2
+            .lines()
+            .take_while(|line| line.trim().is_empty())
+            .count();
         println!("Blank lines at top: {}", blank_lines);
 
         // When setting footer to same value twice, command echoes are suppressed for SetFooterStatus
         // We just verify the footer content is correct
-        assert!(screen2.contains("Test Status"), "Footer should show Test Status");
+        assert!(
+            screen2.contains("Test Status"),
+            "Footer should show Test Status"
+        );
 
         send_ctrl(&mut pty, 'c');
     }
@@ -691,32 +740,51 @@ mod tests {
         snapshot_util::assert_snapshot("footer_output_step5_final", SNAPSHOT_DIR, &screen5);
 
         // Verify no double status lines in any snapshot
-        assert!(!screen1.contains(" Idle | - | no connection | qwen3-coder:30b | ↑0 ↓0\n Idle | - | no connection"),
-                "Step 1: Found double status line");
-        assert!(!screen2.contains(" Idle | - | no connection | qwen3-coder:30b | ↑0 ↓0\n Idle | - | no connection"),
-                "Step 2: Found double status line");
-        assert!(!screen3.contains(" Idle | - | no connection | qwen3-coder:30b | ↑0 ↓0\n Idle | - | no connection"),
-                "Step 3: Found double status line");
-        assert!(!screen4.contains(" Idle | - | no connection | qwen3-coder:30b | ↑0 ↓0\n Idle | - | no connection"),
-                "Step 4: Found double status line");
-        assert!(!screen5.contains(" Idle | - | no connection | qwen3-coder:30b | ↑0 ↓0\n Idle | - | no connection"),
-                "Step 5: Found double status line");
+        assert!(
+            !screen1.contains(
+                " Idle | - | no connection | qwen3-coder:30b | ↑0 ↓0\n Idle | - | no connection"
+            ),
+            "Step 1: Found double status line"
+        );
+        assert!(
+            !screen2.contains(
+                " Idle | - | no connection | qwen3-coder:30b | ↑0 ↓0\n Idle | - | no connection"
+            ),
+            "Step 2: Found double status line"
+        );
+        assert!(
+            !screen3.contains(
+                " Idle | - | no connection | qwen3-coder:30b | ↑0 ↓0\n Idle | - | no connection"
+            ),
+            "Step 3: Found double status line"
+        );
+        assert!(
+            !screen4.contains(
+                " Idle | - | no connection | qwen3-coder:30b | ↑0 ↓0\n Idle | - | no connection"
+            ),
+            "Step 4: Found double status line"
+        );
+        assert!(
+            !screen5.contains(
+                " Idle | - | no connection | qwen3-coder:30b | ↑0 ↓0\n Idle | - | no connection"
+            ),
+            "Step 5: Found double status line"
+        );
 
         send_ctrl(&mut pty, 'c');
     }
 
     #[test]
     fn test_pre_existing_content_preserved() {
-        use nix::pty::Winsize;
         use nix::libc::TIOCSWINSZ;
+        use nix::pty::Winsize;
         use std::os::unix::io::AsRawFd;
 
         // Use a taller terminal (100 lines) to fit welcome message + pre-existing content
         const TALL_TERMINAL_HEIGHT: u16 = 100;
 
         // Create PTY with custom size
-        let mut pty = pty_process::blocking::Pty::new()
-            .expect("Failed to create PTY");
+        let mut pty = pty_process::blocking::Pty::new().expect("Failed to create PTY");
         let pts = pty.pts().expect("Failed to get PTS");
 
         // Set PTY window size to 80x100 so terminal::size() can detect it correctly
@@ -734,18 +802,18 @@ mod tests {
 
         // Write 10 lines of pre-existing content BEFORE starting netget
         // Use ANSI escape codes to position content at specific lines (0-10)
-        pty.write_all(b"\x1b[1;1H=== Pre-existing terminal content (10 lines) ===\r\n").expect("Failed to write");
+        pty.write_all(b"\x1b[1;1H=== Pre-existing terminal content (10 lines) ===\r\n")
+            .expect("Failed to write");
         for i in 1..=10 {
-            pty.write_all(format!("\x1b[{};1HPre-existing line {}\r\n", i + 1, i).as_bytes()).expect("Failed to write");
+            pty.write_all(format!("\x1b[{};1HPre-existing line {}\r\n", i + 1, i).as_bytes())
+                .expect("Failed to write");
         }
         std::thread::sleep(Duration::from_millis(300));
 
         // Now spawn netget in the PTY that already has content
         let binary_path = "target/release/netget";
         let mut cmd = pty_process::blocking::Command::new(binary_path);
-        let _child = cmd
-            .spawn(&pts)
-            .expect("Failed to spawn netget in PTY");
+        let _child = cmd.spawn(&pts).expect("Failed to spawn netget in PTY");
 
         // Give TUI time to start and render
         std::thread::sleep(Duration::from_millis(2000));
@@ -758,14 +826,24 @@ mod tests {
         println!("=====================================================");
 
         // Verify pre-existing content is still visible ABOVE netget output
-        assert!(screen.contains("Pre-existing terminal content"),
-                "Expected to see pre-existing content header");
-        assert!(screen.contains("Pre-existing line 1"), "Expected to see line 1");
-        assert!(screen.contains("Pre-existing line 10"), "Expected to see line 10");
+        assert!(
+            screen.contains("Pre-existing terminal content"),
+            "Expected to see pre-existing content header"
+        );
+        assert!(
+            screen.contains("Pre-existing line 1"),
+            "Expected to see line 1"
+        );
+        assert!(
+            screen.contains("Pre-existing line 10"),
+            "Expected to see line 10"
+        );
 
         // Verify NetGet welcome message is present
-        assert!(screen.contains("TUI initialized") || screen.contains("NetGet"),
-                "Expected to see NetGet output");
+        assert!(
+            screen.contains("TUI initialized") || screen.contains("NetGet"),
+            "Expected to see NetGet output"
+        );
 
         // Verify footer is present at bottom
         assert!(screen.contains("Input:"), "Expected footer to be present");

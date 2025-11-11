@@ -2,7 +2,8 @@
 
 ## Test Approach
 
-Black-box testing using real Tor network and public test destinations. The LLM controls the client based on prompts, tests validate behavior with actual Tor connections.
+Black-box testing using real Tor network and public test destinations. The LLM controls the client based on prompts,
+tests validate behavior with actual Tor connections.
 
 ## LLM Call Budget
 
@@ -34,6 +35,7 @@ Not applicable - testing requires real Tor network interaction.
 ### E2E Tests
 
 All tests are E2E, requiring:
+
 - Tor network access (internet connection)
 - Ollama with LLM model
 - Arti bootstrap (downloads consensus on first run)
@@ -108,35 +110,37 @@ async fn test_tor_connection_error() {
 ### Flakiness Concerns
 
 1. **Network Dependency**: Tests require internet and Tor network
-   - Can fail if Tor network unavailable
-   - Can fail behind restrictive firewalls
-   - Mitigation: Retry logic, reasonable timeouts
+    - Can fail if Tor network unavailable
+    - Can fail behind restrictive firewalls
+    - Mitigation: Retry logic, reasonable timeouts
 
 2. **Bootstrap Time**: First run downloads consensus
-   - Adds 10-30 seconds to first test
-   - Mitigation: Cache consensus, run bootstrap test first
+    - Adds 10-30 seconds to first test
+    - Mitigation: Cache consensus, run bootstrap test first
 
 3. **Onion Service Availability**: Onion services can be down
-   - Test onion addresses may become unavailable
-   - Mitigation: Use multiple fallback addresses
+    - Test onion addresses may become unavailable
+    - Mitigation: Use multiple fallback addresses
 
 4. **Exit Node Variability**: Different exit nodes have different policies
-   - Some sites may be blocked by certain exits
-   - Mitigation: Use widely accessible test sites
+    - Some sites may be blocked by certain exits
+    - Mitigation: Use widely accessible test sites
 
 5. **LLM Behavior**: LLM may format HTTP requests differently
-   - May affect test reliability
-   - Mitigation: Use permissive validation (check key fields only)
+    - May affect test reliability
+    - Mitigation: Use permissive validation (check key fields only)
 
 ### Test Environment
 
 **Minimum Requirements:**
+
 - Internet connection
 - No Tor network blocking (some countries/networks block Tor)
 - Ollama with model loaded
 - ~3MB disk space for consensus cache
 
 **CI Considerations:**
+
 - May not work in restricted CI environments (GitHub Actions may block Tor)
 - Consider marking tests as `#[ignore]` for CI, run manually
 - Alternative: Mock arti-client for CI, only run real tests locally
@@ -157,6 +161,7 @@ RUST_LOG=debug ./cargo-isolated.sh test --no-default-features --features tor-cli
 ## Privacy Notes
 
 Tests connect to:
+
 - Tor directory authorities (public, expected)
 - Public test sites (httpbin.org, check.torproject.org)
 - Public onion services (DuckDuckGo, etc.)

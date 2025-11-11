@@ -16,8 +16,7 @@ use std::time::Duration;
 /// Test that MQTT broker starts successfully
 #[tokio::test]
 async fn test_mqtt_broker_starts() -> E2EResult<()> {
-    let config = ServerConfig::new("Start an MQTT broker on port 0")
-        .with_log_level("off");
+    let config = ServerConfig::new("Start an MQTT broker on port 0").with_log_level("off");
 
     let test_state = start_netget_server(config).await?;
 
@@ -78,10 +77,9 @@ async fn test_mqtt_keyword_detection() -> E2EResult<()> {
 async fn test_mqtt_basic_connect() -> E2EResult<()> {
     use rumqttc::{AsyncClient, Event, MqttOptions, Packet};
 
-    let config = ServerConfig::new(
-        "Start an MQTT broker on port 0. Accept all client connections."
-    )
-    .with_log_level("debug");
+    let config =
+        ServerConfig::new("Start an MQTT broker on port 0. Accept all client connections.")
+            .with_log_level("debug");
 
     let test_state = start_netget_server(config).await?;
     tokio::time::sleep(Duration::from_millis(500)).await;

@@ -75,34 +75,34 @@ impl Default for OpenIdProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for OpenIdProtocol {
-        fn protocol_name(&self) -> &'static str {
-            "OpenID"
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>TCP>HTTP>OPENID"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["openid", "oidc", "openid connect", "sso", "authentication"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Experimental)
-                .implementation("Hyper HTTP server with LLM-generated JWT tokens")
-                .llm_control("All endpoints, JWT token generation, discovery documents")
-                .e2e_testing("reqwest HTTP client")
-                .notes("Supports discovery, authorization, token, userinfo, JWKS endpoints")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "OpenID Connect authentication provider"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Start an OpenID Connect server for SSO on port 8080"
-        }
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            vec![
+    fn protocol_name(&self) -> &'static str {
+        "OpenID"
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>HTTP>OPENID"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["openid", "oidc", "openid connect", "sso", "authentication"]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("Hyper HTTP server with LLM-generated JWT tokens")
+            .llm_control("All endpoints, JWT token generation, discovery documents")
+            .e2e_testing("reqwest HTTP client")
+            .notes("Supports discovery, authorization, token, userinfo, JWKS endpoints")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "OpenID Connect authentication provider"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Start an OpenID Connect server for SSO on port 8080"
+    }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        vec![
                 ActionDefinition {
                     name: "configure_provider".to_string(),
                     description: "Configure OpenID Connect provider settings (issuer, supported scopes, etc.)".to_string(),
@@ -123,9 +123,9 @@ impl Protocol for OpenIdProtocol {
                     example: serde_json::json!({"type": "configure_provider", "issuer": "http://localhost:8080", "supported_scopes": ["openid", "profile", "email"]}),
                 },
             ]
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
                 ActionDefinition {
                     name: "send_discovery_document".to_string(),
                     description: "Send OpenID Connect discovery document (/.well-known/openid-configuration)".to_string(),
@@ -369,169 +369,174 @@ impl Protocol for OpenIdProtocol {
                     example: serde_json::json!({"type": "send_error_response", "error": "invalid_client", "error_description": "Client authentication failed", "status_code": 401}),
                 },
             ]
-        }
-        fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-            vec![
-                ParameterDefinition {
-                    name: "issuer".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Issuer URL for the OpenID Connect provider (e.g., http://localhost:8080)"
+    }
+    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
+        vec![
+            ParameterDefinition {
+                name: "issuer".to_string(),
+                type_hint: "string".to_string(),
+                description:
+                    "Issuer URL for the OpenID Connect provider (e.g., http://localhost:8080)"
                         .to_string(),
-                    required: false,
-                    example: serde_json::json!("http://localhost:8080"),
-                },
-                ParameterDefinition {
-                    name: "supported_scopes".to_string(),
-                    type_hint: "array".to_string(),
-                    description: "Supported OAuth scopes (default: [\"openid\", \"profile\", \"email\"])".to_string(),
-                    required: false,
-                    example: serde_json::json!(["openid", "profile", "email"]),
-                },
-            ]
-        }
-        fn group_name(&self) -> &'static str {
-            "Authentication"
-        }
+                required: false,
+                example: serde_json::json!("http://localhost:8080"),
+            },
+            ParameterDefinition {
+                name: "supported_scopes".to_string(),
+                type_hint: "array".to_string(),
+                description:
+                    "Supported OAuth scopes (default: [\"openid\", \"profile\", \"email\"])"
+                        .to_string(),
+                required: false,
+                example: serde_json::json!(["openid", "profile", "email"]),
+            },
+        ]
+    }
+    fn group_name(&self) -> &'static str {
+        "Authentication"
+    }
 }
 
 // Implement Server trait (server-specific functionality)
 impl Server for OpenIdProtocol {
-        fn spawn(
-            &self,
-            ctx: crate::protocol::SpawnContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::server::openid::OpenIdServer;
-                OpenIdServer::spawn_with_llm_actions(
-                    ctx.listen_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.server_id,
-                    ctx.startup_params,
-                )
-                .await
-            })
-        }
-        fn execute_action(&self, action: JsonValue) -> Result<ActionResult> {
-            let action_type = action["type"]
-                .as_str()
-                .ok_or_else(|| anyhow!("Missing action type"))?;
-    
-            match action_type {
-                "send_discovery_document" => {
-                    let issuer = action["issuer"]
-                        .as_str()
-                        .ok_or_else(|| anyhow!("Missing issuer parameter"))?;
-    
-                    let authorization_endpoint = action["authorization_endpoint"]
-                        .as_str()
-                        .ok_or_else(|| anyhow!("Missing authorization_endpoint parameter"))?;
-    
-                    let token_endpoint = action["token_endpoint"]
-                        .as_str()
-                        .ok_or_else(|| anyhow!("Missing token_endpoint parameter"))?;
-    
-                    let userinfo_endpoint = action["userinfo_endpoint"]
-                        .as_str()
-                        .ok_or_else(|| anyhow!("Missing userinfo_endpoint parameter"))?;
-    
-                    let jwks_uri = action["jwks_uri"]
-                        .as_str()
-                        .ok_or_else(|| anyhow!("Missing jwks_uri parameter"))?;
-    
-                    debug!("OpenID discovery document generated");
-    
-                    Ok(ActionResult::Custom {
-                        name: "send_discovery_document".to_string(),
-                        data: serde_json::json!({
-                            "issuer": issuer,
-                            "authorization_endpoint": authorization_endpoint,
-                            "token_endpoint": token_endpoint,
-                            "userinfo_endpoint": userinfo_endpoint,
-                            "jwks_uri": jwks_uri,
-                            "supported_scopes": action.get("supported_scopes"),
-                            "supported_response_types": action.get("supported_response_types"),
-                        }),
-                    })
-                }
-                "send_authorization_response" => {
-                    let redirect_uri = action["redirect_uri"]
-                        .as_str()
-                        .ok_or_else(|| anyhow!("Missing redirect_uri parameter"))?;
-    
-                    info!("OpenID authorization response: redirect to {}", redirect_uri);
-    
-                    Ok(ActionResult::Custom {
-                        name: "send_authorization_response".to_string(),
-                        data: serde_json::json!({
-                            "redirect_uri": redirect_uri,
-                            "code": action.get("code"),
-                            "state": action.get("state"),
-                            "error": action.get("error"),
-                            "error_description": action.get("error_description"),
-                        }),
-                    })
-                }
-                "send_token_response" => {
-                    let _access_token = action["access_token"]
-                        .as_str()
-                        .ok_or_else(|| anyhow!("Missing access_token parameter"))?;
-    
-                    debug!("OpenID token response generated");
-    
-                    Ok(ActionResult::Custom {
-                        name: "send_token_response".to_string(),
-                        data: action.clone(),
-                    })
-                }
-                "send_userinfo_response" => {
-                    let sub = action["sub"]
-                        .as_str()
-                        .ok_or_else(|| anyhow!("Missing sub parameter"))?;
-    
-                    debug!("OpenID userinfo response for subject: {}", sub);
-    
-                    Ok(ActionResult::Custom {
-                        name: "send_userinfo_response".to_string(),
-                        data: action.clone(),
-                    })
-                }
-                "send_jwks_response" => {
-                    debug!("OpenID JWKS response generated");
-    
-                    Ok(ActionResult::Custom {
-                        name: "send_jwks_response".to_string(),
-                        data: action.clone(),
-                    })
-                }
-                "send_error_response" => {
-                    let error = action["error"]
-                        .as_str()
-                        .ok_or_else(|| anyhow!("Missing error parameter"))?;
-    
-                    warn!("OpenID error response: {}", error);
-    
-                    Ok(ActionResult::Custom {
-                        name: "send_error_response".to_string(),
-                        data: action.clone(),
-                    })
-                }
-                "configure_provider" => {
-                    info!("OpenID provider configuration updated");
-    
-                    Ok(ActionResult::Custom {
-                        name: "configure_provider".to_string(),
-                        data: action.clone(),
-                    })
-                }
-                _ => {
-                    error!("Unknown OpenID action: {}", action_type);
-                    Err(anyhow!("Unknown action type: {}", action_type))
-                }
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::openid::OpenIdServer;
+            OpenIdServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+                ctx.startup_params,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: JsonValue) -> Result<ActionResult> {
+        let action_type = action["type"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing action type"))?;
+
+        match action_type {
+            "send_discovery_document" => {
+                let issuer = action["issuer"]
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Missing issuer parameter"))?;
+
+                let authorization_endpoint = action["authorization_endpoint"]
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Missing authorization_endpoint parameter"))?;
+
+                let token_endpoint = action["token_endpoint"]
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Missing token_endpoint parameter"))?;
+
+                let userinfo_endpoint = action["userinfo_endpoint"]
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Missing userinfo_endpoint parameter"))?;
+
+                let jwks_uri = action["jwks_uri"]
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Missing jwks_uri parameter"))?;
+
+                debug!("OpenID discovery document generated");
+
+                Ok(ActionResult::Custom {
+                    name: "send_discovery_document".to_string(),
+                    data: serde_json::json!({
+                        "issuer": issuer,
+                        "authorization_endpoint": authorization_endpoint,
+                        "token_endpoint": token_endpoint,
+                        "userinfo_endpoint": userinfo_endpoint,
+                        "jwks_uri": jwks_uri,
+                        "supported_scopes": action.get("supported_scopes"),
+                        "supported_response_types": action.get("supported_response_types"),
+                    }),
+                })
+            }
+            "send_authorization_response" => {
+                let redirect_uri = action["redirect_uri"]
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Missing redirect_uri parameter"))?;
+
+                info!(
+                    "OpenID authorization response: redirect to {}",
+                    redirect_uri
+                );
+
+                Ok(ActionResult::Custom {
+                    name: "send_authorization_response".to_string(),
+                    data: serde_json::json!({
+                        "redirect_uri": redirect_uri,
+                        "code": action.get("code"),
+                        "state": action.get("state"),
+                        "error": action.get("error"),
+                        "error_description": action.get("error_description"),
+                    }),
+                })
+            }
+            "send_token_response" => {
+                let _access_token = action["access_token"]
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Missing access_token parameter"))?;
+
+                debug!("OpenID token response generated");
+
+                Ok(ActionResult::Custom {
+                    name: "send_token_response".to_string(),
+                    data: action.clone(),
+                })
+            }
+            "send_userinfo_response" => {
+                let sub = action["sub"]
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Missing sub parameter"))?;
+
+                debug!("OpenID userinfo response for subject: {}", sub);
+
+                Ok(ActionResult::Custom {
+                    name: "send_userinfo_response".to_string(),
+                    data: action.clone(),
+                })
+            }
+            "send_jwks_response" => {
+                debug!("OpenID JWKS response generated");
+
+                Ok(ActionResult::Custom {
+                    name: "send_jwks_response".to_string(),
+                    data: action.clone(),
+                })
+            }
+            "send_error_response" => {
+                let error = action["error"]
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Missing error parameter"))?;
+
+                warn!("OpenID error response: {}", error);
+
+                Ok(ActionResult::Custom {
+                    name: "send_error_response".to_string(),
+                    data: action.clone(),
+                })
+            }
+            "configure_provider" => {
+                info!("OpenID provider configuration updated");
+
+                Ok(ActionResult::Custom {
+                    name: "configure_provider".to_string(),
+                    data: action.clone(),
+                })
+            }
+            _ => {
+                error!("Unknown OpenID action: {}", action_type);
+                Err(anyhow!("Unknown action type: {}", action_type))
             }
         }
+    }
 }
-

@@ -9,6 +9,7 @@
 ## Test Execution
 
 ### Prerequisites
+
 ```bash
 # Build release binary
 ./cargo-isolated.sh build --release --no-default-features --features torrent-dht
@@ -22,6 +23,7 @@ pip3 install bencode.py
 ```
 
 ### Running Tests
+
 ```bash
 # Run DHT E2E tests only
 ./cargo-isolated.sh test --no-default-features --features torrent-dht --test torrent_dht_e2e
@@ -36,6 +38,7 @@ pip3 install bencode.py
 
 **Target**: < 10 LLM calls per test suite
 **Actual Breakdown**:
+
 - **Server startup**: 1 call (parse prompt)
 - **First ping**: 1 call (new event type)
 - **Subsequent pings**: 0 calls (pattern reuse)
@@ -51,6 +54,7 @@ pip3 install bencode.py
 ## Runtime Expectations
 
 **Per Test**:
+
 - Server startup: 5-10s (LLM parses instruction)
 - Per DHT query: 0.5-2s (first query slower, subsequent faster)
 - UDP roundtrip: < 100ms
@@ -64,10 +68,12 @@ pip3 install bencode.py
 **Objective**: Verify basic DHT ping/pong
 
 **Setup**:
+
 1. Start NetGet DHT node on port {AVAILABLE_PORT}
 2. Prompt: "Start a BitTorrent DHT node. Respond to ping queries with node ID 0123456789abcdef0123456789abcdef01234567."
 
 **Test Steps**:
+
 1. Craft ping KRPC message:
    ```python
    {
@@ -89,6 +95,7 @@ pip3 install bencode.py
    ```
 
 **Validation**:
+
 ```rust
 let response: Value = serde_bencode::from_bytes(&response_data)?;
 assert!(matches!(response, Value::Dict(_)));
@@ -109,6 +116,7 @@ assert_eq!(node_id.len(), 20);
 **Setup**: Same as Test 1
 
 **Test Steps**:
+
 1. Craft find_node query:
    ```python
    {
@@ -135,6 +143,7 @@ assert_eq!(node_id.len(), 20);
    ```
 
 **Node Validation**:
+
 ```rust
 let nodes_bytes = r_dict.get(b"nodes".as_ref()).unwrap().as_bytes().unwrap();
 assert_eq!(nodes_bytes.len() % 26, 0, "Nodes must be 26-byte multiples");
@@ -152,6 +161,7 @@ if nodes_bytes.len() >= 26 {
 ```
 
 **LLM Behavior**:
+
 - LLM may return empty nodes list (valid if routing table is empty)
 - LLM may return random nodes (acceptable for testing)
 - LLM may return nodes sorted by XOR distance to target (ideal)
@@ -161,9 +171,12 @@ if nodes_bytes.len() >= 26 {
 **Objective**: Test peer discovery for info_hash
 
 **Setup**:
-1. Prompt: "Start a BitTorrent DHT node. For get_peers queries, return peers [192.168.1.100:6881, 192.168.1.101:6882] for any info_hash. Include token 'test_token'."
+
+1. Prompt: "Start a BitTorrent DHT node. For get_peers queries, return peers [192.168.1.100:6881, 192.168.1.101:6882]
+   for any info_hash. Include token 'test_token'."
 
 **Test Steps**:
+
 1. Craft get_peers query:
    ```python
    {
@@ -178,11 +191,12 @@ if nodes_bytes.len() >= 26 {
    ```
 2. Send to NetGet DHT node
 3. Verify response has EITHER:
-   - **Peers**: `"values": [<compact peer list>]`
-   - **OR Nodes**: `"nodes": <compact node list>` (fallback)
+    - **Peers**: `"values": [<compact peer list>]`
+    - **OR Nodes**: `"nodes": <compact node list>` (fallback)
 4. Must include: `"token": "<opaque value>"`
 
 **Peer Response Validation**:
+
 ```rust
 let r_dict = dict.get(b"r".as_ref()).unwrap().as_dict().unwrap();
 let token = r_dict.get(b"token".as_ref()).expect("Missing token");
@@ -208,11 +222,13 @@ if let Some(Value::Bytes(values)) = r_dict.get(b"values".as_ref()) {
 **Objective**: Verify response transaction IDs match query
 
 **Test Steps**:
+
 1. Send 3 queries with different transaction IDs: "t1", "t2", "t3"
 2. Verify each response has matching transaction ID
 3. Test with 2-byte binary transaction IDs (not just ASCII)
 
 **Validation**:
+
 ```rust
 let queries = vec![
     (b"t1".to_vec(), "ping"),
@@ -238,15 +254,18 @@ for (tid, query_type) in queries {
 **Objective**: Test error responses for malformed queries
 
 **Test Steps**:
+
 1. Send query with missing "id" field
 2. Send query with invalid query type
 3. Send non-bencode garbage data
 
 **Expected**:
+
 - LLM may respond with error message: `{"y": "e", "e": [code, "message"]}`
 - OR LLM may not respond at all (acceptable for UDP)
 
 **Validation**:
+
 ```rust
 // Timeout is acceptable for invalid queries
 match tokio::time::timeout(Duration::from_secs(5), socket.recv_from(&mut buf)).await {
@@ -269,6 +288,7 @@ match tokio::time::timeout(Duration::from_secs(5), socket.recv_from(&mut buf)).a
 ### Using transmission-daemon
 
 **Configure DHT**:
+
 ```bash
 # Stop transmission daemon
 sudo systemctl stop transmission-daemon
@@ -284,6 +304,7 @@ sudo nano /var/lib/transmission-daemon/.config/transmission-daemon/settings.json
 ```
 
 **Monitor Traffic**:
+
 ```bash
 # tcpdump to capture DHT queries
 sudo tcpdump -i lo -n -X 'udp port {PORT}'
@@ -292,6 +313,7 @@ sudo tcpdump -i lo -n -X 'udp port {PORT}'
 ### Using Custom Python Client
 
 **Send DHT Query**:
+
 ```python
 #!/usr/bin/env python3
 import socket
@@ -318,6 +340,7 @@ print(f"Response from {addr}: {response}")
 ## Test Helpers
 
 **Custom Helpers Needed**:
+
 ```rust
 /// Build bencode KRPC query
 fn build_dht_query(
@@ -374,7 +397,8 @@ fn parse_compact_peers(data: &[u8]) -> Vec<(String, u16)> {
 
 ## Known Issues
 
-1. **Empty Routing Table**: LLM likely won't maintain a routing table, so find_node responses may be empty or contain random nodes. This is expected.
+1. **Empty Routing Table**: LLM likely won't maintain a routing table, so find_node responses may be empty or contain
+   random nodes. This is expected.
 
 2. **No Peer Storage**: LLM may not track announced peers, so get_peers may always return empty or fallback to nodes.
 
@@ -387,17 +411,20 @@ fn parse_compact_peers(data: &[u8]) -> Vec<(String, u16)> {
 ## Debugging
 
 **Enable TRACE logging**:
+
 ```bash
 RUST_LOG=trace ./target/release/netget
 ```
 
 **Manual Testing with netcat**:
+
 ```bash
 # Not recommended (bencode is binary), use Python script instead
 python3 dht_test.py
 ```
 
 **Wireshark/tcpdump**:
+
 ```bash
 # Capture DHT traffic
 sudo tcpdump -i lo -n -X 'udp port 6881' -w dht_traffic.pcap
@@ -406,6 +433,7 @@ sudo tcpdump -i lo -n -X 'udp port 6881' -w dht_traffic.pcap
 ```
 
 **Bencode Inspector**:
+
 ```python
 import bencodepy
 with open('query.bin', 'rb') as f:
@@ -415,20 +443,24 @@ with open('query.bin', 'rb') as f:
 ## Performance Benchmarks
 
 **Single Query** (ping):
+
 - Time: ~1-3s (first query with LLM)
 - Time: ~0.5-1s (subsequent queries, pattern reused)
 
 **100 Sequential Queries**:
+
 - Time: ~30-60s (pattern reuse after first few)
 - LLM calls: 3-4 (ping, find_node, get_peers × 1 each)
 
 **Concurrent Queries** (--ollama-lock enabled):
+
 - Serialized through Ollama lock
 - Linear slowdown with concurrency
 
 ## Success Criteria
 
 ✅ **Pass Criteria**:
+
 - DHT node responds to ping, find_node, get_peers
 - Bencode responses are valid
 - Transaction IDs preserved
@@ -436,6 +468,7 @@ with open('query.bin', 'rb') as f:
 - < 10 LLM calls total
 
 ❌ **Failure Indicators**:
+
 - Bencode parse errors
 - Transaction ID mismatches
 - Invalid compact format lengths (not multiples of 26/6)

@@ -2,7 +2,8 @@
 
 ## Test Strategy
 
-End-to-end tests for Kafka client using a real Kafka broker. Tests verify producer and consumer functionality with LLM control.
+End-to-end tests for Kafka client using a real Kafka broker. Tests verify producer and consumer functionality with LLM
+control.
 
 ## Prerequisites
 
@@ -22,6 +23,7 @@ docker run -d \
 ```
 
 Alternatively, use Redpanda (Kafka-compatible, simpler setup):
+
 ```bash
 docker run -d \
   --name redpanda-test \
@@ -40,29 +42,30 @@ docker run -d \
 ## Tests
 
 1. **test_kafka_producer_send_message** (1 LLM call)
-   - Start Kafka producer client
-   - Send message to topic 'test-events'
-   - Verify client connection
+    - Start Kafka producer client
+    - Send message to topic 'test-events'
+    - Verify client connection
 
 2. **test_kafka_consumer_subscribe** (1 LLM call)
-   - Start Kafka consumer client
-   - Subscribe to topics
-   - Verify subscription
+    - Start Kafka consumer client
+    - Subscribe to topics
+    - Verify subscription
 
 3. **test_kafka_producer_consumer_flow** (2 LLM calls)
-   - Start consumer first (subscribe to topic)
-   - Start producer and send message
-   - Verify producer sends successfully
-   - Note: Consumer receive verification is non-deterministic due to offset/timing
+    - Start consumer first (subscribe to topic)
+    - Start producer and send message
+    - Verify producer sends successfully
+    - Note: Consumer receive verification is non-deterministic due to offset/timing
 
 4. **test_kafka_client_protocol_detection** (1 LLM call)
-   - Verify Kafka protocol is correctly detected
-   - Check client metadata
+    - Verify Kafka protocol is correctly detected
+    - Check client metadata
 
 ## Runtime
 
 **Expected:** < 30 seconds (with Kafka already running)
 **Breakdown:**
+
 - Kafka producer connection: ~2 seconds
 - Kafka consumer connection: ~2 seconds
 - Producer-consumer flow: ~6 seconds

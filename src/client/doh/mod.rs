@@ -36,16 +36,23 @@ impl DohClient {
         info!("DoH client {} initializing for {}", client_id, server_url);
 
         // Store server URL in client state
-        app_state.with_client_mut(client_id, |client| {
-            client.set_protocol_field(
-                "server_url".to_string(),
-                serde_json::json!(server_url.clone()),
-            );
-        }).await;
+        app_state
+            .with_client_mut(client_id, |client| {
+                client.set_protocol_field(
+                    "server_url".to_string(),
+                    serde_json::json!(server_url.clone()),
+                );
+            })
+            .await;
 
         // Update status to connected
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] DoH client {} connected to {}", client_id, server_url));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] DoH client {} connected to {}",
+            client_id, server_url
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         info!("DoH client {} connected to {}", client_id, server_url);
@@ -59,8 +66,14 @@ impl DohClient {
         );
 
         // Get instruction and memory for LLM call
-        let instruction = app_state.get_instruction_for_client(client_id).await.unwrap_or_default();
-        let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+        let instruction = app_state
+            .get_instruction_for_client(client_id)
+            .await
+            .unwrap_or_default();
+        let memory = app_state
+            .get_memory_for_client(client_id)
+            .await
+            .unwrap_or_default();
         let protocol = Arc::new(DohClientProtocol::new());
 
         // Call LLM with connected event
@@ -77,7 +90,11 @@ impl DohClient {
         .await
         {
             Ok(llm_result) => {
-                debug!("DoH client {} received {} actions from LLM", client_id, llm_result.actions.len());
+                debug!(
+                    "DoH client {} received {} actions from LLM",
+                    client_id,
+                    llm_result.actions.len()
+                );
 
                 // Execute any immediate actions
                 tokio::spawn(Self::execute_llm_actions(
@@ -124,13 +141,19 @@ impl DohClient {
                     let record_type = data["record_type"].as_str().unwrap_or("A");
                     let use_get = data["use_get"].as_bool().unwrap_or(false);
 
-                    info!("DoH client {} querying {} (type: {})", client_id, domain, record_type);
+                    info!(
+                        "DoH client {} querying {} (type: {})",
+                        client_id, domain, record_type
+                    );
 
                     // Parse domain name
                     let name = match Name::from_str(domain) {
                         Ok(n) => n,
                         Err(e) => {
-                            error!("DoH client {} invalid domain name {}: {}", client_id, domain, e);
+                            error!(
+                                "DoH client {} invalid domain name {}: {}",
+                                client_id, domain, e
+                            );
                             continue;
                         }
                     };
@@ -139,7 +162,10 @@ impl DohClient {
                     let rtype = match RecordType::from_str(record_type) {
                         Ok(rt) => rt,
                         Err(_) => {
-                            error!("DoH client {} invalid record type: {}", client_id, record_type);
+                            error!(
+                                "DoH client {} invalid record type: {}",
+                                client_id, record_type
+                            );
                             RecordType::A
                         }
                     };
@@ -164,7 +190,8 @@ impl DohClient {
                     let response_result = if use_get {
                         // GET method with base64url-encoded query
                         use base64::Engine as _;
-                        let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&query_bytes);
+                        let encoded =
+                            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&query_bytes);
                         http_client
                             .get(&format!("{}?dns={}", server_url, encoded))
                             .header("Accept", "application/dns-message")
@@ -184,7 +211,11 @@ impl DohClient {
                     match response_result {
                         Ok(response) => {
                             if !response.status().is_success() {
-                                error!("DoH client {} HTTP error: {}", client_id, response.status());
+                                error!(
+                                    "DoH client {} HTTP error: {}",
+                                    client_id,
+                                    response.status()
+                                );
                                 continue;
                             }
 
@@ -193,7 +224,10 @@ impl DohClient {
                                     // Parse DNS response
                                     match Message::from_vec(&response_bytes) {
                                         Ok(response_msg) => {
-                                            debug!("DoH client {} received DNS response for {}", client_id, domain);
+                                            debug!(
+                                                "DoH client {} received DNS response for {}",
+                                                client_id, domain
+                                            );
                                             trace!("DoH response: {:?}", response_msg);
 
                                             // Parse response
@@ -210,10 +244,15 @@ impl DohClient {
                                                 })
                                                 .collect();
 
-                                            let status = format!("{:?}", response_msg.response_code());
+                                            let status =
+                                                format!("{:?}", response_msg.response_code());
 
-                                            info!("DoH client {} query result: {} answers, status {}",
-                                                  client_id, answers.len(), status);
+                                            info!(
+                                                "DoH client {} query result: {} answers, status {}",
+                                                client_id,
+                                                answers.len(),
+                                                status
+                                            );
 
                                             // Send response event to LLM
                                             let response_event = Event::new(
@@ -228,8 +267,14 @@ impl DohClient {
                                             );
 
                                             // Get current instruction and memory
-                                            let instruction = app_state.get_instruction_for_client(client_id).await.unwrap_or_default();
-                                            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                                            let instruction = app_state
+                                                .get_instruction_for_client(client_id)
+                                                .await
+                                                .unwrap_or_default();
+                                            let memory = app_state
+                                                .get_memory_for_client(client_id)
+                                                .await
+                                                .unwrap_or_default();
 
                                             // Call LLM again with response
                                             match call_llm_for_client(
@@ -263,12 +308,18 @@ impl DohClient {
                                             }
                                         }
                                         Err(e) => {
-                                            error!("DoH client {} failed to parse DNS response: {}", client_id, e);
+                                            error!(
+                                                "DoH client {} failed to parse DNS response: {}",
+                                                client_id, e
+                                            );
                                         }
                                     }
                                 }
                                 Err(e) => {
-                                    error!("DoH client {} failed to read response body: {}", client_id, e);
+                                    error!(
+                                        "DoH client {} failed to read response body: {}",
+                                        client_id, e
+                                    );
                                 }
                             }
                         }
@@ -279,8 +330,11 @@ impl DohClient {
                 }
                 Ok(ClientActionResult::Disconnect) => {
                     info!("DoH client {} disconnecting", client_id);
-                    app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                    let _ = status_tx.send(format!("[CLIENT] DoH client {} disconnected", client_id));
+                    app_state
+                        .update_client_status(client_id, ClientStatus::Disconnected)
+                        .await;
+                    let _ =
+                        status_tx.send(format!("[CLIENT] DoH client {} disconnected", client_id));
                     break;
                 }
                 Ok(ClientActionResult::WaitForMore) => {
@@ -288,7 +342,10 @@ impl DohClient {
                     break;
                 }
                 Ok(other) => {
-                    error!("DoH client {} unexpected action result: {:?}", client_id, other);
+                    error!(
+                        "DoH client {} unexpected action result: {:?}",
+                        client_id, other
+                    );
                 }
                 Err(e) => {
                     error!("DoH client {} action execution failed: {}", client_id, e);

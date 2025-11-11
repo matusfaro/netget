@@ -5,6 +5,7 @@
 **Approach:** Black-box testing with real libfido2 tools and browsers
 
 **Test Types:**
+
 - Unit tests: None (protocol logic tested via E2E)
 - E2E tests: USB/IP attachment + libfido2 commands
 - Browser tests: WebAuthn with Chrome/Firefox (optional)
@@ -15,6 +16,7 @@
 **Current:** 0 (tests use real client tools, not LLM)
 
 **Rationale:**
+
 - FIDO2 protocol doesn't require LLM for operation
 - Tests verify USB/IP and cryptographic correctness
 - No prompt-driven behavior to test
@@ -68,16 +70,16 @@ sudo -E cargo test --no-default-features --features usb-fido2 test_fido2_make_cr
 
 ## Expected Runtime
 
-| Test | Duration | LLM Calls |
-|------|----------|-----------|
-| Server startup | 2s | 0 |
-| GetInfo | 5s | 0 |
-| U2F registration | 10s | 0 |
-| FIDO2 MakeCredential | 10s | 0 |
-| FIDO2 GetAssertion | 15s | 0 |
-| Multiple credentials | 30s | 0 |
-| Reset | 10s | 0 |
-| Chrome WebAuthn | 60s | 0 |
+| Test                 | Duration | LLM Calls |
+|----------------------|----------|-----------|
+| Server startup       | 2s       | 0         |
+| GetInfo              | 5s       | 0         |
+| U2F registration     | 10s      | 0         |
+| FIDO2 MakeCredential | 10s      | 0         |
+| FIDO2 GetAssertion   | 15s      | 0         |
+| Multiple credentials | 30s      | 0         |
+| Reset                | 10s      | 0         |
+| Chrome WebAuthn      | 60s      | 0         |
 
 **Total:** ~2-3 minutes
 
@@ -112,6 +114,7 @@ sudo -E cargo test --no-default-features --features usb-fido2 test_fido2_make_cr
 **Current Coverage:** ~85% (core features and transport tested, E2E integration pending)
 
 **Implemented Tests:**
+
 - ✅ Server startup with LLM integration
 - ✅ PIN/UV functionality (set, verify, retry counter, length validation)
 - ✅ Resident key creation and storage (multi-RP support)
@@ -125,6 +128,7 @@ sudo -E cargo test --no-default-features --features usb-fido2 test_fido2_make_cr
 - ✅ Browser WebAuthn integration (stub with JavaScript examples)
 
 **Pending Integration Tests:**
+
 - ❌ Real USB/IP client testing (requires usbip, libfido2-tools, sudo)
 - ❌ Browser WebAuthn E2E (requires Chrome/Chromium, chromedriver, selenium)
 - ❌ U2F vs FIDO2 protocol interoperability

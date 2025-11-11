@@ -7,7 +7,7 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, ServerConfig, E2EResult};
+use super::super::super::helpers::{self, E2EResult, ServerConfig};
 use mysql_async::prelude::*;
 use std::time::Duration;
 
@@ -25,7 +25,6 @@ async fn test_mysql_simple_query() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-
     // VALIDATION: Connect and execute query using mysql_async
     println!("Connecting to MySQL server...");
 
@@ -37,10 +36,7 @@ async fn test_mysql_simple_query() -> E2EResult<()> {
         .prefer_socket(false);
 
     let pool = mysql_async::Pool::new(opts);
-    let mut conn = match tokio::time::timeout(
-        Duration::from_secs(10),
-        pool.get_conn()
-    ).await {
+    let mut conn = match tokio::time::timeout(Duration::from_secs(10), pool.get_conn()).await {
         Ok(Ok(conn)) => {
             println!("✓ MySQL connected");
             conn
@@ -57,20 +53,18 @@ async fn test_mysql_simple_query() -> E2EResult<()> {
 
     // Execute simple query
     println!("Executing SELECT 1...");
-    let result: Option<i32> = match tokio::time::timeout(
-        Duration::from_secs(10),
-        conn.query_first("SELECT 1")
-    ).await {
-        Ok(Ok(res)) => res,
-        Ok(Err(e)) => {
-            println!("✗ Query error: {}", e);
-            return Err(e.into());
-        }
-        Err(_) => {
-            println!("✗ Query timeout");
-            return Err("Query timeout".into());
-        }
-    };
+    let result: Option<i32> =
+        match tokio::time::timeout(Duration::from_secs(10), conn.query_first("SELECT 1")).await {
+            Ok(Ok(res)) => res,
+            Ok(Err(e)) => {
+                println!("✗ Query error: {}", e);
+                return Err(e.into());
+            }
+            Err(_) => {
+                println!("✗ Query timeout");
+                return Err("Query timeout".into());
+            }
+        };
 
     match result {
         Some(1) => println!("✓ Received correct result: 1"),
@@ -99,7 +93,6 @@ async fn test_mysql_multi_row_query() -> E2EResult<()> {
 
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
-
 
     println!("Connecting to MySQL server...");
     let opts = mysql_async::OptsBuilder::default()
@@ -137,7 +130,6 @@ async fn test_mysql_create_table() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-
     println!("Connecting to MySQL server...");
     let opts = mysql_async::OptsBuilder::default()
         .ip_or_hostname("127.0.0.1")
@@ -150,7 +142,10 @@ async fn test_mysql_create_table() -> E2EResult<()> {
     println!("✓ MySQL connected");
 
     println!("Executing CREATE TABLE...");
-    match conn.query_drop("CREATE TABLE test (id INT PRIMARY KEY)").await {
+    match conn
+        .query_drop("CREATE TABLE test (id INT PRIMARY KEY)")
+        .await
+    {
         Ok(_) => println!("✓ CREATE TABLE executed successfully"),
         Err(e) => {
             println!("CREATE TABLE returned: {}", e);

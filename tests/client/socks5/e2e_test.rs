@@ -159,7 +159,9 @@ async fn test_socks5_client_no_auth_basic() {
     );
 
     // Get SOCKS5 client protocol
-    let protocol = CLIENT_REGISTRY.get("SOCKS5").expect("SOCKS5 protocol not found");
+    let protocol = CLIENT_REGISTRY
+        .get("SOCKS5")
+        .expect("SOCKS5 protocol not found");
 
     // Create client instance
     let client_id = app_state
@@ -198,7 +200,10 @@ async fn test_socks5_client_no_auth_basic() {
 
     let client_status = &client.unwrap().status;
     assert!(
-        matches!(client_status, ClientStatus::Connected | ClientStatus::Disconnected),
+        matches!(
+            client_status,
+            ClientStatus::Connected | ClientStatus::Disconnected
+        ),
         "Expected Connected or Disconnected, got {:?}",
         client_status
     );
@@ -217,7 +222,9 @@ async fn test_socks5_client_connection_failure() {
         "qwen3-coder:30b".to_string(),
     );
 
-    let protocol = CLIENT_REGISTRY.get("SOCKS5").expect("SOCKS5 protocol not found");
+    let protocol = CLIENT_REGISTRY
+        .get("SOCKS5")
+        .expect("SOCKS5 protocol not found");
 
     let client_id = app_state
         .create_client(
@@ -266,7 +273,9 @@ async fn test_socks5_client_missing_target_addr() {
         "qwen3-coder:30b".to_string(),
     );
 
-    let protocol = CLIENT_REGISTRY.get("SOCKS5").expect("SOCKS5 protocol not found");
+    let protocol = CLIENT_REGISTRY
+        .get("SOCKS5")
+        .expect("SOCKS5 protocol not found");
 
     let client_id = app_state
         .create_client(

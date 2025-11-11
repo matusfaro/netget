@@ -14,7 +14,7 @@ pub mod spawn_context;
 pub use client_registry::CLIENT_REGISTRY;
 pub use connect_context::ConnectContext;
 pub use dependencies::ProtocolDependency;
-pub use metadata::{ProtocolMetadata, ProtocolMetadataV2, DevelopmentState};
 pub use event_type::{Event, EventType};
+pub use metadata::{DevelopmentState, ProtocolMetadata, ProtocolMetadataV2};
 pub use server_registry::registry;
 pub use spawn_context::{SpawnContext, StartupParams};

@@ -69,9 +69,8 @@ impl DiskImage {
         }
 
         // Memory-map the file
-        let mmap = unsafe {
-            MmapMut::map_mut(&file).context("Failed to memory-map disk image file")?
-        };
+        let mmap =
+            unsafe { MmapMut::map_mut(&file).context("Failed to memory-map disk image file")? };
 
         Ok(Self {
             mmap,
@@ -183,7 +182,9 @@ impl DiskImage {
         debug!("Zeroing {} sectors from LBA {}", count, lba);
 
         self.mmap[offset..offset + length].fill(0);
-        self.mmap.flush().context("Failed to flush zero operation")?;
+        self.mmap
+            .flush()
+            .context("Failed to flush zero operation")?;
 
         Ok(())
     }

@@ -107,10 +107,8 @@ mod usb_client_tests {
     #[ignore]
     async fn test_usb_device_connection() {
         // Get test device VID/PID from environment
-        let vid = env::var("USB_TEST_VID")
-            .expect("USB_TEST_VID environment variable not set");
-        let pid = env::var("USB_TEST_PID")
-            .expect("USB_TEST_PID environment variable not set");
+        let vid = env::var("USB_TEST_VID").expect("USB_TEST_VID environment variable not set");
+        let pid = env::var("USB_TEST_PID").expect("USB_TEST_PID environment variable not set");
 
         println!("Testing USB device connection: VID:{} PID:{}", vid, pid);
 

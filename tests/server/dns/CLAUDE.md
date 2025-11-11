@@ -1,9 +1,12 @@
 # DNS Protocol E2E Tests
 
 ## Test Overview
-Tests DNS server implementation with A, TXT, and multiple record queries. Validates NXDOMAIN handling and multi-domain resolution. Uses hickory-client (real DNS client) for protocol correctness.
+
+Tests DNS server implementation with A, TXT, and multiple record queries. Validates NXDOMAIN handling and multi-domain
+resolution. Uses hickory-client (real DNS client) for protocol correctness.
 
 ## Test Strategy
+
 - **Isolated test servers**: Each test spawns separate NetGet instance with specific DNS configuration
 - **Real DNS client**: Uses hickory-client library (AsyncClient + UdpClientStream)
 - **Protocol correctness**: Tests actual DNS wire protocol, not mocked responses
@@ -11,43 +14,53 @@ Tests DNS server implementation with A, TXT, and multiple record queries. Valida
 - **No scripting**: Action-based LLM responses (tests LLM's ability to handle DNS semantics)
 
 ## LLM Call Budget
+
 - `test_dns_a_record_query()`: 1 LLM call (A record query)
 - `test_dns_multiple_records()`: 2 LLM calls (example.com + mail.example.com queries)
 - `test_dns_txt_record()`: 1 LLM call (TXT record query)
 - `test_dns_nxdomain()`: 1 LLM call (NXDOMAIN for unknown domain)
 - **Total: 5 LLM calls** (well under 10 limit)
 
-**Optimization Opportunity**: Could consolidate into single comprehensive DNS server handling all record types and domains, reducing to 1 startup call + 5 query calls = 6 total. However, current approach provides better isolation and clearer failure diagnosis.
+**Optimization Opportunity**: Could consolidate into single comprehensive DNS server handling all record types and
+domains, reducing to 1 startup call + 5 query calls = 6 total. However, current approach provides better isolation and
+clearer failure diagnosis.
 
 ## Scripting Usage
+
 ❌ **Scripting Disabled** - Action-based responses only
 
-**Rationale**: Tests validate that LLM can correctly generate DNS responses using structured actions. Scripting would bypass this validation. For production DNS servers, scripting is highly recommended for performance.
+**Rationale**: Tests validate that LLM can correctly generate DNS responses using structured actions. Scripting would
+bypass this validation. For production DNS servers, scripting is highly recommended for performance.
 
 ## Client Library
+
 - **hickory-client v0.24** - Async DNS client library
-  - `AsyncClient` - High-level DNS query interface
-  - `UdpClientStream` - UDP transport for DNS queries
-  - Handles DNS wire protocol automatically
-  - Validates response format
+    - `AsyncClient` - High-level DNS query interface
+    - `UdpClientStream` - UDP transport for DNS queries
+    - Handles DNS wire protocol automatically
+    - Validates response format
 
 **Why hickory-client?**:
+
 1. Real DNS protocol validation (not just "any UDP response")
 2. Ensures NetGet generates RFC-compliant DNS packets
 3. Same library family as server-side hickory-proto
 4. Async/await compatible with Tokio
 
 ## Expected Runtime
+
 - Model: qwen3-coder:30b
 - Runtime: ~40-50 seconds for full test suite (4 tests × ~10s each)
 - Each test includes: server startup (2-3s) + LLM response (5-8s) + DNS query (<1s)
 
 **Note**: DNS tests are faster than some other protocols because:
+
 - UDP is connectionless (no TCP handshake)
 - hickory-client is very fast
 - No complex protocol state machine
 
 ## Failure Rate
+
 - **Low** (~2-3%) - Occasional LLM response issues
 - Most common failure: LLM returns wrong record type or malformed IP address
 - Timeout failures: Very rare (<1%) - DNS queries have 5s timeout
@@ -56,63 +69,83 @@ Tests DNS server implementation with A, TXT, and multiple record queries. Valida
 ## Test Cases
 
 ### 1. DNS A Record Query (`test_dns_a_record_query`)
-- **Prompt**: "listen on port {port} via dns. Respond to all A record queries for example.com with IP address 93.184.216.34"
+
+- **Prompt**: "listen on port {port} via dns. Respond to all A record queries for example.com with IP address
+  93.184.216.34"
 - **Client**: Queries example.com A record using hickory-client
 - **Expected**: Response contains at least one A record
 - **Purpose**: Tests basic IPv4 address resolution
 - **Validation**: Checks `response.answers()` is non-empty
 
 ### 2. DNS Multiple Records (`test_dns_multiple_records`)
-- **Prompt**: "listen on port {port} via dns. For example.com A records return 1.2.3.4. For mail.example.com A records return 5.6.7.8"
+
+- **Prompt**: "listen on port {port} via dns. For example.com A records return 1.2.3.4. For mail.example.com A records
+  return 5.6.7.8"
 - **Client**: Queries both example.com and mail.example.com
 - **Expected**: Each query returns appropriate A record
 - **Purpose**: Tests multi-domain configuration and LLM's ability to distinguish domains
 - **LLM Calls**: 2 (one per domain query)
 
 ### 3. DNS TXT Record (`test_dns_txt_record`)
-- **Prompt**: "listen on port {port} via dns. For TXT record queries on example.com, return 'v=spf1 include:_spf.example.com ~all'"
+
+- **Prompt**: "listen on port {port} via dns. For TXT record queries on example.com, return 'v=spf1 include:_
+  spf.example.com ~all'"
 - **Client**: Queries example.com TXT record
 - **Expected**: Response contains TXT record
 - **Purpose**: Tests non-address record type (SPF record)
 - **Validation**: Checks for TXT record in answers
 
 ### 4. DNS NXDOMAIN (`test_dns_nxdomain`)
-- **Prompt**: "listen on port {port} via dns. Only respond with A records for known.example.com (1.2.3.4). For all other domains, return NXDOMAIN"
+
+- **Prompt**: "listen on port {port} via dns. Only respond with A records for known.example.com (1.2.3.4). For all other
+  domains, return NXDOMAIN"
 - **Client**: Queries unknown.example.com (should fail)
 - **Expected**: Either error or empty response (implementation-dependent)
 - **Purpose**: Tests error handling and NXDOMAIN response
-- **Note**: Test accepts both error and empty response as valid (NXDOMAIN can be represented either way by client library)
+- **Note**: Test accepts both error and empty response as valid (NXDOMAIN can be represented either way by client
+  library)
 
 ## Known Issues
 
 ### 1. NXDOMAIN Test Variability
+
 The `test_dns_nxdomain` test accepts two outcomes:
+
 1. `Ok(response)` with empty answers or NXDOMAIN response code
 2. `Err(...)` when hickory-client interprets NXDOMAIN as error
 
-**Reason**: Different DNS client libraries handle NXDOMAIN differently. Some return it as error, some as successful response with error code. Test accommodates both.
+**Reason**: Different DNS client libraries handle NXDOMAIN differently. Some return it as error, some as successful
+response with error code. Test accommodates both.
 
 ### 2. No Record Content Validation
-Tests check that responses exist but don't validate exact IP addresses or TXT content. This is intentional - LLM might format responses slightly differently (e.g., adding whitespace, capitalization).
+
+Tests check that responses exist but don't validate exact IP addresses or TXT content. This is intentional - LLM might
+format responses slightly differently (e.g., adding whitespace, capitalization).
 
 **Future Improvement**: Add assertions for exact record content once LLM responses are more consistent.
 
 ### 3. No AAAA, MX, CNAME Tests
+
 Current test suite only covers A and TXT records. Other record types are supported by the protocol but not tested.
 
-**Rationale**: A and TXT provide good coverage of address and text record types. Adding all record types would exceed LLM call budget.
+**Rationale**: A and TXT provide good coverage of address and text record types. Adding all record types would exceed
+LLM call budget.
 
 **Future Enhancement**: Create consolidated test with one server handling all record types.
 
 ### 4. No Concurrent Query Tests
+
 Tests send queries sequentially. No validation of concurrent query handling.
 
-**Reason**: DNS server handles concurrent queries correctly (separate tokio tasks per query), but testing concurrency would complicate assertions and increase LLM calls.
+**Reason**: DNS server handles concurrent queries correctly (separate tokio tasks per query), but testing concurrency
+would complicate assertions and increase LLM calls.
 
 ## Performance Notes
 
 ### Why hickory-client?
+
 Originally considered using raw UDP sockets (like DHCP/NTP tests), but hickory-client provides several advantages:
+
 - Validates DNS wire protocol compliance
 - Automatic query ID generation and matching
 - Timeout handling built-in
@@ -120,7 +153,9 @@ Originally considered using raw UDP sockets (like DHCP/NTP tests), but hickory-c
 - Minimal overhead (~1ms per query)
 
 ### DNS Protocol Characteristics
+
 DNS is inherently fast:
+
 - UDP transport (no TCP handshake)
 - Small packet sizes (typically <512 bytes)
 - Stateless request-response
@@ -131,6 +166,7 @@ Without LLM overhead, NetGet DNS server could handle thousands of queries per se
 ## Future Enhancements
 
 ### Test Coverage Gaps
+
 1. **AAAA records**: No IPv6 testing
 2. **MX records**: No mail exchange testing
 3. **CNAME records**: No alias testing
@@ -141,6 +177,7 @@ Without LLM overhead, NetGet DNS server could handle thousands of queries per se
 8. **Malformed queries**: No testing of invalid DNS packets
 
 ### Consolidation Opportunity
+
 All four tests could be consolidated into a single comprehensive server:
 
 ```rust
@@ -155,15 +192,19 @@ let prompt = format!(
 );
 ```
 
-This would reduce from 4 server spawns to 1, saving ~8-12 seconds of test time and reducing LLM calls from 5 to 4 (1 startup + 4 queries).
+This would reduce from 4 server spawns to 1, saving ~8-12 seconds of test time and reducing LLM calls from 5 to 4 (1
+startup + 4 queries).
 
 ### Scripting Mode Test
+
 Add test with scripting enabled to validate script generation:
+
 - Verify script handles A, TXT, NXDOMAIN correctly
 - Measure throughput improvement (should be 1000x faster)
 - Ensure script doesn't call LLM for each query
 
 ## References
+
 - [RFC 1034: DNS Concepts](https://datatracker.ietf.org/doc/html/rfc1034)
 - [RFC 1035: DNS Implementation](https://datatracker.ietf.org/doc/html/rfc1035)
 - [hickory-client Documentation](https://docs.rs/hickory-client/latest/hickory_client/)

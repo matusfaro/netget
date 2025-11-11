@@ -18,10 +18,10 @@ use tracing::{debug, error, info, trace};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
-use actions::{ArpProtocol, ARP_REQUEST_RECEIVED_EVENT};
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use actions::{ArpProtocol, ARP_REQUEST_RECEIVED_EVENT};
 
 /// Get LLM context and output format instructions for ARP stack
 pub fn get_llm_protocol_prompt() -> (&'static str, &'static str) {
@@ -65,7 +65,11 @@ impl ArpServer {
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
     ) -> Result<String> {
-        console_info!(status_tx, "Starting ARP capture on interface: {}", interface);
+        console_info!(
+            status_tx,
+            "Starting ARP capture on interface: {}",
+            interface
+        );
 
         let protocol = Arc::new(ArpProtocol::new());
 
@@ -194,16 +198,22 @@ impl ArpServer {
                         // Spawn async task to handle packet with LLM
                         runtime.spawn(async move {
                             // Build event data
-                            let event = Event::new(&ARP_REQUEST_RECEIVED_EVENT, serde_json::json!({
-                                "operation": operation_to_string(operation),
-                                "sender_mac": sender_mac.to_string(),
-                                "sender_ip": sender_ip.to_string(),
-                                "target_mac": target_mac.to_string(),
-                                "target_ip": target_ip.to_string(),
-                                "packet_hex": hex::encode(&data)
-                            }));
+                            let event = Event::new(
+                                &ARP_REQUEST_RECEIVED_EVENT,
+                                serde_json::json!({
+                                    "operation": operation_to_string(operation),
+                                    "sender_mac": sender_mac.to_string(),
+                                    "sender_ip": sender_ip.to_string(),
+                                    "target_mac": target_mac.to_string(),
+                                    "target_ip": target_ip.to_string(),
+                                    "packet_hex": hex::encode(&data)
+                                }),
+                            );
 
-                            debug!("ARP calling LLM for {} packet", operation_to_string(operation));
+                            debug!(
+                                "ARP calling LLM for {} packet",
+                                operation_to_string(operation)
+                            );
                             let _ = status_clone.send(format!(
                                 "[DEBUG] ARP calling LLM for {} packet",
                                 operation_to_string(operation)
@@ -216,14 +226,19 @@ impl ArpServer {
                                 None,
                                 &event,
                                 protocol_task_clone.as_ref(),
-                            ).await {
+                            )
+                            .await
+                            {
                                 Ok(execution_result) => {
                                     for message in &execution_result.messages {
                                         info!("{}", message);
                                         let _ = status_clone.send(format!("[INFO] {}", message));
                                     }
 
-                                    debug!("ARP got {} protocol results", execution_result.protocol_results.len());
+                                    debug!(
+                                        "ARP got {} protocol results",
+                                        execution_result.protocol_results.len()
+                                    );
                                     let _ = status_clone.send(format!(
                                         "[DEBUG] ARP got {} protocol results",
                                         execution_result.protocol_results.len()
@@ -231,17 +246,33 @@ impl ArpServer {
 
                                     // Send ARP replies if any via channel
                                     for protocol_result in execution_result.protocol_results {
-                                        if let Some(output_data) = protocol_result.get_all_output().first() {
+                                        if let Some(output_data) =
+                                            protocol_result.get_all_output().first()
+                                        {
                                             // Send packet via channel to injection thread
                                             if packet_tx_clone.send(output_data.clone()).is_ok() {
-                                                debug!("ARP queued {} bytes for sending", output_data.len());
-                                                let _ = status_clone.send(format!("[DEBUG] ARP queued {} bytes for sending", output_data.len()));
+                                                debug!(
+                                                    "ARP queued {} bytes for sending",
+                                                    output_data.len()
+                                                );
+                                                let _ = status_clone.send(format!(
+                                                    "[DEBUG] ARP queued {} bytes for sending",
+                                                    output_data.len()
+                                                ));
 
-                                                trace!("ARP reply (hex): {}", hex::encode(output_data));
-                                                let _ = status_clone.send(format!("[TRACE] ARP reply (hex): {}", hex::encode(output_data)));
+                                                trace!(
+                                                    "ARP reply (hex): {}",
+                                                    hex::encode(output_data)
+                                                );
+                                                let _ = status_clone.send(format!(
+                                                    "[TRACE] ARP reply (hex): {}",
+                                                    hex::encode(output_data)
+                                                ));
                                             } else {
                                                 error!("Failed to queue ARP reply");
-                                                let _ = status_clone.send("[ERROR] Failed to queue ARP reply".to_string());
+                                                let _ = status_clone.send(
+                                                    "[ERROR] Failed to queue ARP reply".to_string(),
+                                                );
                                             }
                                         }
                                     }

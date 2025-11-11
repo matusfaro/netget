@@ -2,7 +2,8 @@
 
 ## Overview
 
-The MQTT client implementation provides LLM-controlled MQTT pub/sub messaging capabilities using the `rumqttc` async library. This allows NetGet to connect to MQTT brokers and perform publish/subscribe operations under LLM control.
+The MQTT client implementation provides LLM-controlled MQTT pub/sub messaging capabilities using the `rumqttc` async
+library. This allows NetGet to connect to MQTT brokers and perform publish/subscribe operations under LLM control.
 
 ## Library Choice
 
@@ -68,26 +69,28 @@ This prevents concurrent LLM calls on the same client.
 ### Events Sent to LLM
 
 1. **mqtt_connected**: Fired when connection is established
-   - Allows LLM to subscribe to initial topics
-   - Parameters: `remote_addr`, `client_id`
+    - Allows LLM to subscribe to initial topics
+    - Parameters: `remote_addr`, `client_id`
 
 2. **mqtt_message_received**: Fired when a message is published to a subscribed topic
-   - Allows LLM to process message and potentially publish responses
-   - Parameters: `topic`, `payload`, `qos`, `retain`
+    - Allows LLM to process message and potentially publish responses
+    - Parameters: `topic`, `payload`, `qos`, `retain`
 
 3. **mqtt_subscribed**: Fired when subscription is confirmed (optional, not currently used)
-   - Could be used for complex subscription workflows
-   - Parameters: `topics`
+    - Could be used for complex subscription workflows
+    - Parameters: `topics`
 
 ### Actions Available to LLM
 
 **Async Actions** (user-initiated):
+
 - `subscribe`: Subscribe to topic patterns (supports `+` and `#` wildcards)
 - `publish`: Publish message to a topic with QoS and retain flag
 - `unsubscribe`: Remove subscriptions
 - `disconnect`: Close connection to broker
 
 **Sync Actions** (in response to events):
+
 - `publish`: Send response message based on received data
 - `subscribe`: Dynamically subscribe to new topics
 
@@ -114,6 +117,7 @@ The MQTT client supports the following startup parameters:
 - **clean_session**: Start with clean session (default: true)
 
 Example:
+
 ```json
 {
   "client_id": "netget-sensor-monitor",
@@ -145,7 +149,8 @@ Wildcards cannot be used in publish topics.
 
 ## Limitations
 
-1. **No TLS support (yet)**: Currently plain TCP only. TLS support can be added via `rumqttc::MqttOptions::set_transport()`
+1. **No TLS support (yet)**: Currently plain TCP only. TLS support can be added via
+   `rumqttc::MqttOptions::set_transport()`
 2. **No will message**: Last Will and Testament not exposed to LLM (can be added)
 3. **No manual acknowledgments**: QoS 1/2 acks are handled automatically by rumqttc
 4. **Limited broker state**: No access to broker statistics or connection metrics

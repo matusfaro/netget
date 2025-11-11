@@ -1,9 +1,11 @@
 //! SSH Agent client protocol actions
 
 use crate::llm::actions::client_trait::{Client, ClientActionResult};
-use crate::llm::actions::{ActionDefinition, Parameter, ParameterDefinition, protocol_trait::Protocol};
-use crate::protocol::{EventType, ConnectContext};
+use crate::llm::actions::{
+    protocol_trait::Protocol, ActionDefinition, Parameter, ParameterDefinition,
+};
 use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+use crate::protocol::{ConnectContext, EventType};
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
@@ -62,7 +64,9 @@ impl Protocol for SshAgentClientProtocol {
         vec![ParameterDefinition {
             name: "socket_path".to_string(),
             type_hint: "string".to_string(),
-            description: "Path to SSH Agent Unix socket (default: $SSH_AUTH_SOCK or ./ssh-agent.sock)".to_string(),
+            description:
+                "Path to SSH Agent Unix socket (default: $SSH_AUTH_SOCK or ./ssh-agent.sock)"
+                    .to_string(),
             required: false,
             example: json!("./ssh-agent.sock"),
         }]
@@ -240,10 +244,7 @@ impl Client for SshAgentClientProtocol {
         })
     }
 
-    fn execute_action(
-        &self,
-        action: Value,
-    ) -> Result<ClientActionResult> {
+    fn execute_action(&self, action: Value) -> Result<ClientActionResult> {
         let action_type = action["type"]
             .as_str()
             .context("Missing 'type' field in action")?;

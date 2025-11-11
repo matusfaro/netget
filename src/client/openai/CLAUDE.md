@@ -2,7 +2,9 @@
 
 ## Overview
 
-The OpenAI client provides LLM-controlled access to the OpenAI API, enabling chat completions, embeddings generation, and other AI capabilities. This implementation uses the `async-openai` crate (v0.26) which provides a well-tested Rust SDK for the OpenAI API.
+The OpenAI client provides LLM-controlled access to the OpenAI API, enabling chat completions, embeddings generation,
+and other AI capabilities. This implementation uses the `async-openai` crate (v0.26) which provides a well-tested Rust
+SDK for the OpenAI API.
 
 ## Library Choices
 
@@ -13,6 +15,7 @@ The OpenAI client provides LLM-controlled access to the OpenAI API, enabling cha
 **License:** MIT
 
 **Why async-openai:**
+
 - **Official-like quality**: Well-maintained, follows OpenAI API specifications closely
 - **Async-first**: Built on tokio for efficient async operations
 - **Type-safe**: Strongly-typed request/response structures
@@ -21,6 +24,7 @@ The OpenAI client provides LLM-controlled access to the OpenAI API, enabling cha
 - **Streaming support**: Can handle streaming responses (future enhancement)
 
 **Alternatives considered:**
+
 - **Direct HTTP calls with reqwest**: More flexible but requires manual request building and error handling
 - **openai-api-rust**: Less actively maintained, fewer features
 
@@ -28,7 +32,8 @@ The OpenAI client provides LLM-controlled access to the OpenAI API, enabling cha
 
 ### Connection Model
 
-Unlike traditional network clients, the OpenAI client is "connectionless" - it's an HTTP API client that makes requests on demand. The connection process:
+Unlike traditional network clients, the OpenAI client is "connectionless" - it's an HTTP API client that makes requests
+on demand. The connection process:
 
 1. **Initialization**: Store API credentials in client protocol data
 2. **Background task**: Monitor for client lifecycle (connection removal)
@@ -60,18 +65,20 @@ Unlike traditional network clients, the OpenAI client is "connectionless" - it's
 ### LLM Integration
 
 **Events:**
+
 1. **`openai_connected`**: Fired when client initializes
-   - Parameters: `api_endpoint`
+    - Parameters: `api_endpoint`
 
 2. **`openai_response_received`**: Fired when API responds
-   - Parameters: `response_type`, `content`, `model`, `usage`
+    - Parameters: `response_type`, `content`, `model`, `usage`
 
 **Actions:**
+
 1. **`send_chat_completion`**: Create chat completion
-   - Parameters: `messages`, `model`, `temperature`, `max_tokens`, `functions`
+    - Parameters: `messages`, `model`, `temperature`, `max_tokens`, `functions`
 
 2. **`send_embedding_request`**: Generate embeddings
-   - Parameters: `input`, `model`
+    - Parameters: `input`, `model`
 
 3. **`disconnect`**: Close client (stop monitoring)
 
@@ -117,6 +124,7 @@ LLM processes response
 ### Chat Completions
 
 **Message Format:**
+
 ```json
 {
   "type": "send_chat_completion",
@@ -131,11 +139,13 @@ LLM processes response
 ```
 
 **Supported Roles:**
+
 - `system`: System message (context setting)
 - `user`: User message
 - `assistant`: Assistant message (conversation history)
 
 **Response Structure:**
+
 - Extracts first choice content
 - Includes token usage stats (prompt_tokens, completion_tokens, total_tokens)
 - Sends structured event to LLM for processing
@@ -143,6 +153,7 @@ LLM processes response
 ### Embeddings
 
 **Request Format:**
+
 ```json
 {
   "type": "send_embedding_request",
@@ -152,16 +163,19 @@ LLM processes response
 ```
 
 **Input Types:**
+
 - Single string: `"input": "text"`
 - Array of strings: `"input": ["text1", "text2"]`
 
 **Response:**
+
 - Returns embedding count and dimensions
 - Stores embeddings in client memory (future: expose to LLM)
 
 ### Error Handling
 
 All API errors are:
+
 1. Logged via tracing
 2. Sent to status channel for UI display
 3. Wrapped in `openai_response_received` event with `response_type: "error"`
@@ -172,24 +186,24 @@ All API errors are:
 ### Current Limitations
 
 1. **Function Calling**: Declared in action parameters but not yet implemented
-   - Requires translating OpenAI function schemas to/from LLM action format
-   - Future enhancement planned
+    - Requires translating OpenAI function schemas to/from LLM action format
+    - Future enhancement planned
 
 2. **Streaming**: async-openai supports streaming, but not integrated
-   - Would require modifying event system to handle partial responses
-   - Future enhancement for long-running completions
+    - Would require modifying event system to handle partial responses
+    - Future enhancement for long-running completions
 
 3. **Embeddings Storage**: Embeddings are generated but not stored long-term
-   - Could be enhanced with vector database integration
-   - LLM currently only sees embedding count/dimensions
+    - Could be enhanced with vector database integration
+    - LLM currently only sees embedding count/dimensions
 
 4. **Model Validation**: No validation of model names
-   - Invalid models fail at API call time
-   - Could add model enumeration
+    - Invalid models fail at API call time
+    - Could add model enumeration
 
 5. **Custom Endpoints**: Basic support for alternative OpenAI-compatible APIs
-   - Tested primarily with official OpenAI API
-   - May require adjustments for some providers
+    - Tested primarily with official OpenAI API
+    - May require adjustments for some providers
 
 ### Protocol-Specific Considerations
 
@@ -202,11 +216,13 @@ All API errors are:
 See `tests/client/openai/CLAUDE.md` for testing details.
 
 **E2E Test Requirements:**
+
 - Valid OpenAI API key (set via startup params)
 - Network access to OpenAI API
 - Budget for API token usage (minimal, <1000 tokens per test)
 
 **Test Coverage:**
+
 - Basic chat completion (1 LLM call)
 - Multi-turn conversation (2-3 LLM calls)
 - Embeddings generation (1 LLM call)
@@ -242,6 +258,7 @@ See `tests/client/openai/CLAUDE.md` for testing details.
 ## Dependencies
 
 **Runtime:**
+
 - `async-openai` v0.26 (OpenAI API client)
 - `tokio` (async runtime)
 - `serde_json` (JSON serialization)
@@ -249,6 +266,7 @@ See `tests/client/openai/CLAUDE.md` for testing details.
 - `tracing` (logging)
 
 **Dev:**
+
 - `async-openai` v0.26 (E2E tests)
 
 ## References

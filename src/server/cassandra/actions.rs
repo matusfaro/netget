@@ -4,8 +4,8 @@ use crate::llm::actions::{
     protocol_trait::{ActionResult, Protocol, Server},
     ActionDefinition, Parameter,
 };
-use crate::server::connection::ConnectionId;
 use crate::protocol::EventType;
+use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
@@ -36,8 +36,8 @@ impl CassandraProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for CassandraProtocol {
-        fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
-            vec![
+    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        vec![
                 crate::llm::actions::ParameterDefinition {
                     name: "send_first".to_string(),
                     type_hint: "boolean".to_string(),
@@ -46,100 +46,101 @@ impl Protocol for CassandraProtocol {
                     example: serde_json::json!(false),
                 },
             ]
-        }
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            vec![list_cassandra_connections_action()]
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                cassandra_ready_action(),
-                cassandra_supported_action(),
-                cassandra_result_rows_action(),
-                cassandra_prepared_action(),
-                cassandra_auth_success_action(),
-                cassandra_error_action(),
-                close_this_connection_action(),
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "Cassandra"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            get_cassandra_event_types()
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>TCP>Cassandra"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["cassandra", "cql"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Experimental)
-                .implementation("cassandra-protocol v3.0 (Protocol v4)")
-                .llm_control("CQL queries, prepared statements, auth")
-                .e2e_testing("scylla client")
-                .notes("Limited types (int, varchar, boolean)")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "Cassandra/CQL database server"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Start a Cassandra/CQL database server on port 9042"
-        }
-        fn group_name(&self) -> &'static str {
-            "Database"
-        }
+    }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        vec![list_cassandra_connections_action()]
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            cassandra_ready_action(),
+            cassandra_supported_action(),
+            cassandra_result_rows_action(),
+            cassandra_prepared_action(),
+            cassandra_auth_success_action(),
+            cassandra_error_action(),
+            close_this_connection_action(),
+        ]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "Cassandra"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_cassandra_event_types()
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>Cassandra"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["cassandra", "cql"]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("cassandra-protocol v3.0 (Protocol v4)")
+            .llm_control("CQL queries, prepared statements, auth")
+            .e2e_testing("scylla client")
+            .notes("Limited types (int, varchar, boolean)")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "Cassandra/CQL database server"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Start a Cassandra/CQL database server on port 9042"
+    }
+    fn group_name(&self) -> &'static str {
+        "Database"
+    }
 }
 
 // Implement Server trait (server-specific functionality)
 impl Server for CassandraProtocol {
-        fn spawn(
-            &self,
-            ctx: crate::protocol::SpawnContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::server::cassandra::CassandraServer;
-                let send_first = ctx.startup_params
-                    .as_ref()
-                    .and_then(|p| p.get_optional_bool("send_first"))
-                    .unwrap_or(false);
-    
-                CassandraServer::spawn_with_llm_actions(
-                    ctx.listen_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    send_first,
-                    ctx.server_id,
-                ).await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "cassandra_ready" => self.execute_cassandra_ready(),
-                "cassandra_supported" => self.execute_cassandra_supported(action),
-                "cassandra_result_rows" => self.execute_cassandra_result_rows(action),
-                "cassandra_prepared" => self.execute_cassandra_prepared(action),
-                "cassandra_auth_success" => self.execute_cassandra_auth_success(),
-                "cassandra_error" => self.execute_cassandra_error(action),
-                "close_this_connection" => Ok(ActionResult::CloseConnection),
-                "list_cassandra_connections" => self.execute_list_cassandra_connections(action),
-                _ => Err(anyhow::anyhow!("Unknown Cassandra action: {}", action_type)),
-            }
-        }
-}
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::cassandra::CassandraServer;
+            let send_first = ctx
+                .startup_params
+                .as_ref()
+                .and_then(|p| p.get_optional_bool("send_first"))
+                .unwrap_or(false);
 
+            CassandraServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                send_first,
+                ctx.server_id,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
+
+        match action_type {
+            "cassandra_ready" => self.execute_cassandra_ready(),
+            "cassandra_supported" => self.execute_cassandra_supported(action),
+            "cassandra_result_rows" => self.execute_cassandra_result_rows(action),
+            "cassandra_prepared" => self.execute_cassandra_prepared(action),
+            "cassandra_auth_success" => self.execute_cassandra_auth_success(),
+            "cassandra_error" => self.execute_cassandra_error(action),
+            "close_this_connection" => Ok(ActionResult::CloseConnection),
+            "list_cassandra_connections" => self.execute_list_cassandra_connections(action),
+            _ => Err(anyhow::anyhow!("Unknown Cassandra action: {}", action_type)),
+        }
+    }
+}
 
 impl CassandraProtocol {
     fn execute_cassandra_ready(&self) -> Result<ActionResult> {
@@ -159,7 +160,9 @@ impl CassandraProtocol {
             .map(|o| o.clone());
 
         debug!("Cassandra SUPPORTED response with options");
-        let _ = self.status_tx.send(format!("[DEBUG] Cassandra → SUPPORTED"));
+        let _ = self
+            .status_tx
+            .send(format!("[DEBUG] Cassandra → SUPPORTED"));
 
         Ok(ActionResult::Custom {
             name: "cassandra_supported".to_string(),
@@ -228,9 +231,9 @@ impl CassandraProtocol {
     fn execute_cassandra_auth_success(&self) -> Result<ActionResult> {
         debug!("Cassandra authentication successful");
 
-        let _ = self.status_tx.send(format!(
-            "[DEBUG] Cassandra → AUTH_SUCCESS"
-        ));
+        let _ = self
+            .status_tx
+            .send(format!("[DEBUG] Cassandra → AUTH_SUCCESS"));
 
         Ok(ActionResult::Custom {
             name: "cassandra_auth_success".to_string(),
@@ -249,7 +252,10 @@ impl CassandraProtocol {
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown error");
 
-        debug!("Cassandra error response: 0x{:04X} - {}", error_code, message);
+        debug!(
+            "Cassandra error response: 0x{:04X} - {}",
+            error_code, message
+        );
 
         let _ = self.status_tx.send(format!(
             "[DEBUG] Cassandra ✗ Error 0x{:04X}: {}",
@@ -351,14 +357,14 @@ fn cassandra_prepared_action() -> ActionDefinition {
     ActionDefinition {
         name: "cassandra_prepared".to_string(),
         description: "Send prepared statement response with result column metadata".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "columns".to_string(),
-                type_hint: "array".to_string(),
-                description: "Column definitions for the result set that the prepared query will return".to_string(),
-                required: true,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "columns".to_string(),
+            type_hint: "array".to_string(),
+            description:
+                "Column definitions for the result set that the prepared query will return"
+                    .to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "cassandra_prepared",
             "columns": [
@@ -418,7 +424,7 @@ fn close_this_connection_action() -> ActionDefinition {
 pub static CASSANDRA_STARTUP_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "cassandra_startup",
-        "Client sends STARTUP frame with protocol version and options"
+        "Client sends STARTUP frame with protocol version and options",
     )
     .with_parameters(vec![
         Parameter {
@@ -434,53 +440,44 @@ pub static CASSANDRA_STARTUP_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: true,
         },
     ])
-    .with_actions(vec![
-        cassandra_ready_action(),
-        cassandra_error_action(),
-    ])
+    .with_actions(vec![cassandra_ready_action(), cassandra_error_action()])
 });
 
 pub static CASSANDRA_OPTIONS_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "cassandra_options",
-        "Client requests supported protocol options"
+        "Client requests supported protocol options",
     )
-    .with_actions(vec![
-        cassandra_supported_action(),
-        cassandra_error_action(),
-    ])
+    .with_actions(vec![cassandra_supported_action(), cassandra_error_action()])
 });
 
 pub static CASSANDRA_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "cassandra_query",
-        "Client sends CQL query to execute"
-    )
-    .with_parameters(vec![
-        Parameter {
-            name: "query".to_string(),
-            type_hint: "string".to_string(),
-            description: "The CQL query string".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "consistency".to_string(),
-            type_hint: "string".to_string(),
-            description: "Consistency level (ONE, QUORUM, ALL, etc.)".to_string(),
-            required: false,
-        },
-    ])
-    .with_actions(vec![
-        cassandra_result_rows_action(),
-        cassandra_error_action(),
-        close_this_connection_action(),
-    ])
+    EventType::new("cassandra_query", "Client sends CQL query to execute")
+        .with_parameters(vec![
+            Parameter {
+                name: "query".to_string(),
+                type_hint: "string".to_string(),
+                description: "The CQL query string".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "consistency".to_string(),
+                type_hint: "string".to_string(),
+                description: "Consistency level (ONE, QUORUM, ALL, etc.)".to_string(),
+                required: false,
+            },
+        ])
+        .with_actions(vec![
+            cassandra_result_rows_action(),
+            cassandra_error_action(),
+            close_this_connection_action(),
+        ])
 });
 
 pub static CASSANDRA_PREPARE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "cassandra_prepare",
-        "Client sends PREPARE frame to prepare a parameterized query"
+        "Client sends PREPARE frame to prepare a parameterized query",
     )
     .with_parameters(vec![
         Parameter {
@@ -502,16 +499,13 @@ pub static CASSANDRA_PREPARE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: true,
         },
     ])
-    .with_actions(vec![
-        cassandra_prepared_action(),
-        cassandra_error_action(),
-    ])
+    .with_actions(vec![cassandra_prepared_action(), cassandra_error_action()])
 });
 
 pub static CASSANDRA_EXECUTE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "cassandra_execute",
-        "Client sends EXECUTE frame to execute a prepared statement with parameters"
+        "Client sends EXECUTE frame to execute a prepared statement with parameters",
     )
     .with_parameters(vec![
         Parameter {
@@ -542,7 +536,7 @@ pub static CASSANDRA_EXECUTE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 pub static CASSANDRA_AUTH_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "cassandra_auth",
-        "Client sends AUTH_RESPONSE with credentials (SASL PLAIN)"
+        "Client sends AUTH_RESPONSE with credentials (SASL PLAIN)",
     )
     .with_parameters(vec![
         Parameter {

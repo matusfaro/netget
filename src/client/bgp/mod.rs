@@ -226,7 +226,8 @@ impl BgpClient {
                     app_state
                         .update_client_status(client_id, ClientStatus::Disconnected)
                         .await;
-                    let _ = status_tx.send(format!("[CLIENT] BGP client {} disconnected", client_id));
+                    let _ =
+                        status_tx.send(format!("[CLIENT] BGP client {} disconnected", client_id));
                     let _ = status_tx.send("__UPDATE_UI__".to_string());
                     break;
                 }
@@ -245,7 +246,10 @@ impl BgpClient {
             // Parse message length
             let msg_len = u16::from_be_bytes([header_buf[16], header_buf[17]]) as usize;
             if msg_len < BGP_HEADER_LEN || msg_len > 4096 {
-                error!("BGP client {} invalid message length: {}", client_id, msg_len);
+                error!(
+                    "BGP client {} invalid message length: {}",
+                    client_id, msg_len
+                );
                 return Err(anyhow!("Invalid BGP message length: {}", msg_len));
             }
 
@@ -316,7 +320,10 @@ impl BgpClient {
                     break;
                 }
                 _ => {
-                    warn!("BGP client {} unsupported message type: {}", client_id, msg_type);
+                    warn!(
+                        "BGP client {} unsupported message type: {}",
+                        client_id, msg_type
+                    );
                 }
             }
         }
@@ -456,7 +463,11 @@ impl BgpClient {
         status_tx: &mpsc::UnboundedSender<String>,
         client_data: &Arc<Mutex<ClientData>>,
     ) -> Result<()> {
-        trace!("BGP client {} received UPDATE: {} bytes", client_id, body.len());
+        trace!(
+            "BGP client {} received UPDATE: {} bytes",
+            client_id,
+            body.len()
+        );
         let _ = status_tx.send(format!(
             "[CLIENT] BGP UPDATE received: {} bytes",
             body.len()

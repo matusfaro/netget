@@ -15,7 +15,10 @@ pub enum ConversationSource {
     /// User input from the command line
     User,
     /// Network event from a protocol implementation
-    Network { server_id: ServerId, connection_id: Option<ConnectionId> },
+    Network {
+        server_id: ServerId,
+        connection_id: Option<ConnectionId>,
+    },
     /// Scheduled task execution
     Task { task_name: String },
     /// Scripting mode execution
@@ -26,7 +29,10 @@ impl ConversationSource {
     pub fn display_label(&self) -> String {
         match self {
             ConversationSource::User => "[User]".to_string(),
-            ConversationSource::Network { server_id, connection_id } => {
+            ConversationSource::Network {
+                server_id,
+                connection_id,
+            } => {
                 if let Some(conn_id) = connection_id {
                     format!("[Net #{}:{}]", server_id.as_u32(), conn_id)
                 } else {
@@ -118,8 +124,7 @@ impl std::fmt::Display for ScriptingMode {
 }
 
 /// Web search mode - controls when web search is allowed
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WebSearchMode {
     /// Web search always enabled
     #[default]
@@ -159,10 +164,8 @@ impl std::str::FromStr for WebSearchMode {
     }
 }
 
-
 /// Event handler mode - controls how LLM should configure event handlers
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EventHandlerMode {
     /// LLM chooses handler types (script/static/llm) as appropriate
     #[default]
@@ -205,7 +208,6 @@ impl std::str::FromStr for EventHandlerMode {
         }
     }
 }
-
 
 /// Request for web search approval (sent from tool executor to UI)
 pub struct WebApprovalRequest {
@@ -312,7 +314,7 @@ impl AppState {
                 selected_scripting_mode,
                 event_handler_mode,
                 web_search_mode: WebSearchMode::On, // Default to enabled
-                web_approval_tx: None, // Will be set by TUI
+                web_approval_tx: None,              // Will be set by TUI
                 include_disabled_protocols,
                 ollama_lock_enabled,
                 instance_id,
@@ -542,12 +544,12 @@ impl AppState {
         // Toggle between ON and OFF only
         // If currently on a specific language, treat as ON and toggle to OFF
         let next = match current {
-            ScriptingMode::On | ScriptingMode::Python | ScriptingMode::JavaScript | ScriptingMode::Go | ScriptingMode::Perl => {
-                ScriptingMode::Off
-            }
-            ScriptingMode::Off => {
-                ScriptingMode::On
-            }
+            ScriptingMode::On
+            | ScriptingMode::Python
+            | ScriptingMode::JavaScript
+            | ScriptingMode::Go
+            | ScriptingMode::Perl => ScriptingMode::Off,
+            ScriptingMode::Off => ScriptingMode::On,
         };
 
         inner.selected_scripting_mode = next;
@@ -604,7 +606,9 @@ impl AppState {
     }
 
     /// Get a clone of the web approval channel
-    pub async fn get_web_approval_channel(&self) -> Option<mpsc::UnboundedSender<WebApprovalRequest>> {
+    pub async fn get_web_approval_channel(
+        &self,
+    ) -> Option<mpsc::UnboundedSender<WebApprovalRequest>> {
         self.inner.read().await.web_approval_tx.clone()
     }
 
@@ -653,8 +657,11 @@ impl AppState {
         &self,
         server_id: ServerId,
     ) -> Option<crate::scripting::EventHandlerConfig> {
-        self.inner.read().await
-            .servers.get(&server_id)
+        self.inner
+            .read()
+            .await
+            .servers
+            .get(&server_id)
             .and_then(|s| s.event_handler_config.clone())
     }
 
@@ -766,7 +773,8 @@ impl AppState {
         }
 
         // Clean up any tasks associated with this connection
-        self.cleanup_connection_tasks(server_id, connection_id).await;
+        self.cleanup_connection_tasks(server_id, connection_id)
+            .await;
     }
 
     /// Remove a connection from a specific server (used by cleanup task)
@@ -782,7 +790,8 @@ impl AppState {
         // Clean up any tasks associated with this connection (safety measure)
         // Tasks should already be cleaned up when connection was closed,
         // but this ensures no orphaned tasks remain
-        self.cleanup_connection_tasks(server_id, connection_id).await;
+        self.cleanup_connection_tasks(server_id, connection_id)
+            .await;
     }
 
     // ========== Proxy Filter Configuration Methods ==========
@@ -914,7 +923,10 @@ impl AppState {
         if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
             if let Some(conn) = server.connections.get_mut(&connection_id) {
                 if let Some(obj) = conn.protocol_info.data.as_object_mut() {
-                    obj.insert("session_state".to_string(), serde_json::to_value(&session_state).unwrap_or(serde_json::Value::Null));
+                    obj.insert(
+                        "session_state".to_string(),
+                        serde_json::to_value(&session_state).unwrap_or(serde_json::Value::Null),
+                    );
                 }
             }
         }
@@ -935,13 +947,22 @@ impl AppState {
             if let Some(conn) = server.connections.get_mut(&connection_id) {
                 if let Some(obj) = conn.protocol_info.data.as_object_mut() {
                     if let Some(s) = session_state {
-                        obj.insert("session_state".to_string(), serde_json::to_value(&s).unwrap_or(serde_json::Value::Null));
+                        obj.insert(
+                            "session_state".to_string(),
+                            serde_json::to_value(&s).unwrap_or(serde_json::Value::Null),
+                        );
                     }
                     if let Some(u) = authenticated_user {
-                        obj.insert("authenticated_user".to_string(), serde_json::to_value(&u).unwrap_or(serde_json::Value::Null));
+                        obj.insert(
+                            "authenticated_user".to_string(),
+                            serde_json::to_value(&u).unwrap_or(serde_json::Value::Null),
+                        );
                     }
                     if let Some(m) = selected_mailbox {
-                        obj.insert("selected_mailbox".to_string(), serde_json::to_value(&m).unwrap_or(serde_json::Value::Null));
+                        obj.insert(
+                            "selected_mailbox".to_string(),
+                            serde_json::to_value(&m).unwrap_or(serde_json::Value::Null),
+                        );
                     }
                     if let Some(r) = mailbox_read_only {
                         obj.insert("mailbox_read_only".to_string(), serde_json::Value::Bool(r));
@@ -965,11 +986,20 @@ impl AppState {
         let inner = self.inner.read().await;
         if let Some(server) = inner.servers.get(&server_id) {
             if let Some(conn) = server.connections.get(&connection_id) {
-                let session_state = conn.protocol_info.data.get("session_state")
+                let session_state = conn
+                    .protocol_info
+                    .data
+                    .get("session_state")
                     .and_then(|v| serde_json::from_value(v.clone()).ok())?;
-                let authenticated_user = conn.protocol_info.data.get("authenticated_user")
+                let authenticated_user = conn
+                    .protocol_info
+                    .data
+                    .get("authenticated_user")
                     .and_then(|v| serde_json::from_value(v.clone()).ok());
-                let selected_mailbox = conn.protocol_info.data.get("selected_mailbox")
+                let selected_mailbox = conn
+                    .protocol_info
+                    .data
+                    .get("selected_mailbox")
                     .and_then(|v| serde_json::from_value(v.clone()).ok());
                 return Some((
                     session_state,
@@ -992,7 +1022,10 @@ impl AppState {
         if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
             if let Some(conn) = server.connections.get_mut(&connection_id) {
                 if let Some(obj) = conn.protocol_info.data.as_object_mut() {
-                    obj.insert("state".to_string(), serde_json::to_value(&protocol_state).unwrap_or(serde_json::Value::Null));
+                    obj.insert(
+                        "state".to_string(),
+                        serde_json::to_value(&protocol_state).unwrap_or(serde_json::Value::Null),
+                    );
                 }
             }
         }
@@ -1053,8 +1086,14 @@ impl AppState {
         if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
             if let Some(conn) = server.connections.get_mut(&connection_id) {
                 if let Some(obj) = conn.protocol_info.data.as_object_mut() {
-                    obj.insert("authenticated".to_string(), serde_json::Value::Bool(authenticated));
-                    obj.insert("username".to_string(), serde_json::to_value(&username).unwrap_or(serde_json::Value::Null));
+                    obj.insert(
+                        "authenticated".to_string(),
+                        serde_json::Value::Bool(authenticated),
+                    );
+                    obj.insert(
+                        "username".to_string(),
+                        serde_json::to_value(&username).unwrap_or(serde_json::Value::Null),
+                    );
                 }
             }
         }
@@ -1070,10 +1109,16 @@ impl AppState {
         if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
             if let Some(conn) = server.connections.get_mut(&connection_id) {
                 if let Some(obj) = conn.protocol_info.data.as_object_mut() {
-                    obj.insert("last_message_type".to_string(), serde_json::Value::String(last_message_type.clone()));
+                    obj.insert(
+                        "last_message_type".to_string(),
+                        serde_json::Value::String(last_message_type.clone()),
+                    );
                     // Mark handshake complete if we've seen both version and verack
                     if last_message_type == "verack" {
-                        obj.insert("handshake_complete".to_string(), serde_json::Value::Bool(true));
+                        obj.insert(
+                            "handshake_complete".to_string(),
+                            serde_json::Value::Bool(true),
+                        );
                     }
                 }
             }
@@ -1087,7 +1132,8 @@ impl AppState {
     pub async fn get_vnc_write_half(
         &self,
         _connection_id: ConnectionId,
-    ) -> Option<std::sync::Arc<tokio::sync::Mutex<tokio::io::WriteHalf<tokio::net::TcpStream>>>> {
+    ) -> Option<std::sync::Arc<tokio::sync::Mutex<tokio::io::WriteHalf<tokio::net::TcpStream>>>>
+    {
         // Write halves are no longer stored in centralized state
         // Protocols manage their own local connection data for I/O
         None
@@ -1247,12 +1293,7 @@ impl AppState {
     where
         F: FnOnce(&mut ClientInstance) -> R,
     {
-        self.inner
-            .write()
-            .await
-            .clients
-            .get_mut(&client_id)
-            .map(f)
+        self.inner.write().await.clients.get_mut(&client_id).map(f)
     }
 
     /// Update event handler configuration for a client
@@ -1377,12 +1418,7 @@ impl AppState {
     where
         F: FnOnce(&mut ServerInstance) -> R,
     {
-        self.inner
-            .write()
-            .await
-            .servers
-            .get_mut(&server_id)
-            .map(f)
+        self.inner.write().await.servers.get_mut(&server_id).map(f)
     }
 
     // ===== Task Management Methods =====
@@ -1640,8 +1676,7 @@ impl AppState {
             .filter(|conv| {
                 matches!(
                     &conv.source,
-                    ConversationSource::User | ConversationSource::Scripting
-                    // Global tasks would be ConversationSource::Task but we need to filter by scope
+                    ConversationSource::User | ConversationSource::Scripting // Global tasks would be ConversationSource::Task but we need to filter by scope
                 )
             })
             .collect()
@@ -1661,13 +1696,15 @@ impl AppState {
     }
 
     /// Get or create the user conversation state
-    pub async fn get_or_create_user_conversation_state(&self) -> Arc<std::sync::Mutex<crate::llm::ConversationState>> {
+    pub async fn get_or_create_user_conversation_state(
+        &self,
+    ) -> Arc<std::sync::Mutex<crate::llm::ConversationState>> {
         let mut inner = self.inner.write().await;
 
         if inner.user_conversation_state.is_none() {
             // Create with default 50k character limit for conversation history
             let conversation_state = Arc::new(std::sync::Mutex::new(
-                crate::llm::ConversationState::new(50000)
+                crate::llm::ConversationState::new(50000),
             ));
             inner.user_conversation_state = Some(conversation_state.clone());
         }

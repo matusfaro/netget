@@ -14,7 +14,9 @@ mod syslog_client_tests {
     #[tokio::test]
     async fn test_syslog_client_udp_connect() -> E2EResult<()> {
         // Start a UDP server listening on an available port (acting as syslog receiver)
-        let server_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via UDP. Log all incoming syslog messages.");
+        let server_config = NetGetConfig::new(
+            "Listen on port {AVAILABLE_PORT} via UDP. Log all incoming syslog messages.",
+        );
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -95,7 +97,8 @@ mod syslog_client_tests {
     #[tokio::test]
     async fn test_syslog_client_custom_messages() -> E2EResult<()> {
         // Start a UDP server
-        let server_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via UDP. Log all incoming data.");
+        let server_config =
+            NetGetConfig::new("Listen on port {AVAILABLE_PORT} via UDP. Log all incoming data.");
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -112,7 +115,10 @@ mod syslog_client_tests {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Verify the client is syslog protocol
-        assert_eq!(client.protocol, "Syslog", "Client should be Syslog protocol");
+        assert_eq!(
+            client.protocol, "Syslog",
+            "Client should be Syslog protocol"
+        );
 
         println!("✅ Syslog client responded to LLM instruction");
 

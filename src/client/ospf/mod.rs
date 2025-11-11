@@ -19,8 +19,8 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace, warn};
 
 use crate::client::ospf::actions::{
-    OSPF_CLIENT_CONNECTED_EVENT, OSPF_CLIENT_DD_RECEIVED_EVENT,
-    OSPF_CLIENT_HELLO_RECEIVED_EVENT, OSPF_CLIENT_LSU_RECEIVED_EVENT,
+    OSPF_CLIENT_CONNECTED_EVENT, OSPF_CLIENT_DD_RECEIVED_EVENT, OSPF_CLIENT_HELLO_RECEIVED_EVENT,
+    OSPF_CLIENT_LSU_RECEIVED_EVENT,
 };
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::actions::client_trait::{Client, ClientActionResult};
@@ -221,8 +221,7 @@ impl OspfClient {
                         }
 
                         // Extract source IP from IP header
-                        let src_ip =
-                            Ipv4Addr::new(buffer[12], buffer[13], buffer[14], buffer[15]);
+                        let src_ip = Ipv4Addr::new(buffer[12], buffer[13], buffer[14], buffer[15]);
 
                         // Extract OSPF packet
                         let ospf_data = &buffer[ip_header_len..n];
@@ -335,12 +334,8 @@ impl OspfClient {
             OSPF_TYPE_HELLO => {
                 Self::parse_hello_packet(&ospf_data, &src_ip, &sender_router_id, &sender_area_id)
             }
-            OSPF_TYPE_DATABASE_DESCRIPTION => {
-                Self::parse_dd_packet(&ospf_data, &sender_router_id)
-            }
-            OSPF_TYPE_LINK_STATE_UPDATE => {
-                Self::parse_lsu_packet(&ospf_data, &sender_router_id)
-            }
+            OSPF_TYPE_DATABASE_DESCRIPTION => Self::parse_dd_packet(&ospf_data, &sender_router_id),
+            OSPF_TYPE_LINK_STATE_UPDATE => Self::parse_lsu_packet(&ospf_data, &sender_router_id),
             OSPF_TYPE_LINK_STATE_REQUEST => {
                 debug!("OSPF LSR from {}", sender_router_id);
                 None
@@ -379,47 +374,48 @@ impl OspfClient {
                             client_data.lock().await.memory = new_memory;
                         }
 
-                    // Execute actions
-                    for action in result.actions {
-                        match protocol.execute_action(action) {
-                            Ok(ClientActionResult::Custom { name, data }) => {
-                                if name.starts_with("ospf_") {
-                                    if let Err(e) =
-                                        Self::handle_ospf_action(&name, &data, socket_fd)
-                                    {
-                                        error!("Failed to execute OSPF action: {}", e);
-                                        let _ = status_tx
-                                            .send(format!("✗ OSPF action error: {}", e));
+                        // Execute actions
+                        for action in result.actions {
+                            match protocol.execute_action(action) {
+                                Ok(ClientActionResult::Custom { name, data }) => {
+                                    if name.starts_with("ospf_") {
+                                        if let Err(e) =
+                                            Self::handle_ospf_action(&name, &data, socket_fd)
+                                        {
+                                            error!("Failed to execute OSPF action: {}", e);
+                                            let _ = status_tx
+                                                .send(format!("✗ OSPF action error: {}", e));
+                                        }
                                     }
                                 }
-                            }
-                            Ok(ClientActionResult::Disconnect) => {
-                                info!("OSPF client {} disconnecting", client_id);
-                                app_state
-                                    .update_client_status(client_id, ClientStatus::Disconnected)
-                                    .await;
-                                let _ = status_tx.send(format!(
-                                    "[CLIENT] OSPF client {} disconnected",
-                                    client_id
-                                ));
-                                let _ = status_tx.send("__UPDATE_UI__".to_string());
-                                return;
-                            }
-                            Ok(ClientActionResult::WaitForMore) => {
-                                trace!("OSPF client {} waiting for more", client_id);
-                            }
-                            Ok(_) => {}
-                            Err(e) => {
-                                error!("Failed to execute action: {}", e);
+                                Ok(ClientActionResult::Disconnect) => {
+                                    info!("OSPF client {} disconnecting", client_id);
+                                    app_state
+                                        .update_client_status(client_id, ClientStatus::Disconnected)
+                                        .await;
+                                    let _ = status_tx.send(format!(
+                                        "[CLIENT] OSPF client {} disconnected",
+                                        client_id
+                                    ));
+                                    let _ = status_tx.send("__UPDATE_UI__".to_string());
+                                    return;
+                                }
+                                Ok(ClientActionResult::WaitForMore) => {
+                                    trace!("OSPF client {} waiting for more", client_id);
+                                }
+                                Ok(_) => {}
+                                Err(e) => {
+                                    error!("Failed to execute action: {}", e);
+                                }
                             }
                         }
                     }
+                    Err(e) => {
+                        error!("OSPF client {} LLM call failed: {}", client_id, e);
+                        let _ =
+                            status_tx.send(format!("✗ OSPF client {} LLM error: {}", client_id, e));
+                    }
                 }
-                Err(e) => {
-                    error!("OSPF client {} LLM call failed: {}", client_id, e);
-                    let _ = status_tx.send(format!("✗ OSPF client {} LLM error: {}", client_id, e));
-                }
-            }
             }
         }
 
@@ -564,7 +560,11 @@ impl OspfClient {
         ))
     }
 
-    fn handle_ospf_action(action_name: &str, data: &serde_json::Value, socket_fd: i32) -> Result<()> {
+    fn handle_ospf_action(
+        action_name: &str,
+        data: &serde_json::Value,
+        socket_fd: i32,
+    ) -> Result<()> {
         let packet = match action_name {
             "ospf_send_hello" => {
                 crate::server::ospf::actions::OspfProtocol::build_hello_packet(data)?

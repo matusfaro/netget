@@ -30,8 +30,10 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
-use crate::state::server::{ConnectionState as ServerConnectionState, ConnectionStatus, ProtocolConnectionInfo, ServerId};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
+use crate::state::server::{
+    ConnectionState as ServerConnectionState, ConnectionStatus, ProtocolConnectionInfo, ServerId,
+};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 
 pub use actions::XmlRpcProtocol;
 
@@ -52,10 +54,7 @@ impl XmlRpcServer {
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         info!("XML-RPC server (action-based) listening on {}", local_addr);
-        let _ = status_tx.send(format!(
-            "[INFO] XML-RPC server listening on {}",
-            local_addr
-        ));
+        let _ = status_tx.send(format!("[INFO] XML-RPC server listening on {}", local_addr));
 
         let protocol = Arc::new(XmlRpcProtocol::new());
 
@@ -63,11 +62,9 @@ impl XmlRpcServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
-                        debug!(
-                            "XML-RPC connection {} from {}",
-                            connection_id, remote_addr
-                        );
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
+                        debug!("XML-RPC connection {} from {}", connection_id, remote_addr);
                         let _ = status_tx.send(format!(
                             "→ XML-RPC connection {} from {}",
                             connection_id, remote_addr
@@ -124,10 +121,7 @@ impl XmlRpcServer {
                                 .serve_connection(io, service)
                                 .await
                             {
-                                error!(
-                                    "XML-RPC connection {} error: {}",
-                                    connection_id, e
-                                );
+                                error!("XML-RPC connection {} error: {}", connection_id, e);
                                 let _ = status_clone.send(format!(
                                     "[ERROR] XML-RPC connection {} error: {}",
                                     connection_id, e
@@ -138,10 +132,8 @@ impl XmlRpcServer {
                             state_clone
                                 .close_connection_on_server(server_id, connection_id)
                                 .await;
-                            let _ = status_clone.send(format!(
-                                "✗ XML-RPC connection {} closed",
-                                connection_id
-                            ));
+                            let _ = status_clone
+                                .send(format!("✗ XML-RPC connection {} closed", connection_id));
                             let _ = status_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
@@ -199,10 +191,7 @@ async fn handle_xmlrpc_request(
 
     // Trace full request
     trace!("XML-RPC request body:\n{}", body_str);
-    let _ = status_tx.send(format!(
-        "[TRACE] XML-RPC request body:\r\n{}",
-        body_str
-    ));
+    let _ = status_tx.send(format!("[TRACE] XML-RPC request body:\r\n{}", body_str));
 
     // Check if it's POST (XML-RPC requires POST)
     if parts.method != hyper::Method::POST {
@@ -326,7 +315,7 @@ pub struct MethodCall {
 #[derive(Debug, Clone, PartialEq)]
 pub enum XmlRpcValue {
     Int(i32),
-    I8(i64),         // Extension: 64-bit integer
+    I8(i64), // Extension: 64-bit integer
     Boolean(bool),
     String(String),
     Double(f64),
@@ -334,7 +323,7 @@ pub enum XmlRpcValue {
     Base64(Vec<u8>),
     Array(Vec<XmlRpcValue>),
     Struct(Vec<(String, XmlRpcValue)>), // key-value pairs
-    Nil,             // Extension: null value
+    Nil,                                // Extension: null value
 }
 
 /// Parse XML-RPC methodCall from XML string
@@ -414,7 +403,8 @@ fn parse_method_call(xml: &str) -> Result<MethodCall> {
                     }
                     b"member" => {
                         if let Some(s) = struct_stack.last_mut() {
-                            if let (Some(name), Some(val)) = (member_name.take(), value_stack.pop()) {
+                            if let (Some(name), Some(val)) = (member_name.take(), value_stack.pop())
+                            {
                                 s.push((name, val));
                             }
                         }

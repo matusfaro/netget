@@ -7,7 +7,7 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, ServerConfig, E2EResult};
+use super::super::super::helpers::{self, E2EResult, ServerConfig};
 
 #[tokio::test]
 async fn test_http_simple_get() -> E2EResult<()> {
@@ -19,10 +19,17 @@ async fn test_http_simple_get() -> E2EResult<()> {
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
-    println!("Server started: {} stack on port {}", server.stack, server.port);
+    println!(
+        "Server started: {} stack on port {}",
+        server.stack, server.port
+    );
 
     // Verify it's actually an HTTP server
-    assert_eq!(server.stack, "HTTP", "Expected HTTP server but got {}", server.stack);
+    assert_eq!(
+        server.stack, "HTTP",
+        "Expected HTTP server but got {}",
+        server.stack
+    );
 
     // VALIDATION: Make request and check response
     let client = reqwest::Client::new();
@@ -150,14 +157,10 @@ async fn test_http_headers() -> E2EResult<()> {
     // Check custom headers (case-insensitive)
     let headers = response.headers();
 
-    let api_version = headers
-        .get("x-api-version")
-        .and_then(|v| v.to_str().ok());
+    let api_version = headers.get("x-api-version").and_then(|v| v.to_str().ok());
     assert_eq!(api_version, Some("1.0"));
 
-    let custom = headers
-        .get("x-custom")
-        .and_then(|v| v.to_str().ok());
+    let custom = headers.get("x-custom").and_then(|v| v.to_str().ok());
     assert_eq!(custom, Some("test-value"));
 
     let body = response.text().await?;
@@ -279,10 +282,17 @@ async fn test_http_simple_get_with_logging() -> E2EResult<()> {
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
-    println!("Server started: {} stack on port {}", server.stack, server.port);
+    println!(
+        "Server started: {} stack on port {}",
+        server.stack, server.port
+    );
 
     // Verify it's actually an HTTP server
-    assert_eq!(server.stack, "HTTP", "Expected HTTP server but got {}", server.stack);
+    assert_eq!(
+        server.stack, "HTTP",
+        "Expected HTTP server but got {}",
+        server.stack
+    );
 
     // VALIDATION: Make request and check response
     let client = reqwest::Client::new();
@@ -340,7 +350,9 @@ async fn test_http_simple_get_with_logging() -> E2EResult<()> {
     } else {
         // Log file not being created is acceptable as the LLM might interpret the instruction differently
         // We'll make this a soft assertion
-        println!("⚠ No access log file found (LLM may have interpreted the instruction differently)");
+        println!(
+            "⚠ No access log file found (LLM may have interpreted the instruction differently)"
+        );
     }
 
     println!("=== Test passed ===\n");

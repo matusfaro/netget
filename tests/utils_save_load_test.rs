@@ -12,8 +12,12 @@ fn test_normalize_filename() {
 #[test]
 fn test_is_actions_json() {
     // Valid actions JSON - {"actions": [...]} format
-    assert!(is_actions_json(r#"{"actions":[{"type":"open_server","port":8080,"base_stack":"http","instruction":"test"}]}"#));
-    assert!(is_actions_json(r#"{"actions":[{"type":"show_message","message":"hello"}]}"#));
+    assert!(is_actions_json(
+        r#"{"actions":[{"type":"open_server","port":8080,"base_stack":"http","instruction":"test"}]}"#
+    ));
+    assert!(is_actions_json(
+        r#"{"actions":[{"type":"show_message","message":"hello"}]}"#
+    ));
 
     // Invalid - not wrapped in actions object
     assert!(!is_actions_json(r#"[{"type":"open_server"}]"#));

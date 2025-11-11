@@ -47,22 +47,31 @@ impl UsbSerialServer {
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
     ) -> Result<SocketAddr> {
-        let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let listener =
+            crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         info!("USB Serial server listening on {}", local_addr);
         let _ = status_tx.send(format!("USB Serial server listening on {}", local_addr));
 
-        let _connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>> = Arc::new(Mutex::new(HashMap::new()));
+        let _connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>> =
+            Arc::new(Mutex::new(HashMap::new()));
         let _protocol = Arc::new(crate::server::usb::serial::actions::UsbSerialProtocol::new());
 
         tokio::spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
-                        info!("USB/IP connection {} from {} (USB serial)", connection_id, remote_addr);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
+                        info!(
+                            "USB/IP connection {} from {} (USB serial)",
+                            connection_id, remote_addr
+                        );
 
-                        use crate::state::server::{ConnectionState as ServerConnectionState, ConnectionStatus, ProtocolConnectionInfo};
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -80,7 +89,9 @@ impl UsbSerialServer {
                                 "baud_rate": 115200
                             })),
                         };
-                        app_state.add_connection_to_server(server_id, conn_state).await;
+                        app_state
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         // Placeholder connection handler

@@ -12,7 +12,11 @@ use tokio::sync::mpsc;
 use tokio::time::{sleep, timeout, Duration};
 
 /// Helper to wait for status message matching a predicate
-async fn wait_for_status<F>(rx: &mut mpsc::UnboundedReceiver<String>, predicate: F, timeout_secs: u64) -> bool
+async fn wait_for_status<F>(
+    rx: &mut mpsc::UnboundedReceiver<String>,
+    predicate: F,
+    timeout_secs: u64,
+) -> bool
 where
     F: Fn(&str) -> bool,
 {
@@ -66,7 +70,12 @@ async fn test_elasticsearch_client_index_and_search() {
     // LLM Call 1: Initial connection + index document action
     // Wait for connection
     assert!(
-        wait_for_status(&mut status_rx, |msg| msg.contains("Elasticsearch client") && msg.contains("ready"), 10).await,
+        wait_for_status(
+            &mut status_rx,
+            |msg| msg.contains("Elasticsearch client") && msg.contains("ready"),
+            10
+        )
+        .await,
         "Elasticsearch client did not connect"
     );
 
@@ -125,7 +134,12 @@ async fn test_elasticsearch_client_bulk_operations() {
 
     // LLM Call 1: Initial connection + bulk operation action
     assert!(
-        wait_for_status(&mut status_rx, |msg| msg.contains("Elasticsearch client") && msg.contains("ready"), 10).await,
+        wait_for_status(
+            &mut status_rx,
+            |msg| msg.contains("Elasticsearch client") && msg.contains("ready"),
+            10
+        )
+        .await,
         "Elasticsearch client did not connect"
     );
 
@@ -162,13 +176,16 @@ async fn test_elasticsearch_client_document_lifecycle() {
 
     // Open Elasticsearch client
     let client_id = app_state.next_client_id().await;
-    app_state.add_client(
-        client_id,
-        "Elasticsearch".to_string(),
-        "localhost:9200".to_string(),
-        "Index a document with id 'test-doc-1' in 'test-index', then get it, then delete it".to_string(),
-        None,
-    ).await;
+    app_state
+        .add_client(
+            client_id,
+            "Elasticsearch".to_string(),
+            "localhost:9200".to_string(),
+            "Index a document with id 'test-doc-1' in 'test-index', then get it, then delete it"
+                .to_string(),
+            None,
+        )
+        .await;
 
     // Connect the client
     use netget::cli::client_startup::start_client_by_id;
@@ -177,7 +194,12 @@ async fn test_elasticsearch_client_document_lifecycle() {
 
     // LLM Call 1: Initial connection + index action
     assert!(
-        wait_for_status(&mut status_rx, |msg| msg.contains("Elasticsearch client") && msg.contains("ready"), 10).await,
+        wait_for_status(
+            &mut status_rx,
+            |msg| msg.contains("Elasticsearch client") && msg.contains("ready"),
+            10
+        )
+        .await,
         "Elasticsearch client did not connect"
     );
 

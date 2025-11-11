@@ -183,8 +183,8 @@ async fn save_actions(actions: Vec<Value>, filename: &str) -> Result<PathBuf> {
     });
 
     // Serialize to pretty JSON
-    let json = serde_json::to_string_pretty(&wrapped)
-        .context("Failed to serialize actions to JSON")?;
+    let json =
+        serde_json::to_string_pretty(&wrapped).context("Failed to serialize actions to JSON")?;
 
     // Write to file
     let mut file = fs::File::create(&path)
@@ -233,14 +233,14 @@ pub fn is_actions_json(input: &str) -> bool {
         // Check for {"actions": [...]} format
         if let Some(actions) = value.get("actions").and_then(|v| v.as_array()) {
             // Check if all elements have a "type" field
-            return !actions.is_empty() && actions.iter().all(|item| {
-                item.as_object()
-                    .and_then(|obj| obj.get("type"))
-                    .and_then(|t| t.as_str())
-                    .is_some()
-            });
+            return !actions.is_empty()
+                && actions.iter().all(|item| {
+                    item.as_object()
+                        .and_then(|obj| obj.get("type"))
+                        .and_then(|t| t.as_str())
+                        .is_some()
+                });
         }
     }
     false
 }
-

@@ -142,7 +142,8 @@ async fn test_isis_capture_with_llm() -> Result<()> {
         id: client_id,
         protocol_name: "IS-IS".to_string(),
         remote_addr: interface.to_string(),
-        instruction: "Capture IS-IS Hello and LSP PDUs. Identify all routers and their neighbors.".to_string(),
+        instruction: "Capture IS-IS Hello and LSP PDUs. Identify all routers and their neighbors."
+            .to_string(),
         status: ClientStatus::Connecting,
         memory: String::new(),
         startup_params: None,
@@ -194,9 +195,8 @@ fn test_isis_pdu_parsing() {
     // Test with a sample IS-IS Hello PDU
 
     // Sample IS-IS L2 LAN Hello PDU (hex)
-    let sample_pdu = hex::decode(
-        "83 1b 01 00 10 01 00 00 00 01 02 03 04 05 06 01 00 00 00 00"
-    ).unwrap();
+    let sample_pdu =
+        hex::decode("83 1b 01 00 10 01 00 00 00 01 02 03 04 05 06 01 00 00 00 00").unwrap();
 
     // Basic validation: first byte should be 0x83 (IS-IS discriminator)
     assert_eq!(sample_pdu[0], 0x83, "IS-IS discriminator should be 0x83");

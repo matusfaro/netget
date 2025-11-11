@@ -10,13 +10,13 @@ use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, trace, warn};
 
+use crate::client::sip::actions::{SIP_CLIENT_CONNECTED_EVENT, SIP_CLIENT_RESPONSE_RECEIVED_EVENT};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::sip::actions::{SIP_CLIENT_CONNECTED_EVENT, SIP_CLIENT_RESPONSE_RECEIVED_EVENT};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -158,10 +158,7 @@ impl SipClient {
                         let response = match Self::parse_sip_response(&data) {
                             Ok(resp) => resp,
                             Err(e) => {
-                                warn!(
-                                    "SIP client {} failed to parse response: {}",
-                                    client_id, e
-                                );
+                                warn!("SIP client {} failed to parse response: {}", client_id, e);
                                 continue;
                             }
                         };
@@ -258,7 +255,10 @@ impl SipClient {
 
                                 // Send automatic ACK for 200 OK response to INVITE (RFC 3261)
                                 if response.method == "INVITE" && response.status_code == 200 {
-                                    info!("SIP client {} sending automatic ACK for INVITE 200 OK", client_id);
+                                    info!(
+                                        "SIP client {} sending automatic ACK for INVITE 200 OK",
+                                        client_id
+                                    );
 
                                     let client_data_lock = client_data_clone.lock().await;
                                     let ack_request = Self::build_ack_request(
@@ -271,14 +271,20 @@ impl SipClient {
 
                                     match socket_clone.send(&ack_request).await {
                                         Ok(sent) => {
-                                            info!("SIP client {} sent ACK ({} bytes)", client_id, sent);
+                                            info!(
+                                                "SIP client {} sent ACK ({} bytes)",
+                                                client_id, sent
+                                            );
                                             let _ = status_clone.send(format!(
                                                 "[CLIENT] SIP client {} sent ACK",
                                                 client_id
                                             ));
                                         }
                                         Err(e) => {
-                                            error!("SIP client {} ACK send error: {}", client_id, e);
+                                            error!(
+                                                "SIP client {} ACK send error: {}",
+                                                client_id, e
+                                            );
                                         }
                                     }
                                 }
@@ -304,16 +310,19 @@ impl SipClient {
                                         // Skip provisional responses in queue
                                         if queued_response.status_code >= 200 {
                                             // Set state to Processing for queued response
-                                            client_data_clone.lock().await.state = ConnectionState::Processing;
+                                            client_data_clone.lock().await.state =
+                                                ConnectionState::Processing;
 
                                             // Extract To tag if present
                                             if let Some(to_tag) = &queued_response.to_tag {
-                                                client_data_clone.lock().await.to_tag = Some(to_tag.clone());
+                                                client_data_clone.lock().await.to_tag =
+                                                    Some(to_tag.clone());
                                             }
 
                                             // Call LLM for queued response
-                                            if let Some(instruction) =
-                                                state_clone.get_instruction_for_client(client_id).await
+                                            if let Some(instruction) = state_clone
+                                                .get_instruction_for_client(client_id)
+                                                .await
                                             {
                                                 let event = Event::new(
                                                     &SIP_CLIENT_RESPONSE_RECEIVED_EVENT,
@@ -345,7 +354,8 @@ impl SipClient {
                                                         memory_updates,
                                                     }) => {
                                                         if let Some(mem) = memory_updates {
-                                                            client_data_clone.lock().await.memory = mem;
+                                                            client_data_clone.lock().await.memory =
+                                                                mem;
                                                         }
 
                                                         for action in actions {
@@ -367,7 +377,8 @@ impl SipClient {
                                             }
 
                                             // Reset state after processing queued response
-                                            client_data_clone.lock().await.state = ConnectionState::Idle;
+                                            client_data_clone.lock().await.state =
+                                                ConnectionState::Idle;
                                         }
                                     }
                                 }
@@ -386,8 +397,8 @@ impl SipClient {
                         state_clone
                             .update_client_status(client_id, ClientStatus::Error(e.to_string()))
                             .await;
-                        let _ =
-                            status_clone.send(format!("[CLIENT] SIP client {} error: {}", client_id, e));
+                        let _ = status_clone
+                            .send(format!("[CLIENT] SIP client {} error: {}", client_id, e));
                         let _ = status_clone.send("__UPDATE_UI__".to_string());
                         break;
                     }
@@ -412,7 +423,8 @@ impl SipClient {
         match protocol.as_ref().execute_action(action.clone()) {
             Ok(ClientActionResult::Custom { name, data }) => {
                 match name.as_str() {
-                    "sip_register" | "sip_invite" | "sip_ack" | "sip_bye" | "sip_options" | "sip_cancel" => {
+                    "sip_register" | "sip_invite" | "sip_ack" | "sip_bye" | "sip_options"
+                    | "sip_cancel" => {
                         // Build and send SIP request
                         let mut client_data_lock = client_data.lock().await;
 

@@ -111,7 +111,8 @@ mod e2e_bitcoin {
 
         // Read server's version response
         println!("  [TEST] Reading version response from server");
-        let response = timeout(Duration::from_secs(120), read_bitcoin_message(&mut client)).await??;
+        let response =
+            timeout(Duration::from_secs(120), read_bitcoin_message(&mut client)).await??;
 
         match response.payload() {
             NetworkMessage::Version(v) => {
@@ -209,10 +210,7 @@ mod e2e_bitcoin {
         match pong_response.payload() {
             NetworkMessage::Pong(nonce) => {
                 println!("  [TEST] Received pong with nonce={}", nonce);
-                assert_eq!(
-                    nonce, ping_nonce,
-                    "Pong nonce should match ping nonce"
-                );
+                assert_eq!(nonce, ping_nonce, "Pong nonce should match ping nonce");
                 println!("  [TEST] ✓ Ping/Pong exchange successful");
             }
             other => {
@@ -247,7 +245,8 @@ mod e2e_bitcoin {
         client.write_all(&msg_bytes).await?;
         client.flush().await?;
 
-        let _version = timeout(Duration::from_secs(120), read_bitcoin_message(&mut client)).await??;
+        let _version =
+            timeout(Duration::from_secs(120), read_bitcoin_message(&mut client)).await??;
         let _verack =
             timeout(Duration::from_secs(120), read_bitcoin_message(&mut client)).await??;
 
@@ -267,25 +266,23 @@ mod e2e_bitcoin {
 
         // Read response (should be addr message or timeout is acceptable)
         println!("  [TEST] Waiting for addr response (or timeout)");
-        let read_result = timeout(Duration::from_secs(120), read_bitcoin_message(&mut client)).await;
+        let read_result =
+            timeout(Duration::from_secs(120), read_bitcoin_message(&mut client)).await;
 
         match read_result {
             Ok(Ok(response)) => match response.payload() {
                 NetworkMessage::Addr(addrs) => {
-                    println!("  [TEST] ✓ Received addr message with {} addresses", addrs.len());
+                    println!(
+                        "  [TEST] ✓ Received addr message with {} addresses",
+                        addrs.len()
+                    );
                 }
                 other => {
-                    println!(
-                        "  [TEST] ✓ Received message type: {:?} (acceptable)",
-                        other
-                    );
+                    println!("  [TEST] ✓ Received message type: {:?} (acceptable)", other);
                 }
             },
             Ok(Err(e)) => {
-                println!(
-                    "  [TEST] ✓ Connection closed (acceptable): {}",
-                    e
-                );
+                println!("  [TEST] ✓ Connection closed (acceptable): {}", e);
             }
             Err(_) => {
                 println!("  [TEST] ✓ Timeout (acceptable - no peers to share)");
@@ -347,7 +344,8 @@ mod e2e_bitcoin {
 
         // Read version response
         println!("  [TEST] Reading version response");
-        let response = timeout(Duration::from_secs(120), read_bitcoin_message(&mut client)).await??;
+        let response =
+            timeout(Duration::from_secs(120), read_bitcoin_message(&mut client)).await??;
 
         // Verify response uses testnet magic
         assert_eq!(
@@ -358,7 +356,10 @@ mod e2e_bitcoin {
 
         match response.payload() {
             NetworkMessage::Version(v) => {
-                println!("  [TEST] ✓ Received testnet version: user_agent={}", v.user_agent);
+                println!(
+                    "  [TEST] ✓ Received testnet version: user_agent={}",
+                    v.user_agent
+                );
             }
             other => {
                 return Err(format!("Expected version message, got {:?}", other).into());

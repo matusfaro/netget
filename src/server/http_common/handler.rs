@@ -1,15 +1,15 @@
 //! Shared HTTP request/response handling logic
 
-use std::collections::HashMap;
+use crate::llm::ActionResult;
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::{Request, Response};
+use std::collections::HashMap;
+use std::convert::Infallible;
 use tokio::sync::mpsc;
 use tracing::{debug, error, trace};
-use crate::llm::ActionResult;
-use std::convert::Infallible;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Extracted request data common to HTTP and HTTP/2
 #[derive(Debug)]
@@ -60,14 +60,21 @@ pub async fn extract_request_data(
     );
     let _ = status_tx.send(format!(
         "[DEBUG] {} request: {} {} {} ({} bytes)",
-        protocol_label, method, uri, version, body_bytes.len()
+        protocol_label,
+        method,
+        uri,
+        version,
+        body_bytes.len()
     ));
 
     // TRACE: Log full request details
     trace!("{} request headers:", protocol_label);
     for (name, value) in &headers {
         trace!("  {}: {}", name, value);
-        let _ = status_tx.send(format!("[TRACE] {} header: {}: {}", protocol_label, name, value));
+        let _ = status_tx.send(format!(
+            "[TRACE] {} header: {}: {}",
+            protocol_label, name, value
+        ));
     }
     if !body_bytes.is_empty() {
         if let Ok(body_str) = std::str::from_utf8(&body_bytes) {
@@ -75,13 +82,26 @@ pub async fn extract_request_data(
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(body_str) {
                 let pretty = serde_json::to_string_pretty(&json).unwrap_or(body_str.to_string());
                 trace!("{} request body (JSON):\n{}", protocol_label, pretty);
-                let _ = status_tx.send(format!("[TRACE] {} request body (JSON):\r\n{}", protocol_label, pretty.replace('\n', "\r\n")));
+                let _ = status_tx.send(format!(
+                    "[TRACE] {} request body (JSON):\r\n{}",
+                    protocol_label,
+                    pretty.replace('\n', "\r\n")
+                ));
             } else {
                 trace!("{} request body:\n{}", protocol_label, body_str);
-                let _ = status_tx.send(format!("[TRACE] {} request body:\r\n{}", protocol_label, body_str.replace('\n', "\r\n")));
+                let _ = status_tx.send(format!(
+                    "[TRACE] {} request body:\r\n{}",
+                    protocol_label,
+                    body_str.replace('\n', "\r\n")
+                ));
             }
         } else {
-            console_trace!(status_tx, "{} request body (binary): {} bytes", protocol_label, body_bytes.len());
+            console_trace!(
+                status_tx,
+                "{} request body (binary): {} bytes",
+                protocol_label,
+                body_bytes.len()
+            );
         }
     }
 
@@ -130,7 +150,11 @@ pub fn build_response(
 
     let _ = status_tx.send(format!(
         "→ {} {} {} → {} ({} bytes)",
-        protocol_label, method, uri, status_code, response_body.len()
+        protocol_label,
+        method,
+        uri,
+        status_code,
+        response_body.len()
     ));
 
     // Build the HTTP response
@@ -141,7 +165,9 @@ pub fn build_response(
         response = response.header(name, value);
     }
 
-    Ok(response.body(Full::new(Bytes::from(response_body))).unwrap())
+    Ok(response
+        .body(Full::new(Bytes::from(response_body)))
+        .unwrap())
 }
 
 /// Build error response for LLM failures
@@ -152,7 +178,10 @@ pub fn build_error_response(
     uri: &str,
     status_tx: &mpsc::UnboundedSender<String>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    error!("LLM error generating {} response: {}", protocol_label, error);
+    error!(
+        "LLM error generating {} response: {}",
+        protocol_label, error
+    );
     let _ = status_tx.send(format!("✗ LLM error for {} {}: {}", method, uri, error));
 
     Ok(Response::builder()

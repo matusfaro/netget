@@ -79,7 +79,10 @@ async fn test_xmlrpc_simple_method() -> E2EResult<()> {
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
-    println!("Server started: {} stack on port {}", server.stack, server.port);
+    println!(
+        "Server started: {} stack on port {}",
+        server.stack, server.port
+    );
 
     // Verify it's actually an XML-RPC server
     assert_eq!(
@@ -112,11 +115,7 @@ async fn test_xmlrpc_simple_method() -> E2EResult<()> {
     println!("Parsed result: {}", result);
 
     // Should contain 8 (5+3)
-    assert!(
-        result.contains("8"),
-        "Expected sum of 8, got: {}",
-        result
-    );
+    assert!(result.contains("8"), "Expected sum of 8, got: {}", result);
 
     println!("✓ XML-RPC method call validated");
     server.stop().await?;
@@ -195,10 +194,7 @@ async fn test_xmlrpc_fault_response() -> E2EResult<()> {
     println!("Received fault response:\n{}", response_xml);
 
     // Verify it's a fault response
-    assert!(
-        response_xml.contains("<fault>"),
-        "Expected fault response"
-    );
+    assert!(response_xml.contains("<fault>"), "Expected fault response");
     assert!(
         response_xml.contains("faultCode") || response_xml.contains("-32601"),
         "Expected fault code"
@@ -288,7 +284,9 @@ async fn test_xmlrpc_boolean_parameter() -> E2EResult<()> {
 
     // Should contain boolean response
     assert!(
-        response_xml.contains("<boolean>") || response_xml.contains("0") || response_xml.contains("false"),
+        response_xml.contains("<boolean>")
+            || response_xml.contains("0")
+            || response_xml.contains("false"),
         "Expected boolean in response"
     );
 

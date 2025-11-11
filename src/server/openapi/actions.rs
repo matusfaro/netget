@@ -81,34 +81,34 @@ impl Default for OpenApiProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for OpenApiProtocol {
-        fn protocol_name(&self) -> &'static str {
-            "OpenAPI"
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>TCP>HTTP>OPENAPI"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["openapi", "rest", "rest api", "api", "swagger"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Experimental)
-                .implementation("openapi-rs parser, matchit router, hyper HTTP")
-                .llm_control("All API responses, spec compliance/violations")
-                .e2e_testing("reqwest HTTP client")
-                .notes("Dynamic spec loading, intentional violations for testing")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "OpenAPI specification server"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Start an OpenAPI server for a TODO API on port 8080"
-        }
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            vec![
+    fn protocol_name(&self) -> &'static str {
+        "OpenAPI"
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>HTTP>OPENAPI"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["openapi", "rest", "rest api", "api", "swagger"]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("openapi-rs parser, matchit router, hyper HTTP")
+            .llm_control("All API responses, spec compliance/violations")
+            .e2e_testing("reqwest HTTP client")
+            .notes("Dynamic spec loading, intentional violations for testing")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "OpenAPI specification server"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Start an OpenAPI server for a TODO API on port 8080"
+    }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        vec![
                 ActionDefinition {
                     name: "reload_spec".to_string(),
                     description: "Reload or update the OpenAPI specification at runtime".to_string(),
@@ -142,9 +142,9 @@ impl Protocol for OpenApiProtocol {
                     example: serde_json::json!({"type": "configure_error_handling", "llm_on_invalid": false}),
                 },
             ]
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
                 ActionDefinition {
                     name: "provide_openapi_spec".to_string(),
                     description: "Provide the OpenAPI specification (used during server startup)".to_string(),
@@ -203,170 +203,169 @@ impl Protocol for OpenApiProtocol {
                     example: serde_json::json!({"type": "send_validation_error", "status_code": 405, "message": "Method GET not allowed for path /users, expected POST"}),
                 },
             ]
-        }
-        fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
-            use crate::llm::actions::ParameterDefinition;
-            vec![
-                ParameterDefinition {
-                    name: "spec".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "OpenAPI 3.x specification in YAML or JSON format (inline)"
-                        .to_string(),
-                    required: false,
-                    example: serde_json::json!(
-                        "openapi: 3.1.0\ninfo:\n  title: My API\n  version: 1.0.0"
-                    ),
-                },
-                ParameterDefinition {
-                    name: "spec_file".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Path to OpenAPI specification file (YAML or JSON)".to_string(),
-                    required: false,
-                    example: serde_json::json!("/path/to/openapi.yaml"),
-                },
-            ]
-        }
-        fn group_name(&self) -> &'static str {
-            "AI & API"
-        }
+    }
+    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        use crate::llm::actions::ParameterDefinition;
+        vec![
+            ParameterDefinition {
+                name: "spec".to_string(),
+                type_hint: "string".to_string(),
+                description: "OpenAPI 3.x specification in YAML or JSON format (inline)"
+                    .to_string(),
+                required: false,
+                example: serde_json::json!(
+                    "openapi: 3.1.0\ninfo:\n  title: My API\n  version: 1.0.0"
+                ),
+            },
+            ParameterDefinition {
+                name: "spec_file".to_string(),
+                type_hint: "string".to_string(),
+                description: "Path to OpenAPI specification file (YAML or JSON)".to_string(),
+                required: false,
+                example: serde_json::json!("/path/to/openapi.yaml"),
+            },
+        ]
+    }
+    fn group_name(&self) -> &'static str {
+        "AI & API"
+    }
 }
 
 // Implement Server trait (server-specific functionality)
 impl Server for OpenApiProtocol {
-        fn spawn(
-            &self,
-            ctx: crate::protocol::SpawnContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::server::openapi::OpenApiServer;
-                OpenApiServer::spawn_with_llm_actions(
-                    ctx.listen_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.server_id,
-                    ctx.startup_params,
-                )
-                .await
-            })
-        }
-        fn execute_action(&self, action: JsonValue) -> Result<ActionResult> {
-            let action_type = action["type"]
-                .as_str()
-                .ok_or_else(|| anyhow!("Missing action type"))?;
-    
-            match action_type {
-                "provide_openapi_spec" => {
-                    let spec = action["spec"]
-                        .as_str()
-                        .ok_or_else(|| anyhow!("Missing spec parameter"))?;
-    
-                    debug!("OpenAPI spec provided: {} bytes", spec.len());
-    
-                    Ok(ActionResult::Custom {
-                        name: "load_openapi_spec".to_string(),
-                        data: serde_json::json!({
-                            "spec": spec
-                        }),
-                    })
-                }
-                "send_openapi_response" => {
-                    let status_code = action["status_code"]
-                        .as_i64()
-                        .ok_or_else(|| anyhow!("Missing status_code parameter"))?
-                        as u16;
-    
-                    let headers = action["headers"].as_object().cloned().unwrap_or_default();
-    
-                    let body = action["body"].as_str().unwrap_or("").to_string();
-    
-                    let spec_compliant = action["spec_compliant"].as_bool().unwrap_or(true);
-    
-                    let compliance_status = if spec_compliant {
-                        "compliant"
-                    } else {
-                        "non-compliant (intentional)"
-                    };
-                    debug!(
-                        "OpenAPI response: {} {} bytes, spec: {}",
-                        status_code,
-                        body.len(),
-                        compliance_status
-                    );
-    
-                    Ok(ActionResult::Custom {
-                        name: "send_openapi_response".to_string(),
-                        data: serde_json::json!({
-                            "status_code": status_code,
-                            "headers": headers,
-                            "body": body,
-                            "spec_compliant": spec_compliant
-                        }),
-                    })
-                }
-                "send_validation_error" => {
-                    let status_code = action["status_code"]
-                        .as_i64()
-                        .ok_or_else(|| anyhow!("Missing status_code parameter"))?
-                        as u16;
-    
-                    let message = action["message"]
-                        .as_str()
-                        .ok_or_else(|| anyhow!("Missing message parameter"))?;
-    
-                    warn!("OpenAPI validation error: {} - {}", status_code, message);
-    
-                    Ok(ActionResult::Custom {
-                        name: "send_validation_error".to_string(),
-                        data: serde_json::json!({
-                            "status_code": status_code,
-                            "message": message
-                        }),
-                    })
-                }
-                "reload_spec" => {
-                    let spec = action["spec"]
-                        .as_str()
-                        .ok_or_else(|| anyhow!("Missing spec parameter"))?;
-    
-                    debug!("OpenAPI spec reload requested: {} bytes", spec.len());
-    
-                    Ok(ActionResult::Custom {
-                        name: "reload_spec".to_string(),
-                        data: serde_json::json!({
-                            "spec": spec,
-                            "reload": true
-                        }),
-                    })
-                }
-                "get_spec_info" => {
-                    debug!("OpenAPI spec info requested");
-                    Ok(ActionResult::NoAction)
-                }
-                "configure_error_handling" => {
-                    let llm_on_invalid = action["llm_on_invalid"]
-                        .as_bool()
-                        .ok_or_else(|| anyhow!("Missing llm_on_invalid parameter"))?;
-    
-                    debug!(
-                        "OpenAPI error handling configured: llm_on_invalid={}",
-                        llm_on_invalid
-                    );
-    
-                    Ok(ActionResult::Custom {
-                        name: "configure_error_handling".to_string(),
-                        data: serde_json::json!({
-                            "llm_on_invalid": llm_on_invalid
-                        }),
-                    })
-                }
-                _ => {
-                    error!("Unknown OpenAPI action: {}", action_type);
-                    Err(anyhow!("Unknown action type: {}", action_type))
-                }
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::openapi::OpenApiServer;
+            OpenApiServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+                ctx.startup_params,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: JsonValue) -> Result<ActionResult> {
+        let action_type = action["type"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing action type"))?;
+
+        match action_type {
+            "provide_openapi_spec" => {
+                let spec = action["spec"]
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Missing spec parameter"))?;
+
+                debug!("OpenAPI spec provided: {} bytes", spec.len());
+
+                Ok(ActionResult::Custom {
+                    name: "load_openapi_spec".to_string(),
+                    data: serde_json::json!({
+                        "spec": spec
+                    }),
+                })
+            }
+            "send_openapi_response" => {
+                let status_code = action["status_code"]
+                    .as_i64()
+                    .ok_or_else(|| anyhow!("Missing status_code parameter"))?
+                    as u16;
+
+                let headers = action["headers"].as_object().cloned().unwrap_or_default();
+
+                let body = action["body"].as_str().unwrap_or("").to_string();
+
+                let spec_compliant = action["spec_compliant"].as_bool().unwrap_or(true);
+
+                let compliance_status = if spec_compliant {
+                    "compliant"
+                } else {
+                    "non-compliant (intentional)"
+                };
+                debug!(
+                    "OpenAPI response: {} {} bytes, spec: {}",
+                    status_code,
+                    body.len(),
+                    compliance_status
+                );
+
+                Ok(ActionResult::Custom {
+                    name: "send_openapi_response".to_string(),
+                    data: serde_json::json!({
+                        "status_code": status_code,
+                        "headers": headers,
+                        "body": body,
+                        "spec_compliant": spec_compliant
+                    }),
+                })
+            }
+            "send_validation_error" => {
+                let status_code = action["status_code"]
+                    .as_i64()
+                    .ok_or_else(|| anyhow!("Missing status_code parameter"))?
+                    as u16;
+
+                let message = action["message"]
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Missing message parameter"))?;
+
+                warn!("OpenAPI validation error: {} - {}", status_code, message);
+
+                Ok(ActionResult::Custom {
+                    name: "send_validation_error".to_string(),
+                    data: serde_json::json!({
+                        "status_code": status_code,
+                        "message": message
+                    }),
+                })
+            }
+            "reload_spec" => {
+                let spec = action["spec"]
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Missing spec parameter"))?;
+
+                debug!("OpenAPI spec reload requested: {} bytes", spec.len());
+
+                Ok(ActionResult::Custom {
+                    name: "reload_spec".to_string(),
+                    data: serde_json::json!({
+                        "spec": spec,
+                        "reload": true
+                    }),
+                })
+            }
+            "get_spec_info" => {
+                debug!("OpenAPI spec info requested");
+                Ok(ActionResult::NoAction)
+            }
+            "configure_error_handling" => {
+                let llm_on_invalid = action["llm_on_invalid"]
+                    .as_bool()
+                    .ok_or_else(|| anyhow!("Missing llm_on_invalid parameter"))?;
+
+                debug!(
+                    "OpenAPI error handling configured: llm_on_invalid={}",
+                    llm_on_invalid
+                );
+
+                Ok(ActionResult::Custom {
+                    name: "configure_error_handling".to_string(),
+                    data: serde_json::json!({
+                        "llm_on_invalid": llm_on_invalid
+                    }),
+                })
+            }
+            _ => {
+                error!("Unknown OpenAPI action: {}", action_type);
+                Err(anyhow!("Unknown action type: {}", action_type))
             }
         }
+    }
 }
-

@@ -66,7 +66,8 @@ Use scripting mode to handle all messages without LLM calls after initial setup.
 
     // Test 2: Auth failure (facility=auth, severity=notice)
     println!("\n[Test 2] Send auth failure message");
-    let auth_msg = "<37>Oct 11 22:14:16 server-01 sshd: Failed password for root from 192.168.1.100";
+    let auth_msg =
+        "<37>Oct 11 22:14:16 server-01 sshd: Failed password for root from 192.168.1.100";
     client
         .send_to(auth_msg.as_bytes(), server_addr)
         .expect("Failed to send auth message");
@@ -111,7 +112,8 @@ Use scripting mode to handle all messages without LLM calls after initial setup.
 
     // Test 7: RFC 5424 format message
     println!("\n[Test 7] Send RFC 5424 format message");
-    let rfc5424_msg = "<165>1 2003-10-11T22:14:15.003Z server-04 myapp 1234 ID47 - Application event occurred";
+    let rfc5424_msg =
+        "<165>1 2003-10-11T22:14:15.003Z server-04 myapp 1234 ID47 - Application event occurred";
     client
         .send_to(rfc5424_msg.as_bytes(), server_addr)
         .expect("Failed to send RFC 5424 message");

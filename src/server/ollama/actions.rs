@@ -13,39 +13,33 @@ use tracing::debug;
 
 /// Ollama generate request event
 pub static OLLAMA_GENERATE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "ollama_generate_request",
-        "Received /api/generate request"
+    EventType::new("ollama_generate_request", "Received /api/generate request").with_parameters(
+        vec![
+            Parameter {
+                name: "model".to_string(),
+                type_hint: "string".to_string(),
+                description: "Model name requested".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "prompt".to_string(),
+                type_hint: "string".to_string(),
+                description: "Prompt text".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "stream".to_string(),
+                type_hint: "boolean".to_string(),
+                description: "Whether streaming is requested".to_string(),
+                required: false,
+            },
+        ],
     )
-    .with_parameters(vec![
-        Parameter {
-            name: "model".to_string(),
-            type_hint: "string".to_string(),
-            description: "Model name requested".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "prompt".to_string(),
-            type_hint: "string".to_string(),
-            description: "Prompt text".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "stream".to_string(),
-            type_hint: "boolean".to_string(),
-            description: "Whether streaming is requested".to_string(),
-            required: false,
-        },
-    ])
 });
 
 /// Ollama chat request event
 pub static OLLAMA_CHAT_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "ollama_chat_request",
-        "Received /api/chat request"
-    )
-    .with_parameters(vec![
+    EventType::new("ollama_chat_request", "Received /api/chat request").with_parameters(vec![
         Parameter {
             name: "model".to_string(),
             type_hint: "string".to_string(),
@@ -68,12 +62,8 @@ pub static OLLAMA_CHAT_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 });
 
 /// Ollama models request event
-pub static OLLAMA_MODELS_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "ollama_models_request",
-        "Received /api/tags request"
-    )
-});
+pub static OLLAMA_MODELS_REQUEST_EVENT: LazyLock<EventType> =
+    LazyLock::new(|| EventType::new("ollama_models_request", "Received /api/tags request"));
 
 /// Ollama protocol action handler
 pub struct OllamaProtocol {}
@@ -116,7 +106,7 @@ impl Protocol for OllamaProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
@@ -157,7 +147,8 @@ impl Server for OllamaProtocol {
                 ctx.status_tx,
                 false,
                 ctx.server_id,
-            ).await
+            )
+            .await
         })
     }
 
@@ -216,14 +207,12 @@ fn ollama_generate_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "ollama_generate_response".to_string(),
         description: "Respond to /api/generate request with LLM-generated text".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "response_text".to_string(),
-                type_hint: "string".to_string(),
-                description: "Generated text response".to_string(),
-                required: true,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "response_text".to_string(),
+            type_hint: "string".to_string(),
+            description: "Generated text response".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "ollama_generate_response",
             "response_text": "The capital of France is Paris."
@@ -235,14 +224,12 @@ fn ollama_chat_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "ollama_chat_response".to_string(),
         description: "Respond to /api/chat request with chat message".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "message_content".to_string(),
-                type_hint: "string".to_string(),
-                description: "Chat message content".to_string(),
-                required: true,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "message_content".to_string(),
+            type_hint: "string".to_string(),
+            description: "Chat message content".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "ollama_chat_response",
             "message_content": "Hello! How can I help you today?"
@@ -254,14 +241,12 @@ fn ollama_models_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "ollama_models_response".to_string(),
         description: "Respond to /api/tags with list of models".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "models".to_string(),
-                type_hint: "array".to_string(),
-                description: "List of model names".to_string(),
-                required: true,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "models".to_string(),
+            type_hint: "array".to_string(),
+            description: "List of model names".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "ollama_models_response",
             "models": ["llama2", "codellama", "mistral"]
@@ -273,14 +258,12 @@ fn ollama_error_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "ollama_error_response".to_string(),
         description: "Respond with error message".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "error_message".to_string(),
-                type_hint: "string".to_string(),
-                description: "Error message to return".to_string(),
-                required: true,
-            },
-        ],
+        parameters: vec![Parameter {
+            name: "error_message".to_string(),
+            type_hint: "string".to_string(),
+            description: "Error message to return".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "ollama_error_response",
             "error_message": "Model not found"
@@ -290,29 +273,22 @@ fn ollama_error_response_action() -> ActionDefinition {
 
 fn get_ollama_event_types() -> Vec<EventType> {
     vec![
-        EventType::new(
-            "ollama_generate_request",
-            "Received /api/generate request"
-        )
-        .with_parameters(vec![
-            Parameter {
-                name: "model".to_string(),
-                type_hint: "string".to_string(),
-                description: "Model name requested".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "prompt".to_string(),
-                type_hint: "string".to_string(),
-                description: "Prompt text".to_string(),
-                required: true,
-            },
-        ]),
-        EventType::new(
-            "ollama_chat_request",
-            "Received /api/chat request"
-        )
-        .with_parameters(vec![
+        EventType::new("ollama_generate_request", "Received /api/generate request")
+            .with_parameters(vec![
+                Parameter {
+                    name: "model".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Model name requested".to_string(),
+                    required: true,
+                },
+                Parameter {
+                    name: "prompt".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Prompt text".to_string(),
+                    required: true,
+                },
+            ]),
+        EventType::new("ollama_chat_request", "Received /api/chat request").with_parameters(vec![
             Parameter {
                 name: "model".to_string(),
                 type_hint: "string".to_string(),
@@ -326,9 +302,6 @@ fn get_ollama_event_types() -> Vec<EventType> {
                 required: true,
             },
         ]),
-        EventType::new(
-            "ollama_models_request",
-            "Received /api/tags request"
-        ),
+        EventType::new("ollama_models_request", "Received /api/tags request"),
     ]
 }

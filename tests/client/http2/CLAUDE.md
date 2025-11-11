@@ -21,12 +21,12 @@ These tests verify HTTP/2 client functionality using black-box testing with the 
 
 ## LLM Call Budget
 
-| Test | LLM Calls | Rationale |
-|------|-----------|-----------|
-| `test_http2_client_get_request` | 2 | Server startup (1) + client connection (1) |
-| `test_http2_client_llm_controlled_request` | 2 | Server startup (1) + client connection (1) |
-| `test_http2_client_multiplexing` | 2 | Server startup (1) + client connection (1) |
-| **Total** | **6** | Well under 10-call budget |
+| Test                                       | LLM Calls | Rationale                                  |
+|--------------------------------------------|-----------|--------------------------------------------|
+| `test_http2_client_get_request`            | 2         | Server startup (1) + client connection (1) |
+| `test_http2_client_llm_controlled_request` | 2         | Server startup (1) + client connection (1) |
+| `test_http2_client_multiplexing`           | 2         | Server startup (1) + client connection (1) |
+| **Total**                                  | **6**     | Well under 10-call budget                  |
 
 ## Expected Runtime
 
@@ -43,10 +43,12 @@ These tests verify HTTP/2 client functionality using black-box testing with the 
 **Objective**: Verify HTTP/2 client can make a simple GET request
 
 **Setup**:
+
 1. Start HTTP/2 server on available port
 2. Start HTTP/2 client connecting to server
 
 **Verification**:
+
 - Client output contains "HTTP2" or "http2" or "HTTP/2" or "connected"
 
 **LLM Calls**: 2
@@ -56,10 +58,12 @@ These tests verify HTTP/2 client functionality using black-box testing with the 
 **Objective**: Verify LLM can understand and generate HTTP/2 requests
 
 **Setup**:
+
 1. Start HTTP/2 server
 2. Start HTTP/2 client with instruction to send custom headers
 
 **Verification**:
+
 - Client protocol is "HTTP2"
 
 **LLM Calls**: 2
@@ -69,15 +73,18 @@ These tests verify HTTP/2 client functionality using black-box testing with the 
 **Objective**: Demonstrate HTTP/2 stream multiplexing capability
 
 **Setup**:
+
 1. Start HTTP/2 server
 2. Start HTTP/2 client with instruction to make multiple requests
 
 **Verification**:
+
 - Client output shows HTTP/2 protocol usage
 
 **LLM Calls**: 2
 
-**Note**: This test demonstrates the multiplexing instruction to LLM, but reqwest handles actual multiplexing transparently.
+**Note**: This test demonstrates the multiplexing instruction to LLM, but reqwest handles actual multiplexing
+transparently.
 
 ## Known Issues
 

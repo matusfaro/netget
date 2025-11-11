@@ -1,17 +1,15 @@
 //! SSH server implementation using russh
 
-pub mod sftp_handler;
 pub mod actions;
+pub mod sftp_handler;
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
-use crate::server::connection::ConnectionId;
-use actions::{
-    SshProtocol, SSH_AUTH_EVENT, SSH_BANNER_EVENT, SSH_SHELL_COMMAND_EVENT,
-};
 use crate::protocol::Event;
+use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
+use actions::{SshProtocol, SSH_AUTH_EVENT, SSH_BANNER_EVENT, SSH_SHELL_COMMAND_EVENT};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use russh::server::{Auth, Msg, Server as RusshServer, Session};
@@ -91,7 +89,13 @@ impl SshServer {
         // Generate host key
         let key_pair = generate_host_key()?;
 
-        let mut server = SshServer::new(config, llm_client, app_state.clone(), status_tx.clone(), server_id);
+        let mut server = SshServer::new(
+            config,
+            llm_client,
+            app_state.clone(),
+            status_tx.clone(),
+            server_id,
+        );
         let russh_config = russh::server::Config {
             inactivity_timeout: Some(std::time::Duration::from_secs(3600)),
             auth_rejection_time: std::time::Duration::from_secs(3),
@@ -102,8 +106,10 @@ impl SshServer {
 
         let russh_config = Arc::new(russh_config);
 
-        info!("SSH server starting on {} (shell: {}, sftp: {})",
-            listen_addr, server.config.shell_enabled, server.config.sftp_enabled);
+        info!(
+            "SSH server starting on {} (shell: {}, sftp: {})",
+            listen_addr, server.config.shell_enabled, server.config.sftp_enabled
+        );
 
         // Start the russh server
         tokio::spawn(async move {
@@ -125,15 +131,23 @@ impl SshServer {
         server_id: crate::state::ServerId,
     ) -> Result<SocketAddr> {
         let config = SshServerConfig::default();
-        Self::spawn_with_config(listen_addr, config, llm_client, app_state, status_tx, Some(server_id)).await
+        Self::spawn_with_config(
+            listen_addr,
+            config,
+            llm_client,
+            app_state,
+            status_tx,
+            Some(server_id),
+        )
+        .await
     }
 }
 
 /// Generate a host key for the SSH server
 fn generate_host_key() -> Result<KeyPair> {
     // Generate an Ed25519 key pair
-    let key = KeyPair::generate_ed25519()
-        .ok_or_else(|| anyhow!("Failed to generate Ed25519 key"))?;
+    let key =
+        KeyPair::generate_ed25519().ok_or_else(|| anyhow!("Failed to generate Ed25519 key"))?;
     Ok(key)
 }
 
@@ -214,7 +228,9 @@ impl SshHandler {
 
     /// Ask LLM about authentication using action-based framework
     async fn llm_auth_decision(&self, username: &str, auth_type: &str) -> Result<bool> {
-        let server_id = self.server_id.unwrap_or_else(|| crate::state::ServerId::new(1));
+        let server_id = self
+            .server_id
+            .unwrap_or_else(|| crate::state::ServerId::new(1));
         debug!("SSH auth request for user '{}' via {}", username, auth_type);
 
         // Create event with auth data
@@ -272,7 +288,9 @@ impl SshHandler {
 
     /// Ask LLM for shell banner/greeting using action-based framework
     async fn llm_shell_banner(&self) -> Result<Option<String>> {
-        let server_id = self.server_id.unwrap_or_else(|| crate::state::ServerId::new(1));
+        let server_id = self
+            .server_id
+            .unwrap_or_else(|| crate::state::ServerId::new(1));
 
         debug!("SSH requesting shell banner from LLM");
 
@@ -315,7 +333,9 @@ impl SshHandler {
     /// Ask LLM to handle shell command using action-based framework
     /// Returns (output, close_connection)
     async fn llm_shell_command(&self, command: &[u8]) -> Result<(Option<String>, bool)> {
-        let server_id = self.server_id.unwrap_or_else(|| crate::state::ServerId::new(1));
+        let server_id = self
+            .server_id
+            .unwrap_or_else(|| crate::state::ServerId::new(1));
         let command_str = String::from_utf8_lossy(command);
 
         debug!("SSH shell command: {:?}", command_str);
@@ -372,7 +392,6 @@ impl SshHandler {
             }
         }
     }
-
 }
 
 impl RusshServer for SshServer {
@@ -380,8 +399,7 @@ impl RusshServer for SshServer {
 
     fn new_client(&mut self, peer_addr: Option<std::net::SocketAddr>) -> Self::Handler {
         let connection_id = ConnectionId::new(
-            tokio::runtime::Handle::current()
-                .block_on(self.app_state.get_next_unified_id())
+            tokio::runtime::Handle::current().block_on(self.app_state.get_next_unified_id()),
         );
         let addr = peer_addr.unwrap_or_else(|| "0.0.0.0:0".parse().unwrap());
 
@@ -390,7 +408,9 @@ impl RusshServer for SshServer {
 
         // Track connection in server state if server_id is available
         if let Some(server_id) = self.server_id {
-            use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+            use crate::state::server::{
+                ConnectionState as ServerConnectionState, ConnectionStatus, ProtocolConnectionInfo,
+            };
             let now = std::time::Instant::now();
 
             // Assume local address is the bind address (we don't have access to the actual socket here)
@@ -415,7 +435,9 @@ impl RusshServer for SshServer {
 
             // Spawn task to add connection (new_client is not async)
             tokio::spawn(async move {
-                app_state.add_connection_to_server(server_id, conn_state).await;
+                app_state
+                    .add_connection_to_server(server_id, conn_state)
+                    .await;
                 let _ = status_tx.send("__UPDATE_UI__".to_string());
             });
         }
@@ -478,7 +500,10 @@ impl russh::server::Handler for SshHandler {
         }
 
         let channel_id = channel.id();
-        self.channel_types.lock().await.insert(channel_id, ChannelType::Session);
+        self.channel_types
+            .lock()
+            .await
+            .insert(channel_id, ChannelType::Session);
         self.channels.lock().await.insert(channel_id, channel);
 
         debug!("SSH session channel {} opened", channel_id);
@@ -492,49 +517,81 @@ impl russh::server::Handler for SshHandler {
         session: &mut Session,
     ) -> Result<(), Self::Error> {
         // DEBUG: SSH subsystem request summary
-        debug!("SSH request: SUBSYSTEM channel={}, name={}", channel_id, name);
-        let _ = self.status_tx.send(format!("[DEBUG] SSH request: SUBSYSTEM channel={}, name={}", channel_id, name));
+        debug!(
+            "SSH request: SUBSYSTEM channel={}, name={}",
+            channel_id, name
+        );
+        let _ = self.status_tx.send(format!(
+            "[DEBUG] SSH request: SUBSYSTEM channel={}, name={}",
+            channel_id, name
+        ));
 
         // TRACE: Full SSH subsystem request
-        trace!("SSH SUBSYSTEM request: channel={}, name='{}', connection={}",
-            channel_id, name, self.connection_id);
-        let _ = self.status_tx.send(format!("[TRACE] SSH SUBSYSTEM request: channel={}, name='{}', connection={}",
-            channel_id, name, self.connection_id));
+        trace!(
+            "SSH SUBSYSTEM request: channel={}, name='{}', connection={}",
+            channel_id,
+            name,
+            self.connection_id
+        );
+        let _ = self.status_tx.send(format!(
+            "[TRACE] SSH SUBSYSTEM request: channel={}, name='{}', connection={}",
+            channel_id, name, self.connection_id
+        ));
 
         if name == "sftp" {
             if !self.config.sftp_enabled {
                 error!("SFTP subsystem requested but SFTP is disabled");
-                let _ = self.status_tx.send("[ERROR] SFTP subsystem requested but SFTP is disabled".to_string());
+                let _ = self
+                    .status_tx
+                    .send("[ERROR] SFTP subsystem requested but SFTP is disabled".to_string());
 
                 debug!("SSH response: CHANNEL_FAILURE (SFTP disabled)");
-                let _ = self.status_tx.send("[DEBUG] SSH response: CHANNEL_FAILURE (SFTP disabled)".to_string());
+                let _ = self
+                    .status_tx
+                    .send("[DEBUG] SSH response: CHANNEL_FAILURE (SFTP disabled)".to_string());
 
                 session.channel_failure(channel_id);
                 return Ok(());
             }
 
-            self.channel_types.lock().await.insert(channel_id, ChannelType::Sftp);
+            self.channel_types
+                .lock()
+                .await
+                .insert(channel_id, ChannelType::Sftp);
 
             // INFO: Major lifecycle event
-            info!("SSH SFTP subsystem started on channel {} (connection {})",
-                channel_id, self.connection_id);
-            let _ = self.status_tx.send(format!("→ SFTP subsystem started on channel {} (conn {})",
-                channel_id, self.connection_id));
+            info!(
+                "SSH SFTP subsystem started on channel {} (connection {})",
+                channel_id, self.connection_id
+            );
+            let _ = self.status_tx.send(format!(
+                "→ SFTP subsystem started on channel {} (conn {})",
+                channel_id, self.connection_id
+            ));
 
             // Get the channel object
             if let Some(channel) = self.get_channel(channel_id).await {
                 debug!("SSH response: CHANNEL_SUCCESS (starting SFTP handler)");
-                let _ = self.status_tx.send("[DEBUG] SSH response: CHANNEL_SUCCESS (starting SFTP handler)".to_string());
+                let _ = self.status_tx.send(
+                    "[DEBUG] SSH response: CHANNEL_SUCCESS (starting SFTP handler)".to_string(),
+                );
 
-                trace!("Creating LlmSftpHandler for channel {} on connection {}",
-                    channel_id, self.connection_id);
-                let _ = self.status_tx.send(format!("[TRACE] Creating LlmSftpHandler for channel {} on connection {}",
-                    channel_id, self.connection_id));
+                trace!(
+                    "Creating LlmSftpHandler for channel {} on connection {}",
+                    channel_id,
+                    self.connection_id
+                );
+                let _ = self.status_tx.send(format!(
+                    "[TRACE] Creating LlmSftpHandler for channel {} on connection {}",
+                    channel_id, self.connection_id
+                ));
 
                 session.channel_success(channel_id);
 
                 // Create LLM-controlled SFTP handler
-                let server_id = self.server_id.unwrap_or_else(|| crate::state::ServerId::new(1));
+                let server_id = self
+                    .server_id
+                    .unwrap_or_else(|| crate::state::ServerId::new(1));
                 let sftp_handler = crate::server::LlmSftpHandler::new(
                     self.connection_id,
                     server_id,
@@ -545,39 +602,75 @@ impl russh::server::Handler for SshHandler {
                 );
 
                 // Run SFTP protocol (this handles all packet parsing)
-                trace!("Starting russh_sftp::server::run() for channel {}", channel_id);
-                let _ = self.status_tx.send(format!("[TRACE] Starting russh_sftp::server::run() for channel {channel_id}"));
+                trace!(
+                    "Starting russh_sftp::server::run() for channel {}",
+                    channel_id
+                );
+                let _ = self.status_tx.send(format!(
+                    "[TRACE] Starting russh_sftp::server::run() for channel {channel_id}"
+                ));
 
                 russh_sftp::server::run(channel.into_stream(), sftp_handler).await;
 
                 // INFO: SFTP session ended
-                info!("SFTP session ended on channel {} (connection {})",
-                    channel_id, self.connection_id);
-                let _ = self.status_tx.send(format!("✗ SFTP session ended on channel {} (conn {})",
-                    channel_id, self.connection_id));
+                info!(
+                    "SFTP session ended on channel {} (connection {})",
+                    channel_id, self.connection_id
+                );
+                let _ = self.status_tx.send(format!(
+                    "✗ SFTP session ended on channel {} (conn {})",
+                    channel_id, self.connection_id
+                ));
 
                 debug!("SSH: SFTP subsystem terminated on channel {}", channel_id);
-                let _ = self.status_tx.send(format!("[DEBUG] SSH: SFTP subsystem terminated on channel {}", channel_id));
+                let _ = self.status_tx.send(format!(
+                    "[DEBUG] SSH: SFTP subsystem terminated on channel {}",
+                    channel_id
+                ));
             } else {
-                error!("SFTP channel {} not found (this should not happen)", channel_id);
-                let _ = self.status_tx.send(format!("[ERROR] SFTP channel {channel_id} not found"));
+                error!(
+                    "SFTP channel {} not found (this should not happen)",
+                    channel_id
+                );
+                let _ = self
+                    .status_tx
+                    .send(format!("[ERROR] SFTP channel {channel_id} not found"));
 
                 debug!("SSH response: CHANNEL_FAILURE (channel not found)");
-                let _ = self.status_tx.send("[DEBUG] SSH response: CHANNEL_FAILURE (channel not found)".to_string());
+                let _ = self
+                    .status_tx
+                    .send("[DEBUG] SSH response: CHANNEL_FAILURE (channel not found)".to_string());
 
                 session.channel_failure(channel_id);
             }
         } else {
-            error!("Unknown subsystem requested: '{}' on channel {}", name, channel_id);
-            let _ = self.status_tx.send(format!("[ERROR] Unknown subsystem requested: '{}'", name));
+            error!(
+                "Unknown subsystem requested: '{}' on channel {}",
+                name, channel_id
+            );
+            let _ = self
+                .status_tx
+                .send(format!("[ERROR] Unknown subsystem requested: '{}'", name));
 
-            debug!("SSH response: CHANNEL_FAILURE (unknown subsystem '{}')", name);
-            let _ = self.status_tx.send(format!("[DEBUG] SSH response: CHANNEL_FAILURE (unknown subsystem '{}')", name));
+            debug!(
+                "SSH response: CHANNEL_FAILURE (unknown subsystem '{}')",
+                name
+            );
+            let _ = self.status_tx.send(format!(
+                "[DEBUG] SSH response: CHANNEL_FAILURE (unknown subsystem '{}')",
+                name
+            ));
 
-            trace!("SSH rejecting unknown subsystem: name='{}', channel={}, connection={}",
-                name, channel_id, self.connection_id);
-            let _ = self.status_tx.send(format!("[TRACE] SSH rejecting unknown subsystem: name='{}', channel={}, conn={}",
-                name, channel_id, self.connection_id));
+            trace!(
+                "SSH rejecting unknown subsystem: name='{}', channel={}, connection={}",
+                name,
+                channel_id,
+                self.connection_id
+            );
+            let _ = self.status_tx.send(format!(
+                "[TRACE] SSH rejecting unknown subsystem: name='{}', channel={}, conn={}",
+                name, channel_id, self.connection_id
+            ));
 
             session.channel_failure(channel_id);
         }
@@ -655,9 +748,15 @@ impl russh::server::Handler for SshHandler {
         match channel_type {
             Some(ChannelType::Session) => {
                 // Shell data - handle backspace, echo properly, and buffer until newline or Ctrl-C
-                trace!("SSH shell data received on channel {}: hex={:02x?}", channel_id, data);
-                let _ = self.status_tx.send(format!("[TRACE] SSH shell data received on channel {}: hex={:02x?}",
-                    channel_id, data));
+                trace!(
+                    "SSH shell data received on channel {}: hex={:02x?}",
+                    channel_id,
+                    data
+                );
+                let _ = self.status_tx.send(format!(
+                    "[TRACE] SSH shell data received on channel {}: hex={:02x?}",
+                    channel_id, data
+                ));
 
                 // Get or create buffer for this channel
                 let mut buffers = self.shell_buffers.lock().await;
@@ -742,21 +841,39 @@ impl russh::server::Handler for SshHandler {
                     // 3. Any control character present (Ctrl-C, Ctrl-D, etc.) - always process
                     // 4. Empty Enter - LLM should respond with prompt
                     let has_ctrl_c = line.contains(&0x03);
-                    let has_any_ctrl = line.iter().any(|&b| (0x01..=0x1F).contains(&b) && b != 0x09);
+                    let has_any_ctrl = line
+                        .iter()
+                        .any(|&b| (0x01..=0x1F).contains(&b) && b != 0x09);
                     let is_empty_cmd = line.iter().all(|&b| b == b'\n' || b == b'\r');
 
                     // Always process if we have any control character or non-empty command
                     if is_first_input || !is_empty_cmd || has_any_ctrl {
-                        debug!("SSH shell processing input ({} bytes, first={}, empty={})",
-                            line.len(), is_first_input, is_empty_cmd);
-                        let _ = self.status_tx.send(format!("[DEBUG] SSH shell processing input ({} bytes, first={}, empty={})",
-                            line.len(), is_first_input, is_empty_cmd));
+                        debug!(
+                            "SSH shell processing input ({} bytes, first={}, empty={})",
+                            line.len(),
+                            is_first_input,
+                            is_empty_cmd
+                        );
+                        let _ = self.status_tx.send(format!(
+                            "[DEBUG] SSH shell processing input ({} bytes, first={}, empty={})",
+                            line.len(),
+                            is_first_input,
+                            is_empty_cmd
+                        ));
 
                         trace!("SSH shell input (hex): {:02x?}", line);
-                        let _ = self.status_tx.send(format!("[TRACE] SSH shell input (hex): {:02x?}", line));
+                        let _ = self
+                            .status_tx
+                            .send(format!("[TRACE] SSH shell input (hex): {:02x?}", line));
 
-                        trace!("SSH shell input (text): {:?}", String::from_utf8_lossy(&line));
-                        let _ = self.status_tx.send(format!("[TRACE] SSH shell input (text): {:?}", String::from_utf8_lossy(&line)));
+                        trace!(
+                            "SSH shell input (text): {:?}",
+                            String::from_utf8_lossy(&line)
+                        );
+                        let _ = self.status_tx.send(format!(
+                            "[TRACE] SSH shell input (text): {:?}",
+                            String::from_utf8_lossy(&line)
+                        ));
 
                         // Build context string for LLM
                         let mut context_parts = Vec::new();
@@ -782,21 +899,39 @@ impl russh::server::Handler for SshHandler {
                             format!(" [{}]", context_parts.join(", "))
                         };
 
-                        if let Ok((output, close_connection)) = self.llm_shell_command(&line).await {
+                        if let Ok((output, close_connection)) = self.llm_shell_command(&line).await
+                        {
                             // Send output if present
                             if let Some(output_text) = output {
                                 let response = CryptoVec::from_slice(output_text.as_bytes());
                                 session.data(channel_id, response);
 
-                                debug!("Sent shell response ({} bytes){}", output_text.len(), context);
-                                let _ = self.status_tx.send(format!("[DEBUG] Sent shell response ({} bytes){}", output_text.len(), context));
-                                let _ = self.status_tx.send(format!("→ Sent shell response to channel {}", channel_id));
+                                debug!(
+                                    "Sent shell response ({} bytes){}",
+                                    output_text.len(),
+                                    context
+                                );
+                                let _ = self.status_tx.send(format!(
+                                    "[DEBUG] Sent shell response ({} bytes){}",
+                                    output_text.len(),
+                                    context
+                                ));
+                                let _ = self.status_tx.send(format!(
+                                    "→ Sent shell response to channel {}",
+                                    channel_id
+                                ));
                             }
 
                             // Handle close_connection flag (e.g., from Ctrl-C)
                             if close_connection {
-                                info!("LLM requested shell connection close on channel {}", channel_id);
-                                let _ = self.status_tx.send(format!("✗ Closing shell (LLM request) on channel {}", channel_id));
+                                info!(
+                                    "LLM requested shell connection close on channel {}",
+                                    channel_id
+                                );
+                                let _ = self.status_tx.send(format!(
+                                    "✗ Closing shell (LLM request) on channel {}",
+                                    channel_id
+                                ));
 
                                 session.exit_status_request(channel_id, 0);
                                 session.eof(channel_id);
@@ -811,18 +946,26 @@ impl russh::server::Handler for SshHandler {
                     } else {
                         // Empty Enter press after initialization - ignore it
                         trace!("SSH shell: ignoring empty Enter (already initialized)");
-                        let _ = self.status_tx.send("[TRACE] SSH shell: ignoring empty Enter".to_string());
+                        let _ = self
+                            .status_tx
+                            .send("[TRACE] SSH shell: ignoring empty Enter".to_string());
                     }
                 } else {
                     // Still accumulating input
                     trace!("SSH shell buffering: {} bytes total", buffer.len());
-                    let _ = self.status_tx.send(format!("[TRACE] SSH shell buffering: {} bytes total", buffer.len()));
+                    let _ = self.status_tx.send(format!(
+                        "[TRACE] SSH shell buffering: {} bytes total",
+                        buffer.len()
+                    ));
                 }
             }
             Some(ChannelType::Sftp) => {
                 // SFTP data is handled by russh_sftp::server::run() in subsystem_request()
                 // This case shouldn't normally be reached
-                debug!("SFTP data received on channel {} - should be handled by SFTP subsystem", channel_id);
+                debug!(
+                    "SFTP data received on channel {} - should be handled by SFTP subsystem",
+                    channel_id
+                );
             }
             None => {
                 debug!("Data received on unknown channel {}", channel_id);

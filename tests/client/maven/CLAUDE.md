@@ -2,11 +2,13 @@
 
 ## Test Approach
 
-Maven client tests verify LLM-controlled artifact discovery and download from Maven repositories. Tests use **real Maven Central** repository to ensure realistic behavior.
+Maven client tests verify LLM-controlled artifact discovery and download from Maven repositories. Tests use **real Maven
+Central** repository to ensure realistic behavior.
 
 ## Test Philosophy
 
-**Black-box testing**: Tests spawn the actual NetGet binary and verify client behavior through output inspection. No mocking of Maven repositories - all tests hit real Maven Central endpoints.
+**Black-box testing**: Tests spawn the actual NetGet binary and verify client behavior through output inspection. No
+mocking of Maven repositories - all tests hit real Maven Central endpoints.
 
 ## LLM Call Budget
 
@@ -16,24 +18,24 @@ Maven client tests verify LLM-controlled artifact discovery and download from Ma
 ### Test Breakdown
 
 1. **test_maven_client_download_artifact** - 1 LLM call
-   - Client connects to Maven Central
-   - Downloads org.apache.commons:commons-lang3:3.12.0
+    - Client connects to Maven Central
+    - Downloads org.apache.commons:commons-lang3:3.12.0
 
 2. **test_maven_client_download_pom** - 1 LLM call
-   - Client connects to Maven Central
-   - Downloads junit:junit:4.13.2 POM file
+    - Client connects to Maven Central
+    - Downloads junit:junit:4.13.2 POM file
 
 3. **test_maven_client_search_versions** - 1 LLM call
-   - Client connects to Maven Central
-   - Fetches maven-metadata.xml for com.google.guava:guava
+    - Client connects to Maven Central
+    - Fetches maven-metadata.xml for com.google.guava:guava
 
 4. **test_maven_client_custom_repository** - 1 LLM call
-   - Client connects with explicit repository URL
-   - Downloads commons-io:commons-io:2.11.0
+    - Client connects with explicit repository URL
+    - Downloads commons-io:commons-io:2.11.0
 
 5. **test_maven_client_missing_artifact** - 1 LLM call
-   - Client attempts to download non-existent artifact
-   - Verifies error handling (404 response)
+    - Client attempts to download non-existent artifact
+    - Verifies error handling (404 response)
 
 ## Expected Runtime
 
@@ -57,6 +59,7 @@ These artifacts are guaranteed to exist in Maven Central and won't be deleted.
 ## Test Coverage
 
 ### Functional Coverage
+
 - ✅ Artifact download (JAR files)
 - ✅ POM file download
 - ✅ Version metadata search
@@ -64,6 +67,7 @@ These artifacts are guaranteed to exist in Maven Central and won't be deleted.
 - ✅ Error handling (404 responses)
 
 ### NOT Covered
+
 - ❌ Dependency resolution (complex, requires POM parsing by LLM)
 - ❌ Transitive dependency download (multi-step LLM flow)
 - ❌ Authenticated repositories (no credentials support yet)
@@ -78,6 +82,7 @@ These artifacts are guaranteed to exist in Maven Central and won't be deleted.
 **None expected** - Tests use stable public artifacts from Maven Central.
 
 Potential issues:
+
 - **Network failures**: Maven Central is highly available (99.9%+)
 - **Slow downloads**: Large artifacts may timeout (mitigated by choosing small artifacts)
 - **LLM interpretation**: If Ollama model changes, LLM may not generate expected actions
@@ -92,6 +97,7 @@ Potential issues:
 ## Test Isolation
 
 Tests are fully isolated:
+
 - No shared state between tests
 - Each test spawns independent NetGet client process
 - No local file system dependencies
@@ -120,6 +126,7 @@ If tests fail:
 ## Future Enhancements
 
 ### Additional Test Scenarios
+
 1. **Dependency resolution**: Test LLM parsing POM dependencies
 2. **Multi-artifact download**: Test downloading artifact + all dependencies
 3. **Version range resolution**: Test "find latest version" scenarios
@@ -127,6 +134,7 @@ If tests fail:
 5. **Parallel downloads**: Test concurrent artifact downloads
 
 ### Test Infrastructure
+
 1. **Local Maven repository**: Use local Nexus/Artifactory for faster tests
 2. **Mock Maven server**: Test edge cases without network dependency
 3. **Performance benchmarks**: Measure download speed and LLM latency
@@ -135,6 +143,7 @@ If tests fail:
 ## Security Testing
 
 Not included in E2E tests (handled separately):
+
 - HTTPS certificate validation
 - Malicious XML in POM files (LLM treats as text)
 - Path traversal in artifact coordinates
@@ -142,17 +151,18 @@ Not included in E2E tests (handled separately):
 
 ## Performance Expectations
 
-| Metric | Target | Measured |
-|--------|--------|----------|
-| LLM calls | < 6 | 5 |
-| Total runtime | < 30s | ~15-20s |
-| Network requests | ~5-10 | 5 |
-| Memory usage | < 100MB | TBD |
-| Download bandwidth | < 5MB | < 1MB |
+| Metric             | Target  | Measured |
+|--------------------|---------|----------|
+| LLM calls          | < 6     | 5        |
+| Total runtime      | < 30s   | ~15-20s  |
+| Network requests   | ~5-10   | 5        |
+| Memory usage       | < 100MB | TBD      |
+| Download bandwidth | < 5MB   | < 1MB    |
 
 ## Artifact Selection Criteria
 
 Chosen artifacts meet these criteria:
+
 1. **Stable**: Well-established, won't be deleted
 2. **Small**: < 1MB download size
 3. **Popular**: High download counts (reliability indicator)
@@ -162,6 +172,7 @@ Chosen artifacts meet these criteria:
 ## Test Output Validation
 
 Tests verify:
+
 1. **Protocol detection**: Output contains "Maven" or "maven"
 2. **Operation confirmation**: Output shows artifact/POM/version messages
 3. **Error handling**: Graceful 404 handling for missing artifacts
@@ -170,6 +181,7 @@ Tests verify:
 ## Comparison with Other Client Tests
 
 Similar to HTTP client tests but:
+
 - **No local server needed**: Uses public Maven Central
 - **More structured data**: Maven coordinates vs free-form URLs
 - **XML parsing by LLM**: POM/metadata parsed as text
@@ -178,6 +190,7 @@ Similar to HTTP client tests but:
 ## Continuous Integration
 
 Tests suitable for CI/CD:
+
 - ✅ No local server setup required
 - ✅ Reproducible (stable artifacts)
 - ✅ Fast (< 30s total)
@@ -186,6 +199,7 @@ Tests suitable for CI/CD:
 - ❌ Requires Ollama running
 
 For offline CI, consider:
+
 1. Use local Maven repository mirror
 2. Update client config to point to local URL
 3. Pre-populate mirror with test artifacts

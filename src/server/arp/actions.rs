@@ -21,111 +21,108 @@ impl ArpProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for ArpProtocol {
-        fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-            vec![
-                ParameterDefinition {
-                    name: "interface".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Network interface name to capture ARP packets from (e.g., 'eth0', 'en0', 'wlan0')".to_string(),
-                    required: true,
-                    example: json!("eth0"),
-                },
-            ]
-        }
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            vec![]
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                send_arp_reply_action(),
-                ignore_arp_action(),
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "ARP"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            get_arp_event_types()
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>ARP"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["arp", "address resolution"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState, PrivilegeRequirement};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Experimental)
-                .privilege_requirement(PrivilegeRequirement::RawSockets)
-                .implementation("libpcap (pcap crate) + pnet for ARP packet handling")
-                .llm_control("Full control - can respond to ARP requests with custom MAC addresses")
-                .e2e_testing("pnet for packet crafting and validation")
-                .notes("Requires root/CAP_NET_RAW for promiscuous mode and packet injection")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "ARP (Address Resolution Protocol) server"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Listen for ARP requests on eth0"
-        }
-        fn group_name(&self) -> &'static str {
-            "Core"
-        }
+    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
+        vec![ParameterDefinition {
+            name: "interface".to_string(),
+            type_hint: "string".to_string(),
+            description:
+                "Network interface name to capture ARP packets from (e.g., 'eth0', 'en0', 'wlan0')"
+                    .to_string(),
+            required: true,
+            example: json!("eth0"),
+        }]
+    }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        vec![]
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![send_arp_reply_action(), ignore_arp_action()]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "ARP"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_arp_event_types()
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>ARP"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["arp", "address resolution"]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{
+            DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2,
+        };
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .privilege_requirement(PrivilegeRequirement::RawSockets)
+            .implementation("libpcap (pcap crate) + pnet for ARP packet handling")
+            .llm_control("Full control - can respond to ARP requests with custom MAC addresses")
+            .e2e_testing("pnet for packet crafting and validation")
+            .notes("Requires root/CAP_NET_RAW for promiscuous mode and packet injection")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "ARP (Address Resolution Protocol) server"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Listen for ARP requests on eth0"
+    }
+    fn group_name(&self) -> &'static str {
+        "Core"
+    }
 }
 
 // Implement Server trait (server-specific functionality)
 impl Server for ArpProtocol {
-        fn spawn(
-            &self,
-            ctx: crate::protocol::SpawnContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::server::arp::ArpServer;
-    
-                // ARP doesn't use SocketAddr, it uses interface name
-                // Extract interface from startup_params
-                let params = ctx.startup_params
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("ARP requires startup parameters (interface)"))?;
-    
-                let interface = params.get_string("interface");
-    
-                // Spawn the ARP server
-                let _interface_name = ArpServer::spawn_with_llm(
-                    interface,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.server_id,
-                ).await?;
-    
-                // ARP doesn't bind to a socket, so return a dummy address
-                // The listen_addr from context is just a placeholder
-                Ok(ctx.listen_addr)
-            })
-        }
-        fn execute_action(
-            &self,
-            action: serde_json::Value,
-        ) -> Result<ActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "send_arp_reply" => self.execute_send_arp_reply(action),
-                "ignore_arp" => Ok(ActionResult::NoAction),
-                _ => Err(anyhow::anyhow!("Unknown ARP action: {}", action_type)),
-            }
-        }
-}
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::arp::ArpServer;
 
+            // ARP doesn't use SocketAddr, it uses interface name
+            // Extract interface from startup_params
+            let params = ctx
+                .startup_params
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("ARP requires startup parameters (interface)"))?;
+
+            let interface = params.get_string("interface");
+
+            // Spawn the ARP server
+            let _interface_name = ArpServer::spawn_with_llm(
+                interface,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+            )
+            .await?;
+
+            // ARP doesn't bind to a socket, so return a dummy address
+            // The listen_addr from context is just a placeholder
+            Ok(ctx.listen_addr)
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
+
+        match action_type {
+            "send_arp_reply" => self.execute_send_arp_reply(action),
+            "ignore_arp" => Ok(ActionResult::NoAction),
+            _ => Err(anyhow::anyhow!("Unknown ARP action: {}", action_type)),
+        }
+    }
+}
 
 impl ArpProtocol {
     /// Execute send_arp_reply action
@@ -151,16 +148,16 @@ impl ArpProtocol {
             .context("Missing 'target_ip' parameter")?;
 
         // Parse MAC addresses
-        let sender_mac_parsed = parse_mac_address(sender_mac)
-            .context("Invalid sender_mac format")?;
-        let target_mac_parsed = parse_mac_address(target_mac)
-            .context("Invalid target_mac format")?;
+        let sender_mac_parsed =
+            parse_mac_address(sender_mac).context("Invalid sender_mac format")?;
+        let target_mac_parsed =
+            parse_mac_address(target_mac).context("Invalid target_mac format")?;
 
         // Parse IP addresses
-        let sender_ip_parsed: std::net::Ipv4Addr = sender_ip.parse()
-            .context("Invalid sender_ip format")?;
-        let target_ip_parsed: std::net::Ipv4Addr = target_ip.parse()
-            .context("Invalid target_ip format")?;
+        let sender_ip_parsed: std::net::Ipv4Addr =
+            sender_ip.parse().context("Invalid sender_ip format")?;
+        let target_ip_parsed: std::net::Ipv4Addr =
+            target_ip.parse().context("Invalid target_ip format")?;
 
         // Build ARP reply packet
         use crate::server::arp::ArpServer;
@@ -179,7 +176,9 @@ impl ArpProtocol {
 fn parse_mac_address(mac_str: &str) -> Result<pnet::util::MacAddr> {
     let parts: Vec<&str> = mac_str.split(':').collect();
     if parts.len() != 6 {
-        return Err(anyhow::anyhow!("MAC address must have 6 octets separated by colons"));
+        return Err(anyhow::anyhow!(
+            "MAC address must have 6 octets separated by colons"
+        ));
     }
 
     let octets: Result<Vec<u8>> = parts
@@ -189,7 +188,7 @@ fn parse_mac_address(mac_str: &str) -> Result<pnet::util::MacAddr> {
 
     let octets = octets?;
     Ok(pnet::util::MacAddr::new(
-        octets[0], octets[1], octets[2], octets[3], octets[4], octets[5]
+        octets[0], octets[1], octets[2], octets[3], octets[4], octets[5],
     ))
 }
 
@@ -253,7 +252,7 @@ fn ignore_arp_action() -> ActionDefinition {
 pub static ARP_REQUEST_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "arp_request_received",
-        "ARP request or reply packet received from network interface"
+        "ARP request or reply packet received from network interface",
     )
     .with_parameters(vec![
         Parameter {
@@ -293,14 +292,9 @@ pub static ARP_REQUEST_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             required: false,
         },
     ])
-    .with_actions(vec![
-        send_arp_reply_action(),
-        ignore_arp_action(),
-    ])
+    .with_actions(vec![send_arp_reply_action(), ignore_arp_action()])
 });
 
 pub fn get_arp_event_types() -> Vec<EventType> {
-    vec![
-        ARP_REQUEST_RECEIVED_EVENT.clone(),
-    ]
+    vec![ARP_REQUEST_RECEIVED_EVENT.clone()]
 }

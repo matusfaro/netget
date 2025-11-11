@@ -16,14 +16,12 @@ pub static REMOTE_BUTTON_PRESSED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "remote_button_pressed",
         "A remote control button was pressed",
     )
-    .with_parameters(vec![
-        Parameter {
-            name: "button".to_string(),
-            type_hint: "string".to_string(),
-            description: "Button name (play_pause, volume_up, etc.)".to_string(),
-            required: true,
-        },
-    ])
+    .with_parameters(vec![Parameter {
+        name: "button".to_string(),
+        type_hint: "string".to_string(),
+        description: "Button name (play_pause, volume_up, etc.)".to_string(),
+        required: true,
+    }])
 });
 
 /// BLE Remote Control protocol handler
@@ -37,15 +35,13 @@ impl BluetoothBleRemoteProtocol {
 
 impl Protocol for BluetoothBleRemoteProtocol {
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-        vec![
-            ParameterDefinition {
-                name: "device_name".to_string(),
-                type_hint: "string".to_string(),
-                description: "Remote device name (default: NetGet-Remote)".to_string(),
-                required: false,
-                example: json!("MyRemote"),
-            },
-        ]
+        vec![ParameterDefinition {
+            name: "device_name".to_string(),
+            type_hint: "string".to_string(),
+            description: "Remote device name (default: NetGet-Remote)".to_string(),
+            required: false,
+            example: json!("MyRemote"),
+        }]
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
@@ -71,9 +67,7 @@ impl Protocol for BluetoothBleRemoteProtocol {
     }
 
     fn get_event_types(&self) -> Vec<EventType> {
-        vec![
-            REMOTE_BUTTON_PRESSED_EVENT.clone(),
-        ]
+        vec![REMOTE_BUTTON_PRESSED_EVENT.clone()]
     }
 
     fn stack_name(&self) -> &'static str {
@@ -85,7 +79,7 @@ impl Protocol for BluetoothBleRemoteProtocol {
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-        use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
@@ -113,17 +107,22 @@ impl Server for BluetoothBleRemoteProtocol {
     fn spawn(
         &self,
         ctx: crate::protocol::SpawnContext,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>,
-    > {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<std::net::SocketAddr>> + Send>>
+    {
         Box::pin(async move {
-            let device_name = ctx.startup_params.as_ref().and_then(|p| p.get_optional_string("device_name"))
+            let device_name = ctx
+                .startup_params
+                .as_ref()
+                .and_then(|p| p.get_optional_string("device_name"))
                 .as_deref()
                 .unwrap_or("NetGet-Remote")
                 .to_string();
 
             // Get instruction from server instance
-            let instruction = ctx.state.get_server(ctx.server_id).await
+            let instruction = ctx
+                .state
+                .get_server(ctx.server_id)
+                .await
                 .map(|s| s.instruction)
                 .unwrap_or_default();
 
@@ -139,22 +138,17 @@ impl Server for BluetoothBleRemoteProtocol {
         })
     }
 
-    fn execute_action(
-        &self,
-        action: serde_json::Value,
-    ) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action["type"]
             .as_str()
             .context("Action must have 'type' field")?;
 
         match action_type {
-            "play_pause" | "next_track" | "previous_track" | "volume_up" | "volume_down" |
-            "mute" | "fast_forward" | "rewind" | "stop" => {
-                Ok(ActionResult::Custom {
-                    name: action_type.to_string(),
-                    data: action,
-                })
-            }
+            "play_pause" | "next_track" | "previous_track" | "volume_up" | "volume_down"
+            | "mute" | "fast_forward" | "rewind" | "stop" => Ok(ActionResult::Custom {
+                name: action_type.to_string(),
+                data: action,
+            }),
             _ => Err(anyhow::anyhow!("Unknown remote action: {}", action_type)),
         }
     }
@@ -165,7 +159,7 @@ fn play_pause_action() -> ActionDefinition {
         name: "play_pause".to_string(),
         description: "Toggle play/pause".to_string(),
         parameters: vec![],
-    example: json!({
+        example: json!({
             "type": "play_pause"
         }),
     }
@@ -176,7 +170,7 @@ fn next_track_action() -> ActionDefinition {
         name: "next_track".to_string(),
         description: "Skip to next track".to_string(),
         parameters: vec![],
-    example: json!({
+        example: json!({
             "type": "next_track"
         }),
     }
@@ -187,7 +181,7 @@ fn previous_track_action() -> ActionDefinition {
         name: "previous_track".to_string(),
         description: "Go to previous track".to_string(),
         parameters: vec![],
-    example: json!({
+        example: json!({
             "type": "previous_track"
         }),
     }
@@ -198,7 +192,7 @@ fn volume_up_action() -> ActionDefinition {
         name: "volume_up".to_string(),
         description: "Increase volume".to_string(),
         parameters: vec![],
-    example: json!({
+        example: json!({
             "type": "volume_up"
         }),
     }
@@ -209,7 +203,7 @@ fn volume_down_action() -> ActionDefinition {
         name: "volume_down".to_string(),
         description: "Decrease volume".to_string(),
         parameters: vec![],
-    example: json!({
+        example: json!({
             "type": "volume_down"
         }),
     }
@@ -220,7 +214,7 @@ fn mute_action() -> ActionDefinition {
         name: "mute".to_string(),
         description: "Toggle mute".to_string(),
         parameters: vec![],
-    example: json!({
+        example: json!({
             "type": "mute"
         }),
     }
@@ -231,7 +225,7 @@ fn fast_forward_action() -> ActionDefinition {
         name: "fast_forward".to_string(),
         description: "Fast forward".to_string(),
         parameters: vec![],
-    example: json!({
+        example: json!({
             "type": "fast_forward"
         }),
     }
@@ -242,7 +236,7 @@ fn rewind_action() -> ActionDefinition {
         name: "rewind".to_string(),
         description: "Rewind".to_string(),
         parameters: vec![],
-    example: json!({
+        example: json!({
             "type": "rewind"
         }),
     }
@@ -253,7 +247,7 @@ fn stop_action() -> ActionDefinition {
         name: "stop".to_string(),
         description: "Stop playback".to_string(),
         parameters: vec![],
-    example: json!({
+        example: json!({
             "type": "stop"
         }),
     }

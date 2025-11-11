@@ -7,7 +7,7 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, ServerConfig, E2EResult};
+use super::super::super::helpers::{self, E2EResult, ServerConfig};
 use std::io::Read;
 use std::net::TcpStream;
 use std::time::Duration;
@@ -22,7 +22,6 @@ async fn test_ssh_banner() -> E2EResult<()> {
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
-
 
     // VALIDATION: Connect and read SSH banner
     println!("Connecting to SSH server...");
@@ -87,7 +86,6 @@ async fn test_ssh_version_exchange() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-
     // VALIDATION: Perform SSH version exchange using ssh2
     println!("Attempting SSH2 version exchange...");
 
@@ -109,10 +107,7 @@ async fn test_ssh_version_exchange() -> E2EResult<()> {
                     // Get remote banner
                     if let Some(banner) = sess.banner() {
                         println!("  Server banner: {}", banner);
-                        assert!(
-                            banner.starts_with("SSH-2.0"),
-                            "Expected SSH-2.0 banner"
-                        );
+                        assert!(banner.starts_with("SSH-2.0"), "Expected SSH-2.0 banner");
                     }
 
                     println!("✓ SSH version exchange verified");
@@ -146,7 +141,6 @@ async fn test_ssh_connection_attempt() -> E2EResult<()> {
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
-
 
     // VALIDATION: Try to establish SSH connection
     println!("Attempting full SSH connection...");
@@ -197,13 +191,13 @@ async fn test_ssh_multiple_connections() -> E2EResult<()> {
     println!("\n=== E2E Test: SSH Multiple Connections ===");
 
     // PROMPT: Tell the LLM to handle multiple SSH connections
-    let prompt = "listen on port {AVAILABLE_PORT} via ssh. Handle multiple concurrent SSH connections. \
+    let prompt =
+        "listen on port {AVAILABLE_PORT} via ssh. Handle multiple concurrent SSH connections. \
         Send banner SSH-2.0-NetGet to each client";
 
     // Start the server
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
-
 
     // VALIDATION: Try multiple connections
     println!("Testing multiple SSH connections...");
@@ -284,7 +278,9 @@ async fn test_ssh_python_auth_script() -> E2EResult<()> {
                         }
                         Err(e) => {
                             println!("    ✗ Authentication as 'alice' failed: {}", e);
-                            println!("      This indicates the LLM may not have generated a script");
+                            println!(
+                                "      This indicates the LLM may not have generated a script"
+                            );
                         }
                     }
                 }
@@ -314,7 +310,9 @@ async fn test_ssh_python_auth_script() -> E2EResult<()> {
 
                     match sess.userauth_password("bob", "anypassword") {
                         Ok(_) => {
-                            println!("    ✗ Authentication as 'bob' succeeded (should have been denied)");
+                            println!(
+                                "    ✗ Authentication as 'bob' succeeded (should have been denied)"
+                            );
                         }
                         Err(e) => {
                             println!("    ✓ Authentication as 'bob' correctly denied: {}", e);
@@ -375,7 +373,8 @@ async fn test_ssh_script_update() -> E2EResult<()> {
     println!("\n=== E2E Test: SSH Script Update on Running Server ===");
 
     // PROMPT: Start SSH server with script, then request to update it
-    let prompt = "listen on port {AVAILABLE_PORT} via ssh. Initially deny all authentication via script. \
+    let prompt =
+        "listen on port {AVAILABLE_PORT} via ssh. Initially deny all authentication via script. \
         Then immediately update the script to allow user 'charlie' and deny others.";
 
     // Start the server
@@ -400,7 +399,9 @@ async fn test_ssh_script_update() -> E2EResult<()> {
 
                     match sess.userauth_password("charlie", "anypassword") {
                         Ok(_) => {
-                            println!("  ✓ Authentication as 'charlie' succeeded (script was updated!)");
+                            println!(
+                                "  ✓ Authentication as 'charlie' succeeded (script was updated!)"
+                            );
                         }
                         Err(e) => {
                             println!("  Note: Authentication failed: {}", e);
@@ -421,7 +422,6 @@ async fn test_ssh_script_update() -> E2EResult<()> {
     // VERIFY: Check that initial script was created and then updated
     println!("\nVerifying that scripts were used...");
 
-
     let output = server.get_output().await;
     println!("  DEBUG: Captured {} output lines", output.len());
 
@@ -435,7 +435,9 @@ async fn test_ssh_script_update() -> E2EResult<()> {
     if server.output_contains("update_script").await {
         println!("  ✓ Verified: Script was updated via update_script action");
     } else {
-        println!("  Note: No update_script action found - LLM may have created final script directly");
+        println!(
+            "  Note: No update_script action found - LLM may have created final script directly"
+        );
     }
 
     // Count LLM requests - we expect:
@@ -470,7 +472,6 @@ async fn test_ssh_script_fallback_to_llm() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-
     // Test 1: User handled by script (dave) - should succeed
     println!("\n  Test 1: Authenticate as 'dave' (handled by script, should succeed)");
     match TcpStream::connect(format!("127.0.0.1:{}", server.port)) {
@@ -494,7 +495,6 @@ async fn test_ssh_script_fallback_to_llm() -> E2EResult<()> {
         Err(e) => println!("    Note: Connection failed: {}", e),
     }
 
-
     // Test 2: User that triggers LLM fallback (eve) - should succeed
     println!("\n  Test 2: Authenticate as 'eve' (fallback to LLM, should succeed)");
     match TcpStream::connect(format!("127.0.0.1:{}", server.port)) {
@@ -517,7 +517,6 @@ async fn test_ssh_script_fallback_to_llm() -> E2EResult<()> {
         }
         Err(e) => println!("    Note: Connection failed: {}", e),
     }
-
 
     // Test 3: Unknown user (frank) - should fail
     println!("\n  Test 3: Authenticate as 'frank' (fallback to LLM, should deny)");
@@ -544,7 +543,6 @@ async fn test_ssh_script_fallback_to_llm() -> E2EResult<()> {
 
     // VERIFY: Check that script was used for dave, and LLM fallback for eve/frank
     println!("\nVerifying script and LLM fallback behavior...");
-
 
     let output = server.get_output().await;
     println!("  DEBUG: Captured {} output lines", output.len());
@@ -603,7 +601,6 @@ async fn test_sftp_basic_operations() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
-
     // VALIDATION: Test SFTP operations using ssh2
     println!("Connecting via SFTP...");
 
@@ -635,7 +632,8 @@ async fn test_sftp_basic_operations() -> E2EResult<()> {
                                         Ok(entries) => {
                                             println!("  ✓ Directory listing received:");
                                             for (path, stat) in &entries {
-                                                println!("    - {} ({} bytes, is_dir: {})",
+                                                println!(
+                                                    "    - {} ({} bytes, is_dir: {})",
                                                     path.display(),
                                                     stat.size.unwrap_or(0),
                                                     stat.is_dir()
@@ -643,7 +641,10 @@ async fn test_sftp_basic_operations() -> E2EResult<()> {
                                             }
 
                                             // Verify we got some entries
-                                            assert!(!entries.is_empty(), "Expected non-empty directory listing");
+                                            assert!(
+                                                !entries.is_empty(),
+                                                "Expected non-empty directory listing"
+                                            );
                                             println!("  ✓ Directory listing validated");
                                         }
                                         Err(e) => {
@@ -661,8 +662,14 @@ async fn test_sftp_basic_operations() -> E2EResult<()> {
                                             let mut contents = String::new();
                                             match file.read_to_string(&mut contents) {
                                                 Ok(bytes_read) => {
-                                                    println!("  ✓ Read {} bytes: {:?}", bytes_read, contents);
-                                                    assert!(!contents.is_empty(), "Expected non-empty file content");
+                                                    println!(
+                                                        "  ✓ Read {} bytes: {:?}",
+                                                        bytes_read, contents
+                                                    );
+                                                    assert!(
+                                                        !contents.is_empty(),
+                                                        "Expected non-empty file content"
+                                                    );
                                                 }
                                                 Err(e) => {
                                                     println!("  Note: File read failed: {}", e);
@@ -699,7 +706,9 @@ async fn test_sftp_basic_operations() -> E2EResult<()> {
                         }
                         Err(e) => {
                             println!("Note: Authentication failed: {}", e);
-                            println!("  The LLM may need to be instructed to accept the authentication");
+                            println!(
+                                "  The LLM may need to be instructed to accept the authentication"
+                            );
                         }
                     }
                 }

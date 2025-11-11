@@ -27,7 +27,10 @@ async fn test_bootp_request_reply() {
         .register_client(
             "BOOTP".to_string(),
             "127.0.0.1:67".to_string(), // dnsmasq BOOTP server
-            Some("Request IP address for MAC 00:11:22:33:44:55 and report boot server details".to_string()),
+            Some(
+                "Request IP address for MAC 00:11:22:33:44:55 and report boot server details"
+                    .to_string(),
+            ),
             None,
         )
         .await;
@@ -162,10 +165,19 @@ async fn test_bootp_no_server() {
         .await;
 
     // Start client
-    let result = netget::cli::client_startup::start_client_by_id(&app_state, client_id, &llm_client, &status_tx).await;
+    let result = netget::cli::client_startup::start_client_by_id(
+        &app_state,
+        client_id,
+        &llm_client,
+        &status_tx,
+    )
+    .await;
 
     // Should succeed (UDP is connectionless, can't detect no-server at connect time)
-    assert!(result.is_ok(), "BOOTP client should start even without server");
+    assert!(
+        result.is_ok(),
+        "BOOTP client should start even without server"
+    );
 
     // Collect messages with short timeout
     let mut messages = Vec::new();
@@ -210,7 +222,10 @@ async fn test_bootp_custom_mac() {
         .register_client(
             "BOOTP".to_string(),
             "127.0.0.1:67".to_string(),
-            Some("Request IP for specific MAC address AA:BB:CC:DD:EE:FF and report results".to_string()),
+            Some(
+                "Request IP for specific MAC address AA:BB:CC:DD:EE:FF and report results"
+                    .to_string(),
+            ),
             None,
         )
         .await;
@@ -245,7 +260,7 @@ async fn test_bootp_custom_mac() {
     // Verify MAC address was used
     assert!(
         all_messages.to_lowercase().contains("aa:bb:cc:dd:ee:ff")
-        || all_messages.to_lowercase().contains("aabbccddeeff"),
+            || all_messages.to_lowercase().contains("aabbccddeeff"),
         "Custom MAC address should be used in request"
     );
 

@@ -2,7 +2,8 @@
 
 ## Overview
 
-The BitTorrent DHT (Distributed Hash Table) client provides LLM-controlled access to the BitTorrent Kademlia-based distributed peer discovery network. Unlike trackers, DHT is decentralized and doesn't rely on central servers.
+The BitTorrent DHT (Distributed Hash Table) client provides LLM-controlled access to the BitTorrent Kademlia-based
+distributed peer discovery network. Unlike trackers, DHT is decentralized and doesn't rely on central servers.
 
 ## Protocol Details
 
@@ -39,16 +40,19 @@ The BitTorrent DHT (Distributed Hash Table) client provides LLM-controlled acces
 ### Message Format
 
 **Query Message (bencode):**
+
 ```
 d1:t2:aa1:y1:q1:q9:find_node1:ad2:id20:<node_id>6:target20:<target_id>ee
 ```
 
 **Response Message (bencode):**
+
 ```
 d1:t2:aa1:y1:r1:rd2:id20:<node_id>5:nodes<compact node info>ee
 ```
 
 **Error Message (bencode):**
+
 ```
 d1:t2:aa1:y1:e1:eli201e23:Generic Error Messageee
 ```
@@ -65,28 +69,28 @@ d1:t2:aa1:y1:e1:eli201e23:Generic Error Messageee
 ### Actions
 
 1. **dht_ping** - Ping a DHT node
-   - Parameters: node_id, transaction_id
-   - LLM decides: which nodes to ping
+    - Parameters: node_id, transaction_id
+    - LLM decides: which nodes to ping
 
 2. **dht_find_node** - Find nodes close to target
-   - Parameters: node_id, target, transaction_id
-   - LLM decides: target ID, iterative routing strategy
+    - Parameters: node_id, target, transaction_id
+    - LLM decides: target ID, iterative routing strategy
 
 3. **dht_get_peers** - Get peers for info_hash
-   - Parameters: node_id, info_hash, transaction_id
-   - LLM decides: which info_hash to query
+    - Parameters: node_id, info_hash, transaction_id
+    - LLM decides: which info_hash to query
 
 4. **dht_announce_peer** - Announce torrent availability
-   - Parameters: node_id, info_hash, transaction_id
-   - LLM decides: when and what to announce
+    - Parameters: node_id, info_hash, transaction_id
+    - LLM decides: when and what to announce
 
 5. **disconnect** - Stop DHT client
 
 ### Events
 
 1. **dht_response** - Received response from DHT node
-   - Data: message_type (q/r/e), query_type, response, error, peer address
-   - LLM analyzes: node lists, peer lists, routing table updates
+    - Data: message_type (q/r/e), query_type, response, error, peer address
+    - LLM analyzes: node lists, peer lists, routing table updates
 
 ## Limitations
 
@@ -115,6 +119,7 @@ See `tests/client/torrent_dht/CLAUDE.md` for E2E testing details.
 ## DHT Bootstrap Nodes
 
 Common bootstrap nodes for joining the DHT network:
+
 - `router.bittorrent.com:6881`
 - `router.utorrent.com:6881`
 - `dht.transmissionbt.com:6881`

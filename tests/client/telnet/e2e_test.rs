@@ -57,7 +57,7 @@ mod telnet_client_tests {
     async fn test_telnet_client_send_command() -> E2EResult<()> {
         // Start a Telnet server that echoes commands
         let server_config = NetGetConfig::new(
-            "Listen on port {AVAILABLE_PORT} via Telnet. Echo back any text received."
+            "Listen on port {AVAILABLE_PORT} via Telnet. Echo back any text received.",
         );
 
         let mut server = start_netget_server(server_config).await?;
@@ -75,7 +75,10 @@ mod telnet_client_tests {
         tokio::time::sleep(Duration::from_millis(1000)).await;
 
         // Verify the client protocol is Telnet
-        assert_eq!(client.protocol, "Telnet", "Client should be Telnet protocol");
+        assert_eq!(
+            client.protocol, "Telnet",
+            "Client should be Telnet protocol"
+        );
 
         println!("✅ Telnet client sent command successfully");
 

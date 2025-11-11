@@ -98,13 +98,8 @@ async fn test_mqtt_client_basic() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     // Start the client
-    netget::cli::client_startup::start_client_by_id(
-        &app_state,
-        client_id,
-        &llm_client,
-        &status_tx,
-    )
-    .await?;
+    netget::cli::client_startup::start_client_by_id(&app_state, client_id, &llm_client, &status_tx)
+        .await?;
 
     // Wait for client to connect and subscribe
     sleep(Duration::from_secs(3)).await;
@@ -187,13 +182,8 @@ async fn test_mqtt_client_qos() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?;
 
-    netget::cli::client_startup::start_client_by_id(
-        &app_state,
-        client_id,
-        &llm_client,
-        &status_tx,
-    )
-    .await?;
+    netget::cli::client_startup::start_client_by_id(&app_state, client_id, &llm_client, &status_tx)
+        .await?;
 
     sleep(Duration::from_secs(3)).await;
 
@@ -253,13 +243,8 @@ async fn test_mqtt_client_wildcards() -> Result<(), Box<dyn std::error::Error>> 
         )
         .await?;
 
-    netget::cli::client_startup::start_client_by_id(
-        &app_state,
-        client_id,
-        &llm_client,
-        &status_tx,
-    )
-    .await?;
+    netget::cli::client_startup::start_client_by_id(&app_state, client_id, &llm_client, &status_tx)
+        .await?;
 
     sleep(Duration::from_secs(3)).await;
 
@@ -344,13 +329,8 @@ async fn test_mqtt_client_retained() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?;
 
-    netget::cli::client_startup::start_client_by_id(
-        &app_state,
-        client_id,
-        &llm_client,
-        &status_tx,
-    )
-    .await?;
+    netget::cli::client_startup::start_client_by_id(&app_state, client_id, &llm_client, &status_tx)
+        .await?;
 
     // The client should receive the retained message immediately upon subscription
     sleep(Duration::from_secs(3)).await;

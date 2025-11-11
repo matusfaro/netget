@@ -51,7 +51,12 @@ mod tests {
 
         // Create a client
         let client_id = app_state
-            .add_client("SocketFile".to_string(), socket_path.clone(), "Test client".to_string(), None)
+            .add_client(
+                "SocketFile".to_string(),
+                socket_path.clone(),
+                "Test client".to_string(),
+                None,
+            )
             .await;
 
         // Connect using the socket file client
@@ -98,14 +103,17 @@ mod tests {
 
         // Check metadata
         let metadata = protocol.metadata();
-        assert_eq!(metadata.state, netget::protocol::metadata::DevelopmentState::Experimental);
+        assert_eq!(
+            metadata.state,
+            netget::protocol::metadata::DevelopmentState::Experimental
+        );
     }
 
     /// Test socket file client actions
     #[test]
     fn test_socket_file_actions() {
-        use netget::llm::actions::protocol_trait::Protocol;
         use netget::llm::actions::client_trait::Client;
+        use netget::llm::actions::protocol_trait::Protocol;
 
         let protocol = netget::client::socket_file::SocketFileClientProtocol::new();
         let app_state = AppState::new();
@@ -115,7 +123,9 @@ mod tests {
         assert!(!async_actions.is_empty());
 
         // Find send_socket_file_data action
-        let send_action = async_actions.iter().find(|a| a.name == "send_socket_file_data");
+        let send_action = async_actions
+            .iter()
+            .find(|a| a.name == "send_socket_file_data");
         assert!(send_action.is_some());
 
         // Find disconnect action
@@ -149,7 +159,10 @@ mod tests {
         let result = protocol.execute_action(disconnect_json);
         assert!(result.is_ok());
 
-        matches!(result.unwrap(), netget::llm::actions::client_trait::ClientActionResult::Disconnect);
+        matches!(
+            result.unwrap(),
+            netget::llm::actions::client_trait::ClientActionResult::Disconnect
+        );
     }
 
     /// Test event types

@@ -2,7 +2,8 @@
 
 ## Test Strategy
 
-The OpenID Connect client tests follow a **limited black-box approach** due to the complexity of running a full OIDC provider. Tests focus on:
+The OpenID Connect client tests follow a **limited black-box approach** due to the complexity of running a full OIDC
+provider. Tests focus on:
 
 1. **Client Initialization**: Verify the client can be created and configured
 2. **Discovery**: Test OIDC provider discovery (`.well-known/openid-configuration`)
@@ -17,26 +18,27 @@ The OpenID Connect client tests follow a **limited black-box approach** due to t
 ### Test Breakdown
 
 1. `test_oidc_client_initialization` - **1 LLM call**
-   - Client connection with discovery
-   - Verifies discovery attempt (may fail on auth but discovery succeeds)
+    - Client connection with discovery
+    - Verifies discovery attempt (may fail on auth but discovery succeeds)
 
 2. `test_oidc_client_with_parameters` - **1 LLM call**
-   - Client connection with startup parameters
-   - Verifies parameter parsing
+    - Client connection with startup parameters
+    - Verifies parameter parsing
 
 3. `test_oidc_client_flow_interpretation` - **1 LLM call**
-   - Client connection with flow instruction
-   - Verifies LLM understands flow types (device code, password, etc.)
+    - Client connection with flow instruction
+    - Verifies LLM understands flow types (device code, password, etc.)
 
 4. `test_oidc_client_invalid_provider` - **1 LLM call**
-   - Client connection to invalid provider
-   - Verifies error handling
+    - Client connection to invalid provider
+    - Verifies error handling
 
 5. `test_oidc_client_disconnect` - **1 LLM call**
-   - Client connection and disconnect
-   - Verifies lifecycle management
+    - Client connection and disconnect
+    - Verifies lifecycle management
 
 **Efficiency Strategy**:
+
 - No server required (connects to public OIDC providers)
 - Quick tests (1-2 seconds each)
 - Focus on initialization and LLM interpretation, not full auth flows
@@ -83,6 +85,7 @@ The OpenID Connect client tests follow a **limited black-box approach** due to t
 ### Option 1: Mock HTTP Server (Future)
 
 Create a mock OIDC provider that:
+
 - Serves `.well-known/openid-configuration`
 - Returns fake tokens for testing
 - Implements minimal OIDC endpoints
@@ -93,6 +96,7 @@ Create a mock OIDC provider that:
 ### Option 2: Local Keycloak (Future)
 
 Run Keycloak in Docker for tests:
+
 ```bash
 docker run -p 8080:8080 -e KEYCLOAK_USER=admin -e KEYCLOAK_PASSWORD=admin quay.io/keycloak/keycloak:latest
 ```
@@ -103,6 +107,7 @@ docker run -p 8080:8080 -e KEYCLOAK_USER=admin -e KEYCLOAK_PASSWORD=admin quay.i
 ### Option 3: Public Test Providers (Current)
 
 Use public providers for discovery only:
+
 - Google: `https://accounts.google.com`
 - Microsoft: `https://login.microsoftonline.com/common/v2.0`
 
@@ -112,20 +117,20 @@ Use public providers for discovery only:
 ## Known Issues
 
 1. **Network Dependency**: Tests require internet access for discovery
-   - May fail in offline environments
-   - Rate limiting possible with public providers
+    - May fail in offline environments
+    - Rate limiting possible with public providers
 
 2. **Discovery Failures**: Public providers may change metadata
-   - Tests verify client handles errors gracefully
-   - Not testing exact discovery response content
+    - Tests verify client handles errors gracefully
+    - Not testing exact discovery response content
 
 3. **No Full Auth**: Cannot test complete authentication flows
-   - Tests verify initialization only
-   - Manual testing required for full flows
+    - Tests verify initialization only
+    - Manual testing required for full flows
 
 4. **LLM Interpretation Variance**: LLM may interpret instructions differently
-   - Tests verify protocol recognition, not exact actions
-   - Prompts designed to be clear and unambiguous
+    - Tests verify protocol recognition, not exact actions
+    - Prompts designed to be clear and unambiguous
 
 ## Running the Tests
 
@@ -177,6 +182,7 @@ For full authentication flow testing, use NetGet interactively:
 ## Success Criteria
 
 Tests pass if:
+
 1. Client initializes without panics
 2. Discovery attempts are made (even if they fail on auth)
 3. LLM recognizes OIDC-specific instructions

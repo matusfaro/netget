@@ -28,14 +28,21 @@ pub enum ActionExecutionError {
 impl fmt::Display for ActionExecutionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::PortConflict { port, protocol, underlying_error } => {
+            Self::PortConflict {
+                port,
+                protocol,
+                underlying_error,
+            } => {
                 write!(
                     f,
                     "Port {} conflict for {} server: {}",
                     port, protocol, underlying_error
                 )
             }
-            Self::PrivilegeDenied { requirement, message } => {
+            Self::PrivilegeDenied {
+                requirement,
+                message,
+            } => {
                 write!(f, "Privilege denied ({}): {}", requirement, message)
             }
             Self::Fatal(e) => write!(f, "Fatal error: {}", e),
@@ -77,7 +84,10 @@ Please provide a corrected open_server action with a different port."#,
                     if *port < 1024 { port + 8000 } else { port + 1 }
                 )
             }
-            Self::PrivilegeDenied { requirement, message } => {
+            Self::PrivilegeDenied {
+                requirement,
+                message,
+            } => {
                 format!(
                     r#"Your previous action failed during execution.
 

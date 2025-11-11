@@ -2,11 +2,13 @@
 
 ## Test Overview
 
-Tests MCP server with JSON-RPC 2.0 clients, validating initialize flow, resources, tools, prompts, ping, and error handling per the MCP specification.
+Tests MCP server with JSON-RPC 2.0 clients, validating initialize flow, resources, tools, prompts, ping, and error
+handling per the MCP specification.
 
 ## Test Strategy
 
 **Feature-Based Tests** - Each test validates one MCP capability:
+
 1. Initialize handshake
 2. Ping (health check)
 3. Resources list
@@ -24,31 +26,31 @@ Tests use **action-based mode** to ensure LLM interprets MCP semantics.
 ### Breakdown by Test Function
 
 1. **`test_mcp_initialize`** - **1 LLM call**
-   - 1 initialize request
+    - 1 initialize request
 
 2. **`test_mcp_ping`** - **0 LLM calls**
-   - Ping is hardcoded (no LLM call)
+    - Ping is hardcoded (no LLM call)
 
 3. **`test_mcp_resources_list`** - **2 LLM calls**
-   - 1 startup + 1 resources/list
+    - 1 startup + 1 resources/list
 
 4. **`test_mcp_resources_read`** - **2 LLM calls**
-   - 1 startup + 1 resources/read
+    - 1 startup + 1 resources/read
 
 5. **`test_mcp_tools_list`** - **2 LLM calls**
-   - 1 startup + 1 tools/list
+    - 1 startup + 1 tools/list
 
 6. **`test_mcp_tools_call`** - **2 LLM calls**
-   - 1 startup + 1 tools/call
+    - 1 startup + 1 tools/call
 
 7. **`test_mcp_prompts_list`** - **2 LLM calls**
-   - 1 startup + 1 prompts/list
+    - 1 startup + 1 prompts/list
 
 8. **`test_mcp_prompts_get`** - **2 LLM calls**
-   - 1 startup + 1 prompts/get
+    - 1 startup + 1 prompts/get
 
 9. **`test_mcp_error_handling`** - **1 LLM call**
-   - 1 startup (invalid method returns error without LLM call)
+    - 1 startup (invalid method returns error without LLM call)
 
 **Total: 14 LLM calls** (slightly over limit but tests are independent)
 
@@ -57,6 +59,7 @@ Tests use **action-based mode** to ensure LLM interprets MCP semantics.
 ## Scripting Usage
 
 **Disabled** - Action-based mode:
+
 - Each MCP request triggers LLM call
 - Validates LLM's MCP interpretation
 - Tests capability declaration and implementation
@@ -64,11 +67,13 @@ Tests use **action-based mode** to ensure LLM interprets MCP semantics.
 ## Client Library
 
 **reqwest + Manual JSON-RPC** - No specialized MCP client:
+
 - `reqwest` for HTTP POST
 - Manual JSON-RPC 2.0 message construction
 - Helper function `send_mcp_request()` for request/response handling
 
 **Why No MCP Client Library?**
+
 - No mature Rust MCP client exists
 - Manual construction validates protocol understanding
 - Simple HTTP + JSON-RPC doesn't require library
@@ -78,71 +83,91 @@ Tests use **action-based mode** to ensure LLM interprets MCP semantics.
 - **Model**: qwen3-coder:30b
 - **Runtime**: ~70-100 seconds for full test suite
 - **Breakdown**:
-  - Each test: ~8-12s (startup + 1-2 requests)
-  - Initialize: ~10s (LLM interprets capability system)
+    - Each test: ~8-12s (startup + 1-2 requests)
+    - Initialize: ~10s (LLM interprets capability system)
 
 ## Failure Rate
 
 **Moderate** (5-10%):
+
 - **Stable**: JSON-RPC handling, HTTP transport
 - **Occasional Issues**:
-  - LLM doesn't return proper capability structure in initialize
-  - LLM returns empty resources/tools/prompts lists
-  - Timeout on slower models or complex capability generation
+    - LLM doesn't return proper capability structure in initialize
+    - LLM returns empty resources/tools/prompts lists
+    - Timeout on slower models or complex capability generation
 
 **Known Flaky Scenarios**:
+
 - Initialize may fail if LLM doesn't understand MCP capability structure
 - Resource/tool/prompt requests may return "not found" errors (acceptable per tests)
 
 ## Test Cases
 
 ### 1. Initialize (`test_mcp_initialize`)
+
 **Validates**: MCP handshake
+
 - Send initialize request with clientInfo
 - Receive response with protocolVersion, capabilities, serverInfo
 - Protocol version is "2024-11-05"
 
 ### 2. Ping (`test_mcp_ping`)
+
 **Validates**: Health check
+
 - Send ping request
 - Receive empty success response
 - No errors
 
 ### 3. Resources List (`test_mcp_resources_list`)
+
 **Validates**: Resource discovery
+
 - Send resources/list request
 - Receive array of resources with uri, name, description
 
 ### 4. Resources Read (`test_mcp_resources_read`)
+
 **Validates**: Resource content retrieval
+
 - Send resources/read with uri
 - Receive contents array with resource data
 - Accept "not found" error (indicates proper error handling)
 
 ### 5. Tools List (`test_mcp_tools_list`)
+
 **Validates**: Tool discovery
+
 - Send tools/list request
 - Receive array of tools with name, description, inputSchema
 
 ### 6. Tools Call (`test_mcp_tools_call`)
+
 **Validates**: Tool execution
+
 - Send tools/call with name and arguments
 - Receive content array with result
 - Accept "execution error" (indicates proper error handling)
 
 ### 7. Prompts List (`test_mcp_prompts_list`)
+
 **Validates**: Prompt template discovery
+
 - Send prompts/list request
 - Receive array of prompts with name, description
 
 ### 8. Prompts Get (`test_mcp_prompts_get`)
+
 **Validates**: Prompt template retrieval
+
 - Send prompts/get with name
 - Receive messages array with prompt template
 - Accept "not found" error
 
 ### 9. Error Handling (`test_mcp_error_handling`)
+
 **Validates**: Unknown method handling
+
 - Send invalid/method request
 - Receive error response with code and message
 - Error structure matches JSON-RPC 2.0
@@ -150,16 +175,19 @@ Tests use **action-based mode** to ensure LLM interprets MCP semantics.
 ## Known Issues
 
 ### Capability Structure Complexity
+
 **Issue**: LLM may not generate proper capability structure
 **Mitigation**: Tests validate structure but accept variations
 **Impact**: Tests pass even if capabilities are incomplete
 
 ### Empty Lists Acceptable
+
 **Issue**: LLM may return empty resources/tools/prompts
 **Mitigation**: Tests accept empty lists as valid
 **Impact**: Doesn't validate actual capability implementation
 
 ### "Not Found" Errors Expected
+
 **Issue**: Resource read and prompt get may return errors
 **Mitigation**: Tests explicitly accept error responses
 **Impact**: Tests validate error handling, not successful retrieval
@@ -177,6 +205,7 @@ Tests use **action-based mode** to ensure LLM interprets MCP semantics.
 ## Key Test Patterns
 
 ### Helper Function for Requests
+
 ```rust
 async fn send_mcp_request(
     port: u16,
@@ -187,6 +216,7 @@ async fn send_mcp_request(
 ```
 
 ### Response Validation
+
 ```rust
 assert_eq!(response.get("jsonrpc").and_then(|v| v.as_str()), Some("2.0"));
 assert_eq!(response.get("id"), Some(&json!(1)));
@@ -199,6 +229,7 @@ if let Some(result) = response.get("result") {
 ```
 
 ### Timeout Wrapping
+
 ```rust
 tokio::time::timeout(
     Duration::from_secs(30),
@@ -209,6 +240,7 @@ tokio::time::timeout(
 ## Why This Protocol is Advanced
 
 Compared to simpler protocols:
+
 1. **Capability System** - Complex initialization with capability negotiation
 2. **Three-Phase Handshake** - Initialize → response → initialized notification
 3. **Multiple Concepts** - Resources, tools, prompts all distinct
@@ -220,14 +252,17 @@ This makes tests more sensitive to LLM understanding of MCP concepts.
 ## MCP-Specific Features
 
 **Session Tracking**:
+
 - Tests don't explicitly track sessions (handled server-side)
 - Each test creates new session via initialize
 - No session cleanup tested (future enhancement)
 
 **Notification Handling**:
+
 - initialized notification not tested (server accepts but doesn't require)
 - Progress/cancelled notifications not tested
 
 **Subscription System**:
+
 - Resource subscriptions declared but not tested
 - No change notifications validated

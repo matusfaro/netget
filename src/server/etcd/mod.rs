@@ -8,29 +8,29 @@ pub mod actions;
 // Re-export protocol for external use
 pub use actions::EtcdProtocol;
 
+use anyhow::{bail, Result};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace};
-use anyhow::{Result, bail};
 
-#[cfg(feature = "etcd")]
-use crate::llm::ollama_client::OllamaClient;
 #[cfg(feature = "etcd")]
 use crate::llm::action_helper::call_llm;
 #[cfg(feature = "etcd")]
-use crate::state::app_state::AppState;
+use crate::llm::ollama_client::OllamaClient;
 #[cfg(feature = "etcd")]
 use crate::protocol::Event;
 #[cfg(feature = "etcd")]
 use crate::server::etcd::actions::ETCD_RANGE_REQUEST_EVENT;
 #[cfg(feature = "etcd")]
-use hyper::{Request, Response, body::Incoming, StatusCode};
+use crate::state::app_state::AppState;
+#[cfg(feature = "etcd")]
+use bytes::Bytes;
 #[cfg(feature = "etcd")]
 use http_body_util::{BodyExt, Full};
 #[cfg(feature = "etcd")]
-use bytes::Bytes;
+use hyper::{body::Incoming, Request, Response, StatusCode};
 #[cfg(feature = "etcd")]
 use prost::Message;
 
@@ -44,11 +44,14 @@ mod mvccpb {
     include!(concat!(env!("OUT_DIR"), "/mvccpb.rs"));
 }
 
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 #[cfg(feature = "etcd")]
-use etcdserverpb::{RangeRequest, RangeResponse, PutRequest, PutResponse, DeleteRangeRequest, DeleteRangeResponse, TxnRequest, TxnResponse, CompactionRequest, CompactionResponse, ResponseHeader};
+use etcdserverpb::{
+    CompactionRequest, CompactionResponse, DeleteRangeRequest, DeleteRangeResponse, PutRequest,
+    PutResponse, RangeRequest, RangeResponse, ResponseHeader, TxnRequest, TxnResponse,
+};
 #[cfg(feature = "etcd")]
 use mvccpb::KeyValue;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// In-memory key-value store with MVCC-like revision tracking
 #[cfg(feature = "etcd")]
@@ -112,7 +115,12 @@ impl EtcdServer {
         let cluster_id = 0x6574636400000001u64; // "etcd" + 1
         let member_id = 0x6d656d6265720001u64; // "member" + 1 (shortened to fit u64)
 
-        console_info!(status_tx, "etcd server starting on {} (cluster: {})", listen_addr, cluster_name);
+        console_info!(
+            status_tx,
+            "etcd server starting on {} (cluster: {})",
+            listen_addr,
+            cluster_name
+        );
 
         // Create in-memory store
         let store = Arc::new(Mutex::new(EtcdStore::new(cluster_id, member_id)));
@@ -148,7 +156,9 @@ impl EtcdServer {
                                 server_id,
                                 store_clone,
                                 protocol_clone,
-                            ).await {
+                            )
+                            .await
+                            {
                                 error!("etcd connection error: {}", e);
                             }
                         });
@@ -188,16 +198,9 @@ impl EtcdServer {
 
             async move {
                 Self::handle_grpc_request(
-                    req,
-                    peer_addr,
-                    local_addr,
-                    llm,
-                    state,
-                    status,
-                    server_id,
-                    store_ref,
-                    proto,
-                ).await
+                    req, peer_addr, local_addr, llm, state, status, server_id, store_ref, proto,
+                )
+                .await
             }
         });
 
@@ -239,19 +242,34 @@ impl EtcdServer {
         // Route to appropriate handler based on path
         let response_bytes = match path.as_str() {
             "/etcdserverpb.KV/Range" => {
-                Self::handle_range(msg_bytes, llm_client, app_state, status_tx, server_id, store, protocol).await?
+                Self::handle_range(
+                    msg_bytes, llm_client, app_state, status_tx, server_id, store, protocol,
+                )
+                .await?
             }
             "/etcdserverpb.KV/Put" => {
-                Self::handle_put(msg_bytes, llm_client, app_state, status_tx, server_id, store, protocol).await?
+                Self::handle_put(
+                    msg_bytes, llm_client, app_state, status_tx, server_id, store, protocol,
+                )
+                .await?
             }
             "/etcdserverpb.KV/DeleteRange" => {
-                Self::handle_delete_range(msg_bytes, llm_client, app_state, status_tx, server_id, store, protocol).await?
+                Self::handle_delete_range(
+                    msg_bytes, llm_client, app_state, status_tx, server_id, store, protocol,
+                )
+                .await?
             }
             "/etcdserverpb.KV/Txn" => {
-                Self::handle_txn(msg_bytes, llm_client, app_state, status_tx, server_id, store, protocol).await?
+                Self::handle_txn(
+                    msg_bytes, llm_client, app_state, status_tx, server_id, store, protocol,
+                )
+                .await?
             }
             "/etcdserverpb.KV/Compact" => {
-                Self::handle_compact(msg_bytes, llm_client, app_state, status_tx, server_id, store, protocol).await?
+                Self::handle_compact(
+                    msg_bytes, llm_client, app_state, status_tx, server_id, store, protocol,
+                )
+                .await?
             }
             _ => {
                 bail!("Unknown gRPC method: {}", path);
@@ -267,9 +285,12 @@ impl EtcdServer {
         // Build HTTP/2 response with gRPC headers
         let mut res = Response::new(Full::new(Bytes::from(response_with_frame)));
         *res.status_mut() = StatusCode::OK;
-        res.headers_mut().insert("content-type", "application/grpc+proto".parse().unwrap());
-        res.headers_mut().insert("grpc-status", "0".parse().unwrap()); // OK
-        res.headers_mut().insert("grpc-message", "".parse().unwrap());
+        res.headers_mut()
+            .insert("content-type", "application/grpc+proto".parse().unwrap());
+        res.headers_mut()
+            .insert("grpc-status", "0".parse().unwrap()); // OK
+        res.headers_mut()
+            .insert("grpc-message", "".parse().unwrap());
 
         Ok(res)
     }
@@ -291,11 +312,14 @@ impl EtcdServer {
         trace!("etcd Range request: {:?}", request);
 
         // Create event for LLM
-        let event = Event::new(&ETCD_RANGE_REQUEST_EVENT, serde_json::json!({
-            "key": key_str,
-            "range_end": if request.range_end.is_empty() { None } else { Some(String::from_utf8_lossy(&request.range_end).to_string()) },
-            "limit": request.limit,
-        }));
+        let event = Event::new(
+            &ETCD_RANGE_REQUEST_EVENT,
+            serde_json::json!({
+                "key": key_str,
+                "range_end": if request.range_end.is_empty() { None } else { Some(String::from_utf8_lossy(&request.range_end).to_string()) },
+                "limit": request.limit,
+            }),
+        );
 
         // Call LLM for decision
         let _execution_result = call_llm(
@@ -305,7 +329,8 @@ impl EtcdServer {
             None,
             &event,
             protocol.as_ref(),
-        ).await?;
+        )
+        .await?;
 
         // For now, return empty response (LLM will control via actions in full implementation)
         let store_lock = store.lock().await;
@@ -334,7 +359,12 @@ impl EtcdServer {
 
         let key_str = String::from_utf8_lossy(&request.key);
         let value_str = String::from_utf8_lossy(&request.value);
-        console_debug!(status_tx, "etcd Put request: key={}, value={}", key_str, value_str);
+        console_debug!(
+            status_tx,
+            "etcd Put request: key={}, value={}",
+            key_str,
+            value_str
+        );
 
         let mut store_lock = store.lock().await;
         store_lock.increment_revision();
@@ -415,7 +445,11 @@ impl EtcdServer {
     ) -> Result<Vec<u8>> {
         let request = CompactionRequest::decode(msg_bytes)?;
 
-        console_debug!(status_tx, "etcd Compact request: revision={}", request.revision);
+        console_debug!(
+            status_tx,
+            "etcd Compact request: revision={}",
+            request.revision
+        );
 
         let store_lock = store.lock().await;
 

@@ -2,7 +2,8 @@
 
 ## Overview
 
-IGMP (Internet Group Management Protocol) is used by IPv4 hosts and adjacent routers to establish multicast group memberships. This implementation provides LLM control over multicast group management and IGMP message handling.
+IGMP (Internet Group Management Protocol) is used by IPv4 hosts and adjacent routers to establish multicast group
+memberships. This implementation provides LLM control over multicast group management and IGMP message handling.
 
 ## Protocol Details
 
@@ -14,13 +15,13 @@ IGMP (Internet Group Management Protocol) is used by IPv4 hosts and adjacent rou
 ### Message Types
 
 1. **Membership Query (0x11)**: Sent by routers to discover which groups have members
-   - General Query: group_address = 0.0.0.0
-   - Group-Specific Query: group_address = specific multicast group
+    - General Query: group_address = 0.0.0.0
+    - Group-Specific Query: group_address = specific multicast group
 
 2. **Membership Report (0x16)**: Sent by hosts to join a group or respond to queries
-   - IGMPv1: type 0x12
-   - IGMPv2: type 0x16
-   - IGMPv3: type 0x22
+    - IGMPv1: type 0x12
+    - IGMPv2: type 0x16
+    - IGMPv3: type 0x22
 
 3. **Leave Group (0x17)**: Sent by hosts to leave a group (IGMPv2+)
 
@@ -43,22 +44,25 @@ IGMP (Internet Group Management Protocol) is used by IPv4 hosts and adjacent rou
 **Implementation**: Raw IP sockets using `libc` and `socket2::Socket`
 
 **Socket Creation**:
+
 - Domain: `AF_INET` (IPv4, constant 2)
 - Type: `SOCK_RAW` (constant 3)
 - Protocol: `IPPROTO_IGMP` (constant 2)
 
 **Requirements**:
+
 - Root privileges or `CAP_NET_RAW` capability
 - Linux platform (uses libc socket syscall)
 - Multicast-enabled network interface
 
 **Implementation Details**:
+
 - Raw socket receives full IP packets (including IP header)
 - IP header is stripped before IGMP parsing (IHL field determines header length)
 - Multicast group join/leave uses `join_multicast_v4`/`leave_multicast_v4`
 - IGMP packets sent to appropriate multicast addresses:
-  - Membership Reports → group address itself
-  - Leave Group → ALL_ROUTERS (224.0.0.2)
+    - Membership Reports → group address itself
+    - Leave Group → ALL_ROUTERS (224.0.0.2)
 
 ### Client Library (for testing)
 
@@ -70,10 +74,12 @@ IGMP (Internet Group Management Protocol) is used by IPv4 hosts and adjacent rou
 ### Control Points
 
 **Async Actions** (require external state changes):
+
 - `join_group` - Join a multicast group
 - `leave_group` - Leave a multicast group
 
 **Sync Actions** (immediate packet responses):
+
 - `send_membership_report` - Send IGMP Membership Report
 - `send_leave_group` - Send IGMP Leave Group message
 - `ignore_message` - Don't respond to this message
@@ -81,20 +87,21 @@ IGMP (Internet Group Management Protocol) is used by IPv4 hosts and adjacent rou
 ### Events
 
 1. **igmp_query_received**: Router querying for group members
-   - Parameters: query_type, group_address, max_response_time
-   - Common response: send_membership_report (if member of queried group)
+    - Parameters: query_type, group_address, max_response_time
+    - Common response: send_membership_report (if member of queried group)
 
 2. **igmp_report_received**: Another host reporting group membership
-   - Parameters: group_address
-   - Common response: ignore_message (suppress own report per IGMP)
+    - Parameters: group_address
+    - Common response: ignore_message (suppress own report per IGMP)
 
 3. **igmp_leave_received**: Another host leaving a group
-   - Parameters: group_address
-   - Common response: ignore_message
+    - Parameters: group_address
+    - Common response: ignore_message
 
 ### LLM Decision Making
 
 The LLM controls:
+
 1. **Group Membership**: Which multicast groups to join/leave
 2. **Query Responses**: Whether to respond to membership queries
 3. **Report Suppression**: IGMPv2 includes report suppression - if we hear another host's report, we can cancel our own
@@ -111,6 +118,7 @@ Follows NetGet dual logging pattern (tracing + status_tx):
 - **TRACE**: Full packet hex dumps
 
 Examples:
+
 ```rust
 debug!("IGMP received from {}: {}", peer_addr, igmp_msg.description());
 let _ = status_tx.send(format!("[DEBUG] IGMP received from {}: {}", peer_addr, igmp_msg.description()));
@@ -124,6 +132,7 @@ let _ = status_tx.send(format!("[TRACE] IGMP data (hex): {}", hex_str));
 ### Connection Tracking
 
 IGMP is connectionless (like UDP). We track:
+
 - Recent peers that sent IGMP messages
 - Joined multicast groups
 - Last activity timestamp
@@ -131,6 +140,7 @@ IGMP is connectionless (like UDP). We track:
 ### State Machine
 
 Server maintains `IgmpServerState`:
+
 - `joined_groups`: Set of Ipv4Addr representing joined multicast groups
 
 ### Packet Processing Flow
@@ -143,24 +153,27 @@ Server maintains `IgmpServerState`:
 6. Determine event type based on message type
 7. Call LLM with event
 8. Execute actions:
-   - Sync: Build and send IGMP response packet to multicast address
-   - Async: Perform actual multicast join/leave via socket options
+    - Sync: Build and send IGMP response packet to multicast address
+    - Async: Perform actual multicast join/leave via socket options
 
 ## Implementation Details
 
 ### Current Implementation
 
 **Raw Socket Support**: ✅ Fully implemented
+
 - Uses `libc::socket()` with SOCK_RAW and IPPROTO_IGMP
 - Requires root privileges or CAP_NET_RAW capability
 - Receives and parses real IGMP packets from network
 
 **Multicast Group Management**: ✅ Fully implemented
+
 - Uses `join_multicast_v4()` to actually join multicast groups
 - Uses `leave_multicast_v4()` to actually leave groups
 - Kernel handles IP-level multicast membership
 
 **IP Header Handling**: ✅ Implemented
+
 - Extracts IHL field to determine IP header length
 - Strips IP header before IGMP parsing
 - Validates IP protocol field (must be 2 for IGMP)
@@ -168,32 +181,32 @@ Server maintains `IgmpServerState`:
 ### Limitations
 
 1. **IGMPv3 Support**: Partial
-   - Can parse IGMPv3 reports (type 0x22)
-   - Cannot construct IGMPv3 reports with source lists
-   - No source filtering (INCLUDE/EXCLUDE modes)
+    - Can parse IGMPv3 reports (type 0x22)
+    - Cannot construct IGMPv3 reports with source lists
+    - No source filtering (INCLUDE/EXCLUDE modes)
 
 2. **Router Functionality**: Not implemented
-   - Current implementation is host-side only
-   - Router would need to send queries and track group members
+    - Current implementation is host-side only
+    - Router would need to send queries and track group members
 
 3. **Platform**: Linux-only
-   - Uses Linux-specific libc constants
-   - Not tested on other Unix platforms
+    - Uses Linux-specific libc constants
+    - Not tested on other Unix platforms
 
 ### Future Enhancements
 
 1. **IGMPv3 Source Filtering**:
-   - INCLUDE mode: specific sources
-   - EXCLUDE mode: all except specific sources
+    - INCLUDE mode: specific sources
+    - EXCLUDE mode: all except specific sources
 
 3. **Router Mode**:
-   - Send periodic general queries
-   - Track per-interface group membership
-   - Handle leave group messages with group-specific queries
+    - Send periodic general queries
+    - Track per-interface group membership
+    - Handle leave group messages with group-specific queries
 
 4. **Automatic Report Suppression**:
-   - Random delay before sending reports
-   - Cancel report if another host reports first
+    - Random delay before sending reports
+    - Cancel report if another host reports first
 
 ## Example Prompts
 
@@ -205,6 +218,7 @@ responds to membership queries with reports for that group.
 ```
 
 Expected behavior:
+
 1. Server starts
 2. LLM decides to join 239.255.255.250
 3. On query for 0.0.0.0 (general), sends report for 239.255.255.250
@@ -219,6 +233,7 @@ Create an IGMP server for a UPnP device. Join the SSDP multicast group
 ```
 
 Expected behavior:
+
 1. Join SSDP multicast group (239.255.255.250)
 2. Respond to all general queries
 3. Respond to group-specific queries for SSDP group
@@ -232,6 +247,7 @@ within the max response time window, don't send your own report.
 ```
 
 Expected behavior:
+
 1. Join group 224.0.1.1
 2. On general query, set timer to send report
 3. If receive another host's report for 224.0.1.1, suppress own report
@@ -242,6 +258,7 @@ Expected behavior:
 See `tests/server/igmp/CLAUDE.md` for E2E testing strategy.
 
 Key testing considerations:
+
 - Manual IGMP packet construction required
 - Test on loopback or isolated network
 - May require root privileges for raw sockets
@@ -252,4 +269,5 @@ Key testing considerations:
 - RFC 1112: Host Extensions for IP Multicasting
 - RFC 2236: Internet Group Management Protocol, Version 2
 - RFC 3376: Internet Group Management Protocol, Version 3
-- RFC 4604: Using Internet Group Management Protocol Version 3 (IGMPv3) and Multicast Listener Discovery Protocol Version 2 (MLDv2) for Source-Specific Multicast
+- RFC 4604: Using Internet Group Management Protocol Version 3 (IGMPv3) and Multicast Listener Discovery Protocol
+  Version 2 (MLDv2) for Source-Specific Multicast

@@ -10,11 +10,11 @@
 
 #[cfg(all(test, feature = "tor"))]
 mod tests {
-    use super::super::helpers::{self, TorTestNetwork};
+    use super::super::helpers::TorTestNetwork;
     use super::super::tor_client::TorClient;
     use anyhow::Result;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use std::time::Duration;
+    use tokio::io::AsyncWriteExt;
 
     /// Test complete Tor network integration with official Tor client
     ///
@@ -53,9 +53,18 @@ mod tests {
         println!("   - Tor Relay: port {}", network.relay.port);
         println!("   - Tor Directory: port {}", network.directory.port);
         println!("   - HTTP Server: port {}", network.http_server_port);
-        println!("   - Relay Fingerprint: {}", network.relay_keys.identity_fingerprint);
-        println!("   - Authority V3 Identity: {}", network.authority_keys.v3_identity_fingerprint);
-        println!("   - Authority Fingerprint: {}", network.authority_keys.authority_fingerprint);
+        println!(
+            "   - Relay Fingerprint: {}",
+            network.relay_keys.identity_fingerprint
+        );
+        println!(
+            "   - Authority V3 Identity: {}",
+            network.authority_keys.v3_identity_fingerprint
+        );
+        println!(
+            "   - Authority Fingerprint: {}",
+            network.authority_keys.authority_fingerprint
+        );
 
         // Create and start official Tor client
         println!("\n--- Starting Tor Client ---");
@@ -76,7 +85,10 @@ mod tests {
         println!("\n--- Waiting for Tor Bootstrap ---");
         println!("  This may take 30-60 seconds as Tor fetches consensus and builds circuits...");
 
-        match tor_client.wait_for_bootstrap(Duration::from_secs(120)).await {
+        match tor_client
+            .wait_for_bootstrap(Duration::from_secs(120))
+            .await
+        {
             Ok(()) => {
                 println!("✓ Tor bootstrap complete!");
             }
@@ -89,13 +101,19 @@ mod tests {
 
         // Verify we can fetch the consensus from the directory
         println!("\n--- Verifying Directory Serves Consensus ---");
-        let consensus_url = format!("http://127.0.0.1:{}/tor/status-vote/current/consensus", network.directory.port);
+        let consensus_url = format!(
+            "http://127.0.0.1:{}/tor/status-vote/current/consensus",
+            network.directory.port
+        );
         let client = reqwest::Client::new();
 
         match client.get(&consensus_url).send().await {
             Ok(response) if response.status().is_success() => {
                 let consensus_text = response.text().await?;
-                println!("✓ Directory served consensus ({} bytes)", consensus_text.len());
+                println!(
+                    "✓ Directory served consensus ({} bytes)",
+                    consensus_text.len()
+                );
 
                 // Verify consensus contains our relay
                 if consensus_text.contains(&network.relay_keys.identity_fingerprint) {

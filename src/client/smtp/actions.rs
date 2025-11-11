@@ -15,25 +15,19 @@ use std::sync::LazyLock;
 pub static SMTP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "smtp_connected",
-        "SMTP client connected to server and ready to send emails"
+        "SMTP client connected to server and ready to send emails",
     )
-    .with_parameters(vec![
-        Parameter {
-            name: "smtp_server".to_string(),
-            type_hint: "string".to_string(),
-            description: "SMTP server hostname".to_string(),
-            required: true,
-        },
-    ])
+    .with_parameters(vec![Parameter {
+        name: "smtp_server".to_string(),
+        type_hint: "string".to_string(),
+        description: "SMTP server hostname".to_string(),
+        required: true,
+    }])
 });
 
 /// SMTP email sent event
 pub static SMTP_CLIENT_EMAIL_SENT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "smtp_email_sent",
-        "Email successfully sent via SMTP"
-    )
-    .with_parameters(vec![
+    EventType::new("smtp_email_sent", "Email successfully sent via SMTP").with_parameters(vec![
         Parameter {
             name: "to".to_string(),
             type_hint: "array".to_string(),
@@ -67,276 +61,278 @@ impl SmtpClientProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for SmtpClientProtocol {
-        fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-            vec![
-                ParameterDefinition {
-                    name: "username".to_string(),
-                    description: "SMTP authentication username (optional)".to_string(),
+    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
+        vec![
+            ParameterDefinition {
+                name: "username".to_string(),
+                description: "SMTP authentication username (optional)".to_string(),
+                type_hint: "string".to_string(),
+                required: false,
+                example: json!("user@example.com"),
+            },
+            ParameterDefinition {
+                name: "password".to_string(),
+                description: "SMTP authentication password (optional)".to_string(),
+                type_hint: "string".to_string(),
+                required: false,
+                example: json!("secret123"),
+            },
+            ParameterDefinition {
+                name: "use_tls".to_string(),
+                description: "Use STARTTLS for secure connection (default: true)".to_string(),
+                type_hint: "boolean".to_string(),
+                required: false,
+                example: json!(true),
+            },
+        ]
+    }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        vec![
+            ActionDefinition {
+                name: "send_email".to_string(),
+                description: "Send an email via SMTP".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "from".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Sender email address".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "to".to_string(),
+                        type_hint: "array".to_string(),
+                        description: "Recipient email addresses".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "subject".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Email subject".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "body".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Email body (plain text)".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "username".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "SMTP authentication username (optional)".to_string(),
+                        required: false,
+                    },
+                    Parameter {
+                        name: "password".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "SMTP authentication password (optional)".to_string(),
+                        required: false,
+                    },
+                    Parameter {
+                        name: "use_tls".to_string(),
+                        type_hint: "boolean".to_string(),
+                        description: "Use STARTTLS (default: true)".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({
+                    "type": "send_email",
+                    "from": "sender@example.com",
+                    "to": ["recipient@example.com"],
+                    "subject": "Test Email",
+                    "body": "Hello, this is a test email from NetGet SMTP client.",
+                    "use_tls": true
+                }),
+            },
+            ActionDefinition {
+                name: "disconnect".to_string(),
+                description: "Disconnect from the SMTP server".to_string(),
+                parameters: vec![],
+                example: json!({
+                    "type": "disconnect"
+                }),
+            },
+        ]
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![ActionDefinition {
+            name: "send_email".to_string(),
+            description: "Send another email in response to previous operation".to_string(),
+            parameters: vec![
+                Parameter {
+                    name: "from".to_string(),
                     type_hint: "string".to_string(),
-                    required: false,
-                    example: json!("user@example.com"),
+                    description: "Sender email address".to_string(),
+                    required: true,
                 },
-                ParameterDefinition {
-                    name: "password".to_string(),
-                    description: "SMTP authentication password (optional)".to_string(),
+                Parameter {
+                    name: "to".to_string(),
+                    type_hint: "array".to_string(),
+                    description: "Recipient email addresses".to_string(),
+                    required: true,
+                },
+                Parameter {
+                    name: "subject".to_string(),
                     type_hint: "string".to_string(),
-                    required: false,
-                    example: json!("secret123"),
+                    description: "Email subject".to_string(),
+                    required: true,
                 },
-                ParameterDefinition {
-                    name: "use_tls".to_string(),
-                    description: "Use STARTTLS for secure connection (default: true)".to_string(),
-                    type_hint: "boolean".to_string(),
-                    required: false,
-                    example: json!(true),
+                Parameter {
+                    name: "body".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Email body".to_string(),
+                    required: true,
                 },
-            ]
-        }
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            vec![
-                ActionDefinition {
-                    name: "send_email".to_string(),
-                    description: "Send an email via SMTP".to_string(),
-                    parameters: vec![
-                        Parameter {
-                            name: "from".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "Sender email address".to_string(),
-                            required: true,
-                        },
-                        Parameter {
-                            name: "to".to_string(),
-                            type_hint: "array".to_string(),
-                            description: "Recipient email addresses".to_string(),
-                            required: true,
-                        },
-                        Parameter {
-                            name: "subject".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "Email subject".to_string(),
-                            required: true,
-                        },
-                        Parameter {
-                            name: "body".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "Email body (plain text)".to_string(),
-                            required: true,
-                        },
-                        Parameter {
-                            name: "username".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "SMTP authentication username (optional)".to_string(),
-                            required: false,
-                        },
-                        Parameter {
-                            name: "password".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "SMTP authentication password (optional)".to_string(),
-                            required: false,
-                        },
-                        Parameter {
-                            name: "use_tls".to_string(),
-                            type_hint: "boolean".to_string(),
-                            description: "Use STARTTLS (default: true)".to_string(),
-                            required: false,
-                        },
-                    ],
-                    example: json!({
-                        "type": "send_email",
-                        "from": "sender@example.com",
-                        "to": ["recipient@example.com"],
-                        "subject": "Test Email",
-                        "body": "Hello, this is a test email from NetGet SMTP client.",
-                        "use_tls": true
-                    }),
-                },
-                ActionDefinition {
-                    name: "disconnect".to_string(),
-                    description: "Disconnect from the SMTP server".to_string(),
-                    parameters: vec![],
-                    example: json!({
-                        "type": "disconnect"
-                    }),
-                },
-            ]
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                ActionDefinition {
-                    name: "send_email".to_string(),
-                    description: "Send another email in response to previous operation".to_string(),
-                    parameters: vec![
-                        Parameter {
-                            name: "from".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "Sender email address".to_string(),
-                            required: true,
-                        },
-                        Parameter {
-                            name: "to".to_string(),
-                            type_hint: "array".to_string(),
-                            description: "Recipient email addresses".to_string(),
-                            required: true,
-                        },
-                        Parameter {
-                            name: "subject".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "Email subject".to_string(),
-                            required: true,
-                        },
-                        Parameter {
-                            name: "body".to_string(),
-                            type_hint: "string".to_string(),
-                            description: "Email body".to_string(),
-                            required: true,
-                        },
-                    ],
-                    example: json!({
-                        "type": "send_email",
-                        "from": "sender@example.com",
-                        "to": ["recipient@example.com"],
-                        "subject": "Follow-up Email",
-                        "body": "This is a follow-up email."
-                    }),
-                },
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "SMTP"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            vec![
-                EventType {
-                    id: "smtp_connected".to_string(),
-                    description: "Triggered when SMTP client connects to server".to_string(),
-                    actions: vec![],
-                    parameters: vec![],
-                },
-                EventType {
-                    id: "smtp_email_sent".to_string(),
-                    description: "Triggered when email is successfully sent".to_string(),
-                    actions: vec![],
-                    parameters: vec![],
-                },
-            ]
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>TCP>SMTP"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["smtp", "smtp client", "email", "send email", "mail"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Experimental)
-                .implementation("lettre library with STARTTLS support")
-                .llm_control("Full control over email composition (from, to, subject, body, auth)")
-                .e2e_testing("Local SMTP server or test mail service")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "SMTP client for sending emails"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Connect to SMTP server at smtp.example.com:587 and send an email to user@example.com"
-        }
-        fn group_name(&self) -> &'static str {
-            "Email"
-        }
+            ],
+            example: json!({
+                "type": "send_email",
+                "from": "sender@example.com",
+                "to": ["recipient@example.com"],
+                "subject": "Follow-up Email",
+                "body": "This is a follow-up email."
+            }),
+        }]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "SMTP"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        vec![
+            EventType {
+                id: "smtp_connected".to_string(),
+                description: "Triggered when SMTP client connects to server".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+            EventType {
+                id: "smtp_email_sent".to_string(),
+                description: "Triggered when email is successfully sent".to_string(),
+                actions: vec![],
+                parameters: vec![],
+            },
+        ]
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>SMTP"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["smtp", "smtp client", "email", "send email", "mail"]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("lettre library with STARTTLS support")
+            .llm_control("Full control over email composition (from, to, subject, body, auth)")
+            .e2e_testing("Local SMTP server or test mail service")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "SMTP client for sending emails"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Connect to SMTP server at smtp.example.com:587 and send an email to user@example.com"
+    }
+    fn group_name(&self) -> &'static str {
+        "Email"
+    }
 }
 
 // Implement Client trait (client-specific functionality)
 impl Client for SmtpClientProtocol {
-        fn connect(
-            &self,
-            ctx: crate::protocol::ConnectContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::client::smtp::SmtpClient;
-                SmtpClient::connect_with_llm_actions(
-                    ctx.remote_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.client_id,
-                )
-                .await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "send_email" => {
-                    let from = action
-                        .get("from")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'from' field")?
-                        .to_string();
-    
-                    let to = action
-                        .get("to")
-                        .and_then(|v| v.as_array())
-                        .context("Missing 'to' field or not an array")?
-                        .iter()
-                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                        .collect::<Vec<_>>();
-    
-                    if to.is_empty() {
-                        return Err(anyhow::anyhow!("'to' field must contain at least one email address"));
-                    }
-    
-                    let subject = action
-                        .get("subject")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'subject' field")?
-                        .to_string();
-    
-                    let body = action
-                        .get("body")
-                        .and_then(|v| v.as_str())
-                        .context("Missing 'body' field")?
-                        .to_string();
-    
-                    let username = action
-                        .get("username")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-    
-                    let password = action
-                        .get("password")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-    
-                    let use_tls = action
-                        .get("use_tls")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(true);
-    
-                    // Return custom result with email data
-                    Ok(ClientActionResult::Custom {
-                        name: "smtp_send_email".to_string(),
-                        data: json!({
-                            "from": from,
-                            "to": to,
-                            "subject": subject,
-                            "body": body,
-                            "username": username,
-                            "password": password,
-                            "use_tls": use_tls,
-                        }),
-                    })
-                }
-                "disconnect" => Ok(ClientActionResult::Disconnect),
-                _ => Err(anyhow::anyhow!("Unknown SMTP client action: {}", action_type)),
-            }
-        }
-}
+    fn connect(
+        &self,
+        ctx: crate::protocol::ConnectContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::client::smtp::SmtpClient;
+            SmtpClient::connect_with_llm_actions(
+                ctx.remote_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.client_id,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
 
+        match action_type {
+            "send_email" => {
+                let from = action
+                    .get("from")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'from' field")?
+                    .to_string();
+
+                let to = action
+                    .get("to")
+                    .and_then(|v| v.as_array())
+                    .context("Missing 'to' field or not an array")?
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect::<Vec<_>>();
+
+                if to.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "'to' field must contain at least one email address"
+                    ));
+                }
+
+                let subject = action
+                    .get("subject")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'subject' field")?
+                    .to_string();
+
+                let body = action
+                    .get("body")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'body' field")?
+                    .to_string();
+
+                let username = action
+                    .get("username")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                let password = action
+                    .get("password")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                let use_tls = action
+                    .get("use_tls")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
+
+                // Return custom result with email data
+                Ok(ClientActionResult::Custom {
+                    name: "smtp_send_email".to_string(),
+                    data: json!({
+                        "from": from,
+                        "to": to,
+                        "subject": subject,
+                        "body": body,
+                        "username": username,
+                        "password": password,
+                        "use_tls": use_tls,
+                    }),
+                })
+            }
+            "disconnect" => Ok(ClientActionResult::Disconnect),
+            _ => Err(anyhow::anyhow!(
+                "Unknown SMTP client action: {}",
+                action_type
+            )),
+        }
+    }
+}

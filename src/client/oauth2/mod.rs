@@ -17,6 +17,10 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
+use crate::client::oauth2::actions::{
+    OAUTH2_CLIENT_CONNECTED_EVENT, OAUTH2_DEVICE_CODE_EVENT, OAUTH2_ERROR_EVENT,
+    OAUTH2_TOKEN_OBTAINED_EVENT,
+};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::actions::client_trait::ClientActionResult;
 use crate::llm::ollama_client::OllamaClient;
@@ -24,13 +28,8 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId as NetGetClientId, ClientStatus};
-use crate::client::oauth2::actions::{
-    OAUTH2_CLIENT_CONNECTED_EVENT, OAUTH2_DEVICE_CODE_EVENT, OAUTH2_ERROR_EVENT,
-    OAUTH2_TOKEN_OBTAINED_EVENT,
-};
 
-type TokenResponseType =
-    StandardTokenResponse<EmptyExtraTokenFields, BasicTokenType>;
+type TokenResponseType = StandardTokenResponse<EmptyExtraTokenFields, BasicTokenType>;
 
 /// OAuth2 client for authentication flows
 pub struct OAuth2Client;
@@ -44,54 +43,55 @@ impl OAuth2Client {
         status_tx: mpsc::UnboundedSender<String>,
         client_id: NetGetClientId,
     ) -> Result<SocketAddr> {
-        info!("OAuth2 client {} initializing for {}", client_id, remote_addr);
+        info!(
+            "OAuth2 client {} initializing for {}",
+            client_id, remote_addr
+        );
 
         // Get startup parameters from protocol data
-        let (oauth_client_id, oauth_client_secret, auth_url_opt, token_url, scopes_opt) =
-            app_state
-                .with_client_mut(client_id, |client| {
-                    let client_id_val = client
-                        .get_protocol_field("client_id")
-                        .and_then(|v| v.as_str())
-                        .context("Missing OAuth2 client_id startup parameter")?;
+        let (oauth_client_id, oauth_client_secret, auth_url_opt, token_url, scopes_opt) = app_state
+            .with_client_mut(client_id, |client| {
+                let client_id_val = client
+                    .get_protocol_field("client_id")
+                    .and_then(|v| v.as_str())
+                    .context("Missing OAuth2 client_id startup parameter")?;
 
-                    let client_secret_val = client
-                        .get_protocol_field("client_secret")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
+                let client_secret_val = client
+                    .get_protocol_field("client_secret")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
 
-                    let auth_url = client
-                        .get_protocol_field("auth_url")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
+                let auth_url = client
+                    .get_protocol_field("auth_url")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
 
-                    let token_url_val = client
-                        .get_protocol_field("token_url")
-                        .and_then(|v| v.as_str())
-                        .context("Missing OAuth2 token_url startup parameter")?;
+                let token_url_val = client
+                    .get_protocol_field("token_url")
+                    .and_then(|v| v.as_str())
+                    .context("Missing OAuth2 token_url startup parameter")?;
 
-                    let scopes = client
-                        .get_protocol_field("scopes")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
+                let scopes = client
+                    .get_protocol_field("scopes")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
 
-                    Ok::<_, anyhow::Error>((
-                        client_id_val.to_string(),
-                        client_secret_val,
-                        auth_url,
-                        token_url_val.to_string(),
-                        scopes,
-                    ))
-                })
-                .await
-                .context("Client not found")??;
+                Ok::<_, anyhow::Error>((
+                    client_id_val.to_string(),
+                    client_secret_val,
+                    auth_url,
+                    token_url_val.to_string(),
+                    scopes,
+                ))
+            })
+            .await
+            .context("Client not found")??;
 
         // Build OAuth2 client
         let client_id_obj = ClientId::new(oauth_client_id);
         let client_secret_obj = oauth_client_secret.map(ClientSecret::new);
 
-        let token_url_obj = TokenUrl::new(token_url.clone())
-            .context("Invalid token URL")?;
+        let token_url_obj = TokenUrl::new(token_url.clone()).context("Invalid token URL")?;
 
         // If auth_url is not provided, use token_url as placeholder (won't be used for flows that don't need it)
         let auth_url_obj = if let Some(auth_url_str) = auth_url_opt.clone() {
@@ -114,19 +114,11 @@ impl OAuth2Client {
         // Store OAuth2 client configuration in protocol data
         app_state
             .with_client_mut(client_id, |client| {
-                client.set_protocol_field(
-                    "oauth2_initialized".to_string(),
-                    serde_json::json!(true),
-                );
-                client.set_protocol_field(
-                    "token_url".to_string(),
-                    serde_json::json!(token_url),
-                );
+                client
+                    .set_protocol_field("oauth2_initialized".to_string(), serde_json::json!(true));
+                client.set_protocol_field("token_url".to_string(), serde_json::json!(token_url));
                 if let Some(auth_url) = &auth_url_opt {
-                    client.set_protocol_field(
-                        "auth_url".to_string(),
-                        serde_json::json!(auth_url),
-                    );
+                    client.set_protocol_field("auth_url".to_string(), serde_json::json!(auth_url));
                 }
                 if let Some(scopes) = &scopes_opt {
                     client.set_protocol_field(
@@ -236,80 +228,37 @@ impl OAuth2Client {
         let action_result = protocol.execute_action(action)?;
 
         match action_result {
-            ClientActionResult::Custom { name, data } => {
-                match name.as_str() {
-                    "oauth2_exchange_password" => {
-                        Self::exchange_password(
-                            client_id,
-                            data,
-                            app_state,
-                            llm_client,
-                            status_tx,
-                        )
+            ClientActionResult::Custom { name, data } => match name.as_str() {
+                "oauth2_exchange_password" => {
+                    Self::exchange_password(client_id, data, app_state, llm_client, status_tx)
                         .await?;
-                    }
-                    "oauth2_exchange_client_credentials" => {
-                        Self::exchange_client_credentials(
-                            client_id,
-                            data,
-                            app_state,
-                            llm_client,
-                            status_tx,
-                        )
-                        .await?;
-                    }
-                    "oauth2_start_device_code" => {
-                        Self::start_device_code_flow(
-                            client_id,
-                            data,
-                            app_state,
-                            llm_client,
-                            status_tx,
-                        )
-                        .await?;
-                    }
-                    "oauth2_poll_device_code" => {
-                        Self::poll_device_code(
-                            client_id,
-                            app_state,
-                            llm_client,
-                            status_tx,
-                        )
-                        .await?;
-                    }
-                    "oauth2_refresh_token" => {
-                        Self::refresh_token(
-                            client_id,
-                            app_state,
-                            llm_client,
-                            status_tx,
-                        )
-                        .await?;
-                    }
-                    "oauth2_generate_auth_url" => {
-                        Self::generate_auth_url(
-                            client_id,
-                            data,
-                            app_state,
-                            status_tx,
-                        )
-                        .await?;
-                    }
-                    "oauth2_exchange_code" => {
-                        Self::exchange_code(
-                            client_id,
-                            data,
-                            app_state,
-                            llm_client,
-                            status_tx,
-                        )
-                        .await?;
-                    }
-                    _ => {
-                        error!("Unknown OAuth2 custom action: {}", name);
-                    }
                 }
-            }
+                "oauth2_exchange_client_credentials" => {
+                    Self::exchange_client_credentials(
+                        client_id, data, app_state, llm_client, status_tx,
+                    )
+                    .await?;
+                }
+                "oauth2_start_device_code" => {
+                    Self::start_device_code_flow(client_id, data, app_state, llm_client, status_tx)
+                        .await?;
+                }
+                "oauth2_poll_device_code" => {
+                    Self::poll_device_code(client_id, app_state, llm_client, status_tx).await?;
+                }
+                "oauth2_refresh_token" => {
+                    Self::refresh_token(client_id, app_state, llm_client, status_tx).await?;
+                }
+                "oauth2_generate_auth_url" => {
+                    Self::generate_auth_url(client_id, data, app_state, status_tx).await?;
+                }
+                "oauth2_exchange_code" => {
+                    Self::exchange_code(client_id, data, app_state, llm_client, status_tx).await?;
+                }
+                _ => {
+                    error!("Unknown OAuth2 custom action: {}", name);
+                }
+            },
             ClientActionResult::Disconnect => {
                 info!("OAuth2 client {} disconnecting", client_id);
                 app_state
@@ -376,10 +325,7 @@ impl OAuth2Client {
             .to_string();
         let scopes_str = data["scopes"].as_str().map(|s| s.to_string());
 
-        info!(
-            "OAuth2 client {} exchanging password for token",
-            client_id
-        );
+        info!("OAuth2 client {} exchanging password for token", client_id);
 
         // Get OAuth2 client config
         let (oauth_client_id, oauth_client_secret, auth_url, token_url, _) = app_state
@@ -407,16 +353,22 @@ impl OAuth2Client {
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
                 Ok::<_, anyhow::Error>((cid, csecret, aurl, turl, dscopes))
-            }).await.context("Client not found")??;
+            })
+            .await
+            .context("Client not found")??;
 
-        let oauth_client =
-            Self::build_oauth_client(oauth_client_id, oauth_client_secret, auth_url, token_url, None)?;
+        let oauth_client = Self::build_oauth_client(
+            oauth_client_id,
+            oauth_client_secret,
+            auth_url,
+            token_url,
+            None,
+        )?;
 
         // Build token request
         let username_obj = ResourceOwnerUsername::new(username);
         let password_obj = ResourceOwnerPassword::new(password);
-        let mut token_request = oauth_client
-            .exchange_password(&username_obj, &password_obj);
+        let mut token_request = oauth_client.exchange_password(&username_obj, &password_obj);
 
         // Add scopes
         if let Some(scopes) = scopes_str {
@@ -493,10 +445,17 @@ impl OAuth2Client {
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
                 Ok::<_, anyhow::Error>((cid, csecret, aurl, turl, dscopes))
-            }).await.context("Client not found")??;
+            })
+            .await
+            .context("Client not found")??;
 
-        let oauth_client =
-            Self::build_oauth_client(oauth_client_id, oauth_client_secret, auth_url, token_url, None)?;
+        let oauth_client = Self::build_oauth_client(
+            oauth_client_id,
+            oauth_client_secret,
+            auth_url,
+            token_url,
+            None,
+        )?;
 
         // Build token request
         let mut token_request = oauth_client.exchange_client_credentials();
@@ -574,7 +533,9 @@ impl OAuth2Client {
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string());
                     Ok::<_, anyhow::Error>((cid, csecret, aurl, turl, durl))
-                }).await.context("Client not found")??;
+                })
+                .await
+                .context("Client not found")??;
 
         let oauth_client = Self::build_oauth_client(
             oauth_client_id,
@@ -592,13 +553,15 @@ impl OAuth2Client {
         // Add scopes
         if let Some(scopes) = scopes_str {
             for scope in scopes.split_whitespace() {
-                device_auth_request =
-                    device_auth_request.add_scope(Scope::new(scope.to_string()));
+                device_auth_request = device_auth_request.add_scope(Scope::new(scope.to_string()));
             }
         }
 
         // Execute device authorization request
-        match device_auth_request.request_async::<_, _, _, EmptyExtraDeviceAuthorizationFields>(async_http_client).await {
+        match device_auth_request
+            .request_async::<_, _, _, EmptyExtraDeviceAuthorizationFields>(async_http_client)
+            .await
+        {
             Ok(device_response) => {
                 let verification_uri = device_response.verification_uri().to_string();
                 let user_code = device_response.user_code().secret().to_string();
@@ -694,9 +657,7 @@ impl OAuth2Client {
                         // Check if token was obtained
                         let has_token = app_state_clone
                             .with_client_mut(client_id, |client| {
-                                client
-                                    .get_protocol_field("access_token")
-                                    .is_some()
+                                client.get_protocol_field("access_token").is_some()
                             })
                             .await
                             .unwrap_or(false);
@@ -757,7 +718,9 @@ impl OAuth2Client {
                         .map(|s| s.to_string())
                         .context("Missing token_url")?;
                     Ok::<_, anyhow::Error>((dc, cid, csecret, aurl, turl))
-                }).await.context("Client not found")??;
+                })
+                .await
+                .context("Client not found")??;
 
         // Make direct HTTP request to token endpoint for device code polling
         // This is a workaround since we can't reconstruct DeviceAuthorizationResponse
@@ -783,18 +746,19 @@ impl OAuth2Client {
                 if status.is_success() {
                     // Token obtained successfully
                     if let Some(access_token) = body.get("access_token").and_then(|v| v.as_str()) {
-                        let token_type = body.get("token_type")
+                        let token_type = body
+                            .get("token_type")
                             .and_then(|v| v.as_str())
                             .unwrap_or("Bearer");
-                        let expires_in = body.get("expires_in")
+                        let expires_in = body
+                            .get("expires_in")
                             .and_then(|v| v.as_u64())
                             .unwrap_or(3600);
-                        let refresh_token = body.get("refresh_token")
+                        let refresh_token = body
+                            .get("refresh_token")
                             .and_then(|v| v.as_str())
                             .map(|s| s.to_string());
-                        let scope = body.get("scope")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
+                        let scope = body.get("scope").and_then(|v| v.as_str()).unwrap_or("");
 
                         // Store tokens
                         app_state
@@ -850,17 +814,20 @@ impl OAuth2Client {
                             .await
                             .unwrap_or_default();
 
-                        if let Ok(ClientLlmResult { actions: _, memory_updates }) =
-                            call_llm_for_client(
-                                &llm_client,
-                                &app_state,
-                                client_id.to_string(),
-                                &instruction,
-                                &memory,
-                                Some(&event),
-                                protocol.as_ref(),
-                                &status_tx,
-                            ).await
+                        if let Ok(ClientLlmResult {
+                            actions: _,
+                            memory_updates,
+                        }) = call_llm_for_client(
+                            &llm_client,
+                            &app_state,
+                            client_id.to_string(),
+                            &instruction,
+                            &memory,
+                            Some(&event),
+                            protocol.as_ref(),
+                            &status_tx,
+                        )
+                        .await
                         {
                             if let Some(mem) = memory_updates {
                                 app_state.set_memory_for_client(client_id, mem).await;
@@ -869,7 +836,10 @@ impl OAuth2Client {
                     }
                 } else {
                     // Check for authorization_pending error
-                    let error = body.get("error").and_then(|v| v.as_str()).unwrap_or("unknown");
+                    let error = body
+                        .get("error")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
                     if error != "authorization_pending" && error != "slow_down" {
                         error!("Device code polling error: {}", error);
                     }
@@ -920,10 +890,17 @@ impl OAuth2Client {
                         .map(|s| s.to_string())
                         .context("Missing token_url")?;
                     Ok::<_, anyhow::Error>((rt, cid, csecret, aurl, turl))
-                }).await.context("Client not found")??;
+                })
+                .await
+                .context("Client not found")??;
 
-        let oauth_client =
-            Self::build_oauth_client(oauth_client_id, oauth_client_secret, auth_url, token_url, None)?;
+        let oauth_client = Self::build_oauth_client(
+            oauth_client_id,
+            oauth_client_secret,
+            auth_url,
+            token_url,
+            None,
+        )?;
 
         // Execute token refresh
         match oauth_client
@@ -997,7 +974,9 @@ impl OAuth2Client {
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
                 Ok::<_, anyhow::Error>((cid, csecret, Some(aurl), turl, dscopes))
-            }).await.context("Client not found")??;
+            })
+            .await
+            .context("Client not found")??;
 
         let mut oauth_client = Self::build_oauth_client(
             oauth_client_id,
@@ -1070,39 +1049,47 @@ impl OAuth2Client {
         info!("OAuth2 client {} exchanging authorization code", client_id);
 
         // Get OAuth client config and PKCE verifier
-        let (pkce_verifier_str, redirect_uri, oauth_client_id, oauth_client_secret, auth_url, token_url) =
-            app_state
-                .with_client_mut(client_id, |client| {
-                    let pkce = client
-                        .get_protocol_field("pkce_verifier")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string())
-                        .context("Missing PKCE verifier")?;
-                    let redir = client
-                        .get_protocol_field("redirect_uri")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string())
-                        .context("Missing redirect_uri")?;
-                    let cid = client
-                        .get_protocol_field("client_id")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string())
-                        .context("Missing client_id")?;
-                    let csecret = client
-                        .get_protocol_field("client_secret")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-                    let aurl = client
-                        .get_protocol_field("auth_url")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-                    let turl = client
-                        .get_protocol_field("token_url")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string())
-                        .context("Missing token_url")?;
-                    Ok::<_, anyhow::Error>((pkce, redir, cid, csecret, aurl, turl))
-                }).await.context("Client not found")??;
+        let (
+            pkce_verifier_str,
+            redirect_uri,
+            oauth_client_id,
+            oauth_client_secret,
+            auth_url,
+            token_url,
+        ) = app_state
+            .with_client_mut(client_id, |client| {
+                let pkce = client
+                    .get_protocol_field("pkce_verifier")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .context("Missing PKCE verifier")?;
+                let redir = client
+                    .get_protocol_field("redirect_uri")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .context("Missing redirect_uri")?;
+                let cid = client
+                    .get_protocol_field("client_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .context("Missing client_id")?;
+                let csecret = client
+                    .get_protocol_field("client_secret")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let aurl = client
+                    .get_protocol_field("auth_url")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let turl = client
+                    .get_protocol_field("token_url")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .context("Missing token_url")?;
+                Ok::<_, anyhow::Error>((pkce, redir, cid, csecret, aurl, turl))
+            })
+            .await
+            .context("Client not found")??;
 
         let mut oauth_client = Self::build_oauth_client(
             oauth_client_id,
@@ -1184,19 +1171,10 @@ impl OAuth2Client {
                     "access_token".to_string(),
                     serde_json::json!(access_token),
                 );
-                client.set_protocol_field(
-                    "token_type".to_string(),
-                    serde_json::json!(token_type),
-                );
-                client.set_protocol_field(
-                    "expires_in".to_string(),
-                    serde_json::json!(expires_in),
-                );
+                client.set_protocol_field("token_type".to_string(), serde_json::json!(token_type));
+                client.set_protocol_field("expires_in".to_string(), serde_json::json!(expires_in));
                 if let Some(rt) = &refresh_token {
-                    client.set_protocol_field(
-                        "refresh_token".to_string(),
-                        serde_json::json!(rt),
-                    );
+                    client.set_protocol_field("refresh_token".to_string(), serde_json::json!(rt));
                 }
                 if !scopes.is_empty() {
                     client.set_protocol_field("scopes".to_string(), serde_json::json!(scopes));

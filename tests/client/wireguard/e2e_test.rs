@@ -64,8 +64,6 @@ mod tests {
     #[test]
     fn test_wireguard_param_parsing() {
         use netget::client::wireguard::actions::WireguardClientProtocol;
-        use netget::llm::actions::Client;
-
         let protocol = WireguardClientProtocol::new();
 
         // Verify protocol metadata
@@ -90,7 +88,6 @@ mod tests {
     #[test]
     fn test_wireguard_actions() {
         use netget::client::wireguard::actions::WireguardClientProtocol;
-        use netget::llm::actions::Client;
         use netget::state::app_state::AppState;
 
         let protocol = WireguardClientProtocol::new();
@@ -112,11 +109,7 @@ mod tests {
         // Verify event types
         let event_types = protocol.get_event_types();
         assert_eq!(event_types.len(), 2);
-        assert!(event_types
-            .iter()
-            .any(|e| e.id == "wireguard_connected"));
-        assert!(event_types
-            .iter()
-            .any(|e| e.id == "wireguard_disconnected"));
+        assert!(event_types.iter().any(|e| e.id == "wireguard_connected"));
+        assert!(event_types.iter().any(|e| e.id == "wireguard_disconnected"));
     }
 }

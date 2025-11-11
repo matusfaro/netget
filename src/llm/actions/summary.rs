@@ -60,9 +60,7 @@ fn summarize_common_action(action: &CommonAction) -> String {
         CommonAction::CloseServer { server_id } => {
             format!("close_server: #{}", server_id)
         }
-        CommonAction::CloseAllServers => {
-            "close_all_servers".to_string()
-        }
+        CommonAction::CloseAllServers => "close_all_servers".to_string(),
         CommonAction::UpdateInstruction { instruction } => {
             let preview = if instruction.len() > 30 {
                 format!("{}...", &instruction[..27])
@@ -101,10 +99,19 @@ fn summarize_common_action(action: &CommonAction) -> String {
             };
             format!("append_to_log: {} \"{}\"", output_name, preview)
         }
-        CommonAction::ScheduleTask { task_id, recurring, delay_secs, interval_secs, .. } => {
+        CommonAction::ScheduleTask {
+            task_id,
+            recurring,
+            delay_secs,
+            interval_secs,
+            ..
+        } => {
             if *recurring {
                 let interval = interval_secs.or(*delay_secs).unwrap_or(0);
-                format!("schedule_task: {} (recurring, interval: {}s)", task_id, interval)
+                format!(
+                    "schedule_task: {} (recurring, interval: {}s)",
+                    task_id, interval
+                )
             } else {
                 let delay = delay_secs.unwrap_or(0);
                 format!("schedule_task: {} (one-shot, delay: {}s)", task_id, delay)
@@ -113,9 +120,7 @@ fn summarize_common_action(action: &CommonAction) -> String {
         CommonAction::CancelTask { task_id } => {
             format!("cancel_task: {}", task_id)
         }
-        CommonAction::ListTasks => {
-            "list_tasks".to_string()
-        }
+        CommonAction::ListTasks => "list_tasks".to_string(),
         CommonAction::OpenClient {
             protocol,
             remote_addr,
@@ -127,21 +132,25 @@ fn summarize_common_action(action: &CommonAction) -> String {
             } else {
                 instruction.clone()
             };
-            format!("open_client: {} → {} \"{}\"", protocol, remote_addr, instr_preview)
+            format!(
+                "open_client: {} → {} \"{}\"",
+                protocol, remote_addr, instr_preview
+            )
         }
         CommonAction::CloseClient { client_id } => {
             format!("close_client: #{}", client_id)
         }
-        CommonAction::CloseAllClients => {
-            "close_all_clients".to_string()
-        }
+        CommonAction::CloseAllClients => "close_all_clients".to_string(),
         CommonAction::CloseConnectionById { connection_id } => {
             format!("close_connection_by_id: #{}", connection_id)
         }
         CommonAction::ReconnectClient { client_id } => {
             format!("reconnect_client: #{}", client_id)
         }
-        CommonAction::UpdateClientInstruction { client_id, instruction } => {
+        CommonAction::UpdateClientInstruction {
+            client_id,
+            instruction,
+        } => {
             let preview = if instruction.len() > 30 {
                 format!("{}...", &instruction[..27])
             } else {
@@ -255,4 +264,3 @@ pub fn summarize_actions(actions: &[Value]) -> String {
 
     format!("{} actions: {}", actions.len(), summaries.join(", "))
 }
-

@@ -14,14 +14,14 @@ use crate::llm::ollama_client::OllamaClient;
 #[cfg(feature = "ldap")]
 use crate::llm::ActionResult;
 #[cfg(feature = "ldap")]
-use actions::{LDAP_BIND_EVENT, LDAP_SEARCH_EVENT, LDAP_UNBIND_EVENT};
+use crate::protocol::Event;
 #[cfg(feature = "ldap")]
 use crate::server::LdapProtocol;
 #[cfg(feature = "ldap")]
-use crate::protocol::Event;
-#[cfg(feature = "ldap")]
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+#[cfg(feature = "ldap")]
+use actions::{LDAP_BIND_EVENT, LDAP_SEARCH_EVENT, LDAP_UNBIND_EVENT};
 
 /// LDAP server that handles directory operations with LLM
 pub struct LdapServer;
@@ -36,7 +36,8 @@ impl LdapServer {
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
     ) -> Result<SocketAddr> {
-        let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let listener =
+            crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         info!("LDAP server (action-based) listening on {}", local_addr);
         let _ = status_tx.send(format!("[INFO] LDAP server listening on {}", local_addr));
@@ -48,10 +49,13 @@ impl LdapServer {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
                         let connection_id = crate::server::connection::ConnectionId::new(
-                            app_state.get_next_unified_id().await
+                            app_state.get_next_unified_id().await,
                         );
                         debug!("LDAP connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!("→ LDAP connection {} from {}", connection_id, remote_addr));
+                        let _ = status_tx.send(format!(
+                            "→ LDAP connection {} from {}",
+                            connection_id, remote_addr
+                        ));
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -74,11 +78,13 @@ impl LdapServer {
                             // Handle LDAP session
                             if let Err(e) = session.handle().await {
                                 error!("LDAP session error: {}", e);
-                                let _ = status_clone.send(format!("[ERROR] LDAP session error: {}", e));
+                                let _ =
+                                    status_clone.send(format!("[ERROR] LDAP session error: {}", e));
                             }
 
                             info!("LDAP connection {} closed", connection_id);
-                            let _ = status_clone.send(format!("✗ LDAP connection {} closed", connection_id));
+                            let _ = status_clone
+                                .send(format!("✗ LDAP connection {} closed", connection_id));
                         });
                     }
                     Err(e) => {
@@ -121,20 +127,26 @@ impl LdapSession {
                 Ok(n) => n,
                 Err(e) => {
                     error!("LDAP read error: {}", e);
-                    let _ = self.status_tx.send(format!("[ERROR] LDAP read error: {}", e));
+                    let _ = self
+                        .status_tx
+                        .send(format!("[ERROR] LDAP read error: {}", e));
                     break;
                 }
             };
 
             buf.truncate(n);
             trace!("LDAP received {} bytes: {:02x?}", n, buf);
-            let _ = self.status_tx.send(format!("[TRACE] LDAP received {} bytes", n));
+            let _ = self
+                .status_tx
+                .send(format!("[TRACE] LDAP received {} bytes", n));
 
             // Parse LDAP message
             match self.parse_ldap_message(&buf).await {
                 Ok(Some(response)) => {
                     trace!("LDAP sending {} bytes: {:02x?}", response.len(), response);
-                    let _ = self.status_tx.send(format!("[TRACE] LDAP sending {} bytes", response.len()));
+                    let _ = self
+                        .status_tx
+                        .send(format!("[TRACE] LDAP sending {} bytes", response.len()));
 
                     self.stream.write_all(&response).await?;
                     self.stream.flush().await?;
@@ -145,7 +157,9 @@ impl LdapSession {
                 }
                 Err(e) => {
                     error!("LDAP parse error: {}", e);
-                    let _ = self.status_tx.send(format!("[ERROR] LDAP parse error: {}", e));
+                    let _ = self
+                        .status_tx
+                        .send(format!("[ERROR] LDAP parse error: {}", e));
                     break;
                 }
             }
@@ -190,7 +204,10 @@ impl LdapSession {
             0x42 => self.handle_unbind_request().await,
             _ => {
                 debug!("LDAP unsupported operation: 0x{:02x}", op_tag);
-                let _ = self.status_tx.send(format!("[DEBUG] LDAP unsupported operation: 0x{:02x}", op_tag));
+                let _ = self.status_tx.send(format!(
+                    "[DEBUG] LDAP unsupported operation: 0x{:02x}",
+                    op_tag
+                ));
                 Ok(Some(encode_ldap_error(msg_id, 2))) // protocolError
             }
         }
@@ -215,7 +232,8 @@ impl LdapSession {
 
         let (dn_bytes, dn_len_bytes) = parse_ber_length(&data[name_start + 1..])?;
         let dn_data_start = name_start + 1 + dn_len_bytes;
-        let dn = String::from_utf8_lossy(&data[dn_data_start..dn_data_start + dn_bytes]).to_string();
+        let dn =
+            String::from_utf8_lossy(&data[dn_data_start..dn_data_start + dn_bytes]).to_string();
 
         // Parse authentication (simple: OCTET STRING with context tag [0])
         let auth_start = dn_data_start + dn_bytes;
@@ -227,16 +245,26 @@ impl LdapSession {
             String::new()
         };
 
-        debug!("LDAP Bind request: version={}, dn={}, password_len={}", version, dn, password.len());
-        let _ = self.status_tx.send(format!("[DEBUG] LDAP Bind request: dn={}", dn));
+        debug!(
+            "LDAP Bind request: version={}, dn={}, password_len={}",
+            version,
+            dn,
+            password.len()
+        );
+        let _ = self
+            .status_tx
+            .send(format!("[DEBUG] LDAP Bind request: dn={}", dn));
 
         // Create Bind event for LLM
-        let event = Event::new(&LDAP_BIND_EVENT, serde_json::json!({
-            "message_id": msg_id,
-            "version": version,
-            "dn": dn,
-            "password": password,
-        }));
+        let event = Event::new(
+            &LDAP_BIND_EVENT,
+            serde_json::json!({
+                "message_id": msg_id,
+                "version": version,
+                "dn": dn,
+                "password": password,
+            }),
+        );
 
         // Get LLM response
         if let Ok(execution_result) = call_llm(
@@ -246,7 +274,9 @@ impl LdapSession {
             Some(self.connection_id),
             &event,
             self.protocol.as_ref(),
-        ).await {
+        )
+        .await
+        {
             for protocol_result in execution_result.protocol_results {
                 if let ActionResult::Output(data) = protocol_result {
                     // Update session state if bind succeeded
@@ -254,8 +284,14 @@ impl LdapSession {
                         if success {
                             self.authenticated = true;
                             self.bind_dn = Some(dn.clone());
-                            info!("LDAP connection {} authenticated as {}", self.connection_id, dn);
-                            let _ = self.status_tx.send(format!("✓ LDAP connection {} authenticated as {}", self.connection_id, dn));
+                            info!(
+                                "LDAP connection {} authenticated as {}",
+                                self.connection_id, dn
+                            );
+                            let _ = self.status_tx.send(format!(
+                                "✓ LDAP connection {} authenticated as {}",
+                                self.connection_id, dn
+                            ));
                         }
                     }
                     return Ok(Some(data));
@@ -264,7 +300,11 @@ impl LdapSession {
         }
 
         // Default: return bind failure
-        Ok(Some(encode_bind_response(msg_id, 49, "Invalid credentials")))
+        Ok(Some(encode_bind_response(
+            msg_id,
+            49,
+            "Invalid credentials",
+        )))
     }
 
     async fn handle_search_request(&mut self, msg_id: i32, data: &[u8]) -> Result<Option<Vec<u8>>> {
@@ -279,19 +319,25 @@ impl LdapSession {
 
         let (base_bytes, base_len_bytes) = parse_ber_length(&data[search_start + 1..])?;
         let base_start = search_start + 1 + base_len_bytes;
-        let base_dn = String::from_utf8_lossy(&data[base_start..base_start + base_bytes]).to_string();
+        let base_dn =
+            String::from_utf8_lossy(&data[base_start..base_start + base_bytes]).to_string();
 
         // For simplicity, we'll just extract the base DN and let the LLM handle the rest
         debug!("LDAP Search request: base_dn={}", base_dn);
-        let _ = self.status_tx.send(format!("[DEBUG] LDAP Search request: base_dn={}", base_dn));
+        let _ = self
+            .status_tx
+            .send(format!("[DEBUG] LDAP Search request: base_dn={}", base_dn));
 
         // Create Search event for LLM
-        let event = Event::new(&LDAP_SEARCH_EVENT, serde_json::json!({
-            "message_id": msg_id,
-            "base_dn": base_dn,
-            "authenticated": self.authenticated,
-            "bind_dn": self.bind_dn.as_deref().unwrap_or(""),
-        }));
+        let event = Event::new(
+            &LDAP_SEARCH_EVENT,
+            serde_json::json!({
+                "message_id": msg_id,
+                "base_dn": base_dn,
+                "authenticated": self.authenticated,
+                "bind_dn": self.bind_dn.as_deref().unwrap_or(""),
+            }),
+        );
 
         // Get LLM response
         if let Ok(execution_result) = call_llm(
@@ -301,7 +347,9 @@ impl LdapSession {
             Some(self.connection_id),
             &event,
             self.protocol.as_ref(),
-        ).await {
+        )
+        .await
+        {
             for protocol_result in execution_result.protocol_results {
                 if let ActionResult::Output(data) = protocol_result {
                     return Ok(Some(data));
@@ -315,12 +363,18 @@ impl LdapSession {
 
     async fn handle_unbind_request(&mut self) -> Result<Option<Vec<u8>>> {
         debug!("LDAP Unbind request from {}", self.connection_id);
-        let _ = self.status_tx.send(format!("[DEBUG] LDAP Unbind request from {}", self.connection_id));
+        let _ = self.status_tx.send(format!(
+            "[DEBUG] LDAP Unbind request from {}",
+            self.connection_id
+        ));
 
         // Create Unbind event for LLM (informational)
-        let event = Event::new(&LDAP_UNBIND_EVENT, serde_json::json!({
-            "bind_dn": self.bind_dn.as_deref().unwrap_or(""),
-        }));
+        let event = Event::new(
+            &LDAP_UNBIND_EVENT,
+            serde_json::json!({
+                "bind_dn": self.bind_dn.as_deref().unwrap_or(""),
+            }),
+        );
 
         // Call LLM but don't wait for response (unbind is fire-and-forget)
         let _ = call_llm(
@@ -330,7 +384,8 @@ impl LdapSession {
             Some(self.connection_id),
             &event,
             self.protocol.as_ref(),
-        ).await;
+        )
+        .await;
 
         // No response for unbind
         Ok(None)
@@ -398,7 +453,12 @@ fn encode_ber_length(length: usize) -> Vec<u8> {
     } else if length < 65536 {
         vec![0x82, (length >> 8) as u8, length as u8]
     } else {
-        vec![0x83, (length >> 16) as u8, (length >> 8) as u8, length as u8]
+        vec![
+            0x83,
+            (length >> 16) as u8,
+            (length >> 8) as u8,
+            length as u8,
+        ]
     }
 }
 

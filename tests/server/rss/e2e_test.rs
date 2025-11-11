@@ -106,35 +106,52 @@ IMPORTANT: Respond with the generate_rss_feed action containing all the feed dat
         .send()
         .await?;
 
+    assert_eq!(response.status(), 200, "Expected 200 OK for tech-news.xml");
     assert_eq!(
-        response.status(),
-        200,
-        "Expected 200 OK for tech-news.xml"
-    );
-    assert_eq!(
-        response.headers().get("content-type").and_then(|h| h.to_str().ok()),
+        response
+            .headers()
+            .get("content-type")
+            .and_then(|h| h.to_str().ok()),
         Some("application/rss+xml; charset=utf-8"),
         "Expected RSS XML content type"
     );
 
     let body = response.text().await?;
     println!("Response length: {} bytes", body.len());
-    println!("First 500 chars:\n{}", &body.chars().take(500).collect::<String>());
+    println!(
+        "First 500 chars:\n{}",
+        &body.chars().take(500).collect::<String>()
+    );
 
     // Verify RSS structure
     assert!(body.contains("<rss"), "Expected <rss tag");
     assert!(body.contains("version=\"2.0\""), "Expected RSS 2.0 version");
     assert!(body.contains("Tech News Daily"), "Expected feed title");
-    assert!(body.contains("https://technews.example.com"), "Expected feed link");
-    assert!(body.contains("New AI Model Released"), "Expected first item title");
-    assert!(body.contains("Cloud Computing Trends"), "Expected second item");
+    assert!(
+        body.contains("https://technews.example.com"),
+        "Expected feed link"
+    );
+    assert!(
+        body.contains("New AI Model Released"),
+        "Expected first item title"
+    );
+    assert!(
+        body.contains("Cloud Computing Trends"),
+        "Expected second item"
+    );
     assert!(body.contains("Quantum Computing"), "Expected third item");
 
     // Verify categories
-    assert!(body.contains("<category>AI</category>") || body.contains("<category domain=\"\">AI</category>"),
-        "Expected AI category");
+    assert!(
+        body.contains("<category>AI</category>")
+            || body.contains("<category domain=\"\">AI</category>"),
+        "Expected AI category"
+    );
     assert!(body.contains("Machine Learning"), "Expected ML category");
-    assert!(body.contains("Deep Learning"), "Expected Deep Learning category");
+    assert!(
+        body.contains("Deep Learning"),
+        "Expected Deep Learning category"
+    );
 
     println!("✓ Tech news feed structure valid");
     println!("✓ Contains 3 items with categories");
@@ -151,21 +168,26 @@ IMPORTANT: Respond with the generate_rss_feed action containing all the feed dat
     let body = response.text().await?;
     println!("Response length: {} bytes", body.len());
 
-    assert!(body.contains("Sports Headlines"), "Expected sports feed title");
-    assert!(body.contains("Championship Game"), "Expected championship item");
+    assert!(
+        body.contains("Sports Headlines"),
+        "Expected sports feed title"
+    );
+    assert!(
+        body.contains("Championship Game"),
+        "Expected championship item"
+    );
     assert!(body.contains("Transfer News"), "Expected transfer item");
-    assert!(body.contains("<category>Football</category>") || body.contains("Football"),
-        "Expected Football category");
+    assert!(
+        body.contains("<category>Football</category>") || body.contains("Football"),
+        "Expected Football category"
+    );
 
     println!("✓ Sports feed structure valid");
     println!("✓ Contains 2 items with categories");
 
     // Test 3: Fetch blog.xml feed
     println!("\n[Test 3] Fetch blog feed (/blog.xml)");
-    let response = client
-        .get(format!("{}/blog.xml", base_url))
-        .send()
-        .await?;
+    let response = client.get(format!("{}/blog.xml", base_url)).send().await?;
 
     assert_eq!(response.status(), 200, "Expected 200 OK for blog.xml");
 
@@ -173,12 +195,20 @@ IMPORTANT: Respond with the generate_rss_feed action containing all the feed dat
     println!("Response length: {} bytes", body.len());
 
     assert!(body.contains("My Dev Blog"), "Expected blog title");
-    assert!(body.contains("Getting Started with Rust"), "Expected Rust post");
-    assert!(body.contains("Understanding RSS Feeds"), "Expected RSS post");
+    assert!(
+        body.contains("Getting Started with Rust"),
+        "Expected Rust post"
+    );
+    assert!(
+        body.contains("Understanding RSS Feeds"),
+        "Expected RSS post"
+    );
     assert!(body.contains("<guid"), "Expected GUID tags");
     assert!(body.contains("john@example.com"), "Expected author");
-    assert!(body.contains("<category>Rust</category>") || body.contains("Rust"),
-        "Expected Rust category");
+    assert!(
+        body.contains("<category>Rust</category>") || body.contains("Rust"),
+        "Expected Rust category"
+    );
 
     println!("✓ Blog feed structure valid");
     println!("✓ Contains author and GUID fields");
@@ -191,11 +221,7 @@ IMPORTANT: Respond with the generate_rss_feed action containing all the feed dat
         .send()
         .await?;
 
-    assert_eq!(
-        response.status(),
-        404,
-        "Expected 404 for non-existent feed"
-    );
+    assert_eq!(response.status(), 404, "Expected 404 for non-existent feed");
     println!("✓ Non-existent feed returns 404");
 
     // Test 5: Verify RSS can be parsed by rss crate
@@ -218,8 +244,15 @@ IMPORTANT: Respond with the generate_rss_feed action containing all the feed dat
 
     // Verify first item
     let first_item = &channel.items()[0];
-    assert_eq!(first_item.title(), Some("New AI Model Released"), "Expected first item title");
-    assert!(first_item.categories().len() >= 2, "Expected at least 2 categories");
+    assert_eq!(
+        first_item.title(),
+        Some("New AI Model Released"),
+        "Expected first item title"
+    );
+    assert!(
+        first_item.categories().len() >= 2,
+        "Expected at least 2 categories"
+    );
 
     println!("✓ Feed parsed successfully by rss crate");
     println!("✓ Channel metadata valid");

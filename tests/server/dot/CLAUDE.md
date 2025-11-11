@@ -1,9 +1,12 @@
 # DNS-over-TLS (DoT) Protocol E2E Tests
 
 ## Test Overview
-Tests DoT server implementation with multiple DNS queries over a single TLS connection. Validates that DNS queries work correctly when delivered over TLS transport.
+
+Tests DoT server implementation with multiple DNS queries over a single TLS connection. Validates that DNS queries work
+correctly when delivered over TLS transport.
 
 ## Test Strategy
+
 - **Single server setup**: One NetGet instance with Python script handles all test queries
 - **Real TLS client**: Uses tokio-rustls with custom certificate verifier (accepts self-signed)
 - **Real DNS client**: Uses hickory-proto for DNS message construction/parsing
@@ -11,54 +14,65 @@ Tests DoT server implementation with multiple DNS queries over a single TLS conn
 - **Script-driven**: Uses Python script for fast, deterministic responses
 
 ## LLM Call Budget
+
 - `test_dot_server()`: 1 LLM call (server startup with script generation)
 - Script handles all 3 DNS queries (0 additional LLM calls)
 - **Total: 1 LLM call** (excellent efficiency)
 
-**Why so efficient?**: Script-driven approach means LLM generates Python code once at startup, then all queries are handled by the script without further LLM involvement. This is ideal for DoT since it has repetitive query/response patterns.
+**Why so efficient?**: Script-driven approach means LLM generates Python code once at startup, then all queries are
+handled by the script without further LLM involvement. This is ideal for DoT since it has repetitive query/response
+patterns.
 
 ## Scripting Usage
+
 ✅ **Scripting Enabled** - Python script handles all queries
 
 **Script Logic**:
+
 ```python
 import json,sys
 d=json.load(sys.stdin)
 print(json.dumps({"actions":[{"type":"dns_response","query_id":d['event']['query_id'],"answers":[{"name":"example.com","type":"A","ttl":300,"data":"93.184.216.34"}]}]}))
 ```
 
-**Why Python?**: Simple script returns same A record for all queries. Demonstrates DoT's ability to handle scripted responses over TLS.
+**Why Python?**: Simple script returns same A record for all queries. Demonstrates DoT's ability to handle scripted
+responses over TLS.
 
 ## Client Library
+
 - **tokio-rustls v0.24** - Async TLS client
-  - `TlsConnector` - Initiates TLS connections
-  - `ClientConfig` - TLS configuration
-  - Custom `ServerCertVerifier` to accept self-signed certificates
+    - `TlsConnector` - Initiates TLS connections
+    - `ClientConfig` - TLS configuration
+    - Custom `ServerCertVerifier` to accept self-signed certificates
 - **hickory-proto v0.24** - DNS message handling
-  - `Message::new()` - Constructs DNS queries
-  - `Message::from_vec()` - Parses DNS responses
-  - `Query::query()` - Creates DNS query records
+    - `Message::new()` - Constructs DNS queries
+    - `Message::from_vec()` - Parses DNS responses
+    - `Query::query()` - Creates DNS query records
 - **rustls v0.23** - TLS protocol implementation
-  - `CryptoProvider` - Cryptographic operations
-  - `ring` provider for crypto primitives
+    - `CryptoProvider` - Cryptographic operations
+    - `ring` provider for crypto primitives
 
 **Why these libraries?**:
+
 1. **TLS client needed**: DoT requires TLS transport (can't use plain TCP)
 2. **Certificate verification**: Must disable verification for self-signed certs in tests
 3. **DNS protocol**: hickory-proto ensures RFC-compliant DNS messages
 4. **Async compatibility**: All libraries integrate with Tokio runtime
 
 ## Expected Runtime
+
 - Model: qwen3-coder:30b
 - Runtime: ~25-30 seconds for full test
-  - Server startup + script generation: ~20s (1 LLM call)
-  - TLS handshake: ~100ms
-  - 3 DNS queries over TLS: ~10ms total (script-driven, very fast)
-  - Validation: <1s
+    - Server startup + script generation: ~20s (1 LLM call)
+    - TLS handshake: ~100ms
+    - 3 DNS queries over TLS: ~10ms total (script-driven, very fast)
+    - Validation: <1s
 
-**Note**: DoT with scripting is extremely fast after initial startup. The expensive part is LLM generating the script, not the actual DNS queries.
+**Note**: DoT with scripting is extremely fast after initial startup. The expensive part is LLM generating the script,
+not the actual DNS queries.
 
 ## Failure Rate
+
 - **Very Low** (<1%) - Highly stable test
 - Script-driven responses are deterministic
 - Occasional failures: TLS handshake timeout if system is very slow
@@ -67,7 +81,9 @@ print(json.dumps({"actions":[{"type":"dns_response","query_id":d['event']['query
 ## Test Cases
 
 ### Test: DoT Server with Multiple Queries (`test_dot_server`)
+
 **Comprehensive test covering**:
+
 1. Server startup with Python script
 2. TLS connection establishment
 3. Multiple DNS queries over same connection
@@ -75,22 +91,25 @@ print(json.dumps({"actions":[{"type":"dns_response","query_id":d['event']['query
 5. Connection persistence
 
 **Test Flow**:
+
 1. Start NetGet server on dynamic port with DNS-over-TLS
 2. Provide Python script that returns A record for all queries
 3. Establish TLS connection to server (disable cert verification)
 4. Send 3 DNS queries for different domains:
-   - Query 1: example.com (A record)
-   - Query 2: test.com (A record)
-   - Query 3: foo.example.com (A record)
+    - Query 1: example.com (A record)
+    - Query 2: test.com (A record)
+    - Query 3: foo.example.com (A record)
 5. Verify each query receives DNS response with answer
 
 **Why 3 queries?**:
+
 - Tests connection reuse (TLS session persists)
 - Tests length-prefixed framing for multiple messages
 - Tests script handles different domains correctly
 - All handled by script (0 LLM calls after startup)
 
 **Validation**:
+
 - Each response must have non-empty `answers()` section
 - Script returns same A record for all domains (expected behavior)
 - Connection remains open between queries
@@ -98,7 +117,9 @@ print(json.dumps({"actions":[{"type":"dns_response","query_id":d['event']['query
 ## Known Issues
 
 ### 1. Self-Signed Certificate Handling
-Test uses custom `NoCertificateVerification` implementation to bypass certificate verification. This is **test-only** code and should never be used in production.
+
+Test uses custom `NoCertificateVerification` implementation to bypass certificate verification. This is **test-only**
+code and should never be used in production.
 
 ```rust
 struct NoCertificateVerification;
@@ -109,10 +130,13 @@ impl ServerCertVerifier for NoCertificateVerification {
 }
 ```
 
-**Why needed?**: NetGet generates self-signed certificates, which would normally fail verification. Production DoT clients should verify certificates properly.
+**Why needed?**: NetGet generates self-signed certificates, which would normally fail verification. Production DoT
+clients should verify certificates properly.
 
 ### 2. No Certificate Validation Test
+
 Test doesn't verify:
+
 - Certificate validity period
 - Certificate subject/hostname
 - Certificate chain
@@ -121,7 +145,9 @@ Test doesn't verify:
 **Reason**: Focus is on DoT protocol correctness, not TLS certificate infrastructure.
 
 ### 3. No Error Response Tests
+
 Test doesn't validate:
+
 - NXDOMAIN responses
 - Server failure responses
 - Invalid query handling
@@ -129,29 +155,38 @@ Test doesn't validate:
 **Future Enhancement**: Add test cases for error conditions with separate server instances.
 
 ### 4. Script Returns Same Response for All
-Current script returns `example.com -> 93.184.216.34` for **all** queries, regardless of domain. This is intentional for simplicity.
 
-**Why acceptable?**: Tests DoT protocol mechanics (TLS transport, framing, multiple queries). Comprehensive DNS logic testing is covered by standard DNS tests.
+Current script returns `example.com -> 93.184.216.34` for **all** queries, regardless of domain. This is intentional for
+simplicity.
+
+**Why acceptable?**: Tests DoT protocol mechanics (TLS transport, framing, multiple queries). Comprehensive DNS logic
+testing is covered by standard DNS tests.
 
 ## Performance Notes
 
 ### TLS Handshake Overhead
+
 - First query: ~100ms overhead (TLS handshake)
 - Subsequent queries: ~1ms each (reuse session)
 - Amortized overhead minimal with connection reuse
 
 ### Scripting Performance
+
 Without scripting, DoT would require 1 LLM call per query:
+
 - 1 startup + 3 queries = 4 LLM calls total
 - Runtime: ~20s (startup) + 3×8s (queries) = 44s
 
 With scripting:
+
 - 1 startup only = 1 LLM call total
 - Runtime: ~20s (startup) + 3×1ms (queries) = 20s
 - **Performance improvement: ~50% faster runtime, 75% fewer LLM calls**
 
 ### Comparison to UDP DNS Tests
+
 DoT tests are:
+
 - **Slower startup**: TLS adds complexity to script generation
 - **Faster queries**: Connection reuse amortizes overhead
 - **More secure**: TLS encryption protects DNS queries
@@ -159,6 +194,7 @@ DoT tests are:
 ## Future Enhancements
 
 ### Test Coverage Gaps
+
 1. **Connection close handling**: Test client-initiated connection close
 2. **Large responses**: Test DNS responses near size limits
 3. **Error responses**: Test NXDOMAIN, SERVFAIL, REFUSED
@@ -167,7 +203,9 @@ DoT tests are:
 6. **Invalid queries**: Test malformed DNS messages
 
 ### Consolidation Opportunity
+
 Could add more comprehensive script:
+
 ```python
 import json,sys
 d=json.load(sys.stdin)
@@ -183,7 +221,9 @@ else:
 This would test domain-specific responses while staying within 1 LLM call budget.
 
 ### Certificate Testing
+
 Add test with proper certificate validation:
+
 1. Generate CA certificate
 2. Sign server certificate
 3. Configure client to trust CA
@@ -192,6 +232,7 @@ Add test with proper certificate validation:
 **Benefit**: Tests production-like TLS setup.
 
 ## References
+
 - [RFC 7858: DNS over TLS](https://datatracker.ietf.org/doc/html/rfc7858)
 - [hickory-proto Documentation](https://docs.rs/hickory-proto/latest/hickory_proto/)
 - [tokio-rustls Documentation](https://docs.rs/tokio-rustls/latest/tokio_rustls/)

@@ -5,6 +5,7 @@
 **Approach:** Black-box testing with OpenSC tools and PC/SC middleware
 
 **Test Types:**
+
 - Unit tests: None (APDU logic tested via E2E)
 - E2E tests: USB/IP attachment + OpenSC/PKCS#11 tools
 - PIV tests: PIV applet operations (when implemented)
@@ -15,6 +16,7 @@
 **Current:** 0 (tests use real PC/SC tools, not LLM)
 
 **Rationale:**
+
 - Smart Card protocol doesn't require LLM for operation
 - Tests verify USB CCID and cryptographic correctness
 - No prompt-driven behavior to test
@@ -74,16 +76,16 @@ sudo -E cargo test --no-default-features --features usb-smartcard test_apdu_exch
 
 ## Expected Runtime
 
-| Test | Duration | LLM Calls |
-|------|----------|-----------|
-| Server startup | 2s | 0 |
-| Card detection | 5s | 0 |
-| APDU exchange | 10s | 0 |
-| PIN verification | 10s | 0 |
-| RSA signing | 15s | 0 |
-| Key generation | 20s | 0 |
-| PKCS#11 access | 15s | 0 |
-| PIV operations | 30s | 0 |
+| Test             | Duration | LLM Calls |
+|------------------|----------|-----------|
+| Server startup   | 2s       | 0         |
+| Card detection   | 5s       | 0         |
+| APDU exchange    | 10s      | 0         |
+| PIN verification | 10s      | 0         |
+| RSA signing      | 15s      | 0         |
+| Key generation   | 20s      | 0         |
+| PKCS#11 access   | 15s      | 0         |
+| PIV operations   | 30s      | 0         |
 
 **Total:** ~2-3 minutes
 
@@ -118,6 +120,7 @@ sudo -E cargo test --no-default-features --features usb-smartcard test_apdu_exch
 **Current Coverage:** 0% (tests not yet implemented)
 
 **Target Coverage:**
+
 - ✅ USB CCID device detection
 - ✅ ATR (Answer To Reset)
 - ✅ Basic APDU exchange (SELECT, GET DATA)

@@ -7,17 +7,20 @@ Virtual USB CDC ACM serial port using USB/IP protocol. Appears as `/dev/ttyACM0`
 ## CDC ACM Protocol
 
 **Two Interfaces**:
+
 1. Communication Interface (control): Line coding, DTR/RTS signals
 2. Data Interface (bulk): Bidirectional serial data transfer
 
 ## LLM Actions
 
 **send_data**: Transmit data to serial port
+
 ```json
 {"type": "send_data", "data": "Hello\n"}
 ```
 
 **set_line_coding**: Configure baud rate and parameters
+
 ```json
 {"type": "set_line_coding", "baud_rate": 115200, "data_bits": 8, "parity": "none", "stop_bits": 1}
 ```

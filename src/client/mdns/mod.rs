@@ -11,13 +11,16 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{error, info, trace, warn};
 
+use crate::client::mdns::actions::{
+    MDNS_CLIENT_CONNECTED_EVENT, MDNS_CLIENT_SERVICE_FOUND_EVENT,
+    MDNS_CLIENT_SERVICE_RESOLVED_EVENT,
+};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::mdns::actions::{MDNS_CLIENT_CONNECTED_EVENT, MDNS_CLIENT_SERVICE_FOUND_EVENT, MDNS_CLIENT_SERVICE_RESOLVED_EVENT};
 
 /// mDNS client that performs service discovery on the local network
 pub struct MdnsClient;
@@ -34,20 +37,20 @@ impl MdnsClient {
         info!("mDNS client {} initializing", client_id);
 
         // Create mDNS service daemon
-        let mdns = ServiceDaemon::new()
-            .context("Failed to create mDNS service daemon")?;
+        let mdns = ServiceDaemon::new().context("Failed to create mDNS service daemon")?;
 
         // Store daemon handle in protocol_data
         // Note: mdns daemon is not directly serializable, so we just mark it as initialized
-        app_state.with_client_mut(client_id, |client| {
-            client.set_protocol_field(
-                "mdns_initialized".to_string(),
-                serde_json::json!(true),
-            );
-        }).await;
+        app_state
+            .with_client_mut(client_id, |client| {
+                client.set_protocol_field("mdns_initialized".to_string(), serde_json::json!(true));
+            })
+            .await;
 
         // Update status
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
         let _ = status_tx.send(format!("[CLIENT] mDNS client {} initialized", client_id));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
@@ -76,8 +79,13 @@ impl MdnsClient {
                     Some(&event),
                     protocol.as_ref(),
                     &status_tx_clone,
-                ).await {
-                    Ok(ClientLlmResult { actions, memory_updates }) => {
+                )
+                .await
+                {
+                    Ok(ClientLlmResult {
+                        actions,
+                        memory_updates,
+                    }) => {
                         // Update memory
                         if let Some(mem) = memory_updates {
                             app_state_clone.set_memory_for_client(client_id, mem).await;
@@ -92,7 +100,9 @@ impl MdnsClient {
                                 llm_client_clone.clone(),
                                 app_state_clone.clone(),
                                 status_tx_clone.clone(),
-                            ).await {
+                            )
+                            .await
+                            {
                                 error!("Failed to execute mDNS action: {}", e);
                             }
                         }
@@ -138,14 +148,22 @@ impl MdnsClient {
             Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) => {
                 match name.as_str() {
                     "browse_service" => {
-                        let service_type = data["service_type"].as_str()
+                        let service_type = data["service_type"]
+                            .as_str()
                             .ok_or_else(|| anyhow::anyhow!("Missing service_type"))?;
 
-                        info!("mDNS client {} browsing for service: {}", client_id, service_type);
-                        let _ = status_tx.send(format!("[CLIENT] Browsing for mDNS service: {}", service_type));
+                        info!(
+                            "mDNS client {} browsing for service: {}",
+                            client_id, service_type
+                        );
+                        let _ = status_tx.send(format!(
+                            "[CLIENT] Browsing for mDNS service: {}",
+                            service_type
+                        ));
 
                         // Start browsing
-                        let receiver = mdns.browse(service_type)
+                        let receiver = mdns
+                            .browse(service_type)
                             .context("Failed to browse service")?;
 
                         // Spawn task to handle browse events
@@ -161,10 +179,17 @@ impl MdnsClient {
                                     Ok(event) => {
                                         match event {
                                             ServiceEvent::ServiceFound(service_type, fullname) => {
-                                                trace!("mDNS service found: {} ({})", fullname, service_type);
+                                                trace!(
+                                                    "mDNS service found: {} ({})",
+                                                    fullname,
+                                                    service_type
+                                                );
 
                                                 // Call LLM with service found event
-                                                if let Some(instruction) = app_state_browse.get_instruction_for_client(client_id).await {
+                                                if let Some(instruction) = app_state_browse
+                                                    .get_instruction_for_client(client_id)
+                                                    .await
+                                                {
                                                     let llm_event = Event::new(
                                                         &MDNS_CLIENT_SERVICE_FOUND_EVENT,
                                                         serde_json::json!({
@@ -173,7 +198,10 @@ impl MdnsClient {
                                                         }),
                                                     );
 
-                                                    let memory = app_state_browse.get_memory_for_client(client_id).await.unwrap_or_default();
+                                                    let memory = app_state_browse
+                                                        .get_memory_for_client(client_id)
+                                                        .await
+                                                        .unwrap_or_default();
 
                                                     match call_llm_for_client(
                                                         &llm_client_browse,
@@ -184,10 +212,19 @@ impl MdnsClient {
                                                         Some(&llm_event),
                                                         protocol_browse.as_ref(),
                                                         &status_tx_browse,
-                                                    ).await {
-                                                        Ok(ClientLlmResult { actions: _, memory_updates }) => {
+                                                    )
+                                                    .await
+                                                    {
+                                                        Ok(ClientLlmResult {
+                                                            actions: _,
+                                                            memory_updates,
+                                                        }) => {
                                                             if let Some(mem) = memory_updates {
-                                                                app_state_browse.set_memory_for_client(client_id, mem).await;
+                                                                app_state_browse
+                                                                    .set_memory_for_client(
+                                                                        client_id, mem,
+                                                                    )
+                                                                    .await;
                                                             }
                                                         }
                                                         Err(e) => {
@@ -197,18 +234,25 @@ impl MdnsClient {
                                                 }
                                             }
                                             ServiceEvent::ServiceResolved(info) => {
-                                                let first_addr = info.get_addresses().iter().next()
+                                                let first_addr = info
+                                                    .get_addresses()
+                                                    .iter()
+                                                    .next()
                                                     .map(|scoped| scoped.to_string())
                                                     .unwrap_or_else(|| "0.0.0.0".to_string());
 
-                                                info!("mDNS service resolved: {} at {}:{}",
+                                                info!(
+                                                    "mDNS service resolved: {} at {}:{}",
                                                     info.get_fullname(),
                                                     first_addr,
                                                     info.get_port()
                                                 );
 
                                                 // Call LLM with service resolved event
-                                                if let Some(instruction) = app_state_browse.get_instruction_for_client(client_id).await {
+                                                if let Some(instruction) = app_state_browse
+                                                    .get_instruction_for_client(client_id)
+                                                    .await
+                                                {
                                                     let llm_event = Event::new(
                                                         &MDNS_CLIENT_SERVICE_RESOLVED_EVENT,
                                                         serde_json::json!({
@@ -220,7 +264,10 @@ impl MdnsClient {
                                                         }),
                                                     );
 
-                                                    let memory = app_state_browse.get_memory_for_client(client_id).await.unwrap_or_default();
+                                                    let memory = app_state_browse
+                                                        .get_memory_for_client(client_id)
+                                                        .await
+                                                        .unwrap_or_default();
 
                                                     match call_llm_for_client(
                                                         &llm_client_browse,
@@ -231,10 +278,19 @@ impl MdnsClient {
                                                         Some(&llm_event),
                                                         protocol_browse.as_ref(),
                                                         &status_tx_browse,
-                                                    ).await {
-                                                        Ok(ClientLlmResult { actions: _, memory_updates }) => {
+                                                    )
+                                                    .await
+                                                    {
+                                                        Ok(ClientLlmResult {
+                                                            actions: _,
+                                                            memory_updates,
+                                                        }) => {
                                                             if let Some(mem) = memory_updates {
-                                                                app_state_browse.set_memory_for_client(client_id, mem).await;
+                                                                app_state_browse
+                                                                    .set_memory_for_client(
+                                                                        client_id, mem,
+                                                                    )
+                                                                    .await;
                                                             }
                                                         }
                                                         Err(e) => {
@@ -243,8 +299,14 @@ impl MdnsClient {
                                                     }
                                                 }
                                             }
-                                            ServiceEvent::ServiceRemoved(service_type, fullname) => {
-                                                info!("mDNS service removed: {} ({})", fullname, service_type);
+                                            ServiceEvent::ServiceRemoved(
+                                                service_type,
+                                                fullname,
+                                            ) => {
+                                                info!(
+                                                    "mDNS service removed: {} ({})",
+                                                    fullname, service_type
+                                                );
                                             }
                                             ServiceEvent::SearchStarted(service_type) => {
                                                 trace!("mDNS search started for: {}", service_type);
@@ -263,7 +325,11 @@ impl MdnsClient {
                                         // Check if it's a timeout or disconnection
                                         if format!("{:?}", e).contains("Timeout") {
                                             // Timeout is expected, check if client still exists
-                                            if app_state_browse.get_client(client_id).await.is_none() {
+                                            if app_state_browse
+                                                .get_client(client_id)
+                                                .await
+                                                .is_none()
+                                            {
                                                 info!("mDNS browse task stopping (client removed)");
                                                 break;
                                             }
@@ -277,7 +343,8 @@ impl MdnsClient {
                         });
                     }
                     "resolve_hostname" => {
-                        let hostname = data["hostname"].as_str()
+                        let hostname = data["hostname"]
+                            .as_str()
                             .ok_or_else(|| anyhow::anyhow!("Missing hostname"))?;
 
                         info!("mDNS client {} resolving hostname: {}", client_id, hostname);
@@ -286,11 +353,15 @@ impl MdnsClient {
                         match mdns.resolve_hostname(hostname, Some(5000)) {
                             Ok(addrs) => {
                                 info!("Resolved {} to {} addresses", hostname, addrs.len());
-                                let _ = status_tx.send(format!("[CLIENT] Resolved {}: {:?}", hostname, addrs));
+                                let _ = status_tx
+                                    .send(format!("[CLIENT] Resolved {}: {:?}", hostname, addrs));
                             }
                             Err(e) => {
                                 warn!("Failed to resolve {}: {}", hostname, e);
-                                let _ = status_tx.send(format!("[CLIENT] Failed to resolve {}: {}", hostname, e));
+                                let _ = status_tx.send(format!(
+                                    "[CLIENT] Failed to resolve {}: {}",
+                                    hostname, e
+                                ));
                             }
                         }
                     }
@@ -301,7 +372,9 @@ impl MdnsClient {
             }
             Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
                 info!("mDNS client {} disconnecting", client_id);
-                app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
                 let _ = status_tx.send(format!("[CLIENT] mDNS client {} disconnected", client_id));
             }
             Ok(crate::llm::actions::client_trait::ClientActionResult::WaitForMore) => {

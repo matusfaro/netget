@@ -31,8 +31,8 @@ impl SmartCardKeyPair {
     /// Generate a new RSA key pair
     pub fn generate(key_ref: u8, bits: usize) -> Result<Self> {
         let mut rng = rand::thread_rng();
-        let private_key = RsaPrivateKey::new(&mut rng, bits)
-            .context("Failed to generate RSA key")?;
+        let private_key =
+            RsaPrivateKey::new(&mut rng, bits).context("Failed to generate RSA key")?;
         let public_key = RsaPublicKey::from(&private_key);
 
         info!("Generated RSA-{} key pair (ref={:#04x})", bits, key_ref);

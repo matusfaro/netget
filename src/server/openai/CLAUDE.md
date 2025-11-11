@@ -2,7 +2,8 @@
 
 ## Overview
 
-OpenAI-compatible HTTP API server that wraps Ollama, allowing clients to use OpenAI libraries and tools to interact with local LLM models. Implements the OpenAI API specification for model listing and chat completions.
+OpenAI-compatible HTTP API server that wraps Ollama, allowing clients to use OpenAI libraries and tools to interact with
+local LLM models. Implements the OpenAI API specification for model listing and chat completions.
 
 ## Protocol Version
 
@@ -13,17 +14,19 @@ OpenAI-compatible HTTP API server that wraps Ollama, allowing clients to use Ope
 ## Library Choices
 
 ### Core Dependencies
+
 - **hyper** (v1) - HTTP/1.1 server implementation
-  - Chosen for: async/await support, efficient connection handling
-  - Used for: HTTP request/response processing
+    - Chosen for: async/await support, efficient connection handling
+    - Used for: HTTP request/response processing
 - **http-body-util** - HTTP body utilities
-  - Chosen for: body collection and Full body type
+    - Chosen for: body collection and Full body type
 - **serde_json** - JSON serialization/deserialization
-  - Chosen for: OpenAI API format compliance
+    - Chosen for: OpenAI API format compliance
 - **tokio** - Async runtime
-  - Chosen for: concurrent connection handling
+    - Chosen for: concurrent connection handling
 
 ### Why Not Use an OpenAI Server Library?
+
 - No suitable Rust library exists for *building* OpenAI-compatible servers
 - Implementing directly gives full control over LLM integration
 - Simple API surface (2 endpoints) doesn't justify additional dependencies
@@ -31,36 +34,45 @@ OpenAI-compatible HTTP API server that wraps Ollama, allowing clients to use Ope
 ## Architecture Decisions
 
 ### LLM Integration Approach
+
 **Direct Ollama Delegation** - The OpenAI server acts as a thin translation layer:
+
 1. Receives OpenAI-format requests
 2. Translates to Ollama API calls
 3. Converts Ollama responses back to OpenAI format
 
 This approach provides:
+
 - Real LLM responses (not simulated)
 - Zero configuration - no prompting needed
 - Full OpenAI SDK compatibility
 
 ### Response Format Translation
+
 **Models List** (`/v1/models`):
+
 - Calls `llm_client.list_models()` to get Ollama models
 - Transforms to OpenAI format: `{object: "list", data: [{id, object: "model", created, owned_by}]}`
 - Static timestamp used (not significant for compatibility)
 
 **Chat Completions** (`/v1/chat/completions`):
+
 - Extracts messages array from OpenAI request
 - Builds simple prompt format: `"user: <message>\nassistant: "`
 - Calls `llm_client.generate()` with Ollama
 - Wraps response in OpenAI completion format with choices array
 
 ### Connection Management
+
 - Each HTTP connection spawned as separate tokio task
 - Connections tracked in `ProtocolConnectionInfo::OpenAi` with `recent_requests` Vec
 - HTTP/1.1 keep-alive handled by hyper's `serve_connection`
 - No manual connection cleanup needed (hyper handles closing)
 
 ### Action System Integration
+
 **Hybrid Model** - Combines direct implementation with action support:
+
 - Most logic is **hardcoded** (no LLM prompting needed)
 - Action system available for future extensibility
 - Protocol implements `ProtocolActions` trait with empty action lists
@@ -68,6 +80,7 @@ This approach provides:
 ## State Management
 
 ### Per-Connection State
+
 ```rust
 ProtocolConnectionInfo::OpenAi {
     recent_requests: Vec<String>,  // Track request endpoints
@@ -75,6 +88,7 @@ ProtocolConnectionInfo::OpenAi {
 ```
 
 ### No Session State
+
 - Each request is stateless (true to OpenAI API design)
 - No conversation history maintained server-side
 - Client provides full message history in each request
@@ -82,6 +96,7 @@ ProtocolConnectionInfo::OpenAi {
 ## Limitations
 
 ### Not Implemented
+
 - **Streaming responses** - No SSE support (OpenAI SDK supports `stream: true`)
 - **Function calling** - Tools/function_call parameters ignored
 - **Embeddings endpoint** - Only chat completions supported
@@ -89,14 +104,16 @@ ProtocolConnectionInfo::OpenAi {
 - **API key authentication** - No auth layer (security out of scope)
 
 ### Response Format Compromises
+
 - Token usage is always `{prompt_tokens: 0, completion_tokens: 0, total_tokens: 0}`
-  - Ollama doesn't expose token counts in generate API
+    - Ollama doesn't expose token counts in generate API
 - Model parameter may not match requested model
-  - Falls back to app_state default model if not specified
+    - Falls back to app_state default model if not specified
 - Temperature/max_tokens parameters passed but not validated
-  - Ollama may interpret differently than OpenAI
+    - Ollama may interpret differently than OpenAI
 
 ### Ollama-Specific Behavior
+
 - Model names follow Ollama format (e.g., `qwen2.5-coder:0.5b`)
 - Response timing may differ from OpenAI (local inference)
 - Availability depends on Ollama service running
@@ -104,6 +121,7 @@ ProtocolConnectionInfo::OpenAi {
 ## Example Prompts and Responses
 
 ### Startup (No Prompting Needed)
+
 ```bash
 netget "open_server port 11435 base_stack openai"
 ```
@@ -111,6 +129,7 @@ netget "open_server port 11435 base_stack openai"
 The server starts immediately with full OpenAI compatibility. No LLM instructions needed.
 
 ### Client Usage (Python)
+
 ```python
 from openai import OpenAI
 
@@ -135,6 +154,7 @@ print(response.choices[0].message.content)
 ```
 
 ### Client Usage (Rust)
+
 ```rust
 use async_openai::{Client, types::*};
 

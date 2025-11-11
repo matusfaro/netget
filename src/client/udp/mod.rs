@@ -10,6 +10,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, trace, warn};
 
+use crate::client::udp::actions::{UDP_CLIENT_CONNECTED_EVENT, UDP_CLIENT_DATAGRAM_RECEIVED_EVENT};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::actions::client_trait::ClientActionResult;
 use crate::llm::ollama_client::OllamaClient;
@@ -17,7 +18,6 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::udp::actions::{UDP_CLIENT_CONNECTED_EVENT, UDP_CLIENT_DATAGRAM_RECEIVED_EVENT};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -48,7 +48,8 @@ impl UdpClient {
         client_id: ClientId,
     ) -> Result<SocketAddr> {
         // Parse remote address for default target
-        let default_target: SocketAddr = remote_addr.parse()
+        let default_target: SocketAddr = remote_addr
+            .parse()
             .context(format!("Failed to parse remote address: {}", remote_addr))?;
 
         // Bind to local address (0.0.0.0:0 for any available port)
@@ -58,10 +59,15 @@ impl UdpClient {
 
         let local_addr = socket.local_addr()?;
 
-        info!("UDP client {} bound to {} (default target: {})", client_id, local_addr, default_target);
+        info!(
+            "UDP client {} bound to {} (default target: {})",
+            client_id, local_addr, default_target
+        );
 
         // Update client state
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
         let _ = status_tx.send(format!("[CLIENT] UDP client {} ready", client_id));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
@@ -87,10 +93,13 @@ impl UdpClient {
                 // Get instruction for this client
                 if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
                     let protocol = Arc::new(UdpClientProtocol::new());
-                    let connected_event = Event::new(&UDP_CLIENT_CONNECTED_EVENT, serde_json::json!({
-                        "remote_addr": default_target.to_string(),
-                        "local_addr": local_addr.to_string(),
-                    }));
+                    let connected_event = Event::new(
+                        &UDP_CLIENT_CONNECTED_EVENT,
+                        serde_json::json!({
+                            "remote_addr": default_target.to_string(),
+                            "local_addr": local_addr.to_string(),
+                        }),
+                    );
 
                     // Call LLM with connected event
                     match call_llm_for_client(
@@ -116,11 +125,17 @@ impl UdpClient {
                             )
                             .await
                             {
-                                error!("Error handling LLM result for UDP client {}: {}", client_id, e);
+                                error!(
+                                    "Error handling LLM result for UDP client {}: {}",
+                                    client_id, e
+                                );
                             }
                         }
                         Err(e) => {
-                            error!("Failed to call LLM for UDP client {} connected event: {}", client_id, e);
+                            error!(
+                                "Failed to call LLM for UDP client {} connected event: {}",
+                                client_id, e
+                            );
                         }
                     }
                 }
@@ -139,7 +154,12 @@ impl UdpClient {
                     match socket_arc.recv_from(&mut buffer).await {
                         Ok((n, source_addr)) => {
                             let data = buffer[..n].to_vec();
-                            trace!("UDP client {} received {} bytes from {}", client_id, n, source_addr);
+                            trace!(
+                                "UDP client {} received {} bytes from {}",
+                                client_id,
+                                n,
+                                source_addr
+                            );
 
                             // Handle datagram with LLM
                             let mut client_data_lock = client_data.lock().await;
@@ -163,7 +183,10 @@ impl UdpClient {
                                     )
                                     .await
                                     {
-                                        error!("Error processing UDP datagram for client {}: {}", client_id, e);
+                                        error!(
+                                            "Error processing UDP datagram for client {}: {}",
+                                            client_id, e
+                                        );
 
                                         // Reset to Idle on error
                                         let mut client_data_lock = client_data.lock().await;
@@ -172,13 +195,19 @@ impl UdpClient {
                                 }
                                 ConnectionState::Processing => {
                                     // Queue the datagram
-                                    trace!("UDP client {} is processing, queuing datagram", client_id);
+                                    trace!(
+                                        "UDP client {} is processing, queuing datagram",
+                                        client_id
+                                    );
                                     client_data_lock.queued_datagrams.push((data, source_addr));
                                     drop(client_data_lock);
                                 }
                                 ConnectionState::Accumulating => {
                                     // Accumulate the datagram
-                                    trace!("UDP client {} is accumulating, adding datagram", client_id);
+                                    trace!(
+                                        "UDP client {} is accumulating, adding datagram",
+                                        client_id
+                                    );
                                     client_data_lock.queued_datagrams.push((data, source_addr));
                                     drop(client_data_lock);
                                 }
@@ -186,8 +215,11 @@ impl UdpClient {
                         }
                         Err(e) => {
                             error!("UDP client {} receive error: {}", client_id, e);
-                            app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
-                            let _ = status_tx.send(format!("[CLIENT] UDP client {} error: {}", client_id, e));
+                            app_state
+                                .update_client_status(client_id, ClientStatus::Error(e.to_string()))
+                                .await;
+                            let _ = status_tx
+                                .send(format!("[CLIENT] UDP client {} error: {}", client_id, e));
                             let _ = status_tx.send("__UPDATE_UI__".to_string());
                             break;
                         }
@@ -216,11 +248,14 @@ impl UdpClient {
         // Get instruction for this client
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
             let protocol = Arc::new(UdpClientProtocol::new());
-            let event = Event::new(&UDP_CLIENT_DATAGRAM_RECEIVED_EVENT, serde_json::json!({
-                "data_hex": data_hex,
-                "data_length": data_len,
-                "source_addr": source_addr.to_string(),
-            }));
+            let event = Event::new(
+                &UDP_CLIENT_DATAGRAM_RECEIVED_EVENT,
+                serde_json::json!({
+                    "data_hex": data_hex,
+                    "data_length": data_len,
+                    "source_addr": source_addr.to_string(),
+                }),
+            );
 
             // Get current memory
             let memory = {
@@ -242,7 +277,15 @@ impl UdpClient {
             .await?;
 
             // Handle LLM result
-            Self::handle_llm_result(llm_result, socket, client_data, client_id, app_state, status_tx).await?;
+            Self::handle_llm_result(
+                llm_result,
+                socket,
+                client_data,
+                client_id,
+                app_state,
+                status_tx,
+            )
+            .await?;
         }
 
         Ok(())
@@ -284,7 +327,8 @@ impl UdpClient {
                             .collect::<Vec<u8>>();
 
                         let target_addr = if let Some(target) = data["target_addr"].as_str() {
-                            target.parse::<SocketAddr>()
+                            target
+                                .parse::<SocketAddr>()
                                 .context(format!("Invalid target address: {}", target))?
                         } else {
                             // Use default target or last source
@@ -294,23 +338,34 @@ impl UdpClient {
 
                         // Send datagram
                         socket.send_to(&data_bytes, target_addr).await?;
-                        trace!("UDP client {} sent {} bytes to {}", client_id, data_bytes.len(), target_addr);
+                        trace!(
+                            "UDP client {} sent {} bytes to {}",
+                            client_id,
+                            data_bytes.len(),
+                            target_addr
+                        );
                     } else if name == "change_target" {
                         let new_target_str = data["new_target"]
                             .as_str()
                             .context("Missing 'new_target' in change_target action")?;
 
-                        let new_target = new_target_str.parse::<SocketAddr>()
+                        let new_target = new_target_str
+                            .parse::<SocketAddr>()
                             .context(format!("Invalid target address: {}", new_target_str))?;
 
                         let mut client_data_lock = client_data.lock().await;
                         client_data_lock.default_target = new_target;
-                        info!("UDP client {} changed default target to {}", client_id, new_target);
+                        info!(
+                            "UDP client {} changed default target to {}",
+                            client_id, new_target
+                        );
                     }
                 }
                 ClientActionResult::Disconnect => {
                     info!("UDP client {} closing socket", client_id);
-                    app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
+                    app_state
+                        .update_client_status(client_id, ClientStatus::Disconnected)
+                        .await;
                     let _ = status_tx.send(format!("[CLIENT] UDP client {} closed", client_id));
                     let _ = status_tx.send("__UPDATE_UI__".to_string());
                     return Ok(());
@@ -335,7 +390,11 @@ impl UdpClient {
         // (LLM has already made its decision based on the current event)
         let mut client_data_lock = client_data.lock().await;
         if !client_data_lock.queued_datagrams.is_empty() {
-            trace!("UDP client {} clearing {} queued datagrams", client_id, client_data_lock.queued_datagrams.len());
+            trace!(
+                "UDP client {} clearing {} queued datagrams",
+                client_id,
+                client_data_lock.queued_datagrams.len()
+            );
             client_data_lock.queued_datagrams.clear();
         }
         client_data_lock.state = ConnectionState::Idle;

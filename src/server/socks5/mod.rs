@@ -7,28 +7,28 @@
 //! - Optional MITM mode for traffic inspection
 //! - Support for IPv4, IPv6, and domain name targets
 
-pub mod filter;
 pub mod actions;
+pub mod filter;
 
 use crate::server::connection::ConnectionId;
-use filter::{Socks5FilterConfig, FilterMode};
-use anyhow::{Result, Context, bail};
-use std::net::{SocketAddr, Ipv4Addr, Ipv6Addr};
+use anyhow::{bail, Context, Result};
+use filter::{FilterMode, Socks5FilterConfig};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn, trace};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
-use actions::{SOCKS5_AUTH_REQUEST_EVENT, SOCKS5_CONNECT_REQUEST_EVENT};
-use crate::server::Socks5Protocol;
 use crate::protocol::Event;
+use crate::server::Socks5Protocol;
 use crate::state::app_state::AppState;
 use crate::state::ServerId;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use actions::{SOCKS5_AUTH_REQUEST_EVENT, SOCKS5_CONNECT_REQUEST_EVENT};
 
 /// SOCKS5 protocol constants
 const SOCKS5_VERSION: u8 = 0x05;
@@ -81,11 +81,16 @@ impl Socks5Server {
         server_id: ServerId,
         startup_params: Option<crate::protocol::StartupParams>,
     ) -> Result<SocketAddr> {
-        info!("SOCKS5 proxy server (action-based) starting on {}", listen_addr);
+        info!(
+            "SOCKS5 proxy server (action-based) starting on {}",
+            listen_addr
+        );
         let _ = status_tx.send(format!("[INFO] SOCKS5 starting on {}", listen_addr));
 
         // Get or initialize SOCKS5 filter configuration
-        let mut config = app_state.get_socks5_filter_config(server_id).await
+        let mut config = app_state
+            .get_socks5_filter_config(server_id)
+            .await
             .unwrap_or_else(|| {
                 info!("No SOCKS5 filter config found, using defaults");
                 Socks5FilterConfig::default()
@@ -103,7 +108,9 @@ impl Socks5Server {
                     if let Some(method_str) = method.as_str() {
                         match method_str {
                             "none" => config.auth_methods.push(AUTH_METHOD_NO_AUTH),
-                            "username_password" => config.auth_methods.push(AUTH_METHOD_USERNAME_PASSWORD),
+                            "username_password" => {
+                                config.auth_methods.push(AUTH_METHOD_USERNAME_PASSWORD)
+                            }
                             _ => warn!("Unknown auth method: {}", method_str),
                         }
                     }
@@ -119,14 +126,19 @@ impl Socks5Server {
 
             // Parse filter configuration
             if let Some(filter) = params.get_optional_object("filter") {
-                if let Some(patterns) = filter.get("target_host_patterns").and_then(|v| v.as_array()) {
-                    config.target_host_patterns = patterns.iter()
+                if let Some(patterns) = filter
+                    .get("target_host_patterns")
+                    .and_then(|v| v.as_array())
+                {
+                    config.target_host_patterns = patterns
+                        .iter()
                         .filter_map(|v| v.as_str())
                         .map(|s| s.to_string())
                         .collect();
                 }
                 if let Some(ranges) = filter.get("target_port_ranges").and_then(|v| v.as_array()) {
-                    config.target_port_ranges = ranges.iter()
+                    config.target_port_ranges = ranges
+                        .iter()
                         .filter_map(|v| v.as_array())
                         .filter_map(|arr| {
                             if arr.len() == 2 {
@@ -158,9 +170,12 @@ impl Socks5Server {
         }
 
         // Store config in app state
-        app_state.set_socks5_filter_config(server_id, config.clone()).await;
+        app_state
+            .set_socks5_filter_config(server_id, config.clone())
+            .await;
 
-        let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let listener =
+            crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         info!("SOCKS5 proxy server listening on {}", local_addr);
         let _ = status_tx.send(format!("→ SOCKS5 proxy ready on {}", local_addr));
@@ -171,7 +186,8 @@ impl Socks5Server {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -181,7 +197,10 @@ impl Socks5Server {
 
                         tokio::spawn(async move {
                             info!("SOCKS5 connection {} from {}", connection_id, remote_addr);
-                            let _ = status_clone.send(format!("[INFO] SOCKS5 connection {} from {}", connection_id, remote_addr));
+                            let _ = status_clone.send(format!(
+                                "[INFO] SOCKS5 connection {} from {}",
+                                connection_id, remote_addr
+                            ));
 
                             if let Err(e) = Self::handle_connection(
                                 stream,
@@ -194,13 +213,20 @@ impl Socks5Server {
                                 protocol_clone,
                                 server_id,
                                 config_clone,
-                            ).await {
+                            )
+                            .await
+                            {
                                 error!("SOCKS5 connection {} error: {}", connection_id, e);
-                                let _ = status_clone.send(format!("✗ SOCKS5 connection {} error: {}", connection_id, e));
+                                let _ = status_clone.send(format!(
+                                    "✗ SOCKS5 connection {} error: {}",
+                                    connection_id, e
+                                ));
                             }
 
                             // Connection closed - mark as closed
-                            state_clone.close_connection_on_server(server_id, connection_id).await;
+                            state_clone
+                                .close_connection_on_server(server_id, connection_id)
+                                .await;
                             let _ = status_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
@@ -229,7 +255,9 @@ impl Socks5Server {
         config: Socks5FilterConfig,
     ) -> Result<()> {
         // Add connection to ServerInstance
-        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+        use crate::state::server::{
+            ConnectionState as ServerConnectionState, ConnectionStatus, ProtocolConnectionInfo,
+        };
         let now = std::time::Instant::now();
         let conn_state = ServerConnectionState {
             id: connection_id,
@@ -242,21 +270,33 @@ impl Socks5Server {
             last_activity: now,
             status: ConnectionStatus::Active,
             status_changed_at: now,
-            protocol_info: ProtocolConnectionInfo::empty()
+            protocol_info: ProtocolConnectionInfo::empty(),
         };
-        app_state.add_connection_to_server(server_id, conn_state).await;
+        app_state
+            .add_connection_to_server(server_id, conn_state)
+            .await;
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Phase 1: Handshake - negotiate auth method
         console_debug!(status_tx, "SOCKS5 {} phase 1: handshake", connection_id);
 
-        let selected_method = Self::negotiate_auth(&mut client_stream, &config, connection_id, &status_tx).await?;
+        let selected_method =
+            Self::negotiate_auth(&mut client_stream, &config, connection_id, &status_tx).await?;
 
-        console_debug!(status_tx, "SOCKS5 {} selected auth method: 0x{:02x}", connection_id, selected_method);
+        console_debug!(
+            status_tx,
+            "SOCKS5 {} selected auth method: 0x{:02x}",
+            connection_id,
+            selected_method
+        );
 
         // Phase 2: Authentication (if required)
         let username = if selected_method == AUTH_METHOD_USERNAME_PASSWORD {
-            console_debug!(status_tx, "SOCKS5 {} phase 2: authentication", connection_id);
+            console_debug!(
+                status_tx,
+                "SOCKS5 {} phase 2: authentication",
+                connection_id
+            );
 
             let auth_result = Self::authenticate_username_password(
                 &mut client_stream,
@@ -266,7 +306,8 @@ impl Socks5Server {
                 &status_tx,
                 &protocol,
                 server_id,
-            ).await?;
+            )
+            .await?;
 
             Some(auth_result)
         } else {
@@ -274,19 +315,41 @@ impl Socks5Server {
         };
 
         // Phase 3: Process CONNECT request
-        console_debug!(status_tx, "SOCKS5 {} phase 3: CONNECT request", connection_id);
+        console_debug!(
+            status_tx,
+            "SOCKS5 {} phase 3: CONNECT request",
+            connection_id
+        );
 
-        let target_addr = Self::parse_connect_request(&mut client_stream, connection_id, &status_tx).await?;
+        let target_addr =
+            Self::parse_connect_request(&mut client_stream, connection_id, &status_tx).await?;
 
-        console_info!(status_tx, "SOCKS5 {} CONNECT to {}", connection_id, target_addr);
+        console_info!(
+            status_tx,
+            "SOCKS5 {} CONNECT to {}",
+            connection_id,
+            target_addr
+        );
 
         // Update connection with target address
-        app_state.update_socks5_target(server_id, connection_id, Some(target_addr.to_string()), username.clone()).await;
+        app_state
+            .update_socks5_target(
+                server_id,
+                connection_id,
+                Some(target_addr.to_string()),
+                username.clone(),
+            )
+            .await;
 
         // Check if target matches filter
         let matches_filter = Self::check_filter_match(&target_addr, &config);
 
-        console_debug!(status_tx, "SOCKS5 {} filter match: {}", connection_id, matches_filter);
+        console_debug!(
+            status_tx,
+            "SOCKS5 {} filter match: {}",
+            connection_id,
+            matches_filter
+        );
 
         // Decide whether to ask LLM or use default action
         let (should_allow, mitm_enabled) = match (&config.filter_mode, matches_filter) {
@@ -303,7 +366,8 @@ impl Socks5Server {
                     &status_tx,
                     &protocol,
                     server_id,
-                ).await?
+                )
+                .await?
             }
             (FilterMode::Selective, false) => {
                 // No filter match, use default action
@@ -317,22 +381,40 @@ impl Socks5Server {
             let _ = status_tx.send(format!("✗ SOCKS5 {} connection denied", connection_id));
 
             // Send SOCKS5 reply: connection not allowed
-            Self::send_connect_reply(&mut client_stream, REPLY_CONNECTION_NOT_ALLOWED, &target_addr).await?;
+            Self::send_connect_reply(
+                &mut client_stream,
+                REPLY_CONNECTION_NOT_ALLOWED,
+                &target_addr,
+            )
+            .await?;
             return Ok(());
         }
 
         // Connect to target
-        let mut target_stream = Self::connect_to_target(&target_addr, connection_id, &status_tx).await?;
+        let mut target_stream =
+            Self::connect_to_target(&target_addr, connection_id, &status_tx).await?;
 
-        info!("SOCKS5 {} connected to target {}", connection_id, target_addr);
-        let _ = status_tx.send(format!("→ SOCKS5 {} connected to {}", connection_id, target_addr));
+        info!(
+            "SOCKS5 {} connected to target {}",
+            connection_id, target_addr
+        );
+        let _ = status_tx.send(format!(
+            "→ SOCKS5 {} connected to {}",
+            connection_id, target_addr
+        ));
 
         // Send SOCKS5 reply: success
         Self::send_connect_reply(&mut client_stream, REPLY_SUCCESS, &target_addr).await?;
 
         // Phase 4: Relay data bidirectionally
-        debug!("SOCKS5 {} phase 4: relay data (MITM: {})", connection_id, mitm_enabled);
-        let _ = status_tx.send(format!("[DEBUG] SOCKS5 {} phase 4: relay (MITM: {})", connection_id, mitm_enabled));
+        debug!(
+            "SOCKS5 {} phase 4: relay data (MITM: {})",
+            connection_id, mitm_enabled
+        );
+        let _ = status_tx.send(format!(
+            "[DEBUG] SOCKS5 {} phase 4: relay (MITM: {})",
+            connection_id, mitm_enabled
+        ));
 
         if mitm_enabled {
             // MITM mode: inspect and modify data
@@ -347,15 +429,20 @@ impl Socks5Server {
                 &status_tx,
                 &protocol,
                 server_id,
-            ).await?;
+            )
+            .await?;
         } else {
             // Passthrough mode: direct relay
             match tokio::io::copy_bidirectional(&mut client_stream, &mut target_stream).await {
                 Ok((client_to_target_bytes, target_to_client_bytes)) => {
-                    info!("SOCKS5 {} relay complete: {} bytes to target, {} bytes from target",
-                          connection_id, client_to_target_bytes, target_to_client_bytes);
-                    let _ = status_tx.send(format!("[INFO] SOCKS5 {} relay complete: {}↑ {}↓",
-                                                   connection_id, client_to_target_bytes, target_to_client_bytes));
+                    info!(
+                        "SOCKS5 {} relay complete: {} bytes to target, {} bytes from target",
+                        connection_id, client_to_target_bytes, target_to_client_bytes
+                    );
+                    let _ = status_tx.send(format!(
+                        "[INFO] SOCKS5 {} relay complete: {}↑ {}↓",
+                        connection_id, client_to_target_bytes, target_to_client_bytes
+                    ));
                 }
                 Err(e) => {
                     console_warn!(status_tx, "SOCKS5 {} relay error: {}", connection_id, e);
@@ -379,7 +466,7 @@ impl Socks5Server {
         protocol: &Arc<Socks5Protocol>,
         server_id: ServerId,
     ) -> Result<()> {
-        use actions::{SOCKS5_DATA_TO_TARGET_EVENT, SOCKS5_DATA_FROM_TARGET_EVENT};
+        use actions::{SOCKS5_DATA_FROM_TARGET_EVENT, SOCKS5_DATA_TO_TARGET_EVENT};
 
         info!("SOCKS5 {} starting MITM relay", connection_id);
         let _ = status_tx.send(format!("[INFO] SOCKS5 {} MITM relay active", connection_id));
@@ -543,10 +630,14 @@ impl Socks5Server {
             }
         }
 
-        info!("SOCKS5 {} MITM relay complete: {}↑ {}↓",
-              connection_id, client_to_target_total, target_to_client_total);
-        let _ = status_tx.send(format!("[INFO] SOCKS5 {} MITM relay complete: {}↑ {}↓",
-                                       connection_id, client_to_target_total, target_to_client_total));
+        info!(
+            "SOCKS5 {} MITM relay complete: {}↑ {}↓",
+            connection_id, client_to_target_total, target_to_client_total
+        );
+        let _ = status_tx.send(format!(
+            "[INFO] SOCKS5 {} MITM relay complete: {}↑ {}↓",
+            connection_id, client_to_target_total, target_to_client_total
+        ));
 
         Ok(())
     }
@@ -565,7 +656,13 @@ impl Socks5Server {
         let version = buf[0];
         let nmethods = buf[1];
 
-        console_trace!(status_tx, "SOCKS5 {} handshake: version={}, nmethods={}", connection_id, version, nmethods);
+        console_trace!(
+            status_tx,
+            "SOCKS5 {} handshake: version={}, nmethods={}",
+            connection_id,
+            version,
+            nmethods
+        );
 
         if version != SOCKS5_VERSION {
             bail!("Unsupported SOCKS version: {}", version);
@@ -579,10 +676,17 @@ impl Socks5Server {
         let mut methods = vec![0u8; nmethods as usize];
         stream.read_exact(&mut methods).await?;
 
-        console_trace!(status_tx, "SOCKS5 {} client methods: {:?}", connection_id, methods);
+        console_trace!(
+            status_tx,
+            "SOCKS5 {} client methods: {:?}",
+            connection_id,
+            methods
+        );
 
         // Select method based on config
-        let selected_method = config.auth_methods.iter()
+        let selected_method = config
+            .auth_methods
+            .iter()
             .find(|&&method| methods.contains(&method))
             .copied()
             .unwrap_or(AUTH_METHOD_NO_ACCEPTABLE);
@@ -615,7 +719,10 @@ impl Socks5Server {
 
         let auth_version = buf[0];
         if auth_version != 0x01 {
-            bail!("Unsupported username/password auth version: {}", auth_version);
+            bail!(
+                "Unsupported username/password auth version: {}",
+                auth_version
+            );
         }
 
         // Read username
@@ -632,13 +739,21 @@ impl Socks5Server {
         stream.read_exact(&mut password_bytes).await?;
         let password = String::from_utf8_lossy(&password_bytes).to_string();
 
-        console_debug!(status_tx, "SOCKS5 {} auth request: username={}", connection_id, username);
+        console_debug!(
+            status_tx,
+            "SOCKS5 {} auth request: username={}",
+            connection_id,
+            username
+        );
 
         // Ask LLM to validate credentials
-        let event = Event::new(&SOCKS5_AUTH_REQUEST_EVENT, serde_json::json!({
-            "username": username,
-            "password": password,
-        }));
+        let event = Event::new(
+            &SOCKS5_AUTH_REQUEST_EVENT,
+            serde_json::json!({
+                "username": username,
+                "password": password,
+            }),
+        );
 
         let execution_result = call_llm(
             llm_client,
@@ -647,12 +762,14 @@ impl Socks5Server {
             Some(connection_id),
             &event,
             protocol.as_ref(),
-        ).await?;
+        )
+        .await?;
 
         // Check if LLM allowed auth
-        let auth_allowed = execution_result.protocol_results.iter().any(|result| {
-            matches!(result, ActionResult::NoAction)
-        });
+        let auth_allowed = execution_result
+            .protocol_results
+            .iter()
+            .any(|result| matches!(result, ActionResult::NoAction));
 
         // Send auth response: [VER(1), STATUS]
         let status = if auth_allowed { 0x00 } else { 0x01 };
@@ -665,7 +782,10 @@ impl Socks5Server {
         }
 
         info!("SOCKS5 {} authenticated as {}", connection_id, username);
-        let _ = status_tx.send(format!("→ SOCKS5 {} authenticated as {}", connection_id, username));
+        let _ = status_tx.send(format!(
+            "→ SOCKS5 {} authenticated as {}",
+            connection_id, username
+        ));
 
         Ok(username)
     }
@@ -685,15 +805,27 @@ impl Socks5Server {
         let _rsv = buf[2];
         let atyp = buf[3];
 
-        trace!("SOCKS5 {} request: version={}, cmd={}, atyp={}", connection_id, version, cmd, atyp);
-        let _ = status_tx.send(format!("[TRACE] SOCKS5 {} request: version={}, cmd=0x{:02x}, atyp=0x{:02x}", connection_id, version, cmd, atyp));
+        trace!(
+            "SOCKS5 {} request: version={}, cmd={}, atyp={}",
+            connection_id,
+            version,
+            cmd,
+            atyp
+        );
+        let _ = status_tx.send(format!(
+            "[TRACE] SOCKS5 {} request: version={}, cmd=0x{:02x}, atyp=0x{:02x}",
+            connection_id, version, cmd, atyp
+        ));
 
         if version != SOCKS5_VERSION {
             bail!("Unsupported SOCKS version: {}", version);
         }
 
         if cmd != CMD_CONNECT {
-            bail!("Unsupported command: 0x{:02x} (only CONNECT supported)", cmd);
+            bail!(
+                "Unsupported command: 0x{:02x} (only CONNECT supported)",
+                cmd
+            );
         }
 
         // Parse destination address
@@ -777,10 +909,17 @@ impl Socks5Server {
     ) -> Result<TcpStream> {
         let target_str = target_addr.to_string();
 
-        debug!("SOCKS5 {} connecting to target: {}", connection_id, target_str);
-        let _ = status_tx.send(format!("[DEBUG] SOCKS5 {} connecting to {}", connection_id, target_str));
+        debug!(
+            "SOCKS5 {} connecting to target: {}",
+            connection_id, target_str
+        );
+        let _ = status_tx.send(format!(
+            "[DEBUG] SOCKS5 {} connecting to {}",
+            connection_id, target_str
+        ));
 
-        let stream = TcpStream::connect(&target_str).await
+        let stream = TcpStream::connect(&target_str)
+            .await
             .context(format!("Failed to connect to {}", target_str))?;
 
         Ok(stream)
@@ -817,9 +956,10 @@ impl Socks5Server {
         let port_matches = if config.target_port_ranges.is_empty() {
             true
         } else {
-            config.target_port_ranges.iter().any(|(start, end)| {
-                target_port >= *start && target_port <= *end
-            })
+            config
+                .target_port_ranges
+                .iter()
+                .any(|(start, end)| target_port >= *start && target_port <= *end)
         };
 
         host_matches && port_matches
@@ -836,12 +976,19 @@ impl Socks5Server {
         protocol: &Arc<Socks5Protocol>,
         server_id: ServerId,
     ) -> Result<(bool, bool)> {
-        console_debug!(status_tx, "SOCKS5 {} asking LLM for decision", connection_id);
+        console_debug!(
+            status_tx,
+            "SOCKS5 {} asking LLM for decision",
+            connection_id
+        );
 
-        let event = Event::new(&SOCKS5_CONNECT_REQUEST_EVENT, serde_json::json!({
-            "target": target_addr.to_string(),
-            "username": username,
-        }));
+        let event = Event::new(
+            &SOCKS5_CONNECT_REQUEST_EVENT,
+            serde_json::json!({
+                "target": target_addr.to_string(),
+                "username": username,
+            }),
+        );
 
         let execution_result = call_llm(
             llm_client,
@@ -850,18 +997,23 @@ impl Socks5Server {
             Some(connection_id),
             &event,
             protocol.as_ref(),
-        ).await?;
+        )
+        .await?;
 
         // Check if LLM allowed connection
-        let allowed = execution_result.protocol_results.iter().any(|result| {
-            matches!(result, ActionResult::NoAction)
-        });
+        let allowed = execution_result
+            .protocol_results
+            .iter()
+            .any(|result| matches!(result, ActionResult::NoAction));
 
         // Extract MITM flag from actions if allowed
         let mitm_enabled = if allowed {
-            execution_result.raw_actions.iter()
+            execution_result
+                .raw_actions
+                .iter()
                 .find(|action| {
-                    action.get("type")
+                    action
+                        .get("type")
                         .and_then(|v| v.as_str())
                         .map(|s| s == "allow_socks5_connect")
                         .unwrap_or(false)
@@ -873,7 +1025,13 @@ impl Socks5Server {
             false
         };
 
-        console_debug!(status_tx, "SOCKS5 {} decision: allowed={}, mitm={}", connection_id, allowed, mitm_enabled);
+        console_debug!(
+            status_tx,
+            "SOCKS5 {} decision: allowed={}, mitm={}",
+            connection_id,
+            allowed,
+            mitm_enabled
+        );
 
         Ok((allowed, mitm_enabled))
     }

@@ -19,16 +19,16 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info};
 
+use crate::llm::call_llm_with_protocol;
+use crate::llm::ollama_client::OllamaClient;
+use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::server::ollama::actions::{
-    OllamaProtocol, OLLAMA_GENERATE_REQUEST_EVENT, OLLAMA_CHAT_REQUEST_EVENT,
+    OllamaProtocol, OLLAMA_CHAT_REQUEST_EVENT, OLLAMA_GENERATE_REQUEST_EVENT,
     OLLAMA_MODELS_REQUEST_EVENT,
 };
-use crate::llm::ollama_client::OllamaClient;
-use crate::llm::call_llm_with_protocol;
-use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 
 /// Ollama-compatible API server with LLM control
 pub struct OllamaServer;
@@ -43,7 +43,8 @@ impl OllamaServer {
         _send_first: bool,
         server_id: crate::state::ServerId,
     ) -> anyhow::Result<SocketAddr> {
-        let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let listener =
+            crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         console_info!(status_tx, "Ollama API server listening on {}", local_addr);
 
@@ -54,15 +55,21 @@ impl OllamaServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new(
-                            app_state.get_next_unified_id().await
-                        );
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        info!("Ollama API connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!("[INFO] Ollama API connection from {}", remote_addr));
+                        info!(
+                            "Ollama API connection {} from {}",
+                            connection_id, remote_addr
+                        );
+                        let _ = status_tx
+                            .send(format!("[INFO] Ollama API connection from {}", remote_addr));
 
                         // Add connection to ServerInstance
-                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -77,7 +84,9 @@ impl OllamaServer {
                             status_changed_at: now,
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
-                        app_state.add_connection_to_server(server_id, conn_state).await;
+                        app_state
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let llm_client_clone = llm_client.clone();
@@ -111,13 +120,20 @@ impl OllamaServer {
                             });
 
                             // Serve HTTP/1 on this connection
-                            if let Err(err) = http1::Builder::new().serve_connection(io, service).await {
+                            if let Err(err) =
+                                http1::Builder::new().serve_connection(io, service).await
+                            {
                                 error!("Error serving Ollama API connection: {:?}", err);
                             }
 
                             // Mark connection as closed
-                            app_state_clone.close_connection_on_server(server_id, connection_id).await;
-                            let _ = status_tx_clone.send(format!("[INFO] Ollama API connection {} closed", connection_id));
+                            app_state_clone
+                                .close_connection_on_server(server_id, connection_id)
+                                .await;
+                            let _ = status_tx_clone.send(format!(
+                                "[INFO] Ollama API connection {} closed",
+                                connection_id
+                            ));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
@@ -153,40 +169,62 @@ async fn handle_ollama_request(
     // Route the request
     match (method.clone(), path) {
         (Method::GET, "/api/tags") => {
-            handle_tags_list_v2(connection_id, llm_client, app_state, status_tx, protocol, server_id).await
+            handle_tags_list_v2(
+                connection_id,
+                llm_client,
+                app_state,
+                status_tx,
+                protocol,
+                server_id,
+            )
+            .await
         }
         (Method::POST, "/api/generate") => {
-            handle_generate_v2(req, connection_id, llm_client, app_state, status_tx, protocol, server_id).await
+            handle_generate_v2(
+                req,
+                connection_id,
+                llm_client,
+                app_state,
+                status_tx,
+                protocol,
+                server_id,
+            )
+            .await
         }
         (Method::POST, "/api/chat") => {
-            handle_chat_v2(req, connection_id, llm_client, app_state, status_tx, protocol, server_id).await
+            handle_chat_v2(
+                req,
+                connection_id,
+                llm_client,
+                app_state,
+                status_tx,
+                protocol,
+                server_id,
+            )
+            .await
         }
-        (Method::POST, "/api/embeddings") => {
-            handle_embeddings(req, status_tx).await
-        }
-        (Method::POST, "/api/show") => {
-            handle_show(req, status_tx).await
-        }
-        (Method::POST, "/api/pull") => {
-            handle_pull(req, status_tx).await
-        }
-        (Method::POST, "/api/create") => {
-            handle_create(req, status_tx).await
-        }
-        (Method::POST, "/api/copy") => {
-            handle_copy(req, status_tx).await
-        }
-        (Method::DELETE, "/api/delete") => {
-            handle_delete(req, status_tx).await
-        }
+        (Method::POST, "/api/embeddings") => handle_embeddings(req, status_tx).await,
+        (Method::POST, "/api/show") => handle_show(req, status_tx).await,
+        (Method::POST, "/api/pull") => handle_pull(req, status_tx).await,
+        (Method::POST, "/api/create") => handle_create(req, status_tx).await,
+        (Method::POST, "/api/copy") => handle_copy(req, status_tx).await,
+        (Method::DELETE, "/api/delete") => handle_delete(req, status_tx).await,
         _ => {
-            console_debug!(status_tx, "Ollama API: Unknown endpoint {} {}", method, path);
+            console_debug!(
+                status_tx,
+                "Ollama API: Unknown endpoint {} {}",
+                method,
+                path
+            );
             Ok(Response::builder()
                 .status(StatusCode::NOT_FOUND)
                 .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(json!({
-                    "error": "Not Found"
-                }).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({
+                        "error": "Not Found"
+                    })
+                    .to_string(),
+                )))
                 .unwrap())
         }
     }
@@ -205,13 +243,12 @@ async fn handle_tags_list_v2(
     let _ = status_tx.send("[DEBUG] Ollama API: Listing models (LLM controlled)".to_string());
 
     // Create event for models request
-    let event = Event::new(
-        &OLLAMA_MODELS_REQUEST_EVENT,
-        json!({}),
-    );
+    let event = Event::new(&OLLAMA_MODELS_REQUEST_EVENT, json!({}));
 
     // Get instruction for this server
-    let instruction = app_state.get_instruction(server_id).await
+    let instruction = app_state
+        .get_instruction(server_id)
+        .await
         .unwrap_or_else(|| "Respond to Ollama API requests".to_string());
 
     // Build event description from instruction and event type
@@ -225,7 +262,9 @@ async fn handle_tags_list_v2(
         Some(connection_id),
         &event_description,
         protocol.as_ref(),
-    ).await {
+    )
+    .await
+    {
         Ok(llm_result) => {
             // Look for ollama_models_response action
             for action in &llm_result.raw_actions {
@@ -275,9 +314,12 @@ async fn handle_tags_list_v2(
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(json!({
-                    "error": format!("LLM error: {}", e)
-                }).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({
+                        "error": format!("LLM error: {}", e)
+                    })
+                    .to_string(),
+                )))
                 .unwrap())
         }
     }
@@ -301,7 +343,9 @@ async fn handle_generate_v2(
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(json!({"error": "Failed to read body"}).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({"error": "Failed to read body"}).to_string(),
+                )))
                 .unwrap());
         }
     };
@@ -314,16 +358,34 @@ async fn handle_generate_v2(
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(json!({"error": "Invalid JSON"}).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({"error": "Invalid JSON"}).to_string(),
+                )))
                 .unwrap());
         }
     };
 
-    let model = request_json.get("model").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-    let prompt = request_json.get("prompt").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let stream = request_json.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+    let model = request_json
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let prompt = request_json
+        .get("prompt")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let stream = request_json
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
-    debug!("Generate: model={}, prompt_len={}, stream={}", model, prompt.len(), stream);
+    debug!(
+        "Generate: model={}, prompt_len={}, stream={}",
+        model,
+        prompt.len(),
+        stream
+    );
 
     // Create event for generate request
     let event = Event::new(
@@ -336,7 +398,9 @@ async fn handle_generate_v2(
     );
 
     // Get instruction
-    let instruction = app_state.get_instruction(server_id).await
+    let instruction = app_state
+        .get_instruction(server_id)
+        .await
         .unwrap_or_else(|| "Respond to Ollama API requests".to_string());
 
     // Build event description from instruction and event type
@@ -350,12 +414,16 @@ async fn handle_generate_v2(
         Some(connection_id),
         &event_description,
         protocol.as_ref(),
-    ).await {
+    )
+    .await
+    {
         Ok(llm_result) => {
             // Look for ollama_generate_response action
             for action in &llm_result.raw_actions {
                 if action.get("type").and_then(|v| v.as_str()) == Some("ollama_generate_response") {
-                    if let Some(response_text) = action.get("response_text").and_then(|v| v.as_str()) {
+                    if let Some(response_text) =
+                        action.get("response_text").and_then(|v| v.as_str())
+                    {
                         if stream {
                             // Streaming response: send NDJSON chunks (all at once)
                             return Ok(build_streaming_generate_response(&model, response_text));
@@ -382,7 +450,9 @@ async fn handle_generate_v2(
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(json!({"error": "No response from LLM"}).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({"error": "No response from LLM"}).to_string(),
+                )))
                 .unwrap())
         }
         Err(e) => {
@@ -390,7 +460,9 @@ async fn handle_generate_v2(
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(json!({"error": format!("LLM error: {}", e)}).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({"error": format!("LLM error: {}", e)}).to_string(),
+                )))
                 .unwrap())
         }
     }
@@ -413,7 +485,9 @@ async fn handle_chat_v2(
             error!("Failed to read request body: {}", e);
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .body(Full::new(Bytes::from(json!({"error": "Failed to read body"}).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({"error": "Failed to read body"}).to_string(),
+                )))
                 .unwrap());
         }
     };
@@ -425,16 +499,34 @@ async fn handle_chat_v2(
             error!("Failed to parse JSON: {}", e);
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .body(Full::new(Bytes::from(json!({"error": "Invalid JSON"}).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({"error": "Invalid JSON"}).to_string(),
+                )))
                 .unwrap());
         }
     };
 
-    let model = request_json.get("model").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-    let messages = request_json.get("messages").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-    let stream = request_json.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+    let model = request_json
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let messages = request_json
+        .get("messages")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let stream = request_json
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
-    debug!("Chat: model={}, {} messages, stream={}", model, messages.len(), stream);
+    debug!(
+        "Chat: model={}, {} messages, stream={}",
+        model,
+        messages.len(),
+        stream
+    );
 
     // Create event for chat request
     let event = Event::new(
@@ -447,7 +539,9 @@ async fn handle_chat_v2(
     );
 
     // Get instruction
-    let instruction = app_state.get_instruction(server_id).await
+    let instruction = app_state
+        .get_instruction(server_id)
+        .await
         .unwrap_or_else(|| "Respond to Ollama API requests".to_string());
 
     // Build event description from instruction and event type
@@ -461,12 +555,16 @@ async fn handle_chat_v2(
         Some(connection_id),
         &event_description,
         protocol.as_ref(),
-    ).await {
+    )
+    .await
+    {
         Ok(llm_result) => {
             // Look for ollama_chat_response action
             for action in &llm_result.raw_actions {
                 if action.get("type").and_then(|v| v.as_str()) == Some("ollama_chat_response") {
-                    if let Some(message_content) = action.get("message_content").and_then(|v| v.as_str()) {
+                    if let Some(message_content) =
+                        action.get("message_content").and_then(|v| v.as_str())
+                    {
                         if stream {
                             // Streaming response: send NDJSON chunks (all at once)
                             return Ok(build_streaming_chat_response(&model, message_content));
@@ -495,14 +593,18 @@ async fn handle_chat_v2(
             // No valid action
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(Full::new(Bytes::from(json!({"error": "No response from LLM"}).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({"error": "No response from LLM"}).to_string(),
+                )))
                 .unwrap())
         }
         Err(e) => {
             error!("LLM error: {}", e);
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(Full::new(Bytes::from(json!({"error": format!("LLM error: {}", e)}).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({"error": format!("LLM error: {}", e)}).to_string(),
+                )))
                 .unwrap())
         }
     }
@@ -594,7 +696,9 @@ async fn handle_embeddings(
         Err(_) => {
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .body(Full::new(Bytes::from(json!({"error": "Failed to read body"}).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({"error": "Failed to read body"}).to_string(),
+                )))
                 .unwrap());
         }
     };
@@ -604,7 +708,9 @@ async fn handle_embeddings(
         Err(_) => {
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .body(Full::new(Bytes::from(json!({"error": "Invalid JSON"}).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({"error": "Invalid JSON"}).to_string(),
+                )))
                 .unwrap());
         }
     };
@@ -634,7 +740,9 @@ async fn handle_show(
         Err(_) => {
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .body(Full::new(Bytes::from(json!({"error": "Failed to read body"}).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({"error": "Failed to read body"}).to_string(),
+                )))
                 .unwrap());
         }
     };
@@ -644,12 +752,17 @@ async fn handle_show(
         Err(_) => {
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .body(Full::new(Bytes::from(json!({"error": "Invalid JSON"}).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({"error": "Invalid JSON"}).to_string(),
+                )))
                 .unwrap());
         }
     };
 
-    let model = request_json.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
+    let model = request_json
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
     let _ = status_tx.send(format!("[DEBUG] Show model: {}", model));
 
     let response = json!({
@@ -678,7 +791,9 @@ async fn handle_pull(
         Err(_) => {
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .body(Full::new(Bytes::from(json!({"error": "Failed to read body"}).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({"error": "Failed to read body"}).to_string(),
+                )))
                 .unwrap());
         }
     };
@@ -688,12 +803,17 @@ async fn handle_pull(
         Err(_) => {
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .body(Full::new(Bytes::from(json!({"error": "Invalid JSON"}).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({"error": "Invalid JSON"}).to_string(),
+                )))
                 .unwrap());
         }
     };
 
-    let model = request_json.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
+    let model = request_json
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
     let _ = status_tx.send(format!("[DEBUG] Pull model: {}", model));
 
     let response = json!({
@@ -718,7 +838,9 @@ async fn handle_create(
         Err(_) => {
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .body(Full::new(Bytes::from(json!({"error": "Failed to read body"}).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({"error": "Failed to read body"}).to_string(),
+                )))
                 .unwrap());
         }
     };
@@ -728,12 +850,17 @@ async fn handle_create(
         Err(_) => {
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .body(Full::new(Bytes::from(json!({"error": "Invalid JSON"}).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({"error": "Invalid JSON"}).to_string(),
+                )))
                 .unwrap());
         }
     };
 
-    let model = request_json.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
+    let model = request_json
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
     let _ = status_tx.send(format!("[DEBUG] Create model: {}", model));
 
     let response = json!({
@@ -756,7 +883,9 @@ async fn handle_copy(
         Err(_) => {
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .body(Full::new(Bytes::from(json!({"error": "Failed to read body"}).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({"error": "Failed to read body"}).to_string(),
+                )))
                 .unwrap());
         }
     };
@@ -766,19 +895,29 @@ async fn handle_copy(
         Err(_) => {
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .body(Full::new(Bytes::from(json!({"error": "Invalid JSON"}).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({"error": "Invalid JSON"}).to_string(),
+                )))
                 .unwrap());
         }
     };
 
-    let source = request_json.get("source").and_then(|v| v.as_str()).unwrap_or("unknown");
-    let destination = request_json.get("destination").and_then(|v| v.as_str()).unwrap_or("unknown");
+    let source = request_json
+        .get("source")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let destination = request_json
+        .get("destination")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
     let _ = status_tx.send(format!("[DEBUG] Copy model: {} -> {}", source, destination));
 
     Ok(Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "application/json")
-        .body(Full::new(Bytes::from(json!({"status": "success"}).to_string())))
+        .body(Full::new(Bytes::from(
+            json!({"status": "success"}).to_string(),
+        )))
         .unwrap())
 }
 
@@ -791,7 +930,9 @@ async fn handle_delete(
         Err(_) => {
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .body(Full::new(Bytes::from(json!({"error": "Failed to read body"}).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({"error": "Failed to read body"}).to_string(),
+                )))
                 .unwrap());
         }
     };
@@ -801,17 +942,24 @@ async fn handle_delete(
         Err(_) => {
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
-                .body(Full::new(Bytes::from(json!({"error": "Invalid JSON"}).to_string())))
+                .body(Full::new(Bytes::from(
+                    json!({"error": "Invalid JSON"}).to_string(),
+                )))
                 .unwrap());
         }
     };
 
-    let model = request_json.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
+    let model = request_json
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
     let _ = status_tx.send(format!("[DEBUG] Delete model: {}", model));
 
     Ok(Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "application/json")
-        .body(Full::new(Bytes::from(json!({"status": "success"}).to_string())))
+        .body(Full::new(Bytes::from(
+            json!({"status": "success"}).to_string(),
+        )))
         .unwrap())
 }

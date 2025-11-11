@@ -7,22 +7,23 @@
 The WireGuard client tests are split into two categories:
 
 1. **Unit Tests** (always run):
-   - Parameter parsing validation
-   - Action definition verification
-   - Event type verification
-   - Protocol metadata validation
+    - Parameter parsing validation
+    - Action definition verification
+    - Event type verification
+    - Protocol metadata validation
 
 2. **E2E Tests** (ignored by default, requires manual setup):
-   - Actual VPN connection to running server
-   - Handshake verification
-   - Status queries
-   - Graceful disconnection
+    - Actual VPN connection to running server
+    - Handshake verification
+    - Status queries
+    - Graceful disconnection
 
 ## LLM Call Budget
 
 **Target**: < 5 LLM calls for full E2E suite (when run)
 
 **Rationale**:
+
 - WireGuard is connection-oriented, not request/response
 - LLM calls only on connect/disconnect events
 - Status queries don't require LLM calls
@@ -32,6 +33,7 @@ The WireGuard client tests are split into two categories:
 
 **Unit tests**: < 1 second
 **E2E tests** (when enabled): ~20-30 seconds
+
 - Connection establishment: ~5 seconds
 - Handshake wait: ~10 seconds
 - Status queries: ~5 seconds
@@ -40,10 +42,12 @@ The WireGuard client tests are split into two categories:
 ## Test Requirements
 
 ### Unit Tests
+
 - No special requirements
 - Run with: `./cargo-isolated.sh test --no-default-features --features wireguard`
 
 ### E2E Tests (Ignored)
+
 - **Root privileges** (Linux/FreeBSD/Windows) or standard user (macOS)
 - **Running WireGuard server** with known configuration
 - **Valid server public key**
@@ -54,6 +58,7 @@ The WireGuard client tests are split into two categories:
 ### Setup
 
 1. Start WireGuard server:
+
 ```bash
 # Terminal 1 (as root)
 sudo ./cargo-isolated.sh run --no-default-features --features wireguard
@@ -66,6 +71,7 @@ sudo ./cargo-isolated.sh run --no-default-features --features wireguard
 ```
 
 2. Run client tests:
+
 ```bash
 # Terminal 2 (as root on Linux/FreeBSD/Windows)
 sudo ./cargo-isolated.sh test --no-default-features --features wireguard client::wireguard::e2e_test::tests::test_wireguard_client_connectivity -- --ignored
@@ -94,16 +100,19 @@ sudo ./cargo-isolated.sh run --no-default-features --features wireguard
 ### What We Test
 
 ✅ **Protocol Metadata**:
+
 - Protocol name, stack name, group name
 - Keywords for parsing
 - Startup parameter definitions
 
 ✅ **Action Definitions**:
+
 - Async actions (get_connection_status, disconnect, get_client_info)
 - Sync actions (none for WireGuard)
 - Action parameter validation
 
 ✅ **Event Types**:
+
 - wireguard_connected event
 - wireguard_disconnected event
 
@@ -115,7 +124,8 @@ sudo ./cargo-isolated.sh run --no-default-features --features wireguard
 ❌ **Packet Routing**: Don't verify routing table changes
 ❌ **Keepalive**: Don't test persistent keepalive behavior
 
-**Rationale**: These are infrastructure concerns handled by WireGuard library (defguard_wireguard_rs) and kernel. Our tests focus on LLM integration and control flow.
+**Rationale**: These are infrastructure concerns handled by WireGuard library (defguard_wireguard_rs) and kernel. Our
+tests focus on LLM integration and control flow.
 
 ## Known Issues
 
@@ -134,6 +144,7 @@ sudo ./cargo-isolated.sh run --no-default-features --features wireguard
 ### Flaky Tests
 
 None expected. Unit tests are deterministic. E2E tests (when run) may timeout if:
+
 - Server not running
 - Network connectivity issues
 - Firewall blocks UDP port 51820
@@ -157,6 +168,7 @@ None expected. Unit tests are deterministic. E2E tests (when run) may timeout if
 ## Example Test Output
 
 ### Unit Tests (Passing)
+
 ```
 running 2 tests
 test tests::test_wireguard_param_parsing ... ok
@@ -166,6 +178,7 @@ test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
 ```
 
 ### E2E Tests (When Run)
+
 ```
 running 1 test
 test tests::test_wireguard_client_connectivity ... ok

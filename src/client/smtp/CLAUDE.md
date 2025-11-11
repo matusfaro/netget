@@ -2,11 +2,13 @@
 
 ## Overview
 
-The SMTP client allows LLM-controlled email sending via SMTP servers. It uses the `lettre` library for robust SMTP protocol support including STARTTLS and authentication.
+The SMTP client allows LLM-controlled email sending via SMTP servers. It uses the `lettre` library for robust SMTP
+protocol support including STARTTLS and authentication.
 
 ## Library Choice
 
 **Primary: `lettre` v0.11**
+
 - Mature, well-maintained SMTP client library
 - Full STARTTLS support for secure email transmission
 - Multiple authentication methods (PLAIN, LOGIN)
@@ -18,6 +20,7 @@ The SMTP client allows LLM-controlled email sending via SMTP servers. It uses th
 ### Connection Model
 
 SMTP is a **request-based protocol** (like HTTP), not a persistent stream (like Redis/TCP):
+
 - Connection is established when client is opened
 - No persistent read loop (emails are sent on-demand)
 - Each `send_email` action creates a new SMTP transaction
@@ -26,6 +29,7 @@ SMTP is a **request-based protocol** (like HTTP), not a persistent stream (like 
 ### State Management
 
 Client state tracked in `ClientInstance.protocol_data`:
+
 - `smtp_server`: Server hostname
 - `remote_addr`: Full server address with port
 
@@ -34,24 +38,27 @@ Client state tracked in `ClientInstance.protocol_data`:
 #### Events
 
 1. **`smtp_connected`** - Triggered when client connects to SMTP server
-   - Parameters: `smtp_server` (hostname)
-   - LLM decides: What email to send, authentication strategy
+    - Parameters: `smtp_server` (hostname)
+    - LLM decides: What email to send, authentication strategy
 
 2. **`smtp_email_sent`** - Triggered after successful email transmission
-   - Parameters: `to` (recipients), `subject`, `success` (boolean)
-   - LLM decides: Send follow-up emails, update memory
+    - Parameters: `to` (recipients), `subject`, `success` (boolean)
+    - LLM decides: Send follow-up emails, update memory
 
 #### Actions
 
 **Async Actions** (user-triggered):
+
 - `send_email` - Send an email via SMTP
-  - Parameters: `from`, `to` (array), `subject`, `body`, `username` (optional), `password` (optional), `use_tls` (optional)
-  - Returns: `ClientActionResult::Custom` with email data
+    - Parameters: `from`, `to` (array), `subject`, `body`, `username` (optional), `password` (optional), `use_tls` (
+      optional)
+    - Returns: `ClientActionResult::Custom` with email data
 
 - `disconnect` - Close SMTP client
-  - Returns: `ClientActionResult::Disconnect`
+    - Returns: `ClientActionResult::Disconnect`
 
 **Sync Actions** (LLM response to events):
+
 - `send_email` - Same as async action, triggered by LLM in response to events
 
 ### Email Sending Flow
@@ -71,6 +78,7 @@ Client state tracked in `ClientInstance.protocol_data`:
 ### Authentication
 
 Supports optional SMTP authentication:
+
 - **Username/Password**: Pass via `username` and `password` parameters
 - **Credentials**: Converted to lettre `Credentials` object
 - **No auth**: Leave credentials empty for open relays (testing)
@@ -136,9 +144,11 @@ SmtpClient::send_email(
 
 **Status**: Async action dispatching for clients is in progress framework-wide
 
-The SMTP client returns `ClientActionResult::Custom` with name `"smtp_send_email"` and email data. This needs to be handled by a central client action dispatcher (similar to server actions) to call `SmtpClient::send_email()`.
+The SMTP client returns `ClientActionResult::Custom` with name `"smtp_send_email"` and email data. This needs to be
+handled by a central client action dispatcher (similar to server actions) to call `SmtpClient::send_email()`.
 
 **Current State**:
+
 - Action structure defined ✓
 - Event system integrated ✓
 - Action dispatcher integration: TODO (framework-wide)
@@ -165,6 +175,7 @@ The SMTP client returns `ClientActionResult::Custom` with name `"smtp_send_email
 ## Testing Strategy
 
 See `tests/client/smtp/CLAUDE.md` for:
+
 - E2E test approach
 - Local SMTP server setup (mailhog, fakesmtp)
 - LLM call budget

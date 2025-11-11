@@ -4,10 +4,11 @@ pub mod actions;
 use crate::llm::action_helper::call_llm;
 use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
-use crate::server::connection::ConnectionId;
-use actions::{RedisProtocol, REDIS_COMMAND_EVENT};
 use crate::protocol::Event;
+use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use actions::{RedisProtocol, REDIS_COMMAND_EVENT};
 use anyhow::Result;
 use redis_protocol::resp2::decode::decode;
 use redis_protocol::resp2::types::OwnedFrame as Frame;
@@ -17,7 +18,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Redis server implementation
 pub struct RedisServer {
@@ -75,7 +75,8 @@ impl RedisServer {
                     Ok((stream, addr)) => {
                         console_debug!(status_tx, "Redis connection from {}", addr);
 
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(actual_addr);
 
                         // Track the connection
@@ -188,7 +189,9 @@ impl RedisHandler {
                             }),
                         );
 
-                        let server_id = self.server_id.unwrap_or_else(|| crate::state::ServerId::new(0));
+                        let server_id = self
+                            .server_id
+                            .unwrap_or_else(|| crate::state::ServerId::new(0));
 
                         let llm_result = call_llm(
                             &self.llm_client,
@@ -208,7 +211,8 @@ impl RedisHandler {
                                         ActionResult::Custom { name, data } => {
                                             match name.as_str() {
                                                 "redis_simple_string" => {
-                                                    let value = data.get("value")
+                                                    let value = data
+                                                        .get("value")
                                                         .and_then(|v| v.as_str())
                                                         .unwrap_or("");
                                                     let resp = encode_simple_string(value);
@@ -222,7 +226,9 @@ impl RedisHandler {
                                                         } else if let Some(s) = v.as_str() {
                                                             encode_bulk_string(s.as_bytes())
                                                         } else {
-                                                            encode_bulk_string(v.to_string().as_bytes())
+                                                            encode_bulk_string(
+                                                                v.to_string().as_bytes(),
+                                                            )
                                                         }
                                                     } else {
                                                         encode_null()
@@ -230,7 +236,8 @@ impl RedisHandler {
                                                     stream.write_all(&resp).await?;
                                                 }
                                                 "redis_array" => {
-                                                    let values = data.get("values")
+                                                    let values = data
+                                                        .get("values")
                                                         .and_then(|v| v.as_array())
                                                         .cloned()
                                                         .unwrap_or_default();
@@ -238,14 +245,16 @@ impl RedisHandler {
                                                     stream.write_all(&resp).await?;
                                                 }
                                                 "redis_integer" => {
-                                                    let value = data.get("value")
+                                                    let value = data
+                                                        .get("value")
                                                         .and_then(|v| v.as_i64())
                                                         .unwrap_or(0);
                                                     let resp = encode_integer(value);
                                                     stream.write_all(&resp).await?;
                                                 }
                                                 "redis_error" => {
-                                                    let message = data.get("message")
+                                                    let message = data
+                                                        .get("message")
                                                         .and_then(|v| v.as_str())
                                                         .unwrap_or("Unknown error");
                                                     let resp = encode_error(message);

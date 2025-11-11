@@ -114,11 +114,8 @@ When receiving BOOTREQUEST:
 
     // Wait for BOOTREPLY
     let mut response_buf = vec![0u8; 1500];
-    let timeout = tokio::time::timeout(
-        Duration::from_secs(10),
-        client.recv_from(&mut response_buf),
-    )
-    .await;
+    let timeout =
+        tokio::time::timeout(Duration::from_secs(10), client.recv_from(&mut response_buf)).await;
 
     assert!(timeout.is_ok(), "BOOTP response timeout");
     let (response_len, _) = timeout.unwrap().unwrap();
@@ -143,7 +140,11 @@ When receiving BOOTREQUEST:
         response_buf[18],
         response_buf[19],
     );
-    assert_eq!(yiaddr, Ipv4Addr::new(192, 168, 1, 100), "Expected IP 192.168.1.100");
+    assert_eq!(
+        yiaddr,
+        Ipv4Addr::new(192, 168, 1, 100),
+        "Expected IP 192.168.1.100"
+    );
 
     // chaddr should match request (client MAC)
     assert_eq!(
@@ -197,11 +198,8 @@ When receiving BOOTREQUEST:
 
     // Wait for response
     let mut response_buf = vec![0u8; 1500];
-    let timeout = tokio::time::timeout(
-        Duration::from_secs(10),
-        client.recv_from(&mut response_buf),
-    )
-    .await;
+    let timeout =
+        tokio::time::timeout(Duration::from_secs(10), client.recv_from(&mut response_buf)).await;
 
     assert!(timeout.is_ok(), "BOOTP response timeout");
     let (response_len, _) = timeout.unwrap().unwrap();
@@ -215,7 +213,11 @@ When receiving BOOTREQUEST:
         response_buf[18],
         response_buf[19],
     );
-    assert_eq!(yiaddr, Ipv4Addr::new(10, 0, 0, 100), "Expected IP 10.0.0.100");
+    assert_eq!(
+        yiaddr,
+        Ipv4Addr::new(10, 0, 0, 100),
+        "Expected IP 10.0.0.100"
+    );
 
     // Check siaddr (server IP)
     let siaddr = Ipv4Addr::new(
@@ -224,7 +226,11 @@ When receiving BOOTREQUEST:
         response_buf[22],
         response_buf[23],
     );
-    assert_eq!(siaddr, Ipv4Addr::new(10, 0, 0, 1), "Expected server IP 10.0.0.1");
+    assert_eq!(
+        siaddr,
+        Ipv4Addr::new(10, 0, 0, 1),
+        "Expected server IP 10.0.0.1"
+    );
 
     // Check file field (boot file name) - starts at offset 108
     let file_bytes = &response_buf[108..236];
@@ -279,11 +285,8 @@ Use server IP 192.168.1.1 for all responses.
     client.send_to(&bootrequest1, server_addr).await.unwrap();
 
     let mut response_buf = vec![0u8; 1500];
-    let timeout = tokio::time::timeout(
-        Duration::from_secs(10),
-        client.recv_from(&mut response_buf),
-    )
-    .await;
+    let timeout =
+        tokio::time::timeout(Duration::from_secs(10), client.recv_from(&mut response_buf)).await;
 
     assert!(timeout.is_ok(), "BOOTP response timeout");
     let (response_len, _) = timeout.unwrap().unwrap();
@@ -296,7 +299,11 @@ Use server IP 192.168.1.1 for all responses.
         response_buf[18],
         response_buf[19],
     );
-    assert_eq!(yiaddr, Ipv4Addr::new(192, 168, 1, 50), "Expected static IP 192.168.1.50");
+    assert_eq!(
+        yiaddr,
+        Ipv4Addr::new(192, 168, 1, 50),
+        "Expected static IP 192.168.1.50"
+    );
 
     println!("✓ BOOTP static MAC-based assignment successful");
 }

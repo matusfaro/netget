@@ -5,7 +5,7 @@
 
 #[cfg(all(test, feature = "igmp"))]
 mod e2e_igmp {
-    use crate::server::helpers::{start_netget_server, ServerConfig, E2EResult};
+    use crate::server::helpers::{start_netget_server, E2EResult, ServerConfig};
     use std::net::{Ipv4Addr, UdpSocket};
     use std::time::Duration;
     use tokio::time::sleep;
@@ -133,8 +133,11 @@ membership report for 239.255.255.250."#;
                     if n >= 8 {
                         let group = Ipv4Addr::new(buffer[4], buffer[5], buffer[6], buffer[7]);
                         println!("  [TEST] ✓ Report for group: {}", group);
-                        assert_eq!(group, Ipv4Addr::new(239, 255, 255, 250),
-                                  "Report should be for 239.255.255.250");
+                        assert_eq!(
+                            group,
+                            Ipv4Addr::new(239, 255, 255, 250),
+                            "Report should be for 239.255.255.250"
+                        );
                     }
                 } else {
                     panic!("Invalid IGMP response");
@@ -200,7 +203,9 @@ a membership report for that group. Ignore queries for groups you haven't joined
         socket.set_read_timeout(Some(Duration::from_secs(2)))?;
         match socket.recv_from(&mut buffer) {
             Ok((_, _)) => {
-                println!("  [TEST] Note: Received response for non-joined group (may be acceptable)");
+                println!(
+                    "  [TEST] Note: Received response for non-joined group (may be acceptable)"
+                );
             }
             Err(_) => {
                 println!("  [TEST] ✓ No response for non-joined group (correct)");
@@ -289,8 +294,12 @@ you can suppress your own report (this is optional per IGMP spec)."#;
                         if msg_type == 0x16 {
                             reports_received += 1;
                             if n >= 8 {
-                                let group = Ipv4Addr::new(buffer[4], buffer[5], buffer[6], buffer[7]);
-                                println!("  [TEST] ✓ Received report #{} for group {}", reports_received, group);
+                                let group =
+                                    Ipv4Addr::new(buffer[4], buffer[5], buffer[6], buffer[7]);
+                                println!(
+                                    "  [TEST] ✓ Received report #{} for group {}",
+                                    reports_received, group
+                                );
                             }
                         }
                     }
@@ -299,7 +308,10 @@ you can suppress your own report (this is optional per IGMP spec)."#;
             }
         }
 
-        assert!(reports_received >= 1, "Should receive at least 1 membership report");
+        assert!(
+            reports_received >= 1,
+            "Should receive at least 1 membership report"
+        );
         println!("  [TEST] ✓ Received {} report(s) total", reports_received);
 
         server.stop().await?;

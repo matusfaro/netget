@@ -3,7 +3,6 @@
 //! This module provides shared functionality for USB/IP protocol handling,
 //! including connection management, URB processing, and helper utilities.
 
-
 /// USB/IP protocol version (1.1.1)
 #[cfg(feature = "usb-common")]
 pub const USBIP_VERSION: u16 = 0x0111;
@@ -73,11 +72,11 @@ pub fn endpoint_number(endpoint: u8) -> u8 {
 #[repr(u32)]
 pub enum UsbSpeed {
     Unknown = 0,
-    Low = 1,      // 1.5 Mbit/s
-    Full = 2,     // 12 Mbit/s
-    High = 3,     // 480 Mbit/s
-    Wireless = 4, // 480 Mbit/s
-    Super = 5,    // 5 Gbit/s
+    Low = 1,       // 1.5 Mbit/s
+    Full = 2,      // 12 Mbit/s
+    High = 3,      // 480 Mbit/s
+    Wireless = 4,  // 480 Mbit/s
+    Super = 5,     // 5 Gbit/s
     SuperPlus = 6, // 10 Gbit/s
 }
 
@@ -93,7 +92,7 @@ pub mod device_class {
     pub const USE_INTERFACE: u8 = 0x00;
     pub const AUDIO: u8 = 0x01;
     pub const COMM: u8 = 0x02; // CDC (Communication Device Class)
-    pub const HID: u8 = 0x03;  // Human Interface Device
+    pub const HID: u8 = 0x03; // Human Interface Device
     pub const PHYSICAL: u8 = 0x05;
     pub const IMAGE: u8 = 0x06;
     pub const PRINTER: u8 = 0x07;
@@ -241,7 +240,11 @@ pub fn hex_dump(data: &[u8], max_bytes: usize) -> String {
         data
     };
 
-    let hex: String = truncated.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ");
+    let hex: String = truncated
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<Vec<_>>()
+        .join(" ");
 
     if data.len() > max_bytes {
         format!("[{} ... ({} bytes total)]", hex, data.len())

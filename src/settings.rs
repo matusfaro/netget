@@ -78,7 +78,10 @@ impl Settings {
                             } else {
                                 "off".to_string()
                             };
-                            debug!("Migrated web_search_enabled={} to web_search_mode={}", enabled, settings.web_search_mode);
+                            debug!(
+                                "Migrated web_search_enabled={} to web_search_mode={}",
+                                enabled, settings.web_search_mode
+                            );
 
                             // Save migrated settings
                             if let Err(e) = settings.save() {
@@ -133,7 +136,10 @@ impl Settings {
     /// Get web search mode
     pub fn get_web_search_mode(&self) -> WebSearchMode {
         self.web_search_mode.parse().unwrap_or_else(|e| {
-            warn!("Invalid web search mode in settings: '{}' ({}), using default", self.web_search_mode, e);
+            warn!(
+                "Invalid web search mode in settings: '{}' ({}), using default",
+                self.web_search_mode, e
+            );
             WebSearchMode::On
         })
     }
@@ -146,17 +152,20 @@ impl Settings {
 
     /// Parse saved scripting mode
     pub fn parse_scripting_mode(&self) -> Option<crate::state::app_state::ScriptingMode> {
-        self.scripting_mode.as_ref().and_then(|mode_str| {
-            match mode_str.to_lowercase().as_str() {
+        self.scripting_mode
+            .as_ref()
+            .and_then(|mode_str| match mode_str.to_lowercase().as_str() {
                 "llm" => Some(crate::state::app_state::ScriptingMode::Off),
                 "python" => Some(crate::state::app_state::ScriptingMode::Python),
                 "javascript" => Some(crate::state::app_state::ScriptingMode::JavaScript),
                 "go" => Some(crate::state::app_state::ScriptingMode::Go),
                 _ => {
-                    warn!("Invalid scripting mode in settings: '{}', ignoring", mode_str);
+                    warn!(
+                        "Invalid scripting mode in settings: '{}', ignoring",
+                        mode_str
+                    );
                     None
                 }
-            }
-        })
+            })
     }
 }

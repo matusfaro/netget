@@ -11,13 +11,13 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tracing::{error, info, trace};
 
+use crate::client::torrent_dht::actions::DHT_RESPONSE_EVENT;
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::torrent_dht::actions::DHT_RESPONSE_EVENT;
 
 /// DHT query/response types
 #[derive(Debug, Deserialize, Serialize)]
@@ -49,21 +49,30 @@ impl TorrentDhtClient {
         client_id: ClientId,
     ) -> Result<SocketAddr> {
         // Parse remote address
-        let remote_sock_addr: SocketAddr = remote_addr.parse()
+        let remote_sock_addr: SocketAddr = remote_addr
+            .parse()
             .context(format!("Invalid DHT node address: {}", remote_addr))?;
 
         // Create UDP socket
-        let socket = UdpSocket::bind("0.0.0.0:0").await
+        let socket = UdpSocket::bind("0.0.0.0:0")
+            .await
             .context("Failed to bind UDP socket for DHT")?;
 
         let local_addr = socket.local_addr()?;
 
-        info!("BitTorrent DHT client {} initialized (local: {}, remote: {})",
-              client_id, local_addr, remote_sock_addr);
+        info!(
+            "BitTorrent DHT client {} initialized (local: {}, remote: {})",
+            client_id, local_addr, remote_sock_addr
+        );
 
         // Update client state
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] BitTorrent DHT client {} connected", client_id));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] BitTorrent DHT client {} connected",
+            client_id
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         let socket_arc = Arc::new(socket);
@@ -78,7 +87,12 @@ impl TorrentDhtClient {
             loop {
                 match socket_clone.recv_from(&mut buf).await {
                     Ok((len, peer)) => {
-                        trace!("DHT client {} received {} bytes from {}", client_id, len, peer);
+                        trace!(
+                            "DHT client {} received {} bytes from {}",
+                            client_id,
+                            len,
+                            peer
+                        );
 
                         // Parse bencode response
                         match serde_bencode::from_bytes::<DhtMessage>(&buf[..len]) {
@@ -86,7 +100,9 @@ impl TorrentDhtClient {
                                 trace!("DHT message: {:?}", msg);
 
                                 // Call LLM with response
-                                if let Some(instruction) = app_state_clone.get_instruction_for_client(client_id).await {
+                                if let Some(instruction) =
+                                    app_state_clone.get_instruction_for_client(client_id).await
+                                {
                                     let protocol = Arc::new(crate::client::torrent_dht::actions::TorrentDhtClientProtocol::new());
                                     let event = Event::new(
                                         &DHT_RESPONSE_EVENT,
@@ -99,7 +115,10 @@ impl TorrentDhtClient {
                                         }),
                                     );
 
-                                    let memory = app_state_clone.get_memory_for_client(client_id).await.unwrap_or_default();
+                                    let memory = app_state_clone
+                                        .get_memory_for_client(client_id)
+                                        .await
+                                        .unwrap_or_default();
 
                                     match call_llm_for_client(
                                         &llm_client_clone,
@@ -110,11 +129,18 @@ impl TorrentDhtClient {
                                         Some(&event),
                                         protocol.as_ref(),
                                         &status_tx_clone,
-                                    ).await {
-                                        Ok(ClientLlmResult { actions, memory_updates }) => {
+                                    )
+                                    .await
+                                    {
+                                        Ok(ClientLlmResult {
+                                            actions,
+                                            memory_updates,
+                                        }) => {
                                             // Update memory
                                             if let Some(mem) = memory_updates {
-                                                app_state_clone.set_memory_for_client(client_id, mem).await;
+                                                app_state_clone
+                                                    .set_memory_for_client(client_id, mem)
+                                                    .await;
                                             }
 
                                             // Execute actions
@@ -125,7 +151,9 @@ impl TorrentDhtClient {
                                                     &socket_clone,
                                                     remote_sock_addr,
                                                     protocol.as_ref(),
-                                                ).await {
+                                                )
+                                                .await
+                                                {
                                                     error!("Failed to execute DHT action: {}", e);
                                                 }
                                             }
@@ -143,7 +171,9 @@ impl TorrentDhtClient {
                     }
                     Err(e) => {
                         error!("DHT client {} recv error: {}", client_id, e);
-                        app_state_clone.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
+                        app_state_clone
+                            .update_client_status(client_id, ClientStatus::Error(e.to_string()))
+                            .await;
                         let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         break;
                     }
@@ -153,7 +183,8 @@ impl TorrentDhtClient {
 
         // Call LLM with connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-            let protocol = Arc::new(crate::client::torrent_dht::actions::TorrentDhtClientProtocol::new());
+            let protocol =
+                Arc::new(crate::client::torrent_dht::actions::TorrentDhtClientProtocol::new());
             let event = Event::new(
                 &DHT_RESPONSE_EVENT,
                 serde_json::json!({
@@ -163,7 +194,10 @@ impl TorrentDhtClient {
                 }),
             );
 
-            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+            let memory = app_state
+                .get_memory_for_client(client_id)
+                .await
+                .unwrap_or_default();
             let socket_clone = socket_arc.clone();
             let app_state_clone = app_state.clone();
             let status_tx_clone = status_tx.clone();
@@ -178,8 +212,13 @@ impl TorrentDhtClient {
                     Some(&event),
                     protocol.as_ref(),
                     &status_tx_clone,
-                ).await {
-                    Ok(ClientLlmResult { actions, memory_updates }) => {
+                )
+                .await
+                {
+                    Ok(ClientLlmResult {
+                        actions,
+                        memory_updates,
+                    }) => {
                         if let Some(mem) = memory_updates {
                             app_state_clone.set_memory_for_client(client_id, mem).await;
                         }
@@ -191,7 +230,9 @@ impl TorrentDhtClient {
                                 &socket_clone,
                                 remote_sock_addr,
                                 protocol.as_ref(),
-                            ).await {
+                            )
+                            .await
+                            {
                                 error!("Failed to execute DHT action: {}", e);
                             }
                         }
@@ -218,20 +259,38 @@ impl TorrentDhtClient {
 
         match protocol.execute_action(action)? {
             ClientActionResult::Custom { name, data } if name == "dht_query" => {
-                let query_type = data.get("query_type").and_then(|v| v.as_str()).context("Missing query_type")?;
-                let transaction_id = data.get("transaction_id").and_then(|v| v.as_str()).unwrap_or("aa");
-                let node_id = data.get("node_id").and_then(|v| v.as_str()).context("Missing node_id")?;
+                let query_type = data
+                    .get("query_type")
+                    .and_then(|v| v.as_str())
+                    .context("Missing query_type")?;
+                let transaction_id = data
+                    .get("transaction_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("aa");
+                let node_id = data
+                    .get("node_id")
+                    .and_then(|v| v.as_str())
+                    .context("Missing node_id")?;
 
                 // Build DHT query message
                 let mut args = serde_json::Map::new();
-                args.insert("id".to_string(), serde_json::Value::String(node_id.to_string()));
+                args.insert(
+                    "id".to_string(),
+                    serde_json::Value::String(node_id.to_string()),
+                );
 
                 if let Some(target) = data.get("target").and_then(|v| v.as_str()) {
-                    args.insert("target".to_string(), serde_json::Value::String(target.to_string()));
+                    args.insert(
+                        "target".to_string(),
+                        serde_json::Value::String(target.to_string()),
+                    );
                 }
 
                 if let Some(info_hash) = data.get("info_hash").and_then(|v| v.as_str()) {
-                    args.insert("info_hash".to_string(), serde_json::Value::String(info_hash.to_string()));
+                    args.insert(
+                        "info_hash".to_string(),
+                        serde_json::Value::String(info_hash.to_string()),
+                    );
                 }
 
                 let message = serde_json::json!({

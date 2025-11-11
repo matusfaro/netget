@@ -4,10 +4,11 @@ pub mod actions;
 use crate::llm::action_helper::call_llm;
 use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
-use crate::server::connection::ConnectionId;
-use actions::{MysqlProtocol, MYSQL_QUERY_EVENT};
 use crate::protocol::Event;
+use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use actions::{MysqlProtocol, MYSQL_QUERY_EVENT};
 use anyhow::Result;
 use async_trait::async_trait;
 use opensrv_mysql::{
@@ -20,7 +21,6 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// MySQL server implementation
 pub struct MysqlServer {
@@ -77,7 +77,8 @@ impl MysqlServer {
                     Ok((stream, addr)) => {
                         console_debug!(status_tx, "MySQL connection from {}", addr);
 
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(actual_addr);
 
                         let handler = MysqlHandler::new(
@@ -118,7 +119,9 @@ impl MysqlServer {
                         tokio::spawn(async move {
                             // MySQL requires split read/write streams
                             let (reader, writer) = tokio::io::split(stream);
-                            if let Err(e) = AsyncMysqlIntermediary::run_on(handler, reader, writer).await {
+                            if let Err(e) =
+                                AsyncMysqlIntermediary::run_on(handler, reader, writer).await
+                            {
                                 error!("MySQL connection error: {:?}", e);
                             }
                         });
@@ -297,7 +300,9 @@ impl MysqlHandler {
             }),
         );
 
-        let server_id = self.server_id.unwrap_or_else(|| crate::state::ServerId::new(0));
+        let server_id = self
+            .server_id
+            .unwrap_or_else(|| crate::state::ServerId::new(0));
 
         let llm_result = call_llm(
             &self.llm_client,
@@ -318,11 +323,13 @@ impl MysqlHandler {
                             match name.as_str() {
                                 "mysql_query_response" => {
                                     // Extract columns and rows from JSON data
-                                    let columns = data.get("columns")
+                                    let columns = data
+                                        .get("columns")
                                         .and_then(|v| v.as_array())
                                         .cloned()
                                         .unwrap_or_default();
-                                    let rows = data.get("rows")
+                                    let rows = data
+                                        .get("rows")
                                         .and_then(|v| v.as_array())
                                         .cloned()
                                         .unwrap_or_default();
@@ -332,10 +339,13 @@ impl MysqlHandler {
                                 }
                                 "mysql_error" => {
                                     // Extract error info from JSON data
-                                    let error_code = data.get("error_code")
+                                    let error_code = data
+                                        .get("error_code")
                                         .and_then(|v| v.as_u64())
-                                        .unwrap_or(1064) as u16;
-                                    let message = data.get("message")
+                                        .unwrap_or(1064)
+                                        as u16;
+                                    let message = data
+                                        .get("message")
                                         .and_then(|v| v.as_str())
                                         .unwrap_or("Unknown error");
 
@@ -358,10 +368,12 @@ impl MysqlHandler {
                                 }
                                 "mysql_ok" => {
                                     // Extract OK response info from JSON data
-                                    let affected_rows = data.get("affected_rows")
+                                    let affected_rows = data
+                                        .get("affected_rows")
                                         .and_then(|v| v.as_u64())
                                         .unwrap_or(0);
-                                    let last_insert_id = data.get("last_insert_id")
+                                    let last_insert_id = data
+                                        .get("last_insert_id")
                                         .and_then(|v| v.as_u64())
                                         .unwrap_or(0);
 
@@ -470,10 +482,7 @@ async fn send_result_set<'a, W: tokio::io::AsyncWrite + Send + Unpin>(
     for row_data in &rows {
         if let Some(row_values) = row_data.as_array() {
             // Convert JSON values to Strings (simplified - ToMysqlValue is implemented for String)
-            let values: Vec<String> = row_values
-                .iter()
-                .map(|v| json_to_mysql_string(v))
-                .collect();
+            let values: Vec<String> = row_values.iter().map(|v| json_to_mysql_string(v)).collect();
 
             row_writer.write_row(values).await?;
         }

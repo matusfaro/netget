@@ -15,23 +15,21 @@ use std::sync::LazyLock;
 pub static BLUETOOTH_SCAN_COMPLETE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "bluetooth_scan_complete",
-        "BLE device scan completed with list of discovered devices"
+        "BLE device scan completed with list of discovered devices",
     )
-    .with_parameters(vec![
-        Parameter {
-            name: "devices".to_string(),
-            type_hint: "array".to_string(),
-            description: "List of discovered BLE devices with address, name, and RSSI".to_string(),
-            required: true,
-        },
-    ])
+    .with_parameters(vec![Parameter {
+        name: "devices".to_string(),
+        type_hint: "array".to_string(),
+        description: "List of discovered BLE devices with address, name, and RSSI".to_string(),
+        required: true,
+    }])
 });
 
 /// Bluetooth client connected event
 pub static BLUETOOTH_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "bluetooth_connected",
-        "Successfully connected to BLE device"
+        "Successfully connected to BLE device",
     )
     .with_parameters(vec![
         Parameter {
@@ -53,57 +51,53 @@ pub static BLUETOOTH_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 pub static BLUETOOTH_SERVICES_DISCOVERED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "bluetooth_services_discovered",
-        "GATT services and characteristics discovered"
+        "GATT services and characteristics discovered",
     )
-    .with_parameters(vec![
-        Parameter {
-            name: "services".to_string(),
-            type_hint: "array".to_string(),
-            description: "List of GATT services with their characteristics".to_string(),
-            required: true,
-        },
-    ])
+    .with_parameters(vec![Parameter {
+        name: "services".to_string(),
+        type_hint: "array".to_string(),
+        description: "List of GATT services with their characteristics".to_string(),
+        required: true,
+    }])
 });
 
 /// Bluetooth client data read event
 pub static BLUETOOTH_DATA_READ_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "bluetooth_data_read",
-        "Data read from BLE characteristic"
+    EventType::new("bluetooth_data_read", "Data read from BLE characteristic").with_parameters(
+        vec![
+            Parameter {
+                name: "service_uuid".to_string(),
+                type_hint: "string".to_string(),
+                description: "UUID of the service".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "characteristic_uuid".to_string(),
+                type_hint: "string".to_string(),
+                description: "UUID of the characteristic".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "value".to_string(),
+                type_hint: "string".to_string(),
+                description: "Human-readable value (if applicable)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "value_hex".to_string(),
+                type_hint: "string".to_string(),
+                description: "Hex-encoded raw bytes".to_string(),
+                required: true,
+            },
+        ],
     )
-    .with_parameters(vec![
-        Parameter {
-            name: "service_uuid".to_string(),
-            type_hint: "string".to_string(),
-            description: "UUID of the service".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "characteristic_uuid".to_string(),
-            type_hint: "string".to_string(),
-            description: "UUID of the characteristic".to_string(),
-            required: true,
-        },
-        Parameter {
-            name: "value".to_string(),
-            type_hint: "string".to_string(),
-            description: "Human-readable value (if applicable)".to_string(),
-            required: false,
-        },
-        Parameter {
-            name: "value_hex".to_string(),
-            type_hint: "string".to_string(),
-            description: "Hex-encoded raw bytes".to_string(),
-            required: true,
-        },
-    ])
 });
 
 /// Bluetooth client notification received event
 pub static BLUETOOTH_NOTIFICATION_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "bluetooth_notification_received",
-        "Notification received from subscribed BLE characteristic"
+        "Notification received from subscribed BLE characteristic",
     )
     .with_parameters(vec![
         Parameter {
@@ -135,11 +129,7 @@ pub static BLUETOOTH_NOTIFICATION_RECEIVED_EVENT: LazyLock<EventType> = LazyLock
 
 /// Bluetooth client disconnected event
 pub static BLUETOOTH_DISCONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "bluetooth_disconnected",
-        "Disconnected from BLE device"
-    )
-    .with_parameters(vec![
+    EventType::new("bluetooth_disconnected", "Disconnected from BLE device").with_parameters(vec![
         Parameter {
             name: "device_address".to_string(),
             type_hint: "string".to_string(),
@@ -165,14 +155,12 @@ impl Protocol for BluetoothClientProtocol {
             ActionDefinition {
                 name: "scan_devices".to_string(),
                 description: "Scan for nearby BLE devices".to_string(),
-                parameters: vec![
-                    Parameter {
-                        name: "duration_secs".to_string(),
-                        type_hint: "number".to_string(),
-                        description: "How long to scan in seconds (default: 5)".to_string(),
-                        required: false,
-                    },
-                ],
+                parameters: vec![Parameter {
+                    name: "duration_secs".to_string(),
+                    type_hint: "number".to_string(),
+                    description: "How long to scan in seconds (default: 5)".to_string(),
+                    required: false,
+                }],
                 example: json!({
                     "type": "scan_devices",
                     "duration_secs": 5
@@ -185,7 +173,8 @@ impl Protocol for BluetoothClientProtocol {
                     Parameter {
                         name: "device_address".to_string(),
                         type_hint: "string".to_string(),
-                        description: "MAC address of device (e.g., 'AA:BB:CC:DD:EE:FF')".to_string(),
+                        description: "MAC address of device (e.g., 'AA:BB:CC:DD:EE:FF')"
+                            .to_string(),
                         required: false,
                     },
                     Parameter {
@@ -202,7 +191,8 @@ impl Protocol for BluetoothClientProtocol {
             },
             ActionDefinition {
                 name: "discover_services".to_string(),
-                description: "Discover GATT services and characteristics on connected device".to_string(),
+                description: "Discover GATT services and characteristics on connected device"
+                    .to_string(),
                 parameters: vec![],
                 example: json!({
                     "type": "discover_services"
@@ -228,7 +218,9 @@ impl Protocol for BluetoothClientProtocol {
                     Parameter {
                         name: "service_uuid".to_string(),
                         type_hint: "string".to_string(),
-                        description: "UUID of the service (e.g., '0000180f-0000-1000-8000-00805f9b34fb')".to_string(),
+                        description:
+                            "UUID of the service (e.g., '0000180f-0000-1000-8000-00805f9b34fb')"
+                                .to_string(),
                         required: true,
                     },
                     Parameter {
@@ -269,7 +261,8 @@ impl Protocol for BluetoothClientProtocol {
                     Parameter {
                         name: "with_response".to_string(),
                         type_hint: "boolean".to_string(),
-                        description: "Whether to wait for write response (default: true)".to_string(),
+                        description: "Whether to wait for write response (default: true)"
+                            .to_string(),
                         required: false,
                     },
                 ],
@@ -380,7 +373,13 @@ impl Protocol for BluetoothClientProtocol {
     }
 
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["bluetooth", "ble", "bluetooth low energy", "gatt", "connect to bluetooth"]
+        vec![
+            "bluetooth",
+            "ble",
+            "bluetooth low energy",
+            "gatt",
+            "connect to bluetooth",
+        ]
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
@@ -460,7 +459,9 @@ impl Client for BluetoothClientProtocol {
                     .map(|s| s.to_string());
 
                 if device_address.is_none() && device_name.is_none() {
-                    return Err(anyhow::anyhow!("Either device_address or device_name must be provided"));
+                    return Err(anyhow::anyhow!(
+                        "Either device_address or device_name must be provided"
+                    ));
                 }
 
                 Ok(ClientActionResult::Custom {
@@ -471,12 +472,10 @@ impl Client for BluetoothClientProtocol {
                     }),
                 })
             }
-            "discover_services" => {
-                Ok(ClientActionResult::Custom {
-                    name: "discover_services".to_string(),
-                    data: json!({}),
-                })
-            }
+            "discover_services" => Ok(ClientActionResult::Custom {
+                name: "discover_services".to_string(),
+                data: json!({}),
+            }),
             "read_characteristic" => {
                 let service_uuid = action
                     .get("service_uuid")
@@ -516,8 +515,8 @@ impl Client for BluetoothClientProtocol {
                     .and_then(|v| v.as_str())
                     .context("Missing 'value_hex' field")?;
 
-                let value_bytes = hex::decode(value_hex)
-                    .context("Invalid hex data in value_hex")?;
+                let value_bytes =
+                    hex::decode(value_hex).context("Invalid hex data in value_hex")?;
 
                 let with_response = action
                     .get("with_response")
@@ -577,7 +576,10 @@ impl Client for BluetoothClientProtocol {
                 })
             }
             "disconnect" => Ok(ClientActionResult::Disconnect),
-            _ => Err(anyhow::anyhow!("Unknown Bluetooth client action: {}", action_type)),
+            _ => Err(anyhow::anyhow!(
+                "Unknown Bluetooth client action: {}",
+                action_type
+            )),
         }
     }
 }

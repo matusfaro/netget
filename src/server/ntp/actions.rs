@@ -21,85 +21,87 @@ impl NtpProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for NtpProtocol {
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            Vec::new()
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                send_ntp_time_response_action(),
-                send_ntp_response_action(),
-                ignore_request_action(),
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "NTP"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            get_ntp_event_types()
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>UDP>NTP"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["ntp", "time"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState, PrivilegeRequirement};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Beta)
-                .privilege_requirement(PrivilegeRequirement::PrivilegedPort(123))
-                .implementation("Manual 48-byte NTP packet construction")
-                .llm_control("Time responses (stratum, timestamps)")
-                .e2e_testing("Manual NTP packet construction")
-                .notes("Sub-ms with scripting, simple protocol")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "Network Time Protocol server for time synchronization"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "pretend to be a ntp server on port 123"
-        }
-        fn group_name(&self) -> &'static str {
-            "Core"
-        }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        Vec::new()
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            send_ntp_time_response_action(),
+            send_ntp_response_action(),
+            ignore_request_action(),
+        ]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "NTP"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_ntp_event_types()
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>UDP>NTP"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["ntp", "time"]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{
+            DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2,
+        };
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Beta)
+            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(123))
+            .implementation("Manual 48-byte NTP packet construction")
+            .llm_control("Time responses (stratum, timestamps)")
+            .e2e_testing("Manual NTP packet construction")
+            .notes("Sub-ms with scripting, simple protocol")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "Network Time Protocol server for time synchronization"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "pretend to be a ntp server on port 123"
+    }
+    fn group_name(&self) -> &'static str {
+        "Core"
+    }
 }
 
 // Implement Server trait (server-specific functionality)
 impl Server for NtpProtocol {
-        fn spawn(
-            &self,
-            ctx: crate::protocol::SpawnContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::server::ntp::NtpServer;
-                NtpServer::spawn_with_llm_actions(
-                    ctx.listen_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.server_id,
-                ).await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "send_ntp_time_response" => self.execute_send_ntp_time_response(action),
-                "send_ntp_response" => self.execute_send_ntp_response(action),
-                "ignore_request" => Ok(ActionResult::NoAction),
-                _ => Err(anyhow::anyhow!("Unknown NTP action: {}", action_type)),
-            }
-        }
-}
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::ntp::NtpServer;
+            NtpServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
 
+        match action_type {
+            "send_ntp_time_response" => self.execute_send_ntp_time_response(action),
+            "send_ntp_response" => self.execute_send_ntp_response(action),
+            "ignore_request" => Ok(ActionResult::NoAction),
+            _ => Err(anyhow::anyhow!("Unknown NTP action: {}", action_type)),
+        }
+    }
+}
 
 impl NtpProtocol {
     fn execute_send_ntp_time_response(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -449,7 +451,5 @@ pub static NTP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// Get NTP event types
 pub fn get_ntp_event_types() -> Vec<EventType> {
-    vec![
-        NTP_REQUEST_EVENT.clone(),
-    ]
+    vec![NTP_REQUEST_EVENT.clone()]
 }

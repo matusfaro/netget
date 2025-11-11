@@ -45,20 +45,22 @@ impl IppClient {
         };
 
         // Store URI in protocol_data
-        app_state.with_client_mut(client_id, |client| {
-            client.set_protocol_field(
-                "ipp_uri".to_string(),
-                serde_json::json!(uri_str),
-            );
-            client.set_protocol_field(
-                "ipp_client".to_string(),
-                serde_json::json!("initialized"),
-            );
-        }).await;
+        app_state
+            .with_client_mut(client_id, |client| {
+                client.set_protocol_field("ipp_uri".to_string(), serde_json::json!(uri_str));
+                client
+                    .set_protocol_field("ipp_client".to_string(), serde_json::json!("initialized"));
+            })
+            .await;
 
         // Update status
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] IPP client {} ready for {}", client_id, uri_str));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] IPP client {} ready for {}",
+            client_id, uri_str
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Spawn background task to monitor for client disconnection
@@ -88,7 +90,10 @@ impl IppClient {
         let uri_str = Self::get_uri(&app_state, client_id).await?;
         let uri: Uri = uri_str.parse().context("Invalid IPP URI")?;
 
-        info!("IPP client {} sending Get-Printer-Attributes to {}", client_id, uri);
+        info!(
+            "IPP client {} sending Get-Printer-Attributes to {}",
+            client_id, uri
+        );
 
         let operation = IppOperationBuilder::get_printer_attributes(uri.clone()).build();
         let client = AsyncIppClient::new(uri);
@@ -96,16 +101,23 @@ impl IppClient {
         match client.send(operation).await {
             Ok(response) => {
                 let status_code = response.header().status_code();
-                info!("IPP client {} received response: status={:?}", client_id, status_code);
+                info!(
+                    "IPP client {} received response: status={:?}",
+                    client_id, status_code
+                );
 
                 // Extract printer attributes
                 let mut attributes = serde_json::Map::new();
                 if status_code.is_success() {
-                    if let Some(printer_attrs) = response.attributes().groups_of(DelimiterTag::PrinterAttributes).next() {
+                    if let Some(printer_attrs) = response
+                        .attributes()
+                        .groups_of(DelimiterTag::PrinterAttributes)
+                        .next()
+                    {
                         for (_, attr) in printer_attrs.attributes() {
                             attributes.insert(
                                 attr.name().to_string(),
-                                serde_json::json!(attr.value().to_string())
+                                serde_json::json!(attr.value().to_string()),
                             );
                         }
                     }
@@ -123,12 +135,16 @@ impl IppClient {
                         "status_code": format!("{:?}", status_code),
                         "attributes": attributes,
                     }),
-                ).await?;
+                )
+                .await?;
 
                 Ok(())
             }
             Err(e) => {
-                error!("IPP client {} Get-Printer-Attributes failed: {}", client_id, e);
+                error!(
+                    "IPP client {} Get-Printer-Attributes failed: {}",
+                    client_id, e
+                );
                 let _ = status_tx.send(format!("[ERROR] IPP Get-Printer-Attributes failed: {}", e));
                 Err(e.into())
             }
@@ -148,8 +164,14 @@ impl IppClient {
         let uri_str = Self::get_uri(&app_state, client_id).await?;
         let uri: Uri = uri_str.parse().context("Invalid IPP URI")?;
 
-        info!("IPP client {} sending Print-Job to {}: job={}, format={:?}, size={} bytes",
-            client_id, uri, job_name, document_format, document_data.len());
+        info!(
+            "IPP client {} sending Print-Job to {}: job={}, format={:?}, size={} bytes",
+            client_id,
+            uri,
+            job_name,
+            document_format,
+            document_data.len()
+        );
 
         // Build Print-Job operation
         // IppPayload needs a Read type, so we convert Vec<u8> to Cursor
@@ -165,16 +187,23 @@ impl IppClient {
         match client.send(operation).await {
             Ok(response) => {
                 let status_code = response.header().status_code();
-                info!("IPP client {} Print-Job response: status={:?}", client_id, status_code);
+                info!(
+                    "IPP client {} Print-Job response: status={:?}",
+                    client_id, status_code
+                );
 
                 // Extract job attributes
                 let mut job_attrs = serde_json::Map::new();
                 if status_code.is_success() {
-                    if let Some(attrs) = response.attributes().groups_of(DelimiterTag::JobAttributes).next() {
+                    if let Some(attrs) = response
+                        .attributes()
+                        .groups_of(DelimiterTag::JobAttributes)
+                        .next()
+                    {
                         for (_, attr) in attrs.attributes() {
                             job_attrs.insert(
                                 attr.name().to_string(),
-                                serde_json::json!(attr.value().to_string())
+                                serde_json::json!(attr.value().to_string()),
                             );
                         }
                     }
@@ -193,7 +222,8 @@ impl IppClient {
                         "job_name": job_name,
                         "job_attributes": job_attrs,
                     }),
-                ).await?;
+                )
+                .await?;
 
                 Ok(())
             }
@@ -216,7 +246,10 @@ impl IppClient {
         let uri_str = Self::get_uri(&app_state, client_id).await?;
         let uri: Uri = uri_str.parse().context("Invalid IPP URI")?;
 
-        info!("IPP client {} sending Get-Job-Attributes to {}: job_id={}", client_id, uri, job_id);
+        info!(
+            "IPP client {} sending Get-Job-Attributes to {}: job_id={}",
+            client_id, uri, job_id
+        );
 
         let operation = IppOperationBuilder::get_job_attributes(uri.clone(), job_id).build();
         let client = AsyncIppClient::new(uri);
@@ -224,16 +257,23 @@ impl IppClient {
         match client.send(operation).await {
             Ok(response) => {
                 let status_code = response.header().status_code();
-                info!("IPP client {} Get-Job-Attributes response: status={:?}", client_id, status_code);
+                info!(
+                    "IPP client {} Get-Job-Attributes response: status={:?}",
+                    client_id, status_code
+                );
 
                 // Extract job attributes
                 let mut attributes = serde_json::Map::new();
                 if status_code.is_success() {
-                    if let Some(job_attrs) = response.attributes().groups_of(DelimiterTag::JobAttributes).next() {
+                    if let Some(job_attrs) = response
+                        .attributes()
+                        .groups_of(DelimiterTag::JobAttributes)
+                        .next()
+                    {
                         for (_, attr) in job_attrs.attributes() {
                             attributes.insert(
                                 attr.name().to_string(),
-                                serde_json::json!(attr.value().to_string())
+                                serde_json::json!(attr.value().to_string()),
                             );
                         }
                     }
@@ -252,7 +292,8 @@ impl IppClient {
                         "job_id": job_id,
                         "attributes": attributes,
                     }),
-                ).await?;
+                )
+                .await?;
 
                 Ok(())
             }
@@ -266,11 +307,16 @@ impl IppClient {
 
     /// Get IPP URI from client state
     async fn get_uri(app_state: &AppState, client_id: ClientId) -> Result<String> {
-        app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("ipp_uri")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }).await.flatten().context("No IPP URI found in client state")
+        app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("ipp_uri")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .await
+            .flatten()
+            .context("No IPP URI found in client state")
     }
 
     /// Call LLM with IPP operation response
@@ -296,7 +342,10 @@ impl IppClient {
                 }),
             );
 
-            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+            let memory = app_state
+                .get_memory_for_client(client_id)
+                .await
+                .unwrap_or_default();
 
             match call_llm_for_client(
                 llm_client,
@@ -307,8 +356,13 @@ impl IppClient {
                 Some(&event),
                 protocol.as_ref(),
                 status_tx,
-            ).await {
-                Ok(ClientLlmResult { actions: _, memory_updates }) => {
+            )
+            .await
+            {
+                Ok(ClientLlmResult {
+                    actions: _,
+                    memory_updates,
+                }) => {
                     // Update memory
                     if let Some(mem) = memory_updates {
                         app_state.set_memory_for_client(client_id, mem).await;

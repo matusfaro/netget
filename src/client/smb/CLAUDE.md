@@ -2,13 +2,15 @@
 
 ## Overview
 
-SMB/CIFS client for accessing Windows file shares and Samba servers. Supports file operations (read, write, delete), directory operations (list, create, delete), and authentication.
+SMB/CIFS client for accessing Windows file shares and Samba servers. Supports file operations (read, write, delete),
+directory operations (list, create, delete), and authentication.
 
 ## Library Choice
 
 **Primary Library:** `pavao` v0.1.0 (libsmbclient wrapper)
 
 **Rationale:**
+
 - Wraps the mature libsmbclient library (from Samba project)
 - Supports SMB 1/2/3 protocol versions with automatic negotiation
 - Simple API for file operations (list_dir, read, write, mkdir, rmdir, unlink)
@@ -16,10 +18,12 @@ SMB/CIFS client for accessing Windows file shares and Samba servers. Supports fi
 - Well-tested in production Samba deployments
 
 **Dependencies:**
+
 - System library: `libsmbclient` (from samba-common package)
 - Rust crate: `pavao` (safe Rust bindings)
 
 **Alternative Considered:**
+
 - `smbc` crate: Similar libsmbclient wrapper with std::fs-like interface
 - Chose `pavao` for SMB 2/3 support and simpler API
 
@@ -46,6 +50,7 @@ Unlike TCP-based clients, SMB client doesn't maintain a persistent connection. I
 ```
 
 **Key Differences from Stream-Based Clients:**
+
 - No read loop (operations are synchronous)
 - Each operation triggers LLM call with result event
 - Actions executed sequentially (not pipelined)
@@ -53,12 +58,14 @@ Unlike TCP-based clients, SMB client doesn't maintain a persistent connection. I
 ### State Management
 
 **Client State:** Tracked in AppState as `ClientStatus`:
+
 - `Connecting`: Initial state
 - `Connected`: Client context created, ready for operations
 - `Disconnected`: Client closed
 - `Error`: Operation failed
 
 **Memory:** Used to track:
+
 - Current working directory
 - Recently accessed files
 - Operation history
@@ -68,25 +75,25 @@ Unlike TCP-based clients, SMB client doesn't maintain a persistent connection. I
 ### Async Actions (User-Triggered)
 
 1. **list_directory**: List contents of SMB directory
-   - Parameters: `path` (smb://server/share/dir)
-   - Returns: Array of entries with name, type, comment
+    - Parameters: `path` (smb://server/share/dir)
+    - Returns: Array of entries with name, type, comment
 
 2. **read_file**: Read file from SMB share
-   - Parameters: `path` (smb://server/share/file.txt)
-   - Returns: File content (text or base64 for binary)
+    - Parameters: `path` (smb://server/share/file.txt)
+    - Returns: File content (text or base64 for binary)
 
 3. **write_file**: Write file to SMB share
-   - Parameters: `path`, `content`
-   - Returns: Bytes written
+    - Parameters: `path`, `content`
+    - Returns: Bytes written
 
 4. **create_directory**: Create directory on SMB share
-   - Parameters: `path`
+    - Parameters: `path`
 
 5. **delete_file**: Delete file from SMB share
-   - Parameters: `path`
+    - Parameters: `path`
 
 6. **delete_directory**: Delete directory from SMB share
-   - Parameters: `path`
+    - Parameters: `path`
 
 7. **disconnect**: Close SMB client
 
@@ -99,24 +106,30 @@ Unlike TCP-based clients, SMB client doesn't maintain a persistent connection. I
 ## Events
 
 ### SMB_CLIENT_CONNECTED_EVENT
+
 Triggered when SMB client initializes with credentials.
 
 **Parameters:**
+
 - `share_url`: Base SMB URL (smb://server/share)
 
 **LLM Decisions:**
+
 - List root directory
 - Read specific file
 - Navigate to subdirectory
 
 ### SMB_CLIENT_DIR_LISTED_EVENT
+
 Triggered when directory listing completes.
 
 **Parameters:**
+
 - `path`: Directory path
 - `entries`: Array of directory entries
 
 **Entry Format:**
+
 ```json
 {
   "name": "filename.txt",
@@ -126,53 +139,65 @@ Triggered when directory listing completes.
 ```
 
 **LLM Decisions:**
+
 - Read a file from listing
 - Navigate to subdirectory
 - Create/delete files
 
 ### SMB_CLIENT_FILE_READ_EVENT
+
 Triggered when file read completes.
 
 **Parameters:**
+
 - `path`: File path
 - `content`: File content (text or base64:...)
 - `size`: File size in bytes
 
 **Content Encoding:**
+
 - UTF-8 text: Plain string
 - Binary data: `base64:<encoded>`
 
 **LLM Decisions:**
+
 - Process file content
 - Write modified version
 - Read another file
 
 ### SMB_CLIENT_FILE_WRITTEN_EVENT
+
 Triggered when file write completes.
 
 **Parameters:**
+
 - `path`: File path
 - `bytes_written`: Number of bytes written
 
 **LLM Decisions:**
+
 - Read back written file
 - Write another file
 - List directory to confirm
 
 ### SMB_CLIENT_ERROR_EVENT
+
 Triggered when SMB operation fails.
 
 **Parameters:**
+
 - `error`: Error message
 - `operation`: Operation that failed
 
 **Common Errors:**
+
 - Authentication failure (invalid credentials)
 - Permission denied (no write access)
 - File not found
 - Network error
 
 **LLM Decisions:**
+
 - Retry operation
 - Try alternative path
 - Report error to user
@@ -193,11 +218,13 @@ Triggered when SMB operation fails.
 **Default:** Guest access (username=guest, password=empty)
 
 **Credentials Handling:**
+
 - Passed to `SmbCredentials::new()`
 - Stored in SMB client context
 - Used for all operations
 
 **Domain vs Workgroup:**
+
 - Domain: Windows domain (e.g., CORP)
 - Workgroup: Workgroup name (e.g., WORKGROUP)
 - Typically one or the other is specified
@@ -207,11 +234,13 @@ Triggered when SMB operation fails.
 **SMB URLs:** `smb://server/share/path/to/file`
 
 **Examples:**
+
 - List share: `smb://192.168.1.100/public/`
 - Read file: `smb://fileserver/documents/readme.txt`
 - Nested path: `smb://server/data/2024/01/report.pdf`
 
 **Important:**
+
 - Must use `smb://` prefix
 - Server can be hostname or IP
 - Share name is required
@@ -220,51 +249,52 @@ Triggered when SMB operation fails.
 ## Limitations
 
 1. **System Dependency**: Requires libsmbclient system library
-   - Linux: `apt install libsmbclient-dev` or `yum install samba-client`
-   - macOS: `brew install samba`
-   - Not cross-platform (needs Samba libraries)
+    - Linux: `apt install libsmbclient-dev` or `yum install samba-client`
+    - macOS: `brew install samba`
+    - Not cross-platform (needs Samba libraries)
 
 2. **Synchronous Operations**: Each operation blocks until complete
-   - No concurrent operations on same client
-   - Large file transfers block LLM interaction
+    - No concurrent operations on same client
+    - Large file transfers block LLM interaction
 
 3. **No Streaming**: Files read/written entirely into memory
-   - Large files (>100MB) may cause memory pressure
-   - No progress updates during transfer
+    - Large files (>100MB) may cause memory pressure
+    - No progress updates during transfer
 
 4. **Limited Metadata**: `list_dir` returns basic info
-   - File size not included in directory listing
-   - Use `stat()` for detailed attributes (not exposed yet)
+    - File size not included in directory listing
+    - Use `stat()` for detailed attributes (not exposed yet)
 
 5. **Error Granularity**: Errors from libsmbclient can be cryptic
-   - Error messages may not be actionable
-   - LLM may struggle to interpret low-level errors
+    - Error messages may not be actionable
+    - LLM may struggle to interpret low-level errors
 
 6. **SMB Version**: Automatic negotiation (SMB 1/2/3)
-   - Modern servers prefer SMB 2/3
-   - SMB 1 deprecated (security concerns)
-   - No manual version selection exposed
+    - Modern servers prefer SMB 2/3
+    - SMB 1 deprecated (security concerns)
+    - No manual version selection exposed
 
 ## Security Considerations
 
 1. **Credentials in Memory**: Username/password stored in SmbCredentials
-   - Not encrypted in memory
-   - Visible in process memory
-   - Consider using Kerberos (not implemented yet)
+    - Not encrypted in memory
+    - Visible in process memory
+    - Consider using Kerberos (not implemented yet)
 
 2. **Network Exposure**: SMB traffic on port 445
-   - Use VPN or trusted network
-   - Consider SMB over SSH tunnel
+    - Use VPN or trusted network
+    - Consider SMB over SSH tunnel
 
 3. **Guest Access**: Default guest credentials
-   - Read-only on most servers
-   - May be disabled on secure servers
+    - Read-only on most servers
+    - May be disabled on secure servers
 
 ## Testing Strategy
 
 See `tests/client/smb/CLAUDE.md` for E2E testing approach.
 
 **Test Server:** Docker Samba container
+
 - Easy setup with `dperson/samba` image
 - Configurable shares and permissions
 - Supports guest and authenticated access
@@ -301,20 +331,24 @@ Connect to SMB at //server/logs and find all .log files modified today
 ## Implementation Notes
 
 **Dual Logging:** All operations use:
+
 - `info!()`, `debug!()`, `error!()` -> `netget.log`
 - `status_tx.send()` -> TUI display
 
 **Error Handling:**
+
 - Operations return `Result<T>`
 - Errors trigger `SMB_CLIENT_ERROR_EVENT`
 - LLM decides whether to retry or abort
 
 **Memory Usage:**
+
 - File content loaded entirely into memory
 - Large files (>100MB) may cause issues
 - Consider chunking for production use
 
 **Concurrency:**
+
 - Single SMB client context per client ID
 - No concurrent operations (library not thread-safe)
 - Operations executed sequentially

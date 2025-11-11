@@ -16,35 +16,36 @@ E2E tests for RSS feed server that verify LLM-driven dynamic feed generation, ca
 ### Test Scenarios
 
 1. **Tech News Feed** (`/tech-news.xml`)
-   - 3 items with varying categories
-   - Categories include simple strings and objects with domains
-   - Verifies structured category rendering
-   - Checks feed metadata (title, link, description, language, TTL)
+    - 3 items with varying categories
+    - Categories include simple strings and objects with domains
+    - Verifies structured category rendering
+    - Checks feed metadata (title, link, description, language, TTL)
 
 2. **Sports Feed** (`/sports.xml`)
-   - 2 items with simple categories
-   - Tests different feed structure
-   - Verifies proper XML generation
+    - 2 items with simple categories
+    - Tests different feed structure
+    - Verifies proper XML generation
 
 3. **Blog Feed** (`/blog.xml`)
-   - 2 items with author and GUID fields
-   - Tests optional RSS elements
-   - Verifies complex category structures
+    - 2 items with author and GUID fields
+    - Tests optional RSS elements
+    - Verifies complex category structures
 
 4. **404 Handling** (`/nonexistent.xml`)
-   - Tests non-existent feed path
-   - Verifies proper error response
+    - Tests non-existent feed path
+    - Verifies proper error response
 
 5. **RSS Parsing** (validation)
-   - Parses generated XML with rss crate
-   - Validates RSS 2.0 compliance
-   - Verifies all fields are accessible
+    - Parses generated XML with rss crate
+    - Validates RSS 2.0 compliance
+    - Verifies all fields are accessible
 
 ## LLM Call Budget
 
 **Total: ~6 LLM calls**
 
 Breakdown:
+
 1. Initial server setup (instruction parsing)
 2. Tech news feed generation
 3. Sports feed generation
@@ -68,19 +69,21 @@ Breakdown:
 
 - **Build time**: Included in feature-specific build (~10-15s)
 - **Test execution**: ~10-15 seconds
-  - Server startup: ~2s
-  - Each feed fetch: ~1-2s (LLM generation time)
-  - Parsing validation: <1s
+    - Server startup: ~2s
+    - Each feed fetch: ~1-2s (LLM generation time)
+    - Parsing validation: <1s
 - **Total**: ~15-20 seconds end-to-end
 
 ## Assertions
 
 ### HTTP Layer
+
 - Status codes (200 for valid, 404 for invalid)
 - Content-Type header (application/rss+xml; charset=utf-8)
 - Response body contains valid XML
 
 ### RSS Structure
+
 - `<rss version="2.0">` tag present
 - Channel elements (title, link, description)
 - Item elements with titles and content
@@ -88,15 +91,17 @@ Breakdown:
 - Optional elements (author, GUID, language, TTL)
 
 ### Content Validation
+
 - Feed titles match specification
 - Item counts correct (3, 2, 2 items)
 - Categories rendered correctly
-  - Simple: `<category>AI</category>`
-  - With domain: `<category domain="ai.example.com">Deep Learning</category>`
+    - Simple: `<category>AI</category>`
+    - With domain: `<category domain="ai.example.com">Deep Learning</category>`
 - Dates in RFC 2822 format
 - Links are valid URLs
 
 ### Parsing Validation
+
 - rss crate can parse generated XML
 - All fields accessible via API
 - No parsing errors
@@ -110,24 +115,24 @@ None currently identified.
 ### Potential Additional Tests
 
 1. **If-Modified-Since header**
-   - Test conditional requests
-   - Verify 304 Not Modified responses
+    - Test conditional requests
+    - Verify 304 Not Modified responses
 
 2. **Feed autodiscovery**
-   - Test HTML pages with `<link rel="alternate">` tags
-   - Verify feed URLs can be discovered
+    - Test HTML pages with `<link rel="alternate">` tags
+    - Verify feed URLs can be discovered
 
 3. **Large feeds**
-   - Test feeds with 100+ items
-   - Verify performance and memory usage
+    - Test feeds with 100+ items
+    - Verify performance and memory usage
 
 4. **Malformed requests**
-   - Test with invalid headers
-   - Test with non-GET methods
+    - Test with invalid headers
+    - Test with non-GET methods
 
 5. **Concurrent requests**
-   - Test multiple simultaneous feed fetches
-   - Verify LLM handles parallelism
+    - Test multiple simultaneous feed fetches
+    - Verify LLM handles parallelism
 
 ## Running Tests
 

@@ -1,10 +1,12 @@
 # IMAP E2E Tests with async-imap Client
 
-This file contains end-to-end tests for the NetGet IMAP implementation using the `async-imap` Rust client library - the same library used by real email clients.
+This file contains end-to-end tests for the NetGet IMAP implementation using the `async-imap` Rust client library - the
+same library used by real email clients.
 
 ## Overview
 
-These tests complement the raw TCP tests in `tests/server/imap/test.rs` by using an actual IMAP client implementation (`async-imap`), providing:
+These tests complement the raw TCP tests in `tests/server/imap/test.rs` by using an actual IMAP client implementation (
+`async-imap`), providing:
 
 - **More realistic testing**: Uses the same library that email clients use
 - **Protocol validation**: The client enforces correct IMAP protocol usage
@@ -50,6 +52,7 @@ ollama pull qwen3-coder:30b
 ### 3. Install Dependencies
 
 The test dependencies are automatically installed when running tests:
+
 - `async-imap` - IMAP client library
 - `async-native-tls` - TLS support for IMAP connections
 
@@ -115,21 +118,25 @@ async fn test_imap_example() -> E2EResult<()> {
 ## Key Features Tested
 
 ### Authentication
+
 - ✅ Successful LOGIN with correct credentials
 - ✅ Failed LOGIN with wrong credentials
 - ✅ CAPABILITY negotiation before and after login
 
 ### Mailbox Operations
+
 - ✅ LIST - Enumerate available mailboxes
 - ✅ SELECT - Open mailbox for read/write
 - ✅ EXAMINE - Open mailbox read-only
 - ✅ STATUS - Get mailbox info without selecting
 
 ### Message Operations
+
 - ✅ FETCH - Retrieve message content (RFC822)
 - ✅ SEARCH - Find messages by criteria (FROM, etc.)
 
 ### Connection Management
+
 - ✅ NOOP - Keep connection alive
 - ✅ LOGOUT - Graceful disconnect
 - ✅ Concurrent connections - Multiple simultaneous clients
@@ -137,11 +144,13 @@ async fn test_imap_example() -> E2EResult<()> {
 ## Comparison with Raw TCP Tests
 
 ### `tests/server/imap/test.rs` (Raw TCP)
+
 - **Pros**: Full protocol control, tests low-level details
 - **Cons**: Manual protocol implementation, error-prone
 - **Use case**: Protocol compliance, edge cases
 
 ### `tests/server/imap/e2e_client_test.rs` (async-imap)
+
 - **Pros**: Real client, validates actual usage, easier to write
 - **Cons**: Limited control over protocol details
 - **Use case**: End-user workflows, integration validation
@@ -153,6 +162,7 @@ Both test suites are complementary and important for comprehensive coverage.
 ### Test Timeout
 
 If tests timeout after 30 seconds:
+
 - Check Ollama is running: `ollama list`
 - Verify model is available: `ollama run qwen3-coder:30b`
 - Increase timeout in the test code if needed
@@ -160,6 +170,7 @@ If tests timeout after 30 seconds:
 ### Connection Refused
 
 If tests fail with "connection refused":
+
 - Ensure the release binary was built: `./cargo-isolated.sh build --release --all-features`
 - Check no other process is using the dynamic port
 - Look for server startup errors in test output
@@ -167,6 +178,7 @@ If tests fail with "connection refused":
 ### LLM Response Issues
 
 If the LLM doesn't generate correct responses:
+
 - Try a different model: `ServerConfig::new(prompt).with_model("llama3.1:70b")`
 - Make prompts more explicit about expected behavior
 - Check server output with `--nocapture` flag

@@ -8,7 +8,7 @@
 
 #[cfg(feature = "dynamo")]
 mod tests {
-    use crate::server::helpers::{start_netget_server, retry, ServerConfig, E2EResult};
+    use crate::server::helpers::{retry, start_netget_server, E2EResult, ServerConfig};
     use aws_config::BehaviorVersion;
     use aws_sdk_dynamodb::types::{
         AttributeDefinition, AttributeValue, KeySchemaElement, KeyType, ScalarAttributeType,
@@ -24,11 +24,7 @@ mod tests {
             .endpoint_url(&endpoint_url)
             .region(aws_config::Region::new("us-east-1"))
             .credentials_provider(aws_sdk_dynamodb::config::Credentials::new(
-                "test",
-                "test",
-                None,
-                None,
-                "test",
+                "test", "test", None, None, "test",
             ))
             .load()
             .await;
@@ -97,8 +93,7 @@ mod tests {
     async fn test_aws_sdk_put_and_get_item() -> E2EResult<()> {
         println!("\n=== Test: AWS SDK PutItem and GetItem ===");
 
-        let prompt =
-            "Start a DynamoDB server on port 0 that remembers items stored with PutItem";
+        let prompt = "Start a DynamoDB server on port 0 that remembers items stored with PutItem";
         let config = ServerConfig::new(prompt).with_log_level("off");
 
         let server = start_netget_server(config).await?;
@@ -116,10 +111,7 @@ mod tests {
                 "userId".to_string(),
                 AttributeValue::S("user-123".to_string()),
             );
-            item.insert(
-                "name".to_string(),
-                AttributeValue::S("Alice".to_string()),
-            );
+            item.insert("name".to_string(), AttributeValue::S("Alice".to_string()));
             item.insert(
                 "email".to_string(),
                 AttributeValue::S("alice@example.com".to_string()),
@@ -187,10 +179,7 @@ mod tests {
                 "productId".to_string(),
                 AttributeValue::S("prod-001".to_string()),
             );
-            item.insert(
-                "price".to_string(),
-                AttributeValue::N("99.99".to_string()),
-            );
+            item.insert("price".to_string(), AttributeValue::N("99.99".to_string()));
 
             client
                 .put_item()
@@ -420,17 +409,11 @@ mod tests {
         let batch_result = retry(|| async {
             let mut item1 = HashMap::new();
             item1.insert("id".to_string(), AttributeValue::S("batch-1".to_string()));
-            item1.insert(
-                "data".to_string(),
-                AttributeValue::S("first".to_string()),
-            );
+            item1.insert("data".to_string(), AttributeValue::S("first".to_string()));
 
             let mut item2 = HashMap::new();
             item2.insert("id".to_string(), AttributeValue::S("batch-2".to_string()));
-            item2.insert(
-                "data".to_string(),
-                AttributeValue::S("second".to_string()),
-            );
+            item2.insert("data".to_string(), AttributeValue::S("second".to_string()));
 
             let put_request1 = aws_sdk_dynamodb::types::PutRequest::builder()
                 .set_item(Some(item1))
@@ -484,14 +467,8 @@ mod tests {
         let client = create_dynamodb_client(server.port).await;
 
         // DescribeTable with AWS SDK
-        let describe_result = retry(|| async {
-            client
-                .describe_table()
-                .table_name("TestTable")
-                .send()
-                .await
-        })
-        .await;
+        let describe_result =
+            retry(|| async { client.describe_table().table_name("TestTable").send().await }).await;
 
         match describe_result {
             Ok(_) => println!("[PASS] DescribeTable succeeded via AWS SDK"),

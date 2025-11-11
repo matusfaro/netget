@@ -13,14 +13,20 @@ use std::time::Duration;
 async fn test_wireguard_handshake_detection() {
     let config = ServerConfig::new("Start a WireGuard VPN honeypot on port 0");
 
-    let mut server = start_netget_server(config).await.expect("Failed to start server");
+    let mut server = start_netget_server(config)
+        .await
+        .expect("Failed to start server");
 
     // Wait for server to be ready
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     // Verify WireGuard stack was selected
-    let output_contains_wg = server.output_contains("WireGuard").await || server.output_contains("WIREGUARD").await;
-    assert!(output_contains_wg, "Server should be running WireGuard stack");
+    let output_contains_wg =
+        server.output_contains("WireGuard").await || server.output_contains("WIREGUARD").await;
+    assert!(
+        output_contains_wg,
+        "Server should be running WireGuard stack"
+    );
 
     // Create UDP client socket
     let client = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind client socket");
@@ -47,7 +53,8 @@ async fn test_wireguard_handshake_detection() {
     tokio::time::sleep(Duration::from_millis(1000)).await;
 
     // Check server output for handshake detection
-    let has_wireguard = server.output_contains("WireGuard").await || server.output_contains("handshake").await;
+    let has_wireguard =
+        server.output_contains("WireGuard").await || server.output_contains("handshake").await;
     assert!(
         has_wireguard,
         "Server output should contain WireGuard handshake detection"
@@ -61,9 +68,12 @@ async fn test_wireguard_handshake_detection() {
 
 #[tokio::test]
 async fn test_wireguard_multiple_packet_types() {
-    let config = ServerConfig::new("Start a WireGuard honeypot on port 0 that logs all packet types");
+    let config =
+        ServerConfig::new("Start a WireGuard honeypot on port 0 that logs all packet types");
 
-    let mut server = start_netget_server(config).await.expect("Failed to start server");
+    let mut server = start_netget_server(config)
+        .await
+        .expect("Failed to start server");
 
     tokio::time::sleep(Duration::from_secs(2)).await;
 
@@ -94,11 +104,9 @@ async fn test_wireguard_multiple_packet_types() {
     // Verify honeypot logged the packets
     tokio::time::sleep(Duration::from_millis(1000)).await;
 
-    let has_wireguard = server.output_contains("WireGuard").await || server.output_contains("WG").await;
-    assert!(
-        has_wireguard,
-        "Server should log WireGuard packets"
-    );
+    let has_wireguard =
+        server.output_contains("WireGuard").await || server.output_contains("WG").await;
+    assert!(has_wireguard, "Server should log WireGuard packets");
 
     println!("✓ Multiple WireGuard packet types detected");
 
@@ -109,7 +117,9 @@ async fn test_wireguard_multiple_packet_types() {
 async fn test_wireguard_concurrent_connections() {
     let config = ServerConfig::new("Start a WireGuard VPN honeypot on port 0");
 
-    let mut server = start_netget_server(config).await.expect("Failed to start server");
+    let mut server = start_netget_server(config)
+        .await
+        .expect("Failed to start server");
 
     tokio::time::sleep(Duration::from_secs(2)).await;
 

@@ -9,15 +9,15 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
+use crate::client::pypi::actions::{
+    PYPI_FILE_DOWNLOADED_EVENT, PYPI_PACKAGE_INFO_EVENT, PYPI_SEARCH_RESULTS_EVENT,
+};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::pypi::actions::{
-    PYPI_PACKAGE_INFO_EVENT, PYPI_SEARCH_RESULTS_EVENT, PYPI_FILE_DOWNLOADED_EVENT,
-};
 
 /// PyPI client that interacts with Python Package Index
 pub struct PypiClient;
@@ -41,27 +41,32 @@ impl PypiClient {
             .context("Failed to build HTTP client")?;
 
         // Parse index URL, default to pypi.org
-        let index_url = if remote_addr.starts_with("http://") || remote_addr.starts_with("https://") {
+        let index_url = if remote_addr.starts_with("http://") || remote_addr.starts_with("https://")
+        {
             remote_addr.clone()
         } else {
             "https://pypi.org".to_string()
         };
 
         // Store client data
-        app_state.with_client_mut(client_id, |client| {
-            client.set_protocol_field(
-                "pypi_client".to_string(),
-                serde_json::json!("initialized"),
-            );
-            client.set_protocol_field(
-                "index_url".to_string(),
-                serde_json::json!(index_url),
-            );
-        }).await;
+        app_state
+            .with_client_mut(client_id, |client| {
+                client.set_protocol_field(
+                    "pypi_client".to_string(),
+                    serde_json::json!("initialized"),
+                );
+                client.set_protocol_field("index_url".to_string(), serde_json::json!(index_url));
+            })
+            .await;
 
         // Update status
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] PyPI client {} ready for {}", client_id, index_url));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] PyPI client {} ready for {}",
+            client_id, index_url
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Spawn background task to monitor client lifecycle
@@ -89,15 +94,23 @@ impl PypiClient {
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
-        let index_url = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("index_url")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }).await.flatten().context("No index URL found")?;
+        let index_url = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("index_url")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .await
+            .flatten()
+            .context("No index URL found")?;
 
         let url = format!("{}/pypi/{}/json", index_url, package_name);
 
-        info!("PyPI client {} fetching package info: {}", client_id, package_name);
+        info!(
+            "PyPI client {} fetching package info: {}",
+            client_id, package_name
+        );
 
         let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
@@ -108,18 +121,28 @@ impl PypiClient {
             Ok(response) => {
                 if !response.status().is_success() {
                     let status = response.status();
-                    error!("PyPI client {} failed to get package info: {} {}", client_id, status.as_u16(), status);
-                    let _ = status_tx.send(format!("[ERROR] Package not found or error: {}", status));
+                    error!(
+                        "PyPI client {} failed to get package info: {} {}",
+                        client_id,
+                        status.as_u16(),
+                        status
+                    );
+                    let _ =
+                        status_tx.send(format!("[ERROR] Package not found or error: {}", status));
                     return Err(anyhow::anyhow!("Package not found: {}", status));
                 }
 
                 let json: serde_json::Value = response.json().await?;
 
-                info!("PyPI client {} received package info for {}", client_id, package_name);
+                info!(
+                    "PyPI client {} received package info for {}",
+                    client_id, package_name
+                );
 
                 // Call LLM with package info
                 if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                    let protocol = Arc::new(crate::client::pypi::actions::PypiClientProtocol::new());
+                    let protocol =
+                        Arc::new(crate::client::pypi::actions::PypiClientProtocol::new());
                     let event = Event::new(
                         &PYPI_PACKAGE_INFO_EVENT,
                         serde_json::json!({
@@ -128,7 +151,10 @@ impl PypiClient {
                         }),
                     );
 
-                    let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                    let memory = app_state
+                        .get_memory_for_client(client_id)
+                        .await
+                        .unwrap_or_default();
 
                     match call_llm_for_client(
                         &llm_client,
@@ -139,8 +165,13 @@ impl PypiClient {
                         Some(&event),
                         protocol.as_ref(),
                         &status_tx,
-                    ).await {
-                        Ok(ClientLlmResult { actions: _, memory_updates }) => {
+                    )
+                    .await
+                    {
+                        Ok(ClientLlmResult {
+                            actions: _,
+                            memory_updates,
+                        }) => {
                             if let Some(mem) = memory_updates {
                                 app_state.set_memory_for_client(client_id, mem).await;
                             }
@@ -198,7 +229,10 @@ impl PypiClient {
                 }),
             );
 
-            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+            let memory = app_state
+                .get_memory_for_client(client_id)
+                .await
+                .unwrap_or_default();
 
             match call_llm_for_client(
                 &llm_client,
@@ -209,8 +243,13 @@ impl PypiClient {
                 Some(&event),
                 protocol.as_ref(),
                 &status_tx,
-            ).await {
-                Ok(ClientLlmResult { actions: _, memory_updates }) => {
+            )
+            .await
+            {
+                Ok(ClientLlmResult {
+                    actions: _,
+                    memory_updates,
+                }) => {
                     if let Some(mem) = memory_updates {
                         app_state.set_memory_for_client(client_id, mem).await;
                     }
@@ -234,11 +273,16 @@ impl PypiClient {
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
-        let index_url = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("index_url")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }).await.flatten().context("No index URL found")?;
+        let index_url = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("index_url")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .await
+            .flatten()
+            .context("No index URL found")?;
 
         // First, get package info to find download URLs
         let info_url = format!("{}/pypi/{}/json", index_url, package_name);
@@ -251,9 +295,8 @@ impl PypiClient {
         let json: serde_json::Value = http_client.get(&info_url).send().await?.json().await?;
 
         // Get the appropriate version
-        let target_version = version.unwrap_or_else(|| {
-            json["info"]["version"].as_str().unwrap_or("").to_string()
-        });
+        let target_version =
+            version.unwrap_or_else(|| json["info"]["version"].as_str().unwrap_or("").to_string());
 
         // Get URLs for this version
         let urls = json["urls"].as_array().context("No URLs found")?;
@@ -263,9 +306,14 @@ impl PypiClient {
             urls.iter().find(|u| u["filename"].as_str() == Some(&fname))
         } else {
             // Default to first wheel, or first sdist
-            urls.iter().find(|u| u["packagetype"].as_str() == Some("bdist_wheel"))
-                .or_else(|| urls.iter().find(|u| u["packagetype"].as_str() == Some("sdist")))
-        }.context("No suitable file found")?;
+            urls.iter()
+                .find(|u| u["packagetype"].as_str() == Some("bdist_wheel"))
+                .or_else(|| {
+                    urls.iter()
+                        .find(|u| u["packagetype"].as_str() == Some("sdist"))
+                })
+        }
+        .context("No suitable file found")?;
 
         let download_url = file_info["url"].as_str().context("No download URL")?;
         let file_name = file_info["filename"].as_str().context("No filename")?;
@@ -277,7 +325,12 @@ impl PypiClient {
         let response = http_client.get(download_url).send().await?;
         let bytes = response.bytes().await?;
 
-        info!("PyPI client {} downloaded {} ({} bytes)", client_id, file_name, bytes.len());
+        info!(
+            "PyPI client {} downloaded {} ({} bytes)",
+            client_id,
+            file_name,
+            bytes.len()
+        );
 
         // Call LLM with download result
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -292,7 +345,10 @@ impl PypiClient {
                 }),
             );
 
-            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+            let memory = app_state
+                .get_memory_for_client(client_id)
+                .await
+                .unwrap_or_default();
 
             match call_llm_for_client(
                 &llm_client,
@@ -303,8 +359,13 @@ impl PypiClient {
                 Some(&event),
                 protocol.as_ref(),
                 &status_tx,
-            ).await {
-                Ok(ClientLlmResult { actions: _, memory_updates }) => {
+            )
+            .await
+            {
+                Ok(ClientLlmResult {
+                    actions: _,
+                    memory_updates,
+                }) => {
                     if let Some(mem) = memory_updates {
                         app_state.set_memory_for_client(client_id, mem).await;
                     }
@@ -327,11 +388,16 @@ impl PypiClient {
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
-        let index_url = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("index_url")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }).await.flatten().context("No index URL found")?;
+        let index_url = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("index_url")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .await
+            .flatten()
+            .context("No index URL found")?;
 
         let info_url = format!("{}/pypi/{}/json", index_url, package_name);
 
@@ -344,17 +410,25 @@ impl PypiClient {
 
         let urls = json["urls"].as_array().context("No URLs found")?;
 
-        let files: Vec<serde_json::Value> = urls.iter().map(|u| {
-            serde_json::json!({
-                "filename": u["filename"],
-                "packagetype": u["packagetype"],
-                "size": u["size"],
-                "python_version": u["python_version"],
-                "url": u["url"],
+        let files: Vec<serde_json::Value> = urls
+            .iter()
+            .map(|u| {
+                serde_json::json!({
+                    "filename": u["filename"],
+                    "packagetype": u["packagetype"],
+                    "size": u["size"],
+                    "python_version": u["python_version"],
+                    "url": u["url"],
+                })
             })
-        }).collect();
+            .collect();
 
-        info!("PyPI client {} listed {} files for {}", client_id, files.len(), package_name);
+        info!(
+            "PyPI client {} listed {} files for {}",
+            client_id,
+            files.len(),
+            package_name
+        );
 
         // Call LLM with file list
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -370,7 +444,10 @@ impl PypiClient {
                 }),
             );
 
-            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+            let memory = app_state
+                .get_memory_for_client(client_id)
+                .await
+                .unwrap_or_default();
 
             match call_llm_for_client(
                 &llm_client,
@@ -381,8 +458,13 @@ impl PypiClient {
                 Some(&event),
                 protocol.as_ref(),
                 &status_tx,
-            ).await {
-                Ok(ClientLlmResult { actions: _, memory_updates }) => {
+            )
+            .await
+            {
+                Ok(ClientLlmResult {
+                    actions: _,
+                    memory_updates,
+                }) => {
                     if let Some(mem) = memory_updates {
                         app_state.set_memory_for_client(client_id, mem).await;
                     }

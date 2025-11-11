@@ -269,12 +269,7 @@ impl ScheduledTask {
 
         format!(
             "- Task '{}' (ID: {}): {} scope, {}, next in {}, status: {:?}",
-            self.name,
-            self.id,
-            scope_str,
-            type_str,
-            next_in,
-            self.status
+            self.name, self.id, scope_str, type_str, next_in, self.status
         )
     }
 }

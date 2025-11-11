@@ -22,9 +22,9 @@ pub struct BootpProtocol {
 #[cfg(feature = "bootp")]
 #[derive(Clone)]
 pub struct BootpRequestContext {
-    pub xid: u32,        // Transaction ID
-    pub chaddr: Vec<u8>, // Client MAC address
-    pub op: v4::Opcode,  // Operation code (BootRequest/BootReply)
+    pub xid: u32,         // Transaction ID
+    pub chaddr: Vec<u8>,  // Client MAC address
+    pub op: v4::Opcode,   // Operation code (BootRequest/BootReply)
     pub ciaddr: Ipv4Addr, // Client IP address
     pub giaddr: Ipv4Addr, // Gateway IP address (for relay)
     pub sname: String,    // Server host name
@@ -47,85 +47,87 @@ impl BootpProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for BootpProtocol {
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            Vec::new()
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                send_bootp_reply_action(),
-                send_bootp_response_action(),
-                ignore_request_action(),
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "BOOTP"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            get_bootp_event_types()
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>UDP>BOOTP"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["bootp", "bootstrap"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState, PrivilegeRequirement};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Experimental)
-                .privilege_requirement(PrivilegeRequirement::PrivilegedPort(67))
-                .implementation("dhcproto v0.12 for parsing (BOOTP format)")
-                .llm_control("BOOTREQUEST→BOOTREPLY flow + boot file location")
-                .e2e_testing("Manual BOOTP packet construction - 3 LLM calls")
-                .notes("Bootstrap Protocol (RFC 951) - DHCP predecessor")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "BOOTP server for diskless workstation boot configuration"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Start a BOOTP server on port 67"
-        }
-        fn group_name(&self) -> &'static str {
-            "Core"
-        }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        Vec::new()
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            send_bootp_reply_action(),
+            send_bootp_response_action(),
+            ignore_request_action(),
+        ]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "BOOTP"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_bootp_event_types()
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>UDP>BOOTP"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["bootp", "bootstrap"]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{
+            DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2,
+        };
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(67))
+            .implementation("dhcproto v0.12 for parsing (BOOTP format)")
+            .llm_control("BOOTREQUEST→BOOTREPLY flow + boot file location")
+            .e2e_testing("Manual BOOTP packet construction - 3 LLM calls")
+            .notes("Bootstrap Protocol (RFC 951) - DHCP predecessor")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "BOOTP server for diskless workstation boot configuration"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Start a BOOTP server on port 67"
+    }
+    fn group_name(&self) -> &'static str {
+        "Core"
+    }
 }
 
 // Implement Server trait (server-specific functionality)
 impl Server for BootpProtocol {
-        fn spawn(
-            &self,
-            ctx: crate::protocol::SpawnContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::server::bootp::BootpServer;
-                BootpServer::spawn_with_llm_actions(
-                    ctx.listen_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.server_id,
-                ).await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "send_bootp_reply" => self.execute_send_bootp_reply(action),
-                "send_bootp_response" => self.execute_send_bootp_response(action),
-                "ignore_request" => Ok(ActionResult::NoAction),
-                _ => Err(anyhow::anyhow!("Unknown BOOTP action: {}", action_type)),
-            }
-        }
-}
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::bootp::BootpServer;
+            BootpServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
 
+        match action_type {
+            "send_bootp_reply" => self.execute_send_bootp_reply(action),
+            "send_bootp_response" => self.execute_send_bootp_response(action),
+            "ignore_request" => Ok(ActionResult::NoAction),
+            _ => Err(anyhow::anyhow!("Unknown BOOTP action: {}", action_type)),
+        }
+    }
+}
 
 impl BootpProtocol {
     #[cfg(feature = "bootp")]
@@ -302,7 +304,7 @@ fn ignore_request_action() -> ActionDefinition {
 pub static BOOTP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "bootp_request",
-        "BOOTP client sent a BOOTREQUEST (requesting IP and boot configuration)"
+        "BOOTP client sent a BOOTREQUEST (requesting IP and boot configuration)",
     )
     .with_parameters(vec![
         Parameter {
@@ -332,7 +334,5 @@ pub static BOOTP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 });
 
 pub fn get_bootp_event_types() -> Vec<EventType> {
-    vec![
-        BOOTP_REQUEST_EVENT.clone(),
-    ]
+    vec![BOOTP_REQUEST_EVENT.clone()]
 }

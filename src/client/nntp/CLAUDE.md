@@ -2,16 +2,20 @@
 
 ## Overview
 
-The NNTP (Network News Transfer Protocol) client implementation provides LLM-controlled access to Usenet newsgroups. NNTP is a text-based protocol defined in RFC 3977 (and earlier RFCs 977, 2980) used for reading and posting articles to distributed discussion systems.
+The NNTP (Network News Transfer Protocol) client implementation provides LLM-controlled access to Usenet newsgroups.
+NNTP is a text-based protocol defined in RFC 3977 (and earlier RFCs 977, 2980) used for reading and posting articles to
+distributed discussion systems.
 
 ## Library Choices
 
 **No external dependencies** - NNTP is implemented using:
+
 - `tokio::net::TcpStream` for network I/O
 - `tokio::io::BufReader` for line-based reading
 - Manual protocol implementation (text-based commands)
 
 This approach was chosen because:
+
 1. **Simplicity**: NNTP is a simple text protocol similar to SMTP/IMAP
 2. **No mature Rust crate**: No suitable high-level NNTP client library exists
 3. **LLM control**: Direct protocol control allows the LLM to construct any command
@@ -55,6 +59,7 @@ ConnectionState:
 ### Multi-line Response Handling
 
 NNTP commands that return multi-line responses include:
+
 - **LIST** (215): List of newsgroups
 - **ARTICLE** (220): Full article (headers + body)
 - **HEAD** (221): Article headers only
@@ -68,18 +73,19 @@ The client detects multi-line responses by status code and reads until it encoun
 ### Event Types
 
 1. **nntp_connected**
-   - Fired when connection established
-   - Includes: `remote_addr`, `welcome_message`
-   - LLM decides: Initial command (LIST, GROUP, etc.)
+    - Fired when connection established
+    - Includes: `remote_addr`, `welcome_message`
+    - LLM decides: Initial command (LIST, GROUP, etc.)
 
 2. **nntp_response_received**
-   - Fired for each server response
-   - Includes: `status_code`, `response`, `command` (that triggered it)
-   - LLM decides: Next command or action
+    - Fired for each server response
+    - Includes: `status_code`, `response`, `command` (that triggered it)
+    - LLM decides: Next command or action
 
 ### Actions
 
 #### Async Actions (User-triggered)
+
 - `nntp_group`: Select a newsgroup (GROUP command)
 - `nntp_article`: Retrieve full article (ARTICLE command)
 - `nntp_head`: Retrieve article headers (HEAD command)
@@ -91,12 +97,14 @@ The client detects multi-line responses by status code and reads until it encoun
 - `nntp_quit`: Disconnect (QUIT command)
 
 #### Sync Actions (Response-triggered)
+
 - `nntp_group`: Select newsgroup in response to data
 - `wait_for_more`: Wait for more data before responding
 
 ### Action Execution
 
 Most actions are converted to `ClientActionResult::Custom` with command strings:
+
 ```json
 {
   "name": "nntp_command",
@@ -107,6 +115,7 @@ Most actions are converted to `ClientActionResult::Custom` with command strings:
 ```
 
 The `nntp_post` action follows the proper NNTP POST protocol flow:
+
 1. Send `POST` command
 2. Article data (headers + body) is stored in pending state
 3. Server responds with `340 Send article to be posted`
@@ -116,6 +125,7 @@ The `nntp_post` action follows the proper NNTP POST protocol flow:
 ## Response Codes
 
 Common NNTP status codes:
+
 - **200**: Server ready, posting allowed
 - **201**: Server ready, posting not allowed
 - **211**: Group selected (GROUP response)
@@ -135,22 +145,26 @@ Common NNTP status codes:
 ## Example Prompts
 
 ### List Available Newsgroups
+
 ```
 Connect to NNTP at news.example.com:119 and list all newsgroups
 ```
 
 LLM flow:
+
 1. Receives `nntp_connected` event
 2. Executes `nntp_list` action
 3. Receives `nntp_response_received` with newsgroup list
 4. Can parse and display results
 
 ### Read Articles from Group
+
 ```
 Connect to NNTP at news.example.com:119, select comp.lang.rust, and retrieve the last 10 articles
 ```
 
 LLM flow:
+
 1. Receives `nntp_connected` event
 2. Executes `nntp_group` with group_name="comp.lang.rust"
 3. Receives `211` response with article range
@@ -158,11 +172,13 @@ LLM flow:
 5. Executes `nntp_article` for each article of interest
 
 ### Post Article
+
 ```
 Connect to NNTP at news.example.com:119 and post a test article to test.misc
 ```
 
 LLM flow:
+
 1. Receives `nntp_connected` event
 2. Executes `nntp_post` action with headers and body
 3. POST command is sent, article data is stored pending 340 response

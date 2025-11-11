@@ -32,12 +32,14 @@ async fn test_dot_client_basic_query() {
     let (app_state, ollama_client, mut status_rx) = setup_test().await;
 
     // Open DoT client
-    let client_id = app_state.add_client(
-        "DoT".to_string(),
-        "dns.google:853".to_string(),
-        "Query example.com A record and tell me the IP address".to_string(),
-        None,
-    ).await;
+    let client_id = app_state
+        .add_client(
+            "DoT".to_string(),
+            "dns.google:853".to_string(),
+            "Query example.com A record and tell me the IP address".to_string(),
+            None,
+        )
+        .await;
 
     // Start client
     let status_tx = app_state.get_status_tx().await.unwrap();
@@ -46,7 +48,9 @@ async fn test_dot_client_basic_query() {
         client_id,
         &ollama_client,
         &status_tx,
-    ).await.unwrap();
+    )
+    .await
+    .unwrap();
 
     // Wait for status messages
     let mut connected = false;
@@ -97,12 +101,14 @@ async fn test_dot_client_multiple_queries() {
     let (app_state, ollama_client, mut status_rx) = setup_test().await;
 
     // Open DoT client with instruction to query multiple record types
-    let client_id = app_state.add_client(
-        "DoT".to_string(),
-        "1.1.1.1:853".to_string(),
-        "Query example.com for A, AAAA, and MX records, one at a time".to_string(),
-        None,
-    ).await;
+    let client_id = app_state
+        .add_client(
+            "DoT".to_string(),
+            "1.1.1.1:853".to_string(),
+            "Query example.com for A, AAAA, and MX records, one at a time".to_string(),
+            None,
+        )
+        .await;
 
     // Start client
     let status_tx = app_state.get_status_tx().await.unwrap();
@@ -111,7 +117,9 @@ async fn test_dot_client_multiple_queries() {
         client_id,
         &ollama_client,
         &status_tx,
-    ).await.unwrap();
+    )
+    .await
+    .unwrap();
 
     // Count queries and responses
     let mut query_count = 0;
@@ -139,7 +147,10 @@ async fn test_dot_client_multiple_queries() {
     }
 
     // Verify multiple queries were sent
-    assert!(query_count >= 3, "Should send at least 3 queries (A, AAAA, MX)");
+    assert!(
+        query_count >= 3,
+        "Should send at least 3 queries (A, AAAA, MX)"
+    );
 
     // Verify multiple responses were received
     assert!(response_count >= 3, "Should receive at least 3 responses");
@@ -151,12 +162,15 @@ async fn test_dot_client_nxdomain_handling() {
     let (app_state, ollama_client, mut status_rx) = setup_test().await;
 
     // Open DoT client to query non-existent domain
-    let client_id = app_state.add_client(
-        "DoT".to_string(),
-        "dns.google:853".to_string(),
-        "Query nonexistent-domain-12345.example for A record and tell me what error you get".to_string(),
-        None,
-    ).await;
+    let client_id = app_state
+        .add_client(
+            "DoT".to_string(),
+            "dns.google:853".to_string(),
+            "Query nonexistent-domain-12345.example for A record and tell me what error you get"
+                .to_string(),
+            None,
+        )
+        .await;
 
     // Start client
     let status_tx = app_state.get_status_tx().await.unwrap();
@@ -165,7 +179,9 @@ async fn test_dot_client_nxdomain_handling() {
         client_id,
         &ollama_client,
         &status_tx,
-    ).await.unwrap();
+    )
+    .await
+    .unwrap();
 
     // Wait for response
     let mut response_received = false;
@@ -204,12 +220,14 @@ async fn test_dot_client_tls_connection() {
     let (app_state, ollama_client, mut status_rx) = setup_test().await;
 
     // Open DoT client to Cloudflare
-    let client_id = app_state.add_client(
-        "DoT".to_string(),
-        "cloudflare-dns.com:853".to_string(),
-        "Query cloudflare.com A record".to_string(),
-        None,
-    ).await;
+    let client_id = app_state
+        .add_client(
+            "DoT".to_string(),
+            "cloudflare-dns.com:853".to_string(),
+            "Query cloudflare.com A record".to_string(),
+            None,
+        )
+        .await;
 
     // Start client
     let status_tx = app_state.get_status_tx().await.unwrap();
@@ -218,7 +236,9 @@ async fn test_dot_client_tls_connection() {
         client_id,
         &ollama_client,
         &status_tx,
-    ).await.unwrap();
+    )
+    .await
+    .unwrap();
 
     // Wait for TLS handshake to complete
     let mut tls_connected = false;
@@ -238,7 +258,10 @@ async fn test_dot_client_tls_connection() {
     }
 
     // Verify TLS connection succeeded
-    assert!(tls_connected, "Should establish TLS connection to DoT server");
+    assert!(
+        tls_connected,
+        "Should establish TLS connection to DoT server"
+    );
 
     // Verify client status
     let client = app_state.get_client(client_id).await.unwrap();

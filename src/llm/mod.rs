@@ -7,11 +7,11 @@ pub mod action_helper;
 pub mod actions; // Centralized helper for LLM calls
 pub mod conversation; // Conversation-based LLM interaction
 pub mod conversation_state; // Conversation history management
-pub mod template_engine; // Handlebars template engine
-pub mod event_instructions; // Event-specific instructions
 pub mod default_instructions; // Default instructions registry
 pub mod event_handler_executor; // Event handler execution (script/static/llm)
-pub mod model_selection; // Model selection utilities
+pub mod event_instructions; // Event-specific instructions
+pub mod model_selection;
+pub mod template_engine; // Handlebars template engine // Model selection utilities
 
 // Old modules
 pub mod client;
@@ -33,8 +33,8 @@ pub use actions::{
 
 // Re-export action helper functions
 pub use action_helper::{
-    call_llm_with_actions, call_llm_with_custom_actions, call_llm_with_protocol,
-    call_llm_for_client, ClientLlmResult,
+    call_llm_for_client, call_llm_with_actions, call_llm_with_custom_actions,
+    call_llm_with_protocol, ClientLlmResult,
 };
 
 // Legacy re-exports (for backward compatibility during migration)
@@ -51,14 +51,18 @@ pub use response_handler::{handle_llm_response, ProcessedResponse};
 pub use conversation::ConversationHandler;
 
 // Conversation state management
-pub use conversation_state::{ConversationState, ConversationMessage, MessageRole, MessageType};
+pub use conversation_state::{ConversationMessage, ConversationState, MessageRole, MessageType};
 
 // Message type from ollama_client module
 pub use ollama_client::Message;
 
 // Event instructions
-pub use event_instructions::{EventInstructions, Example, ServerInstructionConfig, InstructionSource};
 pub use default_instructions::{resolve_instructions, DEFAULT_INSTRUCTIONS};
+pub use event_instructions::{
+    EventInstructions, Example, InstructionSource, ServerInstructionConfig,
+};
 
 // Model selection
-pub use model_selection::{select_or_validate_model, check_ollama_availability, ensure_model_selected, ModelInfo};
+pub use model_selection::{
+    check_ollama_availability, ensure_model_selected, select_or_validate_model, ModelInfo,
+};

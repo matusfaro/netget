@@ -2,7 +2,8 @@
 
 ## Test Strategy
 
-WHOIS client tests verify LLM-controlled domain/IP lookups using real WHOIS servers. Tests use public WHOIS infrastructure (whois.iana.org, whois.verisign-grs.com) to validate protocol implementation.
+WHOIS client tests verify LLM-controlled domain/IP lookups using real WHOIS servers. Tests use public WHOIS
+infrastructure (whois.iana.org, whois.verisign-grs.com) to validate protocol implementation.
 
 ## Test Approach
 
@@ -20,20 +21,21 @@ WHOIS client tests verify LLM-controlled domain/IP lookups using real WHOIS serv
 ### Per-Test Breakdown
 
 1. **test_whois_query_example_com** - 2 LLM calls
-   - Client connection + query generation
-   - Response parsing
+    - Client connection + query generation
+    - Response parsing
 
 2. **test_whois_query_verisign** - 2 LLM calls
-   - Client connection + query generation
-   - Response parsing + registrar extraction
+    - Client connection + query generation
+    - Response parsing + registrar extraction
 
 3. **test_whois_auto_disconnect** - 2 LLM calls
-   - Client connection + query generation
-   - Response parsing + disconnection detection
+    - Client connection + query generation
+    - Response parsing + disconnection detection
 
 ## Expected Runtime
 
 **Total:** ~15-20 seconds
+
 - Each test: ~5-7 seconds
 - Network latency: ~1-2 seconds per query
 - LLM processing: ~2-3 seconds per call
@@ -41,18 +43,21 @@ WHOIS client tests verify LLM-controlled domain/IP lookups using real WHOIS serv
 ## Test Scenarios
 
 ### 1. Basic WHOIS Query (IANA)
+
 **Server:** whois.iana.org:43
 **Query:** example.com
 **Expected:** Referral to authoritative server or root zone info
 **Validates:** Basic connection, query sending, response reception
 
 ### 2. Authoritative WHOIS Query (Verisign)
+
 **Server:** whois.verisign-grs.com:43
 **Query:** example.com
 **Expected:** Full domain registration details (registrar, dates, nameservers)
 **Validates:** Full WHOIS response parsing
 
 ### 3. Auto-Disconnection Handling
+
 **Server:** whois.iana.org:43
 **Query:** com
 **Expected:** Response received, connection auto-closed by server
@@ -67,11 +72,13 @@ WHOIS client tests verify LLM-controlled domain/IP lookups using real WHOIS serv
 **Low risk** - WHOIS servers are stable
 
 **Potential issues:**
+
 - Network timeouts (rare, public servers are reliable)
 - Rate limiting (unlikely with 3 queries)
 - Server downtime (IANA/Verisign are highly available)
 
 **Mitigation:**
+
 - Use 3-second timeouts (generous for WHOIS responses)
 - Query stable domains (example.com)
 - Minimal query count (3 total)
@@ -79,21 +86,25 @@ WHOIS client tests verify LLM-controlled domain/IP lookups using real WHOIS serv
 ## Test Data
 
 **Domains:**
+
 - example.com - Reserved domain (RFC 2606), always exists
 - com - Top-level domain, always exists
 
 **Servers:**
+
 - whois.iana.org - IANA root registry (99.9% uptime)
 - whois.verisign-grs.com - Verisign .com/.net registry (enterprise SLA)
 
 ## Rate Limiting Considerations
 
 **Test frequency:** Safe for frequent runs
+
 - WHOIS servers allow ~100 queries/minute
 - Tests make 3 queries total
 - No risk of IP bans
 
 **Best practices:**
+
 - Avoid parallel test execution (sequential queries only)
 - Use well-known domains (avoid enumeration patterns)
 - Keep query count < 10 per test suite
@@ -101,14 +112,17 @@ WHOIS client tests verify LLM-controlled domain/IP lookups using real WHOIS serv
 ## Validation Points
 
 **Connection:**
+
 - ✅ Client shows "connected" status
 - ✅ Protocol identified as "WHOIS"
 
 **Response:**
+
 - ✅ Response contains expected keywords (domain, registrar, refer)
 - ✅ LLM parses response successfully
 
 **Disconnection:**
+
 - ✅ Client shows "disconnected" after response
 - ✅ One-shot protocol behavior (no persistent connection)
 
@@ -130,12 +144,14 @@ WHOIS client tests verify LLM-controlled domain/IP lookups using real WHOIS serv
 ## Debugging Tips
 
 **If tests fail:**
+
 1. Check network connectivity (`ping whois.iana.org`)
 2. Verify WHOIS server is up (`nc whois.iana.org 43` + type "example.com")
 3. Check for rate limiting (try manual query)
 4. Review NetGet logs for connection errors
 
 **Expected output:**
+
 ```
 [CLIENT] WHOIS client 1 connected
 WHOIS client 1 querying: example.com

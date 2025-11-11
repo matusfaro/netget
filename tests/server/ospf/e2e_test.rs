@@ -4,17 +4,12 @@
 
 #[cfg(all(test, feature = "ospf"))]
 mod tests {
-    use std::net::{SocketAddr, Ipv4Addr};
-    use std::time::Duration;
+    use std::net::{Ipv4Addr, SocketAddr};
     use tokio::net::UdpSocket;
-    use tokio::time::timeout;
 
     // Helper: Parse IPv4 address to bytes
     fn ipv4_to_bytes(ip: &str) -> [u8; 4] {
-        let parts: Vec<u8> = ip
-            .split('.')
-            .filter_map(|s| s.parse::<u8>().ok())
-            .collect();
+        let parts: Vec<u8> = ip.split('.').filter_map(|s| s.parse::<u8>().ok()).collect();
 
         if parts.len() == 4 {
             [parts[0], parts[1], parts[2], parts[3]]
@@ -104,7 +99,8 @@ mod tests {
         drop(test_socket); // Release the port
 
         // Start NetGet server
-        let server_addr = SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), test_port);
+        let server_addr =
+            SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), test_port);
 
         // TODO: Start server with LLM
         // For now, this is a compilation test
@@ -115,7 +111,10 @@ mod tests {
         // 4. Receive and verify Hello response
         // 5. Verify neighbor state transitions
 
-        println!("OSPF E2E test placeholder - server would listen on {}", server_addr);
+        println!(
+            "OSPF E2E test placeholder - server would listen on {}",
+            server_addr
+        );
         println!("Future implementation:");
         println!("  1. Start OSPF server with LLM");
         println!("  2. Send OSPF Hello packet");
@@ -127,8 +126,8 @@ mod tests {
     fn test_ospf_hello_packet_construction() {
         // Test Hello packet construction
         let hello = build_ospf_hello(
-            "2.2.2.2",      // router_id
-            "0.0.0.0",      // area_id (backbone)
+            "2.2.2.2",       // router_id
+            "0.0.0.0",       // area_id (backbone)
             "255.255.255.0", // network_mask
             1,               // priority
         );
@@ -168,17 +167,17 @@ mod tests {
     fn test_ospf_checksum() {
         // Create a simple test packet
         let mut packet = vec![
-            2, 1,  // Version, Type
+            2, 1, // Version, Type
             0, 32, // Length (32 bytes)
-            1, 1, 1, 1,  // Router ID
-            0, 0, 0, 0,  // Area ID
-            0, 0,        // Checksum (placeholder)
-            0, 0,        // AuType
-            0, 0, 0, 0, 0, 0, 0, 0,  // Authentication
+            1, 1, 1, 1, // Router ID
+            0, 0, 0, 0, // Area ID
+            0, 0, // Checksum (placeholder)
+            0, 0, // AuType
+            0, 0, 0, 0, 0, 0, 0, 0, // Authentication
             // Minimal Hello body
-            255, 255, 255, 0,  // Network mask
-            0, 10,             // Hello interval
-            0, 1,              // Options, Priority
+            255, 255, 255, 0, // Network mask
+            0, 10, // Hello interval
+            0, 1, // Options, Priority
         ];
 
         // Calculate checksum

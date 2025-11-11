@@ -24,7 +24,10 @@ mod svn_e2e_test {
         .expect("Failed to create Ollama client");
 
         // Open SVN server via user input
-        let user_input = format!("listen on port {{{{AVAILABLE_PORT}}}} via svn\n{}", instruction);
+        let user_input = format!(
+            "listen on port {{{{AVAILABLE_PORT}}}} via svn\n{}",
+            instruction
+        );
         state
             .handle_user_input(&user_input, &ollama_client, status_tx.clone())
             .await
@@ -105,9 +108,7 @@ When client connects, send protocol greeting with:
         let (_state, addr) = start_svn_server(instruction).await;
 
         // Connect and read greeting
-        let stream = TcpStream::connect(&addr)
-            .await
-            .expect("Failed to connect");
+        let stream = TcpStream::connect(&addr).await.expect("Failed to connect");
         let mut reader = BufReader::new(stream);
 
         let mut greeting = String::new();
@@ -193,7 +194,9 @@ Use send_svn_failure action.
         println!("Received response: {}", response);
 
         assert!(
-            response.contains("failure") || response.contains("error") || response.contains("not found"),
+            response.contains("failure")
+                || response.contains("error")
+                || response.contains("not found"),
             "Response should indicate failure: {}",
             response
         );

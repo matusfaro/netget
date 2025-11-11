@@ -4,9 +4,7 @@
 
 #![cfg(all(test, feature = "openid"))]
 
-use helpers::{
-    netget_with_instruction, wait_for_log_match, OllamaGuard, PORT_OPENID_E2E,
-};
+use helpers::{netget_with_instruction, wait_for_log_match, OllamaGuard, PORT_OPENID_E2E};
 use reqwest;
 use serde_json::{json, Value};
 

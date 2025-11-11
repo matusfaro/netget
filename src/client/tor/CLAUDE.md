@@ -2,11 +2,13 @@
 
 ## Overview
 
-The Tor client enables NetGet to make anonymous connections through the Tor network using the Arti library (a pure Rust implementation of Tor).
+The Tor client enables NetGet to make anonymous connections through the Tor network using the Arti library (a pure Rust
+implementation of Tor).
 
 ## Library Choice
 
 **Arti** (`arti-client` v0.36)
+
 - Official Tor Project implementation in Rust
 - Pure Rust (no C dependencies)
 - Production-ready (v1.0.0 released)
@@ -14,6 +16,7 @@ The Tor client enables NetGet to make anonymous connections through the Tor netw
 - Supports regular connections and onion services (.onion addresses)
 
 **Why Arti:**
+
 - Mature and well-maintained by Tor Project
 - Safer than C Tor due to memory safety
 - Native Tokio integration (AsyncRead + AsyncWrite)
@@ -52,20 +55,22 @@ Idle ────data────> Processing ─────LLM done───�
 ### Events
 
 1. **`tor_connected`**: Triggered when connection established through Tor
-   - Parameters: `target` (destination address)
-   - LLM can send initial data or wait for response
+    - Parameters: `target` (destination address)
+    - LLM can send initial data or wait for response
 
 2. **`tor_data_received`**: Triggered when data received from destination
-   - Parameters: `data_hex` (hex-encoded data), `data_length`
-   - LLM decides how to respond (send data, wait for more, disconnect)
+    - Parameters: `data_hex` (hex-encoded data), `data_length`
+    - LLM decides how to respond (send data, wait for more, disconnect)
 
 ### Actions
 
 **Async Actions** (user-initiated):
+
 - `send_tor_data`: Send hex-encoded data to destination
 - `disconnect`: Close the circuit
 
 **Sync Actions** (response to events):
+
 - `send_tor_data`: Send hex-encoded data in response to received data
 - `wait_for_more`: Queue current data and wait for more before responding
 
@@ -91,11 +96,13 @@ What action do you take?
 ### Onion Services
 
 The client automatically supports `.onion` addresses:
+
 ```rust
 TorClient::connect("exampleonion3sd.onion:80").await?
 ```
 
 Arti handles:
+
 - Hidden service descriptor lookups
 - Introduction point connections
 - Rendezvous point circuits
@@ -103,6 +110,7 @@ Arti handles:
 ### Circuit Isolation
 
 Arti provides automatic circuit isolation:
+
 - Each `TorClient` instance uses isolated circuits
 - For additional isolation, use `TorClient::isolated_client()`
 - Prevents traffic correlation between different connections
@@ -110,6 +118,7 @@ Arti provides automatic circuit isolation:
 ### Exit Node Selection
 
 Currently uses Arti's default exit node selection:
+
 - Weighted by bandwidth and flags
 - Avoids bad exits (via consensus)
 - Future enhancement: LLM control via `StreamPrefs`
@@ -117,6 +126,7 @@ Currently uses Arti's default exit node selection:
 ### DNS Resolution
 
 All DNS resolution happens through Tor:
+
 - Prevents DNS leaks
 - `connect()` accepts hostname:port, not IP addresses
 - DNS queries sent through exit node
@@ -124,30 +134,30 @@ All DNS resolution happens through Tor:
 ## Limitations
 
 1. **Bootstrap Time**: Initial connection takes 10-30 seconds to fetch consensus
-   - Mitigated: Arti caches consensus between runs
-   - Future: Show bootstrap progress to user
+    - Mitigated: Arti caches consensus between runs
+    - Future: Show bootstrap progress to user
 
 2. **Performance**: Tor adds latency (3+ hops)
-   - Typical latency: 100-500ms
-   - Bandwidth: Limited by slowest relay
+    - Typical latency: 100-500ms
+    - Bandwidth: Limited by slowest relay
 
 3. **No Direct Circuit Control**: Arti abstracts circuit management
-   - Can't manually select specific relays
-   - Can't force circuit rebuild (yet)
-   - Exit node selection uses Arti's defaults
+    - Can't manually select specific relays
+    - Can't force circuit rebuild (yet)
+    - Exit node selection uses Arti's defaults
 
 4. **Binary Data Only**: LLM works with hex-encoded data
-   - Same pattern as TCP client
-   - Works well for text protocols (HTTP, IRC, etc.)
-   - Less ideal for complex binary protocols
+    - Same pattern as TCP client
+    - Works well for text protocols (HTTP, IRC, etc.)
+    - Less ideal for complex binary protocols
 
 5. **No Bridge Support Yet**: No pluggable transport support in this implementation
-   - Arti supports bridges, but not exposed in our API
-   - Future enhancement
+    - Arti supports bridges, but not exposed in our API
+    - Future enhancement
 
 6. **Connection Identification**: No true local address
-   - Returns dummy `127.0.0.1:0` as local_addr
-   - Tor connections don't have real local sockets
+    - Returns dummy `127.0.0.1:0` as local_addr
+    - Tor connections don't have real local sockets
 
 ## Security Considerations
 

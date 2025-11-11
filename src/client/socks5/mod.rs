@@ -11,7 +11,9 @@ use tokio::sync::{mpsc, Mutex};
 use tokio_socks::tcp::Socks5Stream;
 use tracing::{error, info, trace, warn};
 
-use crate::client::socks5::actions::{SOCKS5_CLIENT_CONNECTED_EVENT, SOCKS5_CLIENT_DATA_RECEIVED_EVENT};
+use crate::client::socks5::actions::{
+    SOCKS5_CLIENT_CONNECTED_EVENT, SOCKS5_CLIENT_DATA_RECEIVED_EVENT,
+};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
@@ -158,9 +160,11 @@ impl Socks5Client {
                     for action in actions {
                         use crate::llm::actions::client_trait::Client;
                         match protocol.as_ref().execute_action(action) {
-                            Ok(crate::llm::actions::client_trait::ClientActionResult::SendData(
-                                bytes,
-                            )) => {
+                            Ok(
+                                crate::llm::actions::client_trait::ClientActionResult::SendData(
+                                    bytes,
+                                ),
+                            ) => {
                                 if let Ok(_) = write_half_arc.lock().await.write_all(&bytes).await {
                                     trace!(
                                         "SOCKS5 client {} sent {} bytes through tunnel",
@@ -169,7 +173,9 @@ impl Socks5Client {
                                     );
                                 }
                             }
-                            Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
+                            Ok(
+                                crate::llm::actions::client_trait::ClientActionResult::Disconnect,
+                            ) => {
                                 warn!("SOCKS5 client {} requested disconnect immediately after connect", client_id);
                             }
                             _ => {}
@@ -177,7 +183,10 @@ impl Socks5Client {
                     }
                 }
                 Err(e) => {
-                    error!("LLM error for SOCKS5 client {} on connect: {}", client_id, e);
+                    error!(
+                        "LLM error for SOCKS5 client {} on connect: {}",
+                        client_id, e
+                    );
                 }
             }
         }
@@ -193,10 +202,8 @@ impl Socks5Client {
                         app_state
                             .update_client_status(client_id, ClientStatus::Disconnected)
                             .await;
-                        let _ = status_tx.send(format!(
-                            "[CLIENT] SOCKS5 client {} disconnected",
-                            client_id
-                        ));
+                        let _ = status_tx
+                            .send(format!("[CLIENT] SOCKS5 client {} disconnected", client_id));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         break;
                     }
@@ -222,8 +229,7 @@ impl Socks5Client {
                                     app_state.get_instruction_for_client(client_id).await
                                 {
                                     let protocol = Arc::new(
-                                        crate::client::socks5::actions::Socks5ClientProtocol::new(
-                                        ),
+                                        crate::client::socks5::actions::Socks5ClientProtocol::new(),
                                     );
                                     let event = Event::new(
                                         &SOCKS5_CLIENT_DATA_RECEIVED_EVENT,

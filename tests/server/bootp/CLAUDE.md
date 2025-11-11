@@ -2,21 +2,24 @@
 
 ## Test Strategy
 
-BOOTP (Bootstrap Protocol) E2E tests validate the server's ability to handle BOOTREQUEST messages and respond with correct BOOTREPLY packets containing IP assignments and boot file configuration.
+BOOTP (Bootstrap Protocol) E2E tests validate the server's ability to handle BOOTREQUEST messages and respond with
+correct BOOTREPLY packets containing IP assignments and boot file configuration.
 
 ### Testing Approach
+
 - **Black-box testing**: Tests use real UDP client to send manually-crafted BOOTP packets
 - **Packet construction**: Tests build BOOTREQUEST packets according to RFC 951
 - **Response validation**: Parse BOOTREPLY packets and verify:
-  - Operation code (op=2 for BOOTREPLY)
-  - Transaction ID matches request
-  - Assigned IP address (yiaddr field)
-  - Server IP address (siaddr field)
-  - Boot file name (file field, 128 bytes)
-  - Server hostname (sname field, 64 bytes)
-  - Client MAC echoed correctly
+    - Operation code (op=2 for BOOTREPLY)
+    - Transaction ID matches request
+    - Assigned IP address (yiaddr field)
+    - Server IP address (siaddr field)
+    - Boot file name (file field, 128 bytes)
+    - Server hostname (sname field, 64 bytes)
+    - Client MAC echoed correctly
 
 ### Test Coverage
+
 1. **Basic flow** - Simple BOOTREQUEST → BOOTREPLY exchange
 2. **Boot file configuration** - Verify boot file path and server hostname in response
 3. **Static assignment** - MAC-based static IP allocation
@@ -26,6 +29,7 @@ BOOTP (Bootstrap Protocol) E2E tests validate the server's ability to handle BOO
 ### Target: < 10 LLM calls per test suite
 
 Current budget:
+
 - **test_bootp_basic_flow**: 1 LLM call (server startup)
 - **test_bootp_boot_file**: 1 LLM call (server startup)
 - **test_bootp_static_assignment**: 1 LLM call (server startup)
@@ -33,6 +37,7 @@ Current budget:
 **Total**: 3 LLM calls for full test suite ✓
 
 ### Optimization Techniques
+
 1. **Single server per test** - One comprehensive instruction instead of multiple servers
 2. **Manual packet construction** - No client library needed, direct UDP socket
 3. **No scripting mode** - Tests validate LLM decision-making for each request
@@ -41,17 +46,20 @@ Current budget:
 ## Runtime Characteristics
 
 ### Expected Runtime
+
 - **Without Ollama cache**: 15-20 seconds per test (~45-60s total)
 - **With Ollama cache**: 5-10 seconds per test (~15-30s total)
 - **LLM processing**: 2-5 seconds per BOOTP request
 
 ### Breakdown
+
 - Server startup: 2-3 seconds (LLM generates instruction understanding)
 - BOOTREQUEST → BOOTREPLY: 2-5 seconds (LLM processes request, generates response)
 - Packet construction: < 1ms
 - Network I/O: < 1ms (localhost UDP)
 
 ### Performance Notes
+
 - BOOTP is stateless UDP, so tests are fast once LLM responds
 - dhcproto parsing/encoding: ~50-100 microseconds (negligible)
 - Most time spent waiting for LLM to process BOOTREQUEST and generate BOOTREPLY
@@ -60,12 +68,14 @@ Current budget:
 ## Test Environment
 
 ### Requirements
+
 - **Ollama**: Running with default model (qwen3-coder:30b or configured model)
 - **Feature flag**: `bootp` must be enabled
 - **Network**: Localhost UDP (no external network needed)
 - **Privileges**: May require sudo for port 67 (can use high port for testing)
 
 ### Running Tests
+
 ```bash
 # Build release binary first (faster startup)
 ./cargo-isolated.sh build --release --no-default-features --features bootp
@@ -80,21 +90,25 @@ Current budget:
 ## Known Issues
 
 ### 1. Port Binding
+
 - Port 67 (BOOTP server port) is privileged
 - Tests use `{AVAILABLE_PORT}` placeholder for dynamic port assignment
 - Client binds to ephemeral port (not 68) for testing
 
 ### 2. Broadcast Handling
+
 - BOOTP uses broadcast (255.255.255.255) in production
 - Tests use direct localhost addressing for simplicity
 - Broadcast flag (0x8000) set in requests for protocol compliance
 
 ### 3. Packet Format Assumptions
+
 - Tests assume dhcproto handles BOOTP/DHCP magic cookie (99.130.83.99)
 - Vendor-specific area (vend field) padded with zeros
 - sname and file fields null-terminated C strings (64 and 128 bytes)
 
 ### 4. LLM Response Variations
+
 - LLM may assign different IPs than expected (e.g., 192.168.1.101 instead of .100)
 - Boot file path may vary (e.g., "pxeboot.n12" vs "boot/pxeboot.n12")
 - Tests should accept reasonable variations or provide more specific instructions
@@ -102,6 +116,7 @@ Current budget:
 ## Test Data
 
 ### BOOTP Packet Structure (RFC 951)
+
 ```
 Offset  Size  Field       Description
 ------  ----  ----------  -----------
@@ -125,6 +140,7 @@ Offset  Size  Field       Description
 ### Example Test Instructions
 
 #### Basic Server
+
 ```
 BOOTP server that assigns IP addresses from 192.168.1.100 onwards.
 When receiving BOOTREQUEST:
@@ -135,6 +151,7 @@ When receiving BOOTREQUEST:
 ```
 
 #### PXE Boot Server
+
 ```
 BOOTP server for PXE boot.
 When receiving BOOTREQUEST:
@@ -145,6 +162,7 @@ When receiving BOOTREQUEST:
 ```
 
 #### Static MAC Mapping
+
 ```
 BOOTP server with static MAC-to-IP mappings.
 When receiving BOOTREQUEST:
@@ -159,40 +177,46 @@ Use server IP 192.168.1.1 for all responses.
 ### Common Failures
 
 #### 1. No Response
+
 - **Symptom**: Test times out waiting for BOOTREPLY
 - **Causes**:
-  - LLM didn't understand BOOTP instruction
-  - Server crashed during request processing
-  - Wrong port/address
+    - LLM didn't understand BOOTP instruction
+    - Server crashed during request processing
+    - Wrong port/address
 - **Debug**: Check netget.log for BOOTP receive/send messages
 
 #### 2. Wrong IP Assignment
+
 - **Symptom**: yiaddr doesn't match expected value
 - **Causes**:
-  - LLM interpreted instruction differently
-  - LLM used different IP allocation strategy
+    - LLM interpreted instruction differently
+    - LLM used different IP allocation strategy
 - **Debug**: Check LLM response in logs, adjust instruction to be more specific
 
 #### 3. Boot File Not Set
+
 - **Symptom**: file field is empty or wrong
 - **Causes**:
-  - LLM didn't include boot_file parameter in action
-  - Boot file path truncated (max 127 chars)
+    - LLM didn't include boot_file parameter in action
+    - Boot file path truncated (max 127 chars)
 - **Debug**: Check LLM action JSON in logs
 
 #### 4. Transaction ID Mismatch
+
 - **Symptom**: xid in response doesn't match request
 - **Causes**:
-  - Bug in server implementation
-  - Context not preserved correctly
+    - Bug in server implementation
+    - Context not preserved correctly
 - **Debug**: Check BootpRequestContext in mod.rs
 
 ### Log Levels
+
 - **TRACE**: Full hex dump of BOOTREQUEST and BOOTREPLY packets
 - **DEBUG**: Summary ("BOOTP received 300 bytes from 127.0.0.1")
 - **INFO**: LLM decision messages ("Assigned 192.168.1.100 to client...")
 
 ### Manual Testing
+
 ```bash
 # Start server manually
 netget
@@ -206,17 +230,20 @@ echo -ne '\x01\x01\x06\x00...' | nc -u localhost 67
 ## Future Enhancements
 
 ### Potential Test Additions
+
 1. **BOOTP relay test** - Validate giaddr (gateway/relay) handling
 2. **Multiple requests test** - Verify IP pool management
 3. **Malformed packet test** - Test error handling for invalid BOOTP packets
 4. **Scripting mode test** - Enable scripting and verify 0 LLM calls after startup
 
 ### Test Optimizations
+
 1. **Reuse server** - One server instance for all tests (reduces to 1 LLM call total)
 2. **Parallel execution** - Run tests concurrently with --ollama-lock
 3. **Mock LLM mode** - Bypass Ollama for faster CI tests (not currently implemented)
 
 ## References
+
 - [RFC 951: Bootstrap Protocol (BOOTP)](https://datatracker.ietf.org/doc/html/rfc951)
 - [RFC 1542: BOOTP Extensions](https://datatracker.ietf.org/doc/html/rfc1542)
 - [dhcproto crate](https://docs.rs/dhcproto/)

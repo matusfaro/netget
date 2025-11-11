@@ -1,9 +1,12 @@
 # IRC Protocol E2E Tests
 
 ## Test Overview
-Tests IRC server implementation with various IRC protocol commands: registration (NICK/USER), keepalive (PING/PONG), channel operations (JOIN), and messaging (PRIVMSG). Validates LLM's ability to handle IRC protocol semantics.
+
+Tests IRC server implementation with various IRC protocol commands: registration (NICK/USER), keepalive (PING/PONG),
+channel operations (JOIN), and messaging (PRIVMSG). Validates LLM's ability to handle IRC protocol semantics.
 
 ## Test Strategy
+
 - **Isolated test servers**: Each test spawns separate NetGet instance with specific IRC behavior
 - **Raw TCP client**: Uses `tokio::net::TcpStream` with `BufReader` for line-based IRC protocol
 - **No IRC library**: Manual command construction and response parsing (tests actual protocol)
@@ -11,6 +14,7 @@ Tests IRC server implementation with various IRC protocol commands: registration
 - **Action-based**: No scripting (tests LLM's IRC protocol understanding)
 
 ## LLM Call Budget
+
 - `test_irc_welcome()`: 2 LLM calls (NICK command + USER command)
 - `test_irc_ping_pong()`: 1 LLM call (PING command)
 - `test_irc_join_channel()`: 3 LLM calls (NICK + USER + JOIN)
@@ -19,141 +23,167 @@ Tests IRC server implementation with various IRC protocol commands: registration
 - **Total: 15 LLM calls** (exceeds 10 limit slightly)
 
 **Optimization Opportunity**: Could consolidate into 2-3 comprehensive servers:
+
 1. Server handling NICK/USER/JOIN/PRIVMSG (6-7 LLM calls)
 2. Server handling PING/PONG (1 LLM call)
 3. Total: 7-8 LLM calls (within budget)
 
-**Why not consolidated yet?**: Tests provide better isolation and clearer failure diagnosis. Each test validates specific IRC behavior independently.
+**Why not consolidated yet?**: Tests provide better isolation and clearer failure diagnosis. Each test validates
+specific IRC behavior independently.
 
 ## Scripting Usage
+
 ❌ **Scripting Disabled** - Action-based responses only
 
-**Rationale**: Tests validate LLM's understanding of IRC protocol semantics (numerics, message formats, command parsing). Scripting would bypass this validation. For production IRC servers, scripting is recommended for common patterns (PING/PONG, JOIN confirmations).
+**Rationale**: Tests validate LLM's understanding of IRC protocol semantics (numerics, message formats, command
+parsing). Scripting would bypass this validation. For production IRC servers, scripting is recommended for common
+patterns (PING/PONG, JOIN confirmations).
 
 ## Client Library
+
 - **tokio::net::TcpStream** - Raw async TCP socket
 - **tokio::io::AsyncBufReadExt** - Line-based reading (`BufReader`)
 - **tokio::io::AsyncWriteExt** - For sending IRC commands
 - **No IRC library** - Manual message parsing
 
 **Why raw TCP?**:
+
 1. IRC is line-based text protocol (simple to handle manually)
 2. Tests actual byte-level protocol behavior
 3. No dependency on IRC client libraries (which may have quirks)
 4. Direct control over command timing and formatting
 
 ## Expected Runtime
+
 - Model: qwen3-coder:30b
 - Runtime: ~120-150 seconds for full test suite (5 tests)
-  - Each test: ~2-3 server startup + 1-3 LLM calls per test × 5-8s per call
-  - `test_irc_welcome`: ~25s (2 LLM calls)
-  - `test_irc_ping_pong`: ~15s (1 LLM call)
-  - `test_irc_join_channel`: ~35s (3 LLM calls)
-  - `test_irc_privmsg`: ~35s (3 LLM calls)
-  - `test_irc_multiple_clients`: ~50s (6 LLM calls)
+    - Each test: ~2-3 server startup + 1-3 LLM calls per test × 5-8s per call
+    - `test_irc_welcome`: ~25s (2 LLM calls)
+    - `test_irc_ping_pong`: ~15s (1 LLM call)
+    - `test_irc_join_channel`: ~35s (3 LLM calls)
+    - `test_irc_privmsg`: ~35s (3 LLM calls)
+    - `test_irc_multiple_clients`: ~50s (6 LLM calls)
 
 **Note**: IRC tests are slower than DNS/DoT/DoH because:
+
 - No scripting (each command requires LLM call)
 - IRC registration requires multiple commands (NICK, USER)
 - Multiple test cases to cover protocol breadth
 
 ## Failure Rate
+
 - **Medium** (~10-15%) - LLM may not always follow IRC protocol correctly
 - Common failures:
-  - LLM doesn't include numeric code (e.g., missing "001" in welcome)
-  - LLM formats message incorrectly (missing ":", wrong prefix)
-  - LLM doesn't respond at all (returns empty action list)
+    - LLM doesn't include numeric code (e.g., missing "001" in welcome)
+    - LLM formats message incorrectly (missing ":", wrong prefix)
+    - LLM doesn't respond at all (returns empty action list)
 - Timeout failures: Rare (~2%) - LLM takes too long to respond
 
-**Why higher than DNS?**: IRC protocol has more complex formatting requirements (numerics, prefixes, colons). LLM sometimes struggles with exact formatting.
+**Why higher than DNS?**: IRC protocol has more complex formatting requirements (numerics, prefixes, colons). LLM
+sometimes struggles with exact formatting.
 
 ## Test Cases
 
 ### 1. IRC Welcome (`test_irc_welcome`)
+
 **Tests**: IRC registration flow (NICK + USER commands)
 
-- **Prompt**: "listen on port {port} via irc. When users connect and send NICK and USER commands, respond with IRC welcome numeric 001: ':servername 001 nickname :Welcome to the IRC Network'"
+- **Prompt**: "listen on port {port} via irc. When users connect and send NICK and USER commands, respond with IRC
+  welcome numeric 001: ':servername 001 nickname :Welcome to the IRC Network'"
 - **Client Actions**:
-  1. Send `NICK testuser\r\n`
-  2. Send `USER testuser 0 * :Test User\r\n`
-  3. Read responses (up to 5 lines)
+    1. Send `NICK testuser\r\n`
+    2. Send `USER testuser 0 * :Test User\r\n`
+    3. Read responses (up to 5 lines)
 - **Expected**: Response contains " 001 " or "Welcome" or "WELCOME"
 - **Purpose**: Tests basic IRC registration and welcome message
 
 **LLM Calls**: 2 (one for NICK, one for USER)
 
 **Notes**:
+
 - May receive multiple response lines (LLM might send multiple numerics)
 - Test accepts case-insensitive "welcome" to handle LLM variations
 - If no response, test prints note (doesn't fail hard)
 
 ### 2. IRC PING/PONG (`test_irc_ping_pong`)
+
 **Tests**: IRC keepalive mechanism
 
-- **Prompt**: "listen on port {port} via irc. When you receive a PING command with a token, respond with PONG using the same token. Format: 'PONG :token'"
+- **Prompt**: "listen on port {port} via irc. When you receive a PING command with a token, respond with PONG using the
+  same token. Format: 'PONG :token'"
 - **Client Actions**:
-  1. Send `PING :1234567890\r\n`
-  2. Read response
+    1. Send `PING :1234567890\r\n`
+    2. Read response
 - **Expected**: Response contains "PONG" and "1234567890"
 - **Purpose**: Tests LLM's ability to parse PING and format PONG correctly
 
 **LLM Calls**: 1
 
 **Notes**:
+
 - Simple command/response test
 - Tests token echo behavior (critical for IRC keepalive)
 
 ### 3. IRC Channel Join (`test_irc_join_channel`)
+
 **Tests**: Channel join workflow
 
-- **Prompt**: "listen on port {port} via irc. When users send JOIN #channel, respond with ':nickname JOIN #channel' to confirm the join"
+- **Prompt**: "listen on port {port} via irc. When users send JOIN #channel, respond with ':nickname JOIN #channel' to
+  confirm the join"
 - **Client Actions**:
-  1. Send `NICK testuser\r\n`
-  2. Send `USER testuser 0 * :Test User\r\n`
-  3. Send `JOIN #test\r\n`
-  4. Read responses (up to 5 lines)
+    1. Send `NICK testuser\r\n`
+    2. Send `USER testuser 0 * :Test User\r\n`
+    3. Send `JOIN #test\r\n`
+    4. Read responses (up to 5 lines)
 - **Expected**: Response contains "JOIN" and "#test"
 - **Purpose**: Tests channel join confirmation
 
 **LLM Calls**: 3 (NICK + USER + JOIN)
 
 **Notes**:
+
 - Registration commands may or may not receive responses (test doesn't validate)
 - Focus is on JOIN confirmation format
 - Test accepts join confirmation with or without user/host prefix
 
 ### 4. IRC PRIVMSG (`test_irc_privmsg`)
+
 **Tests**: Private message handling
 
-- **Prompt**: "listen on port {port} via irc. When you receive 'PRIVMSG target :message', echo it back as 'PRIVMSG sender :message'"
+- **Prompt**: "listen on port {port} via irc. When you receive 'PRIVMSG target :message', echo it back as 'PRIVMSG
+  sender :message'"
 - **Client Actions**:
-  1. Send `NICK testuser\r\n`
-  2. Send `USER testuser 0 * :Test User\r\n`
-  3. Send `PRIVMSG bot :Hello IRC\r\n`
-  4. Read responses (up to 5 lines)
+    1. Send `NICK testuser\r\n`
+    2. Send `USER testuser 0 * :Test User\r\n`
+    3. Send `PRIVMSG bot :Hello IRC\r\n`
+    4. Read responses (up to 5 lines)
 - **Expected**: Response contains "PRIVMSG" and "Hello"
 - **Purpose**: Tests message echo/relay behavior
 
 **LLM Calls**: 3 (NICK + USER + PRIVMSG)
 
 **Notes**:
+
 - Tests basic messaging functionality
 - LLM may echo to different target (test just checks for PRIVMSG with message content)
 
 ### 5. IRC Multiple Clients (`test_irc_multiple_clients`)
+
 **Tests**: Concurrent client handling
 
-- **Prompt**: "listen on port {port} via irc. Handle multiple concurrent IRC clients. Send welcome message (001) to each client that connects with NICK and USER"
+- **Prompt**: "listen on port {port} via irc. Handle multiple concurrent IRC clients. Send welcome message (001) to each
+  client that connects with NICK and USER"
 - **Client Actions**:
-  1. Spawn 3 concurrent clients
-  2. Each sends `NICK testuser{N}\r\n` and `USER testuser{N} 0 * :Test User {N}\r\n`
-  3. Each tries to read response
+    1. Spawn 3 concurrent clients
+    2. Each sends `NICK testuser{N}\r\n` and `USER testuser{N} 0 * :Test User {N}\r\n`
+    3. Each tries to read response
 - **Expected**: Each client receives response (ideally 001 welcome)
 - **Purpose**: Tests server's ability to handle multiple simultaneous connections
 
 **LLM Calls**: 6 (3 clients × 2 commands each)
 
 **Notes**:
+
 - Tests concurrency (separate tokio tasks per client)
 - Each client is independent
 - Test reports how many clients succeeded (doesn't require all 3)
@@ -161,7 +191,9 @@ Tests IRC server implementation with various IRC protocol commands: registration
 ## Known Issues
 
 ### 1. LLM IRC Protocol Variability
+
 LLM may not always follow IRC protocol exactly:
+
 - Missing numeric codes (e.g., "Welcome" instead of "001 ... :Welcome")
 - Incorrect message format (missing colons, wrong prefix format)
 - Extra text or explanations in responses
@@ -169,7 +201,9 @@ LLM may not always follow IRC protocol exactly:
 **Mitigation**: Tests use loose assertions (`contains()` instead of exact match).
 
 ### 2. Registration Command Responses
+
 Tests send NICK and USER but don't validate their responses (only validate final command response). LLM might:
+
 - Not respond to NICK/USER at all
 - Send errors (e.g., "433 Nickname in use")
 - Send unexpected numerics
@@ -177,32 +211,41 @@ Tests send NICK and USER but don't validate their responses (only validate final
 **Reason**: Tests focus on specific command being tested, not full registration flow.
 
 ### 3. No Multi-Line Response Validation
-Some IRC commands return multiple lines (e.g., NAMES returns 353 + 366). Tests read up to 5 lines but don't validate multi-line sequences.
+
+Some IRC commands return multiple lines (e.g., NAMES returns 353 + 366). Tests read up to 5 lines but don't validate
+multi-line sequences.
 
 **Future Enhancement**: Add tests for multi-line responses (channel lists, WHO responses, etc.).
 
 ### 4. Timing-Dependent Failures
-Tests use 10-second timeout per read. Slow LLM responses can cause timeouts, especially when multiple LLM calls are needed (e.g., `test_irc_multiple_clients`).
+
+Tests use 10-second timeout per read. Slow LLM responses can cause timeouts, especially when multiple LLM calls are
+needed (e.g., `test_irc_multiple_clients`).
 
 **Mitigation**: Timeout is generous (10s), but very slow systems might still timeout.
 
 ## Performance Notes
 
 ### Why No Scripting?
+
 IRC tests don't use scripting because:
+
 1. **Protocol validation**: Need to test LLM's IRC protocol understanding
 2. **Complex state**: IRC requires tracking users, channels, nicknames (hard to script)
 3. **Varied commands**: Each test exercises different IRC command (script wouldn't help much)
 
 However, production IRC servers should use scripting for common patterns:
+
 - PING/PONG keepalive
 - JOIN confirmations
 - Standard numeric responses
 
 ### LLM Call Budget Exceeded
+
 Tests currently use 15 LLM calls, exceeding the 10-call guideline.
 
 **Consolidation Plan**:
+
 ```rust
 // Comprehensive IRC test (7-8 LLM calls)
 let prompt = format!(
@@ -227,6 +270,7 @@ This would reduce from 5 test functions to 1-2 comprehensive tests.
 ## Future Enhancements
 
 ### Test Coverage Gaps
+
 1. **PART command**: Test leaving channels
 2. **QUIT command**: Test graceful disconnect
 3. **NOTICE command**: Test non-reply messages
@@ -237,19 +281,24 @@ This would reduce from 5 test functions to 1-2 comprehensive tests.
 8. **KICK/BAN**: Test channel moderation
 
 ### Scripting Mode Test
+
 Add test with scripting enabled:
+
 - Validate script handles PING/PONG automatically
 - Test script maintains state (nicknames, channels)
 - Measure throughput (should handle hundreds of messages/sec)
 
 ### Protocol Compliance Test
+
 Add test suite that validates against IRC RFCs:
+
 - Message format parsing
 - Numeric code correctness
 - Command parameter validation
 - Prefix format validation
 
 ## References
+
 - [RFC 1459: IRC Protocol](https://datatracker.ietf.org/doc/html/rfc1459)
 - [RFC 2812: IRC Client Protocol](https://datatracker.ietf.org/doc/html/rfc2812)
 - [Modern IRC Docs](https://modern.ircdocs.horse/)

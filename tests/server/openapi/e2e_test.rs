@@ -5,7 +5,7 @@
 
 #![cfg(feature = "openapi")]
 
-use crate::server::helpers::{self, ServerConfig, E2EResult};
+use crate::server::helpers::{self, E2EResult, ServerConfig};
 use serde_json::Value;
 use std::time::Duration;
 
@@ -40,8 +40,10 @@ async fn test_openapi_todo_list() -> E2EResult<()> {
         client
             .get(format!("http://127.0.0.1:{}/todos", server.port))
             .header("Accept", "application/json")
-            .send()
-    ).await {
+            .send(),
+    )
+    .await
+    {
         Ok(Ok(resp)) => {
             println!("✓ Received HTTP response: {}", resp.status());
             resp
@@ -75,9 +77,18 @@ async fn test_openapi_todo_list() -> E2EResult<()> {
             // Validate structure if todos exist
             if !todos.is_empty() {
                 let first_todo = &todos[0];
-                assert!(first_todo.get("id").is_some(), "Todo should have 'id' field");
-                assert!(first_todo.get("title").is_some(), "Todo should have 'title' field");
-                assert!(first_todo.get("done").is_some(), "Todo should have 'done' field");
+                assert!(
+                    first_todo.get("id").is_some(),
+                    "Todo should have 'id' field"
+                );
+                assert!(
+                    first_todo.get("title").is_some(),
+                    "Todo should have 'title' field"
+                );
+                assert!(
+                    first_todo.get("done").is_some(),
+                    "Todo should have 'done' field"
+                );
                 println!("✓ First todo: {}", serde_json::to_string(&first_todo)?);
             }
         } else {
@@ -121,7 +132,10 @@ async fn test_openapi_create_todo() -> E2EResult<()> {
         "done": false
     });
 
-    println!("Request body: {}", serde_json::to_string_pretty(&request_body)?);
+    println!(
+        "Request body: {}",
+        serde_json::to_string_pretty(&request_body)?
+    );
 
     let response = match tokio::time::timeout(
         Duration::from_secs(20),
@@ -129,8 +143,10 @@ async fn test_openapi_create_todo() -> E2EResult<()> {
             .post(format!("http://127.0.0.1:{}/todos", server.port))
             .header("Content-Type", "application/json")
             .json(&request_body)
-            .send()
-    ).await {
+            .send(),
+    )
+    .await
+    {
         Ok(Ok(resp)) => {
             println!("✓ Received HTTP response: {}", resp.status());
             resp
@@ -161,8 +177,14 @@ async fn test_openapi_create_todo() -> E2EResult<()> {
 
     // If it's a structured todo response, validate it
     if json.get("id").is_some() {
-        assert!(json.get("title").is_some(), "Created todo should have 'title' field");
-        assert!(json.get("done").is_some(), "Created todo should have 'done' field");
+        assert!(
+            json.get("title").is_some(),
+            "Created todo should have 'title' field"
+        );
+        assert!(
+            json.get("done").is_some(),
+            "Created todo should have 'done' field"
+        );
         println!("✓ Created todo: {}", serde_json::to_string(&json)?);
     } else {
         println!("✓ Received response (placeholder or alternative format)");
@@ -202,8 +224,10 @@ async fn test_openapi_method_validation() -> E2EResult<()> {
         Duration::from_secs(20),
         client
             .get(format!("http://127.0.0.1:{}/admin/reset", server.port))
-            .send()
-    ).await {
+            .send(),
+    )
+    .await
+    {
         Ok(Ok(resp)) => {
             println!("✓ Received HTTP response: {}", resp.status());
             resp
@@ -223,8 +247,7 @@ async fn test_openapi_method_validation() -> E2EResult<()> {
 
     // With route matching, should get immediate 405 without LLM consultation
     assert_eq!(
-        status,
-        405,
+        status, 405,
         "Expected 405 Method Not Allowed for wrong method, got {}",
         status
     );
@@ -285,8 +308,10 @@ async fn test_openapi_spec_compliant_flag() -> E2EResult<()> {
         Duration::from_secs(20),
         client
             .get(format!("http://127.0.0.1:{}/todos", server.port))
-            .send()
-    ).await {
+            .send(),
+    )
+    .await
+    {
         Ok(Ok(resp)) => {
             println!("✓ Received HTTP response: {}", resp.status());
             resp
@@ -348,8 +373,10 @@ async fn test_openapi_404_not_found() -> E2EResult<()> {
         Duration::from_secs(20),
         client
             .get(format!("http://127.0.0.1:{}/unknown", server.port))
-            .send()
-    ).await {
+            .send(),
+    )
+    .await
+    {
         Ok(Ok(resp)) => {
             println!("✓ Received HTTP response: {}", resp.status());
             resp
@@ -369,8 +396,7 @@ async fn test_openapi_404_not_found() -> E2EResult<()> {
 
     // With route matching, should get immediate 404 without LLM consultation
     assert_eq!(
-        status,
-        404,
+        status, 404,
         "Expected 404 Not Found for undefined path, got {}",
         status
     );

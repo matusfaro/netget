@@ -13,12 +13,14 @@ The IS-IS client tests are **primarily manual** due to environmental requirement
 ### Unit Tests (No LLM)
 
 **test_isis_device_listing**:
+
 - Lists available network interfaces
 - No root required
 - No LLM calls
 - Verifies pcap device enumeration works
 
 **test_isis_pdu_parsing**:
+
 - Tests basic PDU header parsing
 - No network access required
 - No LLM calls
@@ -30,6 +32,7 @@ The IS-IS client tests are **primarily manual** due to environmental requirement
 ### Integration Tests (With LLM)
 
 **test_isis_client_requires_root**:
+
 - Checks for root privileges
 - Checks for Ollama availability
 - Creates client instance
@@ -42,11 +45,12 @@ The IS-IS client tests are **primarily manual** due to environmental requirement
 ### Manual E2E Test
 
 **test_isis_capture_with_llm**:
+
 - **Requires**:
-  - Root access (sudo)
-  - IS-IS router on network OR packet replay
-  - Ollama running
-  - Correct interface name set in test
+    - Root access (sudo)
+    - IS-IS router on network OR packet replay
+    - Ollama running
+    - Correct interface name set in test
 - **Captures IS-IS PDUs for 30 seconds**
 - **LLM analyzes topology**
 - **Marked with `#[ignore]`** - manual test only
@@ -91,6 +95,7 @@ sudo vim /etc/frr/isisd.conf
 ```
 
 Sample IS-IS config:
+
 ```
 router isis MYNET
  net 49.0001.1921.6800.1001.00
@@ -144,16 +149,18 @@ Then capture on veth0.
 **Total Budget**: < 10 LLM calls per test run
 
 ### Breakdown:
+
 - Device listing: 0 calls
 - PDU parsing: 0 calls
 - Client setup: 0 calls
 - **PDU capture**: 1 call per PDU (rate-limited by capture)
-  - Typical: 1-5 Hello PDUs/minute per router
-  - Budget for 30 second capture: ~1-3 calls
+    - Typical: 1-5 Hello PDUs/minute per router
+    - Budget for 30 second capture: ~1-3 calls
 
 ### Why So Few Calls?
 
 IS-IS PDUs are infrequent:
+
 - **Hello PDUs**: Sent every 10 seconds by default
 - **LSPs**: Sent on topology changes
 - **CSNPs/PSNPs**: Synchronization messages
@@ -171,18 +178,18 @@ In a stable network with 1-2 routers, expect only 1-3 PDUs in 30 seconds.
 ### Platform-Specific
 
 1. **Interface names vary**:
-   - Linux: eth0, wlan0, ens33
-   - macOS: en0, en1
-   - Windows: Not directly supported (WinPcap required)
+    - Linux: eth0, wlan0, ens33
+    - macOS: en0, en1
+    - Windows: Not directly supported (WinPcap required)
 
 2. **Pcap permissions**:
-   - Linux: Requires root or CAP_NET_RAW
-   - macOS: Requires root or /dev/bpf permissions
-   - May need to adjust `/dev/bpf*` permissions on macOS
+    - Linux: Requires root or CAP_NET_RAW
+    - macOS: Requires root or /dev/bpf permissions
+    - May need to adjust `/dev/bpf*` permissions on macOS
 
 3. **Filter syntax**:
-   - BPF filter may vary slightly between platforms
-   - Current filter: `ether proto 0xfefe or ether[14:2] = 0xfefe`
+    - BPF filter may vary slightly between platforms
+    - Current filter: `ether proto 0xfefe or ether[14:2] = 0xfefe`
 
 ### Test Reliability
 
@@ -198,9 +205,9 @@ In a stable network with 1-2 routers, expect only 1-3 PDUs in 30 seconds.
 1. **Device listing**: Returns list of interfaces (may be empty on some systems)
 2. **PDU parsing**: Correctly identifies IS-IS discriminator (0x83)
 3. **Manual E2E**:
-   - Captures at least 1 IS-IS PDU
-   - LLM parses PDU type
-   - No errors in pcap or LLM processing
+    - Captures at least 1 IS-IS PDU
+    - LLM parses PDU type
+    - No errors in pcap or LLM processing
 
 ### Expected Output
 

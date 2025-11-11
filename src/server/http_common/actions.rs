@@ -1,9 +1,9 @@
 //! Shared HTTP action execution logic
 
+use crate::llm::actions::protocol_trait::ActionResult;
 use anyhow::{Context, Result};
 use serde_json::json;
 use std::collections::HashMap;
-use crate::llm::actions::protocol_trait::ActionResult;
 
 /// Parsed HTTP response data
 #[derive(Debug)]

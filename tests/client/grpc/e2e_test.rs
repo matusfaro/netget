@@ -88,7 +88,10 @@ mod grpc_client_tests {
         // Verify client shows error or connection failure
         let output = client.get_output().await;
         assert!(
-            output.contains("ERROR") || output.contains("error") || output.contains("failed") || output.contains("Error"),
+            output.contains("ERROR")
+                || output.contains("error")
+                || output.contains("failed")
+                || output.contains("Error"),
             "Client should show connection error. Output: {:?}",
             output
         );

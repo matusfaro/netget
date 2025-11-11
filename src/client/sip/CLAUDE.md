@@ -2,27 +2,34 @@
 
 ## Overview
 
-SIP (Session Initiation Protocol) client implementing RFC 3261 for VoIP signaling. The client can register with SIP servers, initiate calls (INVITE), terminate sessions (BYE), query capabilities (OPTIONS), and cancel pending requests (CANCEL).
+SIP (Session Initiation Protocol) client implementing RFC 3261 for VoIP signaling. The client can register with SIP
+servers, initiate calls (INVITE), terminate sessions (BYE), query capabilities (OPTIONS), and cancel pending requests (
+CANCEL).
 
 **Compliance**: RFC 3261 (SIP - Session Initiation Protocol)
 
-**Protocol Purpose**: SIP is a text-based signaling protocol for creating, modifying, and terminating multimedia sessions. This client implementation enables NetGet to act as a SIP User Agent for testing VoIP servers, conducting security research, or simulating SIP endpoints.
+**Protocol Purpose**: SIP is a text-based signaling protocol for creating, modifying, and terminating multimedia
+sessions. This client implementation enables NetGet to act as a SIP User Agent for testing VoIP servers, conducting
+security research, or simulating SIP endpoints.
 
 ## Library Choices
 
 **Manual Implementation** - Complete SIP protocol handling implemented from scratch
+
 - **Why**: Matches the server implementation approach for consistency
 - SIP is a text-based HTTP-like protocol, straightforward to parse and generate
 - Manual implementation provides full control over request generation for LLM
 - No dependency on external SIP libraries (consistent with Cargo.toml comment)
 
 **Alternative Considered - rsip v0.3.0**:
+
 - General-purpose SIP message parser and builder
 - **Pros**: Handles SIP message parsing, URI parsing, header handling
 - **Cons**: Would add dependency; manual parsing is sufficient for client needs
 - **Decision**: Use manual implementation for simplicity and no-dependency approach
 
 **Text Protocol Handling**:
+
 - Line-based parsing (similar to HTTP)
 - Headers: `Name: Value\r\n` format
 - Body: Optional SDP (Session Description Protocol) after blank line
@@ -33,12 +40,14 @@ SIP (Session Initiation Protocol) client implementing RFC 3261 for VoIP signalin
 ### UDP-Based Protocol
 
 **Primary Transport: UDP**:
+
 - Connectionless: Each SIP transaction is independent
 - Connect to SIP server port 5060 (standard SIP UDP port)
 - Single UDP socket per client
 - Fast request-response pattern
 
 **Connection Tracking**:
+
 - Each SIP dialog (REGISTER, INVITE→ACK→BYE cycle) tracked via Call-ID
 - Dialog ID = Call-ID + From tag + To tag
 - Maintains CSeq counter for request sequencing
@@ -58,6 +67,7 @@ The SIP client uses the standard client LLM integration pattern:
 The client builds RFC 3261 compliant SIP requests:
 
 **Request Structure**:
+
 ```
 Method URI SIP/2.0
 Via: SIP/2.0/UDP client-ip:port;branch=z9hG4bK-netget-<random>
@@ -73,6 +83,7 @@ Content-Length: <length>
 ```
 
 **Critical Headers**:
+
 - **Via**: Routing information with branch parameter (RFC 3261 magic cookie `z9hG4bK`)
 - **From**: Caller identity with unique tag (generated once per dialog)
 - **To**: Callee identity (tag added after first response)
@@ -81,6 +92,7 @@ Content-Length: <length>
 - **Contact**: Client's reachable address (for server callbacks)
 
 **Method-Specific Headers**:
+
 - **REGISTER**: Expires (registration lifetime)
 - **INVITE**: Contact, Content-Type: application/sdp (with SDP body)
 - **BYE**: None (minimal headers)
@@ -94,6 +106,7 @@ The client parses SIP responses (RFC 3261 Section 7):
 **Status Line**: `SIP/2.0 <status-code> <reason-phrase>`
 
 **Common Status Codes**:
+
 - **100 Trying**: Request received, processing
 - **180 Ringing**: Call is ringing
 - **200 OK**: Successful request
@@ -103,6 +116,7 @@ The client parses SIP responses (RFC 3261 Section 7):
 - **603 Decline**: Callee declined call
 
 **Header Extraction**:
+
 - Copy headers from request (Via, From, To, Call-ID, CSeq)
 - Extract To tag from successful responses (used in subsequent requests)
 - Parse SDP body from 200 OK responses to INVITE
@@ -110,6 +124,7 @@ The client parses SIP responses (RFC 3261 Section 7):
 ### State Management
 
 **Per-Client State** (`ClientData`):
+
 ```rust
 struct ClientData {
     state: ConnectionState,        // Idle/Processing/Accumulating
@@ -123,11 +138,13 @@ struct ClientData {
 ```
 
 **State Machine**:
+
 - **Idle**: Ready to process incoming response
 - **Processing**: LLM is processing current response
 - **Accumulating**: Not used for UDP (no partial responses)
 
 **Dialog Lifecycle**:
+
 1. Client connects → Generate Call-ID and From tag
 2. LLM decides to REGISTER → Send REGISTER with CSeq=1
 3. Receive 200 OK → Extract To tag, LLM decides next action
@@ -144,35 +161,35 @@ The LLM controls the SIP client via actions:
 ### Async Actions (User-Triggered)
 
 1. **sip_register**: Register with SIP server
-   - Parameters: from, to, request_uri, contact, expires
-   - Use case: Establish client presence with registrar
-   - Example: Register alice@example.com for 3600 seconds
+    - Parameters: from, to, request_uri, contact, expires
+    - Use case: Establish client presence with registrar
+    - Example: Register alice@example.com for 3600 seconds
 
 2. **sip_invite**: Initiate call
-   - Parameters: from, to, request_uri, contact, sdp
-   - Use case: Start voice/video session
-   - Example: Call bob@example.com with SDP media offer
+    - Parameters: from, to, request_uri, contact, sdp
+    - Use case: Start voice/video session
+    - Example: Call bob@example.com with SDP media offer
 
 3. **sip_ack**: Acknowledge INVITE 200 OK (usually automatic)
-   - Parameters: from, to, request_uri
-   - Use case: Complete INVITE 3-way handshake (auto-sent by client)
-   - Note: LLM can explicitly send ACK, but client sends it automatically
-   - Example: ACK bob@example.com after receiving 200 OK to INVITE
+    - Parameters: from, to, request_uri
+    - Use case: Complete INVITE 3-way handshake (auto-sent by client)
+    - Note: LLM can explicitly send ACK, but client sends it automatically
+    - Example: ACK bob@example.com after receiving 200 OK to INVITE
 
 4. **sip_bye**: Terminate active session
-   - Parameters: from, to, request_uri
-   - Use case: End call
-   - Example: Hang up ongoing call
+    - Parameters: from, to, request_uri
+    - Use case: End call
+    - Example: Hang up ongoing call
 
 5. **sip_options**: Query capabilities
-   - Parameters: from, to, request_uri
-   - Use case: Check server/user availability
-   - Example: Ping bob@example.com to check presence
+    - Parameters: from, to, request_uri
+    - Use case: Check server/user availability
+    - Example: Ping bob@example.com to check presence
 
 6. **sip_cancel**: Cancel pending request
-   - Parameters: from, to, request_uri
-   - Use case: Cancel INVITE before final response
-   - Example: Cancel call while ringing
+    - Parameters: from, to, request_uri
+    - Use case: Cancel INVITE before final response
+    - Example: Cancel call while ringing
 
 ### Sync Actions (Response-Based)
 
@@ -182,33 +199,36 @@ The LLM controls the SIP client via actions:
 ### Events
 
 **sip_client_connected**:
+
 - Triggered: After UDP socket established
 - Context: remote_addr, local_addr
 - LLM decides: Typically sends REGISTER or OPTIONS
 
 **sip_client_response_received**:
+
 - Triggered: SIP final response (2xx-6xx) received from server
 - Note: Provisional responses (1xx like 100 Trying, 180 Ringing) are logged but do NOT trigger LLM calls
 - Context:
-  - status_code (200, 403, 486, etc.)
-  - reason_phrase ("OK", "Forbidden", "Busy Here")
-  - method (REGISTER, INVITE, BYE, etc. from CSeq)
-  - call_id, from, to headers
-  - body (SDP if present)
+    - status_code (200, 403, 486, etc.)
+    - reason_phrase ("OK", "Forbidden", "Busy Here")
+    - method (REGISTER, INVITE, BYE, etc. from CSeq)
+    - call_id, from, to headers
+    - body (SDP if present)
 - LLM decides:
-  - 200 OK to REGISTER → Send INVITE or wait
-  - 200 OK to INVITE → Client automatically sends ACK (LLM decides next action after)
-  - 486 Busy Here → End dialog or retry
-  - 403 Forbidden → Authentication or policy issue
+    - 200 OK to REGISTER → Send INVITE or wait
+    - 200 OK to INVITE → Client automatically sends ACK (LLM decides next action after)
+    - 486 Busy Here → End dialog or retry
+    - 403 Forbidden → Authentication or policy issue
 - Automatic Behavior:
-  - Client sends ACK immediately after 200 OK to INVITE (RFC 3261 requirement)
-  - Queued responses processed after LLM finishes processing current response
+    - Client sends ACK immediately after 200 OK to INVITE (RFC 3261 requirement)
+    - Queued responses processed after LLM finishes processing current response
 
 ## SDP (Session Description Protocol)
 
 For INVITE requests, the client must provide SDP describing media capabilities:
 
 **Example SDP** (generated by LLM):
+
 ```
 v=0
 o=netget 2890844526 2890844526 IN IP4 192.0.2.1
@@ -220,6 +240,7 @@ a=rtpmap:0 PCMU/8000
 ```
 
 **SDP Fields**:
+
 - `v=0`: SDP version
 - `o=`: Originator (username, session ID, version, network type, IP)
 - `s=`: Session name
@@ -228,51 +249,54 @@ a=rtpmap:0 PCMU/8000
 - `m=`: Media description (audio, port, protocol, format list)
 - `a=`: Attributes (codec mapping)
 
-**LLM Generation**: LLM generates simplified SDP with plausible values. No actual RTP media streams are created (SIP is signaling only, media would require RTP implementation).
+**LLM Generation**: LLM generates simplified SDP with plausible values. No actual RTP media streams are created (SIP is
+signaling only, media would require RTP implementation).
 
 ## Limitations
 
 ### Current Implementation
 
 1. **UDP Only**
-   - TCP/TLS transports not implemented
-   - Max UDP packet size: 65535 bytes
+    - TCP/TLS transports not implemented
+    - Max UDP packet size: 65535 bytes
 
 2. **Manual SIP Parsing**
-   - Not using rsip or other SIP crates
-   - May have edge cases in complex headers
-   - No SIP URI parser (uses simple string matching)
+    - Not using rsip or other SIP crates
+    - May have edge cases in complex headers
+    - No SIP URI parser (uses simple string matching)
 
 3. **No Authentication**
-   - RFC 2617 digest authentication not implemented
-   - Cannot handle 401 Unauthorized challenges
-   - No nonce, realm, or response calculation
+    - RFC 2617 digest authentication not implemented
+    - Cannot handle 401 Unauthorized challenges
+    - No nonce, realm, or response calculation
 
 4. **Simplified SDP**
-   - No actual RTP media streams
-   - LLM generates plausible SDP strings
-   - No codec negotiation or media handling
+    - No actual RTP media streams
+    - LLM generates plausible SDP strings
+    - No codec negotiation or media handling
 
 5. **No Retransmission**
-   - No transaction layer (retransmissions, timeouts)
-   - Relies on single request-response
-   - Network loss causes silent failure
+    - No transaction layer (retransmissions, timeouts)
+    - Relies on single request-response
+    - Network loss causes silent failure
 
 6. **Limited Dialog State**
-   - Basic Call-ID, tags, CSeq tracking
-   - No route set (Record-Route) handling
-   - No early dialog vs. confirmed dialog distinction
-   - Queued responses processed sequentially
+    - Basic Call-ID, tags, CSeq tracking
+    - No route set (Record-Route) handling
+    - No early dialog vs. confirmed dialog distinction
+    - Queued responses processed sequentially
 
 ### Protocol Compliance Gaps
 
 **RFC 3261 Features Implemented**:
+
 - ACK request handling (automatic after 200 OK to INVITE) ✓
 - Provisional response handling (1xx responses skipped) ✓
 - Queued response processing (handles concurrent responses) ✓
 - Basic dialog state tracking (Call-ID, tags, CSeq) ✓
 
 **RFC 3261 Features Not Implemented**:
+
 - Transaction layer (retransmissions, timeouts, T1/T2 timers)
 - Digest authentication (401 challenges)
 - TCP/TLS transports
@@ -282,13 +306,15 @@ a=rtpmap:0 PCMU/8000
 - UPDATE (session modification)
 - Route set handling (proxy scenarios)
 
-**Impact**: Suitable for basic SIP testing, security research, and simple call scenarios. Not suitable for production SIP client use or complex call flows.
+**Impact**: Suitable for basic SIP testing, security research, and simple call scenarios. Not suitable for production
+SIP client use or complex call flows.
 
 ## Use Cases
 
 ### SIP Server Testing
 
 **Test Registration**:
+
 ```
 Connect to SIP server at 192.168.1.100:5060.
 REGISTER as alice@example.com.
@@ -297,6 +323,7 @@ Log all responses.
 ```
 
 **Test Call Flow**:
+
 ```
 Connect to SIP server at 192.168.1.100:5060.
 REGISTER as alice@example.com with expires 3600.
@@ -309,6 +336,7 @@ Log all responses and SDP bodies.
 ### VoIP Security Research
 
 **Scan SIP Server**:
+
 ```
 Connect to target SIP server.
 Send OPTIONS to various user IDs (alice, bob, admin, etc.).
@@ -317,6 +345,7 @@ Attempt REGISTER for discovered users.
 ```
 
 **Test Unauthorized Call Attempts**:
+
 ```
 Connect to SIP server without authentication.
 Attempt INVITE to premium number.
@@ -326,6 +355,7 @@ Log whether server allows call (security issue).
 ### Presence Checking
 
 **Check User Availability**:
+
 ```
 Connect to SIP server.
 Send OPTIONS to user@domain.
@@ -391,7 +421,8 @@ Log final status.
 
 **Call Hijacking**: Without authentication, cannot guarantee identity. Suitable for testing, not secure communications.
 
-**Eavesdropping**: UDP is unencrypted. All SIP messages visible on network. Use SIPS (TLS) for encryption (not implemented).
+**Eavesdropping**: UDP is unencrypted. All SIP messages visible on network. Use SIPS (TLS) for encryption (not
+implemented).
 
 ## References
 
@@ -404,6 +435,7 @@ Log final status.
 ## Implemented Features
 
 **Completed** (RFC 3261 Basic Compliance):
+
 - ✓ ACK request handling (automatic after 200 OK to INVITE)
 - ✓ Provisional response handling (1xx responses skipped)
 - ✓ Queued response processing (handles concurrent responses)
@@ -413,17 +445,20 @@ Log final status.
 ## Future Enhancements
 
 **Priority 1** (Enhanced Reliability):
+
 - Digest authentication (401 challenge/response)
 - Retransmission handling (transaction layer)
 - Error response handling improvements
 
 **Priority 2** (Advanced Features):
+
 - TCP transport support
 - TLS (SIPS) on port 5061
 - Route set tracking (Record-Route/Route headers)
 - SUBSCRIBE/NOTIFY (presence)
 
 **Priority 3** (Production-Ready):
+
 - SIP URI parser (proper URI handling)
 - Multiple concurrent dialog support
 - RTP media integration (actual voice/video)
@@ -434,22 +469,23 @@ Log final status.
 **E2E Testing**: Test against NetGet SIP server (self-testing)
 
 **Test Scenarios**:
+
 1. **Registration Test** (< 3 LLM calls):
-   - Connect client to SIP server
-   - LLM sends REGISTER
-   - Server responds 200 OK
-   - Verify registration accepted
+    - Connect client to SIP server
+    - LLM sends REGISTER
+    - Server responds 200 OK
+    - Verify registration accepted
 
 2. **Call Attempt Test** (< 5 LLM calls):
-   - REGISTER with server
-   - INVITE target user
-   - Receive 180 Ringing or 200 OK
-   - Verify SDP in response
+    - REGISTER with server
+    - INVITE target user
+    - Receive 180 Ringing or 200 OK
+    - Verify SDP in response
 
 3. **OPTIONS Query Test** (< 2 LLM calls):
-   - Send OPTIONS to server
-   - Receive 200 OK with Allow header
-   - Verify supported methods listed
+    - Send OPTIONS to server
+    - Receive 200 OK with Allow header
+    - Verify supported methods listed
 
 **LLM Call Budget**: 5-10 LLM calls total for comprehensive E2E test suite using scripting mode where possible.
 
@@ -460,6 +496,7 @@ Log final status.
 **When to Migrate**: If SIP URI parsing becomes complex or authentication support needed.
 
 **Migration Path**:
+
 1. Replace manual parser with `rsip::Request` and `rsip::Response`
 2. Use `rsip::Uri` for proper URI handling
 3. Integrate digest auth with `rsip::headers::Authorization`
@@ -470,12 +507,14 @@ Log final status.
 ## Comparison to SIP Server
 
 **Similarities**:
+
 - Both use UDP on port 5060
 - Both parse/generate SIP text messages
 - Both use manual implementation (no external SIP library)
 - Both have LLM-controlled actions
 
 **Differences**:
+
 - **Server**: Listens for requests, generates responses
 - **Client**: Sends requests, parses responses
 - **Server**: Stateless possible (can respond without memory)

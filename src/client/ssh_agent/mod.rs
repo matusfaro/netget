@@ -17,6 +17,9 @@ use tokio::net::UnixStream;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, trace};
 
+use crate::client::ssh_agent::actions::{
+    SSH_AGENT_CLIENT_CONNECTED_EVENT, SSH_AGENT_CLIENT_RESPONSE_RECEIVED_EVENT,
+};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::actions::client_trait::ClientActionResult;
 use crate::llm::ollama_client::OllamaClient;
@@ -24,7 +27,6 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::ssh_agent::actions::{SSH_AGENT_CLIENT_CONNECTED_EVENT, SSH_AGENT_CLIENT_RESPONSE_RECEIVED_EVENT};
 
 /// SSH Agent message types
 const SSH_AGENTC_REQUEST_IDENTITIES: u8 = 11;
@@ -70,24 +72,39 @@ impl SshAgentClient {
             // Try SSH_AUTH_SOCK environment variable
             std::env::var("SSH_AUTH_SOCK")
                 .ok()
-                .and_then(|s| if s.is_empty() { None } else { Some(PathBuf::from(s)) })
+                .and_then(|s| {
+                    if s.is_empty() {
+                        None
+                    } else {
+                        Some(PathBuf::from(s))
+                    }
+                })
                 .unwrap_or_else(|| PathBuf::from("./ssh-agent.sock"))
         } else {
             PathBuf::from(&remote_addr)
         };
 
-        info!("SSH Agent client {} connecting to {:?}", client_id, socket_path);
+        info!(
+            "SSH Agent client {} connecting to {:?}",
+            client_id, socket_path
+        );
 
         // Connect to Unix socket
-        let stream = UnixStream::connect(&socket_path)
-            .await
-            .context(format!("Failed to connect to SSH Agent at {:?}", socket_path))?;
+        let stream = UnixStream::connect(&socket_path).await.context(format!(
+            "Failed to connect to SSH Agent at {:?}",
+            socket_path
+        ))?;
 
         info!("SSH Agent client {} connected", client_id);
 
         // Update client state
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] SSH Agent client {} connected to {:?}", client_id, socket_path));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] SSH Agent client {} connected to {:?}",
+            client_id, socket_path
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Split stream
@@ -123,7 +140,10 @@ impl SshAgentClient {
             )
             .await
             {
-                Ok(ClientLlmResult { actions, memory_updates }) => {
+                Ok(ClientLlmResult {
+                    actions,
+                    memory_updates,
+                }) => {
                     // Update memory
                     if let Some(mem) = memory_updates {
                         client_data.lock().await.memory = mem;
@@ -149,7 +169,9 @@ impl SshAgentClient {
                             }
                             Ok(ClientActionResult::Disconnect) => {
                                 info!("SSH Agent client {} disconnecting", client_id);
-                                app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
+                                app_state
+                                    .update_client_status(client_id, ClientStatus::Disconnected)
+                                    .await;
                                 return Ok("127.0.0.1:0".parse().unwrap());
                             }
                             Ok(ClientActionResult::WaitForMore) => {}
@@ -180,8 +202,13 @@ impl SshAgentClient {
                 match read_half.read(&mut buffer).await {
                     Ok(0) => {
                         info!("SSH Agent client {} disconnected", client_id);
-                        app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                        let _ = status_tx.send(format!("[CLIENT] SSH Agent client {} disconnected", client_id));
+                        app_state
+                            .update_client_status(client_id, ClientStatus::Disconnected)
+                            .await;
+                        let _ = status_tx.send(format!(
+                            "[CLIENT] SSH Agent client {} disconnected",
+                            client_id
+                        ));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         break;
                     }
@@ -200,7 +227,9 @@ impl SshAgentClient {
                                 drop(client_data_lock);
 
                                 // Parse response and call LLM
-                                if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
+                                if let Some(instruction) =
+                                    app_state.get_instruction_for_client(client_id).await
+                                {
                                     match Self::parse_response(&data) {
                                         Ok(event_data) => {
                                             let event = Event::new(
@@ -220,7 +249,10 @@ impl SshAgentClient {
                                             )
                                             .await
                                             {
-                                                Ok(ClientLlmResult { actions, memory_updates }) => {
+                                                Ok(ClientLlmResult {
+                                                    actions,
+                                                    memory_updates,
+                                                }) => {
                                                     // Update memory
                                                     if let Some(mem) = memory_updates {
                                                         client_data.lock().await.memory = mem;
@@ -229,27 +261,40 @@ impl SshAgentClient {
                                                     // Execute actions
                                                     for action in actions {
                                                         use crate::llm::actions::client_trait::Client;
-                                                        match protocol.as_ref().execute_action(action) {
-                                                            Ok(ClientActionResult::Custom { name, data }) => {
-                                                                if let Err(e) = Self::handle_custom_action(
-                                                                    &name,
-                                                                    data,
-                                                                    client_id,
-                                                                    &write_half_arc,
-                                                                    &app_state,
-                                                                    &status_tx,
-                                                                )
-                                                                .await
+                                                        match protocol
+                                                            .as_ref()
+                                                            .execute_action(action)
+                                                        {
+                                                            Ok(ClientActionResult::Custom {
+                                                                name,
+                                                                data,
+                                                            }) => {
+                                                                if let Err(e) =
+                                                                    Self::handle_custom_action(
+                                                                        &name,
+                                                                        data,
+                                                                        client_id,
+                                                                        &write_half_arc,
+                                                                        &app_state,
+                                                                        &status_tx,
+                                                                    )
+                                                                    .await
                                                                 {
                                                                     error!("Failed to execute custom action: {}", e);
                                                                 }
                                                             }
                                                             Ok(ClientActionResult::Disconnect) => {
                                                                 info!("SSH Agent client {} disconnecting", client_id);
-                                                                app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
+                                                                app_state
+                                                                    .update_client_status(
+                                                                        client_id,
+                                                                        ClientStatus::Disconnected,
+                                                                    )
+                                                                    .await;
                                                                 return;
                                                             }
-                                                            Ok(ClientActionResult::WaitForMore) => {}
+                                                            Ok(ClientActionResult::WaitForMore) => {
+                                                            }
                                                             Ok(ClientActionResult::NoAction) => {}
                                                             Ok(ClientActionResult::SendData(_)) => {
                                                                 error!("SendData not expected in SSH Agent client (protocol should use Custom actions)");
@@ -258,13 +303,19 @@ impl SshAgentClient {
                                                                 error!("Multiple not expected in SSH Agent client (protocol should use individual actions)");
                                                             }
                                                             Err(e) => {
-                                                                error!("Action execution error: {}", e);
+                                                                error!(
+                                                                    "Action execution error: {}",
+                                                                    e
+                                                                );
                                                             }
                                                         }
                                                     }
                                                 }
                                                 Err(e) => {
-                                                    error!("LLM error for SSH Agent client {}: {}", client_id, e);
+                                                    error!(
+                                                        "LLM error for SSH Agent client {}: {}",
+                                                        client_id, e
+                                                    );
                                                 }
                                             }
                                         }
@@ -299,7 +350,9 @@ impl SshAgentClient {
                     }
                     Err(e) => {
                         error!("SSH Agent client {} read error: {}", client_id, e);
-                        app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
+                        app_state
+                            .update_client_status(client_id, ClientStatus::Error(e.to_string()))
+                            .await;
                         break;
                     }
                 }
@@ -385,7 +438,9 @@ impl SshAgentClient {
                 trace!("SSH Agent client {} sent REQUEST_IDENTITIES", client_id);
             }
             "sign_request" => {
-                let public_key_blob_hex = data["public_key_blob_hex"].as_str().context("Missing public_key_blob_hex")?;
+                let public_key_blob_hex = data["public_key_blob_hex"]
+                    .as_str()
+                    .context("Missing public_key_blob_hex")?;
                 let data_hex = data["data_hex"].as_str().context("Missing data_hex")?;
                 let flags = data["flags"].as_u64().unwrap_or(0) as u32;
 
@@ -403,8 +458,12 @@ impl SshAgentClient {
             }
             "add_identity" => {
                 let key_type = data["key_type"].as_str().context("Missing key_type")?;
-                let public_key_blob_hex = data["public_key_blob_hex"].as_str().context("Missing public_key_blob_hex")?;
-                let private_key_blob_hex = data["private_key_blob_hex"].as_str().context("Missing private_key_blob_hex")?;
+                let public_key_blob_hex = data["public_key_blob_hex"]
+                    .as_str()
+                    .context("Missing public_key_blob_hex")?;
+                let private_key_blob_hex = data["private_key_blob_hex"]
+                    .as_str()
+                    .context("Missing private_key_blob_hex")?;
                 let comment = data["comment"].as_str().unwrap_or("");
 
                 let public_key_blob = hex::decode(public_key_blob_hex)?;
@@ -421,7 +480,9 @@ impl SshAgentClient {
                 trace!("SSH Agent client {} sent ADD_IDENTITY", client_id);
             }
             "remove_identity" => {
-                let public_key_blob_hex = data["public_key_blob_hex"].as_str().context("Missing public_key_blob_hex")?;
+                let public_key_blob_hex = data["public_key_blob_hex"]
+                    .as_str()
+                    .context("Missing public_key_blob_hex")?;
                 let public_key_blob = hex::decode(public_key_blob_hex)?;
 
                 let mut message = BytesMut::new();

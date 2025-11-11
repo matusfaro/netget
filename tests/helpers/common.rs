@@ -1,7 +1,7 @@
 // Shared test utilities for NetGet E2E testing
 
-use std::path::PathBuf;
 use std::future::Future;
+use std::path::PathBuf;
 use std::time::Duration;
 use tokio::process::Command;
 use tokio::time::sleep;
@@ -57,7 +57,11 @@ where
         match condition().await {
             Ok(result) => {
                 if attempts > 1 {
-                    println!("  [RETRY] Condition succeeded after {} attempts in {:?}", attempts, start.elapsed());
+                    println!(
+                        "  [RETRY] Condition succeeded after {} attempts in {:?}",
+                        attempts,
+                        start.elapsed()
+                    );
                 }
                 return Ok(result);
             }
@@ -173,6 +177,9 @@ pub fn build_prompt(base_stack: &str, port: u16, instructions: &str) -> String {
     if port == 0 {
         format!("listen on port 0 via {}. {}", base_stack, instructions)
     } else {
-        format!("listen on port {} via {}. {}", port, base_stack, instructions)
+        format!(
+            "listen on port {} via {}. {}",
+            port, base_stack, instructions
+        )
     }
 }

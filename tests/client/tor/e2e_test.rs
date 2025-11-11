@@ -8,18 +8,23 @@
 
 #![cfg(all(test, feature = "tor-client"))]
 
+use netget::llm::OllamaClient;
 use netget::state::app_state::AppState;
 use netget::state::ClientStatus;
-use netget::llm::OllamaClient;
-use tokio::sync::mpsc;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::mpsc;
 
 /// Helper to create test app state with Tor client
 async fn create_test_client(
     instruction: &str,
     remote_addr: &str,
-) -> (Arc<AppState>, u32, OllamaClient, mpsc::UnboundedReceiver<String>) {
+) -> (
+    Arc<AppState>,
+    u32,
+    OllamaClient,
+    mpsc::UnboundedReceiver<String>,
+) {
     let (status_tx, status_rx) = mpsc::unbounded_channel();
     let app_state = Arc::new(AppState::new(status_tx.clone()));
 
@@ -49,11 +54,8 @@ async fn create_test_client(
 #[tokio::test]
 #[ignore] // Ignore by default due to Tor network requirement
 async fn test_tor_bootstrap() {
-    let (app_state, client_id, llm_client, mut status_rx) = create_test_client(
-        "Wait for connection",
-        "check.torproject.org:80",
-    )
-    .await;
+    let (app_state, client_id, llm_client, mut status_rx) =
+        create_test_client("Wait for connection", "check.torproject.org:80").await;
 
     let status_tx = app_state.get_status_tx();
 
@@ -109,10 +111,7 @@ async fn test_tor_bootstrap() {
     let has_bootstrap_msg = messages.iter().any(|m| {
         m.contains("Tor client") && (m.contains("initializing") || m.contains("bootstrapped"))
     });
-    assert!(
-        has_bootstrap_msg,
-        "Expected to see Tor bootstrap messages"
-    );
+    assert!(has_bootstrap_msg, "Expected to see Tor bootstrap messages");
 }
 
 /// Test 2: Connect to check.torproject.org and verify Tor usage
@@ -158,13 +157,10 @@ async fn test_tor_check_connection() {
     }
 
     // Verify we connected through Tor
-    let has_connected = messages.iter().any(|m| {
-        m.contains("Tor client") && m.contains("connected")
-    });
-    assert!(
-        has_connected,
-        "Expected to see Tor connection message"
-    );
+    let has_connected = messages
+        .iter()
+        .any(|m| m.contains("Tor client") && m.contains("connected"));
+    assert!(has_connected, "Expected to see Tor connection message");
 }
 
 /// Test 3: Connect to onion service (DuckDuckGo)
@@ -209,9 +205,9 @@ async fn test_tor_onion_service() {
     }
 
     // Verify we connected to onion service
-    let has_onion_connected = messages.iter().any(|m| {
-        m.contains("Tor client") && m.contains("connected") && m.contains(".onion")
-    });
+    let has_onion_connected = messages
+        .iter()
+        .any(|m| m.contains("Tor client") && m.contains("connected") && m.contains(".onion"));
     assert!(
         has_onion_connected,
         "Expected to see onion service connection"

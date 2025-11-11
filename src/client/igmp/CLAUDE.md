@@ -2,24 +2,28 @@
 
 ## Overview
 
-The IGMP (Internet Group Management Protocol) client enables NetGet to join and leave multicast groups, receive multicast data, and send multicast packets. This implementation uses socket options for multicast group management, which doesn't require root privileges for basic operations.
+The IGMP (Internet Group Management Protocol) client enables NetGet to join and leave multicast groups, receive
+multicast data, and send multicast packets. This implementation uses socket options for multicast group management,
+which doesn't require root privileges for basic operations.
 
 ## Library Choices
 
 ### Primary Approach: Socket Options (socket2)
+
 - **Library**: `socket2` v0.5 (already a NetGet dependency)
 - **Purpose**: Multicast group join/leave using `IP_ADD_MEMBERSHIP` and `IP_DROP_MEMBERSHIP`
 - **Privileges**: No root required for receiving multicast
 - **Pros**:
-  - Simple and portable
-  - Kernel handles IGMP protocol messages automatically
-  - Works on all platforms (Linux, macOS, Windows)
-  - No raw socket privileges needed
+    - Simple and portable
+    - Kernel handles IGMP protocol messages automatically
+    - Works on all platforms (Linux, macOS, Windows)
+    - No raw socket privileges needed
 - **Cons**:
-  - Cannot manually craft IGMP packets
-  - Relies on kernel's IGMP implementation
+    - Cannot manually craft IGMP packets
+    - Relies on kernel's IGMP implementation
 
 ### Data Transport: tokio::net::UdpSocket
+
 - **Library**: `tokio::net::UdpSocket` (tokio standard library)
 - **Purpose**: Receiving multicast UDP datagrams and sending multicast data
 - **Integration**: Seamless async I/O with tokio runtime
@@ -50,6 +54,7 @@ Idle → Processing → Idle
 ### Multicast Group Tracking
 
 The client tracks joined multicast groups in `IgmpClientData::joined_groups` (HashSet<Ipv4Addr>). This allows:
+
 - Preventing duplicate joins
 - Tracking active memberships
 - Clean leave on client shutdown (future enhancement)
@@ -59,60 +64,60 @@ The client tracks joined multicast groups in `IgmpClientData::joined_groups` (Ha
 ### Events
 
 1. **igmp_connected** - Triggered when client binds and is ready
-   - Parameters: `local_addr` (socket bind address)
+    - Parameters: `local_addr` (socket bind address)
 
 2. **igmp_data_received** - Triggered on multicast datagram reception
-   - Parameters:
-     - `data_hex`: Hexadecimal-encoded datagram payload
-     - `data_length`: Payload size in bytes
-     - `source_addr`: Sender's IP:port
+    - Parameters:
+        - `data_hex`: Hexadecimal-encoded datagram payload
+        - `data_length`: Payload size in bytes
+        - `source_addr`: Sender's IP:port
 
 ### Actions
 
 #### Async Actions (User-triggered)
 
 1. **join_multicast_group**
-   - Joins an IPv4 multicast group
-   - Parameters:
-     - `multicast_addr`: Multicast IP (e.g., `239.1.2.3`)
-     - `interface_addr`: Local interface (default: `0.0.0.0` for any)
-   - Effect: Kernel sends IGMP Membership Report
-   - Example:
-     ```json
-     {
-       "type": "join_multicast_group",
-       "multicast_addr": "239.1.2.3",
-       "interface_addr": "0.0.0.0"
-     }
-     ```
+    - Joins an IPv4 multicast group
+    - Parameters:
+        - `multicast_addr`: Multicast IP (e.g., `239.1.2.3`)
+        - `interface_addr`: Local interface (default: `0.0.0.0` for any)
+    - Effect: Kernel sends IGMP Membership Report
+    - Example:
+      ```json
+      {
+        "type": "join_multicast_group",
+        "multicast_addr": "239.1.2.3",
+        "interface_addr": "0.0.0.0"
+      }
+      ```
 
 2. **leave_multicast_group**
-   - Leaves an IPv4 multicast group
-   - Parameters: Same as join
-   - Effect: Kernel sends IGMP Leave Group message
-   - Example:
-     ```json
-     {
-       "type": "leave_multicast_group",
-       "multicast_addr": "239.1.2.3"
-     }
-     ```
+    - Leaves an IPv4 multicast group
+    - Parameters: Same as join
+    - Effect: Kernel sends IGMP Leave Group message
+    - Example:
+      ```json
+      {
+        "type": "leave_multicast_group",
+        "multicast_addr": "239.1.2.3"
+      }
+      ```
 
 3. **send_multicast**
-   - Sends data to a multicast group
-   - Parameters:
-     - `multicast_addr`: Destination multicast IP
-     - `port`: Destination port
-     - `data_hex`: Hex-encoded payload
-   - Example:
-     ```json
-     {
-       "type": "send_multicast",
-       "multicast_addr": "239.1.2.3",
-       "port": 5000,
-       "data_hex": "48656c6c6f"
-     }
-     ```
+    - Sends data to a multicast group
+    - Parameters:
+        - `multicast_addr`: Destination multicast IP
+        - `port`: Destination port
+        - `data_hex`: Hex-encoded payload
+    - Example:
+      ```json
+      {
+        "type": "send_multicast",
+        "multicast_addr": "239.1.2.3",
+        "port": 5000,
+        "data_hex": "48656c6c6f"
+      }
+      ```
 
 #### Sync Actions (Response to events)
 
@@ -130,7 +135,8 @@ sock.join_multicast_v4(&multicast_ip, &interface_ip)?; // Kernel sends IGMP repo
 sock.leave_multicast_v4(&multicast_ip, &interface_ip)?; // Kernel sends IGMP leave
 ```
 
-**Important**: These operations trigger the kernel to send IGMP protocol messages (Membership Report, Leave Group). The client doesn't construct raw IGMP packets.
+**Important**: These operations trigger the kernel to send IGMP protocol messages (Membership Report, Leave Group). The
+client doesn't construct raw IGMP packets.
 
 ### Multicast Reception
 
@@ -155,23 +161,28 @@ socket.send_to(&data, "239.1.2.3:5000").await?;
 ## Limitations
 
 ### 1. IPv4 Only
+
 - Current implementation supports only IPv4 multicast (224.0.0.0/4)
 - IPv6 multicast (ff00::/8) requires different socket options (`IPV6_ADD_MEMBERSHIP`)
 
 ### 2. No Raw IGMP Packet Construction
+
 - Cannot manually craft IGMP packets (requires raw sockets + root)
 - Cannot send custom IGMP queries or reports
 - Relies entirely on kernel's IGMP implementation
 
 ### 3. Single Interface Binding
+
 - Socket binds to `0.0.0.0` (all interfaces) by default
 - Cannot explicitly select interface for joins without additional socket configuration
 
 ### 4. No IGMP Version Control
+
 - Kernel chooses IGMP version (IGMPv1/v2/v3) based on router behavior
 - Client cannot force specific IGMP version
 
 ### 5. No Group-Source Filtering (IGMPv3)
+
 - Cannot use source-specific multicast (SSM)
 - Would require `IP_ADD_SOURCE_MEMBERSHIP` socket option (future enhancement)
 
@@ -180,6 +191,7 @@ socket.send_to(&data, "239.1.2.3:5000").await?;
 ### Local Testing
 
 Multicast works on localhost but has limitations:
+
 - **Loopback Multicast**: Enabled by default on most systems
 - **Same Machine**: Can test sender/receiver on same host
 - **Firewall**: Ensure multicast traffic (224.0.0.0/4) is not blocked
@@ -187,6 +199,7 @@ Multicast works on localhost but has limitations:
 ### Network Testing
 
 For real multicast testing:
+
 - **Multicast-Capable Network**: Router must support IGMP
 - **IGMP Querier**: At least one IGMP querier on subnet
 - **TTL**: Ensure TTL > 1 for multi-hop multicast
@@ -232,13 +245,13 @@ For real multicast testing:
 
 NetGet also has an IGMP **server** (`src/server/igmp/`), which differs:
 
-| Feature | Client | Server |
-|---------|--------|--------|
-| **Purpose** | Join/leave groups, receive multicast | Respond to IGMP queries (router-like) |
-| **Socket Type** | UDP socket (port 0 or user-specified) | Raw IP socket (protocol 2) |
-| **Privileges** | No root required | Requires root/CAP_NET_RAW |
-| **IGMP Packets** | Kernel handles | Manual construction |
-| **Use Case** | Multicast data consumer | IGMP protocol testing |
+| Feature          | Client                                | Server                                |
+|------------------|---------------------------------------|---------------------------------------|
+| **Purpose**      | Join/leave groups, receive multicast  | Respond to IGMP queries (router-like) |
+| **Socket Type**  | UDP socket (port 0 or user-specified) | Raw IP socket (protocol 2)            |
+| **Privileges**   | No root required                      | Requires root/CAP_NET_RAW             |
+| **IGMP Packets** | Kernel handles                        | Manual construction                   |
+| **Use Case**     | Multicast data consumer               | IGMP protocol testing                 |
 
 ## Security Considerations
 

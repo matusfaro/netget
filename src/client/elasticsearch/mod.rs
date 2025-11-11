@@ -9,16 +9,15 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
+use crate::client::elasticsearch::actions::{
+    ELASTICSEARCH_CLIENT_CONNECTED_EVENT, ELASTICSEARCH_CLIENT_RESPONSE_RECEIVED_EVENT,
+};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::elasticsearch::actions::{
-    ELASTICSEARCH_CLIENT_CONNECTED_EVENT,
-    ELASTICSEARCH_CLIENT_RESPONSE_RECEIVED_EVENT,
-};
 
 /// Elasticsearch client that interacts with Elasticsearch clusters
 pub struct ElasticsearchClient;
@@ -35,14 +34,18 @@ impl ElasticsearchClient {
         // For Elasticsearch, "connection" is logical (HTTP-based)
         // We'll create a reqwest client configured for Elasticsearch
 
-        info!("Elasticsearch client {} initialized for {}", client_id, remote_addr);
+        info!(
+            "Elasticsearch client {} initialized for {}",
+            client_id, remote_addr
+        );
 
         // Ensure URL has scheme
-        let cluster_url = if remote_addr.starts_with("http://") || remote_addr.starts_with("https://") {
-            remote_addr.clone()
-        } else {
-            format!("http://{}", remote_addr)
-        };
+        let cluster_url =
+            if remote_addr.starts_with("http://") || remote_addr.starts_with("https://") {
+                remote_addr.clone()
+            } else {
+                format!("http://{}", remote_addr)
+            };
 
         // Build HTTP client for Elasticsearch
         let _http_client = reqwest::Client::builder()
@@ -51,20 +54,25 @@ impl ElasticsearchClient {
             .context("Failed to build HTTP client for Elasticsearch")?;
 
         // Store client configuration in protocol_data
-        app_state.with_client_mut(client_id, |client| {
-            client.set_protocol_field(
-                "es_client".to_string(),
-                serde_json::json!("initialized"),
-            );
-            client.set_protocol_field(
-                "cluster_url".to_string(),
-                serde_json::json!(cluster_url.clone()),
-            );
-        }).await;
+        app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .set_protocol_field("es_client".to_string(), serde_json::json!("initialized"));
+                client.set_protocol_field(
+                    "cluster_url".to_string(),
+                    serde_json::json!(cluster_url.clone()),
+                );
+            })
+            .await;
 
         // Update status
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] Elasticsearch client {} ready for {}", client_id, cluster_url));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] Elasticsearch client {} ready for {}",
+            client_id, cluster_url
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Call LLM with connected event to get initial instructions
@@ -77,7 +85,10 @@ impl ElasticsearchClient {
                 }),
             );
 
-            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+            let memory = app_state
+                .get_memory_for_client(client_id)
+                .await
+                .unwrap_or_default();
 
             match call_llm_for_client(
                 &llm_client,
@@ -88,8 +99,13 @@ impl ElasticsearchClient {
                 Some(&event),
                 protocol.as_ref(),
                 &status_tx,
-            ).await {
-                Ok(ClientLlmResult { actions, memory_updates }) => {
+            )
+            .await
+            {
+                Ok(ClientLlmResult {
+                    actions,
+                    memory_updates,
+                }) => {
                     // Update memory
                     if let Some(mem) = memory_updates {
                         app_state.set_memory_for_client(client_id, mem).await;
@@ -99,53 +115,54 @@ impl ElasticsearchClient {
                     use crate::llm::actions::client_trait::{Client, ClientActionResult};
                     for action in actions {
                         match protocol.execute_action(action) {
-                            Ok(ClientActionResult::Custom { name, data }) => {
-                                match name.as_str() {
-                                    "index_document" => {
-                                        let index = data.get("index")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("unknown")
-                                            .to_string();
-                                        let id = data.get("id")
-                                            .and_then(|v| v.as_str())
-                                            .map(|s| s.to_string());
-                                        let document = data.get("document")
-                                            .cloned()
-                                            .unwrap_or(serde_json::json!({}));
+                            Ok(ClientActionResult::Custom { name, data }) => match name.as_str() {
+                                "index_document" => {
+                                    let index = data
+                                        .get("index")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("unknown")
+                                        .to_string();
+                                    let id = data
+                                        .get("id")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string());
+                                    let document = data
+                                        .get("document")
+                                        .cloned()
+                                        .unwrap_or(serde_json::json!({}));
 
-                                        tokio::spawn(Self::index_document(
-                                            client_id,
-                                            index,
-                                            id,
-                                            document,
-                                            app_state.clone(),
-                                            llm_client.clone(),
-                                            status_tx.clone(),
-                                        ));
-                                    }
-                                    "search" => {
-                                        let index = data.get("index")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("unknown")
-                                            .to_string();
-                                        let query = data.get("query")
-                                            .cloned()
-                                            .unwrap_or(serde_json::json!({}));
-
-                                        tokio::spawn(Self::search(
-                                            client_id,
-                                            index,
-                                            query,
-                                            app_state.clone(),
-                                            llm_client.clone(),
-                                            status_tx.clone(),
-                                        ));
-                                    }
-                                    _ => {
-                                        info!("Ignoring action {} during initial connection", name);
-                                    }
+                                    tokio::spawn(Self::index_document(
+                                        client_id,
+                                        index,
+                                        id,
+                                        document,
+                                        app_state.clone(),
+                                        llm_client.clone(),
+                                        status_tx.clone(),
+                                    ));
                                 }
-                            }
+                                "search" => {
+                                    let index = data
+                                        .get("index")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("unknown")
+                                        .to_string();
+                                    let query =
+                                        data.get("query").cloned().unwrap_or(serde_json::json!({}));
+
+                                    tokio::spawn(Self::search(
+                                        client_id,
+                                        index,
+                                        query,
+                                        app_state.clone(),
+                                        llm_client.clone(),
+                                        status_tx.clone(),
+                                    ));
+                                }
+                                _ => {
+                                    info!("Ignoring action {} during initial connection", name);
+                                }
+                            },
                             Ok(ClientActionResult::NoAction) => {
                                 // LLM chose to take no action
                             }
@@ -169,7 +186,10 @@ impl ElasticsearchClient {
                     }
                 }
                 Err(e) => {
-                    error!("Initial LLM call failed for Elasticsearch client {}: {}", client_id, e);
+                    error!(
+                        "Initial LLM call failed for Elasticsearch client {}: {}",
+                        client_id, e
+                    );
                 }
             }
         }
@@ -209,7 +229,10 @@ impl ElasticsearchClient {
             format!("{}/{}/_doc", cluster_url, index)
         };
 
-        info!("Elasticsearch client {} indexing document into {}", client_id, index);
+        info!(
+            "Elasticsearch client {} indexing document into {}",
+            client_id, index
+        );
 
         let http_client = reqwest::Client::new();
         let response = http_client
@@ -220,10 +243,15 @@ impl ElasticsearchClient {
             .context("Failed to send index request")?;
 
         let status_code = response.status().as_u16();
-        let response_body: serde_json::Value = response.json().await
+        let response_body: serde_json::Value = response
+            .json()
+            .await
             .unwrap_or(serde_json::json!({"error": "Failed to parse response"}));
 
-        info!("Elasticsearch client {} index response: {}", client_id, status_code);
+        info!(
+            "Elasticsearch client {} index response: {}",
+            client_id, status_code
+        );
 
         Self::call_llm_with_response(
             client_id,
@@ -233,7 +261,8 @@ impl ElasticsearchClient {
             app_state,
             llm_client,
             status_tx,
-        ).await
+        )
+        .await
     }
 
     /// Search documents in Elasticsearch
@@ -248,7 +277,10 @@ impl ElasticsearchClient {
         let cluster_url = Self::get_cluster_url(&app_state, client_id).await?;
         let url = format!("{}/{}/_search", cluster_url, index);
 
-        info!("Elasticsearch client {} searching index {}", client_id, index);
+        info!(
+            "Elasticsearch client {} searching index {}",
+            client_id, index
+        );
 
         let search_body = serde_json::json!({
             "query": query
@@ -263,12 +295,16 @@ impl ElasticsearchClient {
             .context("Failed to send search request")?;
 
         let status_code = response.status().as_u16();
-        let response_body: serde_json::Value = response.json().await
+        let response_body: serde_json::Value = response
+            .json()
+            .await
             .unwrap_or(serde_json::json!({"error": "Failed to parse response"}));
 
-        info!("Elasticsearch client {} search response: {} hits",
+        info!(
+            "Elasticsearch client {} search response: {} hits",
             client_id,
-            response_body.get("hits")
+            response_body
+                .get("hits")
                 .and_then(|h| h.get("total"))
                 .and_then(|t| t.get("value"))
                 .and_then(|v| v.as_u64())
@@ -283,7 +319,8 @@ impl ElasticsearchClient {
             app_state,
             llm_client,
             status_tx,
-        ).await
+        )
+        .await
     }
 
     /// Get a document by ID
@@ -298,7 +335,10 @@ impl ElasticsearchClient {
         let cluster_url = Self::get_cluster_url(&app_state, client_id).await?;
         let url = format!("{}/{}/_doc/{}", cluster_url, index, id);
 
-        info!("Elasticsearch client {} getting document {} from {}", client_id, id, index);
+        info!(
+            "Elasticsearch client {} getting document {} from {}",
+            client_id, id, index
+        );
 
         let http_client = reqwest::Client::new();
         let response = http_client
@@ -308,7 +348,9 @@ impl ElasticsearchClient {
             .context("Failed to send get request")?;
 
         let status_code = response.status().as_u16();
-        let response_body: serde_json::Value = response.json().await
+        let response_body: serde_json::Value = response
+            .json()
+            .await
             .unwrap_or(serde_json::json!({"error": "Failed to parse response"}));
 
         Self::call_llm_with_response(
@@ -319,7 +361,8 @@ impl ElasticsearchClient {
             app_state,
             llm_client,
             status_tx,
-        ).await
+        )
+        .await
     }
 
     /// Delete a document by ID
@@ -334,7 +377,10 @@ impl ElasticsearchClient {
         let cluster_url = Self::get_cluster_url(&app_state, client_id).await?;
         let url = format!("{}/{}/_doc/{}", cluster_url, index, id);
 
-        info!("Elasticsearch client {} deleting document {} from {}", client_id, id, index);
+        info!(
+            "Elasticsearch client {} deleting document {} from {}",
+            client_id, id, index
+        );
 
         let http_client = reqwest::Client::new();
         let response = http_client
@@ -344,7 +390,9 @@ impl ElasticsearchClient {
             .context("Failed to send delete request")?;
 
         let status_code = response.status().as_u16();
-        let response_body: serde_json::Value = response.json().await
+        let response_body: serde_json::Value = response
+            .json()
+            .await
             .unwrap_or(serde_json::json!({"error": "Failed to parse response"}));
 
         Self::call_llm_with_response(
@@ -355,7 +403,8 @@ impl ElasticsearchClient {
             app_state,
             llm_client,
             status_tx,
-        ).await
+        )
+        .await
     }
 
     /// Execute bulk operations
@@ -369,15 +418,21 @@ impl ElasticsearchClient {
         let cluster_url = Self::get_cluster_url(&app_state, client_id).await?;
         let url = format!("{}/_bulk", cluster_url);
 
-        info!("Elasticsearch client {} executing {} bulk operations", client_id, operations.len());
+        info!(
+            "Elasticsearch client {} executing {} bulk operations",
+            client_id,
+            operations.len()
+        );
 
         // Build NDJSON bulk request body
         let mut bulk_body = String::new();
         for op in operations {
-            let action = op.get("action")
+            let action = op
+                .get("action")
                 .and_then(|a| a.as_str())
                 .context("Missing 'action' field in bulk operation")?;
-            let index = op.get("index")
+            let index = op
+                .get("index")
                 .and_then(|i| i.as_str())
                 .context("Missing 'index' field in bulk operation")?;
             let id = op.get("id").and_then(|i| i.as_str());
@@ -393,7 +448,8 @@ impl ElasticsearchClient {
                     bulk_body.push_str(&serde_json::to_string(&meta)?);
                     bulk_body.push('\n');
 
-                    let document = op.get("document")
+                    let document = op
+                        .get("document")
                         .context("Missing 'document' field for index action")?;
                     bulk_body.push_str(&serde_json::to_string(&document)?);
                     bulk_body.push('\n');
@@ -420,7 +476,8 @@ impl ElasticsearchClient {
                     bulk_body.push_str(&serde_json::to_string(&meta)?);
                     bulk_body.push('\n');
 
-                    let document = op.get("document")
+                    let document = op
+                        .get("document")
                         .context("Missing 'document' field for update action")?;
                     let update_doc = serde_json::json!({ "doc": document });
                     bulk_body.push_str(&serde_json::to_string(&update_doc)?);
@@ -440,7 +497,9 @@ impl ElasticsearchClient {
             .context("Failed to send bulk request")?;
 
         let status_code = response.status().as_u16();
-        let response_body: serde_json::Value = response.json().await
+        let response_body: serde_json::Value = response
+            .json()
+            .await
             .unwrap_or(serde_json::json!({"error": "Failed to parse response"}));
 
         Self::call_llm_with_response(
@@ -451,16 +510,22 @@ impl ElasticsearchClient {
             app_state,
             llm_client,
             status_tx,
-        ).await
+        )
+        .await
     }
 
     /// Helper: Get cluster URL from client state
     async fn get_cluster_url(app_state: &Arc<AppState>, client_id: ClientId) -> Result<String> {
-        app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("cluster_url")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }).await.flatten().context("No cluster URL found")
+        app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("cluster_url")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .await
+            .flatten()
+            .context("No cluster URL found")
     }
 
     /// Helper: Call LLM with response
@@ -484,7 +549,10 @@ impl ElasticsearchClient {
                 }),
             );
 
-            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+            let memory = app_state
+                .get_memory_for_client(client_id)
+                .await
+                .unwrap_or_default();
 
             match call_llm_for_client(
                 &llm_client,
@@ -495,8 +563,13 @@ impl ElasticsearchClient {
                 Some(&event),
                 protocol.as_ref(),
                 &status_tx,
-            ).await {
-                Ok(ClientLlmResult { actions: _, memory_updates }) => {
+            )
+            .await
+            {
+                Ok(ClientLlmResult {
+                    actions: _,
+                    memory_updates,
+                }) => {
                     // Update memory
                     if let Some(mem) = memory_updates {
                         app_state.set_memory_for_client(client_id, mem).await;

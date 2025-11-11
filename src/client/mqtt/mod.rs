@@ -13,9 +13,7 @@ use tracing::{debug, error, info, trace};
 
 use crate::protocol::StartupParams;
 
-use crate::client::mqtt::actions::{
-    MQTT_CLIENT_CONNECTED_EVENT, MQTT_MESSAGE_RECEIVED_EVENT,
-};
+use crate::client::mqtt::actions::{MQTT_CLIENT_CONNECTED_EVENT, MQTT_MESSAGE_RECEIVED_EVENT};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::actions::client_trait::{Client, ClientActionResult};
 use crate::llm::ollama_client::OllamaClient;
@@ -39,11 +37,11 @@ impl MqttClient {
     ) -> Result<SocketAddr> {
         // Parse remote address (host:port)
         let parts: Vec<&str> = remote_addr.split(':').collect();
-        let host = parts.get(0).context("Missing host in remote_addr")?.to_string();
-        let port: u16 = parts
-            .get(1)
-            .and_then(|p| p.parse().ok())
-            .unwrap_or(1883);
+        let host = parts
+            .get(0)
+            .context("Missing host in remote_addr")?
+            .to_string();
+        let port: u16 = parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(1883);
 
         // Extract startup parameters
         let mqtt_client_id = startup_params
@@ -78,8 +76,10 @@ impl MqttClient {
             mqttoptions.set_credentials(user, pass);
         }
 
-        info!("MQTT client {} connecting to {}:{} with client_id={}",
-            client_id, host, port, mqtt_client_id);
+        info!(
+            "MQTT client {} connecting to {}:{} with client_id={}",
+            client_id, host, port, mqtt_client_id
+        );
 
         // Create MQTT client
         let (mqtt_client, eventloop) = AsyncClient::new(mqttoptions, 10);
@@ -134,12 +134,17 @@ async fn handle_mqtt_events(
                         if !connected {
                             connected = true;
                             info!("MQTT client {} connected to broker", client_id);
-                            app_state.update_client_status(client_id, ClientStatus::Connected).await;
-                            let _ = status_tx.send(format!("[CLIENT] MQTT client {} connected", client_id));
+                            app_state
+                                .update_client_status(client_id, ClientStatus::Connected)
+                                .await;
+                            let _ = status_tx
+                                .send(format!("[CLIENT] MQTT client {} connected", client_id));
                             let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                             // Call LLM with connected event
-                            if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
+                            if let Some(instruction) =
+                                app_state.get_instruction_for_client(client_id).await
+                            {
                                 let protocol = Arc::new(MqttClientProtocol::new());
                                 let event = ProtocolEvent::new(
                                     &MQTT_CLIENT_CONNECTED_EVENT,
@@ -149,7 +154,10 @@ async fn handle_mqtt_events(
                                     }),
                                 );
 
-                                let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                                let memory = app_state
+                                    .get_memory_for_client(client_id)
+                                    .await
+                                    .unwrap_or_default();
 
                                 match call_llm_for_client(
                                     &llm_client,
@@ -192,13 +200,19 @@ async fn handle_mqtt_events(
                         .await;
                     }
                     Event::Incoming(Packet::SubAck(suback)) => {
-                        debug!("MQTT client {} subscription acknowledged: {:?}", client_id, suback);
+                        debug!(
+                            "MQTT client {} subscription acknowledged: {:?}",
+                            client_id, suback
+                        );
                         // Could optionally notify LLM of successful subscription
                     }
                     Event::Incoming(Packet::Disconnect) => {
                         info!("MQTT client {} disconnected by broker", client_id);
-                        app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                        let _ = status_tx.send(format!("[CLIENT] MQTT client {} disconnected", client_id));
+                        app_state
+                            .update_client_status(client_id, ClientStatus::Disconnected)
+                            .await;
+                        let _ = status_tx
+                            .send(format!("[CLIENT] MQTT client {} disconnected", client_id));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
                         break;
                     }
@@ -212,7 +226,9 @@ async fn handle_mqtt_events(
             }
             Err(e) => {
                 error!("MQTT client {} connection error: {}", client_id, e);
-                app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
+                app_state
+                    .update_client_status(client_id, ClientStatus::Error(e.to_string()))
+                    .await;
                 let _ = status_tx.send(format!("[CLIENT] MQTT client {} error: {}", client_id, e));
                 let _ = status_tx.send("__UPDATE_UI__".to_string());
                 break;
@@ -255,7 +271,10 @@ async fn handle_incoming_message(
             }),
         );
 
-        let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+        let memory = app_state
+            .get_memory_for_client(client_id)
+            .await
+            .unwrap_or_default();
 
         match call_llm_for_client(
             llm_client,
@@ -295,74 +314,84 @@ async fn handle_llm_actions(
     // Execute actions
     for action in result.actions {
         match protocol.execute_action(action) {
-            Ok(ClientActionResult::Custom { name, data }) => {
-                match name.as_str() {
-                    "mqtt_subscribe" => {
-                        if let (Some(topics), Some(qos)) = (
-                            data.get("topics").and_then(|v| v.as_array()),
-                            data.get("qos").and_then(|v| v.as_u64()),
-                        ) {
-                            let qos_level = match qos {
-                                0 => QoS::AtMostOnce,
-                                1 => QoS::AtLeastOnce,
-                                2 => QoS::ExactlyOnce,
-                                _ => QoS::AtMostOnce,
-                            };
+            Ok(ClientActionResult::Custom { name, data }) => match name.as_str() {
+                "mqtt_subscribe" => {
+                    if let (Some(topics), Some(qos)) = (
+                        data.get("topics").and_then(|v| v.as_array()),
+                        data.get("qos").and_then(|v| v.as_u64()),
+                    ) {
+                        let qos_level = match qos {
+                            0 => QoS::AtMostOnce,
+                            1 => QoS::AtLeastOnce,
+                            2 => QoS::ExactlyOnce,
+                            _ => QoS::AtMostOnce,
+                        };
 
-                            for topic in topics {
-                                if let Some(topic_str) = topic.as_str() {
-                                    if let Err(e) = mqtt_client.subscribe(topic_str, qos_level).await {
-                                        error!("MQTT client {} subscribe error: {}", client_id, e);
-                                    } else {
-                                        info!("MQTT client {} subscribed to '{}' with QoS {}", client_id, topic_str, qos);
-                                    }
+                        for topic in topics {
+                            if let Some(topic_str) = topic.as_str() {
+                                if let Err(e) = mqtt_client.subscribe(topic_str, qos_level).await {
+                                    error!("MQTT client {} subscribe error: {}", client_id, e);
+                                } else {
+                                    info!(
+                                        "MQTT client {} subscribed to '{}' with QoS {}",
+                                        client_id, topic_str, qos
+                                    );
                                 }
                             }
                         }
-                    }
-                    "mqtt_publish" => {
-                        if let (Some(topic), Some(payload)) = (
-                            data.get("topic").and_then(|v| v.as_str()),
-                            data.get("payload").and_then(|v| v.as_str()),
-                        ) {
-                            let qos = data.get("qos").and_then(|v| v.as_u64()).unwrap_or(0);
-                            let retain = data.get("retain").and_then(|v| v.as_bool()).unwrap_or(false);
-
-                            let qos_level = match qos {
-                                0 => QoS::AtMostOnce,
-                                1 => QoS::AtLeastOnce,
-                                2 => QoS::ExactlyOnce,
-                                _ => QoS::AtMostOnce,
-                            };
-
-                            if let Err(e) = mqtt_client
-                                .publish(topic, qos_level, retain, payload.as_bytes())
-                                .await
-                            {
-                                error!("MQTT client {} publish error: {}", client_id, e);
-                            } else {
-                                info!("MQTT client {} published to '{}': {}", client_id, topic, payload);
-                            }
-                        }
-                    }
-                    "mqtt_unsubscribe" => {
-                        if let Some(topics) = data.get("topics").and_then(|v| v.as_array()) {
-                            for topic in topics {
-                                if let Some(topic_str) = topic.as_str() {
-                                    if let Err(e) = mqtt_client.unsubscribe(topic_str).await {
-                                        error!("MQTT client {} unsubscribe error: {}", client_id, e);
-                                    } else {
-                                        info!("MQTT client {} unsubscribed from '{}'", client_id, topic_str);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    _ => {
-                        debug!("Unknown MQTT custom action: {}", name);
                     }
                 }
-            }
+                "mqtt_publish" => {
+                    if let (Some(topic), Some(payload)) = (
+                        data.get("topic").and_then(|v| v.as_str()),
+                        data.get("payload").and_then(|v| v.as_str()),
+                    ) {
+                        let qos = data.get("qos").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let retain = data
+                            .get("retain")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+
+                        let qos_level = match qos {
+                            0 => QoS::AtMostOnce,
+                            1 => QoS::AtLeastOnce,
+                            2 => QoS::ExactlyOnce,
+                            _ => QoS::AtMostOnce,
+                        };
+
+                        if let Err(e) = mqtt_client
+                            .publish(topic, qos_level, retain, payload.as_bytes())
+                            .await
+                        {
+                            error!("MQTT client {} publish error: {}", client_id, e);
+                        } else {
+                            info!(
+                                "MQTT client {} published to '{}': {}",
+                                client_id, topic, payload
+                            );
+                        }
+                    }
+                }
+                "mqtt_unsubscribe" => {
+                    if let Some(topics) = data.get("topics").and_then(|v| v.as_array()) {
+                        for topic in topics {
+                            if let Some(topic_str) = topic.as_str() {
+                                if let Err(e) = mqtt_client.unsubscribe(topic_str).await {
+                                    error!("MQTT client {} unsubscribe error: {}", client_id, e);
+                                } else {
+                                    info!(
+                                        "MQTT client {} unsubscribed from '{}'",
+                                        client_id, topic_str
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    debug!("Unknown MQTT custom action: {}", name);
+                }
+            },
             Ok(ClientActionResult::Disconnect) => {
                 info!("MQTT client {} disconnecting", client_id);
                 if let Err(e) = mqtt_client.disconnect().await {

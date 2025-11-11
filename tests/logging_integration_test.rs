@@ -15,7 +15,10 @@ mod logging_integration_tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("Failed to bind to port 0");
-        let port = listener.local_addr().expect("Failed to get local addr").port();
+        let port = listener
+            .local_addr()
+            .expect("Failed to get local addr")
+            .port();
         drop(listener);
 
         // Prompt NetGet to open a server and append to a log
@@ -44,14 +47,19 @@ mod logging_integration_tests {
 
         // Debug output if test fails
         if !output.status.success() {
-            eprintln!("NetGet stdout:\n{}", String::from_utf8_lossy(&output.stdout));
-            eprintln!("NetGet stderr:\n{}", String::from_utf8_lossy(&output.stderr));
+            eprintln!(
+                "NetGet stdout:\n{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            eprintln!(
+                "NetGet stderr:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
         // Look for a log file matching pattern: netget_test_*.log
         let current_dir = std::env::current_dir().expect("Failed to get current directory");
-        let entries = std::fs::read_dir(&current_dir)
-            .expect("Failed to read current directory");
+        let entries = std::fs::read_dir(&current_dir).expect("Failed to read current directory");
 
         let mut found_log_file = None;
         for entry in entries {
@@ -70,8 +78,7 @@ mod logging_integration_tests {
             println!("✓ Found log file: {:?}", log_path);
 
             // Read and verify content
-            let content = std::fs::read_to_string(log_path)
-                .expect("Failed to read log file");
+            let content = std::fs::read_to_string(log_path).expect("Failed to read log file");
 
             println!("Log file content:\n{}", content);
 
@@ -85,7 +92,10 @@ mod logging_integration_tests {
             std::fs::remove_file(log_path).expect("Failed to remove log file");
             println!("✓ Cleaned up log file");
         } else {
-            panic!("No log file found matching pattern netget_test_*.log in {:?}", current_dir);
+            panic!(
+                "No log file found matching pattern netget_test_*.log in {:?}",
+                current_dir
+            );
         }
 
         println!("✓ Test passed! Log file was created and contained expected content.");

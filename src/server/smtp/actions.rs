@@ -128,9 +128,9 @@ impl SmtpProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for SmtpProtocol {
-        fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
-            use crate::llm::actions::ParameterDefinition;
-            vec![
+    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        use crate::llm::actions::ParameterDefinition;
+        vec![
                 ParameterDefinition {
                     name: "enable_tls".to_string(),
                     type_hint: "boolean".to_string(),
@@ -174,136 +174,135 @@ impl Protocol for SmtpProtocol {
                     example: json!("IT Department"),
                 },
             ]
-        }
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            // SMTP doesn't need async actions for now
-            Vec::new()
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                send_smtp_greeting_action(),
-                send_smtp_ok_action(),
-                send_smtp_ehlo_action(),
-                send_smtp_start_data_action(),
-                send_smtp_error_action(),
-                send_smtp_quit_action(),
-                send_smtp_message_action(),
-                wait_for_more_action(),
-                close_connection_action(),
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "SMTP"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            get_smtp_event_types()
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>TCP>SMTP"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec!["smtp", "mail", "email"]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Experimental)
-                .implementation("Manual line-based parsing with tokio, optional TLS via rustls")
-                .llm_control("All SMTP commands + responses")
-                .e2e_testing("lettre SMTP client")
-                .notes("Basic MTA functionality, supports plain SMTP and SMTPS (implicit TLS)")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "SMTP/SMTPS mail server"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Start an SMTP mail server on port 25 (or 'Start an SMTPS mail server on port 465 with TLS enabled')"
-        }
-        fn group_name(&self) -> &'static str {
-            "Application"
-        }
+    }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        // SMTP doesn't need async actions for now
+        Vec::new()
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            send_smtp_greeting_action(),
+            send_smtp_ok_action(),
+            send_smtp_ehlo_action(),
+            send_smtp_start_data_action(),
+            send_smtp_error_action(),
+            send_smtp_quit_action(),
+            send_smtp_message_action(),
+            wait_for_more_action(),
+            close_connection_action(),
+        ]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "SMTP"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_smtp_event_types()
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>SMTP"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["smtp", "mail", "email"]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("Manual line-based parsing with tokio, optional TLS via rustls")
+            .llm_control("All SMTP commands + responses")
+            .e2e_testing("lettre SMTP client")
+            .notes("Basic MTA functionality, supports plain SMTP and SMTPS (implicit TLS)")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "SMTP/SMTPS mail server"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Start an SMTP mail server on port 25 (or 'Start an SMTPS mail server on port 465 with TLS enabled')"
+    }
+    fn group_name(&self) -> &'static str {
+        "Application"
+    }
 }
 
 // Implement Server trait (server-specific functionality)
 impl Server for SmtpProtocol {
-        fn spawn(
-            &self,
-            ctx: crate::protocol::SpawnContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::server::smtp::SmtpServer;
-    
-                // Check if TLS should be enabled via startup parameters
-                let tls_config = if let Some(ref params) = ctx.startup_params {
-                    if params.get_optional_bool("enable_tls").unwrap_or(false) {
-                        // Generate TLS configuration
-                        let common_name = params.get_optional_string("tls_common_name");
-                        let san_dns_names = params.get_optional_array("tls_san_dns_names")
-                            .map(|arr| {
-                                arr.iter()
-                                    .filter_map(|v| v.as_str())
-                                    .map(|s| s.to_string())
-                                    .collect::<Vec<_>>()
-                            });
-                        let validity_days = params.get_optional_i64("tls_validity_days");
-                        let organization = params.get_optional_string("tls_organization");
-                        let organizational_unit = params.get_optional_string("tls_organizational_unit");
-    
-                        match crate::server::tls_cert_manager::generate_custom_tls_config(
-                            common_name,
-                            san_dns_names,
-                            validity_days,
-                            organization,
-                            organizational_unit,
-                        ) {
-                            Ok(config) => Some(config),
-                            Err(e) => {
-                                tracing::error!("Failed to generate TLS config: {}", e);
-                                None
-                            }
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::smtp::SmtpServer;
+
+            // Check if TLS should be enabled via startup parameters
+            let tls_config = if let Some(ref params) = ctx.startup_params {
+                if params.get_optional_bool("enable_tls").unwrap_or(false) {
+                    // Generate TLS configuration
+                    let common_name = params.get_optional_string("tls_common_name");
+                    let san_dns_names = params.get_optional_array("tls_san_dns_names").map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str())
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>()
+                    });
+                    let validity_days = params.get_optional_i64("tls_validity_days");
+                    let organization = params.get_optional_string("tls_organization");
+                    let organizational_unit = params.get_optional_string("tls_organizational_unit");
+
+                    match crate::server::tls_cert_manager::generate_custom_tls_config(
+                        common_name,
+                        san_dns_names,
+                        validity_days,
+                        organization,
+                        organizational_unit,
+                    ) {
+                        Ok(config) => Some(config),
+                        Err(e) => {
+                            tracing::error!("Failed to generate TLS config: {}", e);
+                            None
                         }
-                    } else {
-                        None
                     }
                 } else {
                     None
-                };
-    
-                SmtpServer::spawn_with_llm_actions(
-                    ctx.listen_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.server_id,
-                    tls_config,
-                ).await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "send_smtp_greeting" => self.execute_send_smtp_greeting(action),
-                "send_smtp_ok" => self.execute_send_smtp_ok(action),
-                "send_smtp_ehlo" => self.execute_send_smtp_ehlo(action),
-                "send_smtp_start_data" => self.execute_send_smtp_start_data(action),
-                "send_smtp_error" => self.execute_send_smtp_error(action),
-                "send_smtp_quit" => self.execute_send_smtp_quit(action),
-                "send_smtp_message" => self.execute_send_smtp_message(action),
-                "wait_for_more" => Ok(ActionResult::WaitForMore),
-                "close_connection" => Ok(ActionResult::CloseConnection),
-                _ => Err(anyhow::anyhow!("Unknown SMTP action: {}", action_type)),
-            }
-        }
-}
+                }
+            } else {
+                None
+            };
 
+            SmtpServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+                tls_config,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
+
+        match action_type {
+            "send_smtp_greeting" => self.execute_send_smtp_greeting(action),
+            "send_smtp_ok" => self.execute_send_smtp_ok(action),
+            "send_smtp_ehlo" => self.execute_send_smtp_ehlo(action),
+            "send_smtp_start_data" => self.execute_send_smtp_start_data(action),
+            "send_smtp_error" => self.execute_send_smtp_error(action),
+            "send_smtp_quit" => self.execute_send_smtp_quit(action),
+            "send_smtp_message" => self.execute_send_smtp_message(action),
+            "wait_for_more" => Ok(ActionResult::WaitForMore),
+            "close_connection" => Ok(ActionResult::CloseConnection),
+            _ => Err(anyhow::anyhow!("Unknown SMTP action: {}", action_type)),
+        }
+    }
+}
 
 // Action definitions
 
@@ -473,15 +472,24 @@ fn close_connection_action() -> ActionDefinition {
 // SMTP Action Constants
 // ============================================================================
 
-pub static SEND_SMTP_GREETING_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| send_smtp_greeting_action());
-pub static SEND_SMTP_OK_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| send_smtp_ok_action());
-pub static SEND_SMTP_EHLO_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| send_smtp_ehlo_action());
-pub static SEND_SMTP_START_DATA_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| send_smtp_start_data_action());
-pub static SEND_SMTP_ERROR_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| send_smtp_error_action());
-pub static SEND_SMTP_QUIT_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| send_smtp_quit_action());
-pub static SEND_SMTP_MESSAGE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| send_smtp_message_action());
-pub static WAIT_FOR_MORE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| wait_for_more_action());
-pub static CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| close_connection_action());
+pub static SEND_SMTP_GREETING_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| send_smtp_greeting_action());
+pub static SEND_SMTP_OK_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| send_smtp_ok_action());
+pub static SEND_SMTP_EHLO_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| send_smtp_ehlo_action());
+pub static SEND_SMTP_START_DATA_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| send_smtp_start_data_action());
+pub static SEND_SMTP_ERROR_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| send_smtp_error_action());
+pub static SEND_SMTP_QUIT_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| send_smtp_quit_action());
+pub static SEND_SMTP_MESSAGE_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| send_smtp_message_action());
+pub static WAIT_FOR_MORE_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| wait_for_more_action());
+pub static CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> =
+    LazyLock::new(|| close_connection_action());
 
 // ============================================================================
 // SMTP Event Type Constants
@@ -516,7 +524,5 @@ pub static SMTP_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// Get SMTP event types
 pub fn get_smtp_event_types() -> Vec<EventType> {
-    vec![
-        SMTP_COMMAND_EVENT.clone(),
-    ]
+    vec![SMTP_COMMAND_EVENT.clone()]
 }

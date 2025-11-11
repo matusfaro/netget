@@ -6,7 +6,7 @@
 //! - Validating IMAP responses against RFC 3501 expectations
 
 use crate::server::helpers::{
-    get_available_port, start_netget_server, wait_for_server_startup, ServerConfig, E2EResult,
+    start_netget_server, wait_for_server_startup, E2EResult, ServerConfig,
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
@@ -55,7 +55,8 @@ async fn read_greeting(stream: &mut TcpStream) -> E2EResult<String> {
 
 #[tokio::test]
 async fn test_imap_greeting() -> E2EResult<()> {
-    let prompt = "listen on port {AVAILABLE_PORT} via imap. Send greeting: * OK IMAP4rev1 Server Ready";
+    let prompt =
+        "listen on port {AVAILABLE_PORT} via imap. Send greeting: * OK IMAP4rev1 Server Ready";
 
     let server = start_netget_server(ServerConfig::new(prompt)).await?;
 
@@ -178,9 +179,7 @@ async fn test_imap_login_failure() -> E2EResult<()> {
     let responses = send_imap_command(&mut client, "A001", "LOGIN wronguser wrongpass").await?;
 
     // Should have tagged NO response
-    let response_line = responses
-        .last()
-        .expect("Should have at least one response");
+    let response_line = responses.last().expect("Should have at least one response");
 
     assert!(
         response_line.starts_with("A001 NO") || response_line.contains("Invalid"),
@@ -258,7 +257,10 @@ async fn test_imap_list_mailboxes() -> E2EResult<()> {
     let responses = send_imap_command(&mut client, "A003", "LIST \"\" \"*\"").await?;
 
     // Check for LIST responses
-    let list_lines: Vec<_> = responses.iter().filter(|l| l.starts_with("* LIST")).collect();
+    let list_lines: Vec<_> = responses
+        .iter()
+        .filter(|l| l.starts_with("* LIST"))
+        .collect();
 
     assert!(
         list_lines.len() >= 1,
@@ -268,7 +270,11 @@ async fn test_imap_list_mailboxes() -> E2EResult<()> {
 
     // Check for INBOX
     let has_inbox = list_lines.iter().any(|l| l.contains("INBOX"));
-    assert!(has_inbox, "LIST should include INBOX, got: {:?}", list_lines);
+    assert!(
+        has_inbox,
+        "LIST should include INBOX, got: {:?}",
+        list_lines
+    );
 
     // Check for tagged OK response
     let ok_line = responses
@@ -466,7 +472,8 @@ async fn test_imap_status() -> E2EResult<()> {
     let _login_resp = send_imap_command(&mut client, "A001", "LOGIN alice secret").await?;
 
     // Send STATUS command
-    let responses = send_imap_command(&mut client, "A004", "STATUS INBOX (MESSAGES RECENT)").await?;
+    let responses =
+        send_imap_command(&mut client, "A004", "STATUS INBOX (MESSAGES RECENT)").await?;
 
     // Check for STATUS response
     let status_line = responses

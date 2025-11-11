@@ -30,7 +30,7 @@ mod openai_client_tests {
             "Connect to OpenAI API with key '{}' and send a chat completion: 'Say hello in exactly 3 words.'",
             api_key
         ))
-        .with_timeout(Duration::from_secs(30));  // OpenAI API can take time
+        .with_timeout(Duration::from_secs(30)); // OpenAI API can take time
 
         let mut client = start_netget_client(client_config).await?;
 
@@ -47,9 +47,9 @@ mod openai_client_tests {
         // Verify we got some kind of response (could be success or error)
         assert!(
             client.output_contains("response").await
-            || client.output_contains("completion").await
-            || client.output_contains("received").await
-            || client.output_contains("ERROR").await,  // API errors are OK for testing
+                || client.output_contains("completion").await
+                || client.output_contains("received").await
+                || client.output_contains("ERROR").await, // API errors are OK for testing
             "Client should show response indication. Output: {:?}",
             client.get_output().await
         );
@@ -80,7 +80,10 @@ mod openai_client_tests {
         tokio::time::sleep(Duration::from_secs(5)).await;
 
         // Verify the client is OpenAI protocol
-        assert_eq!(client.protocol, "OpenAI", "Client should be OpenAI protocol");
+        assert_eq!(
+            client.protocol, "OpenAI",
+            "Client should be OpenAI protocol"
+        );
 
         println!("✅ OpenAI client with model selection worked");
 
@@ -142,8 +145,8 @@ mod openai_client_tests {
         // Verify client shows error
         assert!(
             client.output_contains("ERROR").await
-            || client.output_contains("error").await
-            || client.output_contains("failed").await,
+                || client.output_contains("error").await
+                || client.output_contains("failed").await,
             "Client should show error for invalid API key. Output: {:?}",
             client.get_output().await
         );

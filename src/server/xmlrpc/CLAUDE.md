@@ -2,7 +2,8 @@
 
 ## Overview
 
-XML-RPC server over HTTP POST where the LLM controls all RPC method execution. Supports standard XML-RPC types (int, boolean, string, double, dateTime, base64, array, struct), introspection methods, and fault responses.
+XML-RPC server over HTTP POST where the LLM controls all RPC method execution. Supports standard XML-RPC types (int,
+boolean, string, double, dateTime, base64, array, struct), introspection methods, and fault responses.
 
 ## Protocol Version
 
@@ -13,13 +14,15 @@ XML-RPC server over HTTP POST where the LLM controls all RPC method execution. S
 ## Library Choices
 
 ### Core Dependencies
+
 - **quick-xml** v0.36 - Fast XML parsing and writing
-  - Chosen for: Performance, low memory usage, streaming support
-  - Used for: Parsing `<methodCall>` and generating `<methodResponse>`
+    - Chosen for: Performance, low memory usage, streaming support
+    - Used for: Parsing `<methodCall>` and generating `<methodResponse>`
 - **hyper** v1 - HTTP/1.1 server
 - **base64** - Base64 encoding for `<base64>` type
 
 ### Why Manual XML Parsing?
+
 - XML-RPC has simple, well-defined structure
 - quick-xml provides full control over parsing
 - No comprehensive XML-RPC server library for Rust exists
@@ -27,12 +30,15 @@ XML-RPC server over HTTP POST where the LLM controls all RPC method execution. S
 ## Architecture Decisions
 
 ### LLM Control Points
+
 **Complete Method Implementation** - LLM handles all method logic:
+
 1. **Parse**: Extract `methodName` and `params` from XML
 2. **LLM Call**: Send method details to LLM as JSON event
 3. **Generate**: Convert LLM response to XML `<methodResponse>`
 
 **Action-Based Responses**:
+
 ```json
 {
   "actions": [
@@ -45,6 +51,7 @@ XML-RPC server over HTTP POST where the LLM controls all RPC method execution. S
 ```
 
 Or for faults:
+
 ```json
 {
   "actions": [
@@ -58,7 +65,9 @@ Or for faults:
 ```
 
 ### Type System
+
 **XML-RPC Types Supported**:
+
 - `<int>` / `<i4>` - 32-bit integer
 - `<i8>` - 64-bit integer (extension)
 - `<boolean>` - 0 or 1
@@ -71,17 +80,21 @@ Or for faults:
 - `<nil>` - Null value (extension)
 
 **Conversion to JSON for LLM**:
+
 - XML types converted to JSON for LLM interpretation
 - LLM returns JSON, converted back to XML
 
 ### Introspection Support
+
 **Standard Methods** (LLM can implement):
+
 - `system.listMethods` - List available methods
 - `system.methodHelp` - Get method documentation
 - `system.methodSignature` - Get method signature
 - `system.multicall` - Batch method calls (extension)
 
 ### Connection Management
+
 - Each HTTP connection spawned as tokio task
 - Connections tracked in `ProtocolConnectionInfo::XmlRpc` with `recent_methods` Vec
 - HTTP/1.1 handled by hyper
@@ -89,23 +102,27 @@ Or for faults:
 ## Limitations
 
 ### Not Implemented
+
 - **Transport negotiation** - Only HTTP POST supported
 - **Authentication** - No auth layer
 - **Compression** - No gzip support
 - **Custom extensions** - Only standard + nil/i8 extensions
 
 ### Type Limitations
+
 - **Date parsing** - Accepts ISO 8601 strings, no validation
 - **Number precision** - double may lose precision
 - **Struct key ordering** - Not preserved
 
 ### Performance
+
 - **XML parsing overhead** - Slower than JSON
 - **Manual type conversion** - Extra overhead vs. binary protocols
 
 ## Example Prompts and Responses
 
 ### Startup
+
 ```
 listen on port 8080 via xmlrpc stack.
 
@@ -118,7 +135,9 @@ For unknown methods, return fault code -32601 with message "Method not found".
 ```
 
 ### Network Event (Method Call)
+
 **Received XML**:
+
 ```xml
 <?xml version="1.0"?>
 <methodCall>
@@ -131,6 +150,7 @@ For unknown methods, return fault code -32601 with message "Method not found".
 ```
 
 **Converted to JSON for LLM**:
+
 ```json
 {
   "event_type": "xmlrpc_method_call",
@@ -140,6 +160,7 @@ For unknown methods, return fault code -32601 with message "Method not found".
 ```
 
 **LLM Response**:
+
 ```json
 {
   "actions": [
@@ -152,6 +173,7 @@ For unknown methods, return fault code -32601 with message "Method not found".
 ```
 
 **Sent to Client**:
+
 ```xml
 <?xml version="1.0"?>
 <methodResponse>
@@ -162,7 +184,9 @@ For unknown methods, return fault code -32601 with message "Method not found".
 ```
 
 ### Fault Response
+
 **LLM Response**:
+
 ```json
 {
   "actions": [
@@ -176,6 +200,7 @@ For unknown methods, return fault code -32601 with message "Method not found".
 ```
 
 **Sent to Client**:
+
 ```xml
 <?xml version="1.0"?>
 <methodResponse>

@@ -7,7 +7,7 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, ServerConfig, E2EResult};
+use super::super::super::helpers::{self, E2EResult, ServerConfig};
 use std::time::Duration;
 
 #[tokio::test]
@@ -36,7 +36,8 @@ async fn test_mdns_service_advertisement() -> E2EResult<()> {
     let service_type = "_http._tcp.local.";
     println!("Browsing for service type: {}", service_type);
 
-    let receiver = mdns.browse(service_type)
+    let receiver = mdns
+        .browse(service_type)
         .map_err(|e| format!("Failed to browse mDNS: {}", e))?;
 
     // Wait for service discovery (with timeout)
@@ -47,7 +48,9 @@ async fn test_mdns_service_advertisement() -> E2EResult<()> {
     while start.elapsed() < timeout_duration {
         match tokio::time::timeout(Duration::from_secs(2), async {
             receiver.recv_async().await
-        }).await {
+        })
+        .await
+        {
             Ok(Ok(event)) => {
                 match event {
                     mdns_sd::ServiceEvent::ServiceResolved(info) => {
@@ -85,7 +88,6 @@ async fn test_mdns_service_advertisement() -> E2EResult<()> {
                 // Timeout on this recv, continue polling
             }
         }
-
     }
 
     if found_service {
@@ -132,7 +134,8 @@ async fn test_mdns_multiple_services() -> E2EResult<()> {
     for service_type in service_types {
         println!("Browsing for service type: {}", service_type);
 
-        let receiver = mdns.browse(service_type)
+        let receiver = mdns
+            .browse(service_type)
             .map_err(|e| format!("Failed to browse mDNS: {}", e))?;
 
         // Wait briefly for this service type
@@ -142,20 +145,20 @@ async fn test_mdns_multiple_services() -> E2EResult<()> {
         while start.elapsed() < timeout_duration {
             match tokio::time::timeout(Duration::from_secs(1), async {
                 receiver.recv_async().await
-            }).await {
-                Ok(Ok(event)) => {
-                    match event {
-                        mdns_sd::ServiceEvent::ServiceResolved(info) => {
-                            println!("  ✓ Found service: {}", info.get_fullname());
-                            found_count += 1;
-                            break;
-                        }
-                        mdns_sd::ServiceEvent::ServiceFound(_, fullname) => {
-                            println!("  Service found: {}", fullname);
-                        }
-                        _ => {}
+            })
+            .await
+            {
+                Ok(Ok(event)) => match event {
+                    mdns_sd::ServiceEvent::ServiceResolved(info) => {
+                        println!("  ✓ Found service: {}", info.get_fullname());
+                        found_count += 1;
+                        break;
                     }
-                }
+                    mdns_sd::ServiceEvent::ServiceFound(_, fullname) => {
+                        println!("  Service found: {}", fullname);
+                    }
+                    _ => {}
+                },
                 _ => break,
             }
         }
@@ -197,7 +200,8 @@ async fn test_mdns_service_with_properties() -> E2EResult<()> {
         .map_err(|e| format!("Failed to create mDNS daemon: {}", e))?;
 
     let service_type = "_http._tcp.local.";
-    let receiver = mdns.browse(service_type)
+    let receiver = mdns
+        .browse(service_type)
         .map_err(|e| format!("Failed to browse mDNS: {}", e))?;
 
     let mut found_properties = false;
@@ -207,7 +211,9 @@ async fn test_mdns_service_with_properties() -> E2EResult<()> {
     while start.elapsed() < timeout_duration {
         match tokio::time::timeout(Duration::from_secs(2), async {
             receiver.recv_async().await
-        }).await {
+        })
+        .await
+        {
             Ok(Ok(event)) => {
                 if let mdns_sd::ServiceEvent::ServiceResolved(info) = event {
                     println!("✓ Service discovered with properties:");
@@ -253,7 +259,6 @@ async fn test_mdns_custom_service_type() -> E2EResult<()> {
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started with custom service type");
 
-
     // VALIDATION: Query for custom service type
     println!("Querying for custom service type...");
 
@@ -261,7 +266,8 @@ async fn test_mdns_custom_service_type() -> E2EResult<()> {
         .map_err(|e| format!("Failed to create mDNS daemon: {}", e))?;
 
     let service_type = "_netget._tcp.local.";
-    let receiver = mdns.browse(service_type)
+    let receiver = mdns
+        .browse(service_type)
         .map_err(|e| format!("Failed to browse mDNS: {}", e))?;
 
     let mut found_custom = false;
@@ -271,23 +277,23 @@ async fn test_mdns_custom_service_type() -> E2EResult<()> {
     while start.elapsed() < timeout_duration {
         match tokio::time::timeout(Duration::from_secs(2), async {
             receiver.recv_async().await
-        }).await {
-            Ok(Ok(event)) => {
-                match event {
-                    mdns_sd::ServiceEvent::ServiceResolved(info) => {
-                        println!("✓ Custom service type discovered: {}", info.get_fullname());
-                        found_custom = true;
-                        break;
-                    }
-                    mdns_sd::ServiceEvent::ServiceFound(ty, fullname) => {
-                        println!("  Service found: {} ({})", fullname, ty);
-                        if ty == service_type {
-                            found_custom = true;
-                        }
-                    }
-                    _ => {}
+        })
+        .await
+        {
+            Ok(Ok(event)) => match event {
+                mdns_sd::ServiceEvent::ServiceResolved(info) => {
+                    println!("✓ Custom service type discovered: {}", info.get_fullname());
+                    found_custom = true;
+                    break;
                 }
-            }
+                mdns_sd::ServiceEvent::ServiceFound(ty, fullname) => {
+                    println!("  Service found: {} ({})", fullname, ty);
+                    if ty == service_type {
+                        found_custom = true;
+                    }
+                }
+                _ => {}
+            },
             _ => break,
         }
     }

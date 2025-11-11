@@ -5,7 +5,7 @@
 
 #![cfg(feature = "doh")]
 
-use super::super::super::helpers::{self, ServerConfig, E2EResult};
+use super::super::super::helpers::{self, E2EResult, ServerConfig};
 use hickory_proto::op::{Message as DnsMessage, Query};
 use hickory_proto::rr::{Name, RecordType};
 use reqwest::Client;
@@ -13,7 +13,12 @@ use std::str::FromStr;
 use std::time::Duration;
 
 /// Helper to query DoH server using GET method (base64url encoded)
-async fn query_doh_get(client: &Client, port: u16, domain: &str, record_type: RecordType) -> E2EResult<DnsMessage> {
+async fn query_doh_get(
+    client: &Client,
+    port: u16,
+    domain: &str,
+    record_type: RecordType,
+) -> E2EResult<DnsMessage> {
     let url = format!("https://127.0.0.1:{}/dns-query", port);
 
     // Build DNS query message
@@ -31,11 +36,7 @@ async fn query_doh_get(client: &Client, port: u16, domain: &str, record_type: Re
     let encoded = URL_SAFE_NO_PAD.encode(&query_bytes);
 
     // Send GET request
-    let response = client
-        .get(&url)
-        .query(&[("dns", encoded)])
-        .send()
-        .await?;
+    let response = client.get(&url).query(&[("dns", encoded)]).send().await?;
 
     let response_bytes = response.bytes().await?;
 
@@ -46,7 +47,12 @@ async fn query_doh_get(client: &Client, port: u16, domain: &str, record_type: Re
 }
 
 /// Helper to query DoH server using POST method (binary DNS message)
-async fn query_doh_post(client: &Client, port: u16, domain: &str, record_type: RecordType) -> E2EResult<DnsMessage> {
+async fn query_doh_post(
+    client: &Client,
+    port: u16,
+    domain: &str,
+    record_type: RecordType,
+) -> E2EResult<DnsMessage> {
     let url = format!("https://127.0.0.1:{}/dns-query", port);
 
     // Build DNS query message
@@ -100,8 +106,9 @@ async fn test_doh_server() -> E2EResult<()> {
     let server = helpers::start_netget_server(
         ServerConfig::new(prompt)
             .with_log_level("info")
-            .with_no_scripts(true)  // Disable scripting
-    ).await?;
+            .with_no_scripts(true), // Disable scripting
+    )
+    .await?;
 
     println!("DoH server started on port {}", server.port);
 
@@ -124,7 +131,10 @@ async fn test_doh_server() -> E2EResult<()> {
 
     println!("\n[Test 3] Another GET query - different domain...");
     let response3 = query_doh_get(&client, server.port, "test.com.", RecordType::A).await?;
-    assert!(!response3.answers().is_empty(), "Expected answer (script returns same for all)");
+    assert!(
+        !response3.answers().is_empty(),
+        "Expected answer (script returns same for all)"
+    );
     println!("✓ GET response: {:?}", response3.answers()[0]);
 
     println!("\n=== All DoH tests passed! ===");

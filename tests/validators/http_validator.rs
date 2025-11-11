@@ -71,12 +71,7 @@ impl HttpValidator {
         let actual = response.status();
 
         if actual != expected {
-            anyhow::bail!(
-                "Expected status {} for {}, got {}",
-                expected,
-                path,
-                actual
-            );
+            anyhow::bail!("Expected status {} for {}, got {}", expected, path, actual);
         }
 
         Ok(())
@@ -102,7 +97,9 @@ impl HttpValidator {
     /// Assert response is valid JSON and matches expected value
     pub async fn expect_json(&self, path: &str, expected: &Value) -> Result<()> {
         let response = self.get(path).await?;
-        let actual: Value = response.json().await
+        let actual: Value = response
+            .json()
+            .await
             .context("Response is not valid JSON")?;
 
         if actual != *expected {
@@ -120,10 +117,13 @@ impl HttpValidator {
     /// Assert response JSON contains a field with expected value
     pub async fn expect_json_field(&self, path: &str, field: &str, expected: &Value) -> Result<()> {
         let response = self.get(path).await?;
-        let json: Value = response.json().await
+        let json: Value = response
+            .json()
+            .await
             .context("Response is not valid JSON")?;
 
-        let actual = json.get(field)
+        let actual = json
+            .get(field)
             .with_context(|| format!("Field '{}' not found in JSON response", field))?;
 
         if actual != expected {
@@ -153,7 +153,10 @@ impl HttpValidator {
             tokio::time::sleep(Duration::from_millis(500)).await;
 
             if i % 5 == 0 && i > 0 {
-                println!("Still waiting for HTTP server to be ready... (attempt {})", i);
+                println!(
+                    "Still waiting for HTTP server to be ready... (attempt {})",
+                    i
+                );
             }
         }
 

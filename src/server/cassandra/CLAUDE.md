@@ -2,7 +2,9 @@
 
 ## Overview
 
-Cassandra/CQL server implementing the native Cassandra binary protocol (CQL v3) using the `cassandra-protocol` crate for frame parsing and manual response construction. Supports STARTUP, OPTIONS, QUERY, PREPARE, EXECUTE, and AUTH_RESPONSE operations with full LLM control over query responses.
+Cassandra/CQL server implementing the native Cassandra binary protocol (CQL v3) using the `cassandra-protocol` crate for
+frame parsing and manual response construction. Supports STARTUP, OPTIONS, QUERY, PREPARE, EXECUTE, and AUTH_RESPONSE
+operations with full LLM control over query responses.
 
 **Port**: 9042 (default Cassandra port)
 **Protocol Version**: Protocol v4 (Cassandra 3.x+)
@@ -11,6 +13,7 @@ Cassandra/CQL server implementing the native Cassandra binary protocol (CQL v3) 
 ## Library Choices
 
 **cassandra-protocol** (v3.0):
+
 - Chosen for comprehensive CQL binary protocol support
 - Provides `Envelope` for frame parsing and serialization
 - Handles frame headers, compression, opcodes
@@ -18,6 +21,7 @@ Cassandra/CQL server implementing the native Cassandra binary protocol (CQL v3) 
 - Manual response body construction required
 
 **Manual Response Construction**:
+
 - LLM controls all query/prepare/execute responses
 - Response bodies manually built following CQL wire format
 - Complex binary encoding for: metadata, column specs, row data
@@ -26,6 +30,7 @@ Cassandra/CQL server implementing the native Cassandra binary protocol (CQL v3) 
 ## Architecture Decisions
 
 ### Frame-Based Protocol
+
 - Each CQL frame has: version, direction, flags, stream_id, opcode, length, body
 - Parse incoming frames with `Envelope::from_buffer()`
 - Handle opcodes: STARTUP, OPTIONS, QUERY, PREPARE, EXECUTE, AUTH_RESPONSE
@@ -34,25 +39,28 @@ Cassandra/CQL server implementing the native Cassandra binary protocol (CQL v3) 
 - Write encoded bytes to TcpStream
 
 ### Connection State Machine
+
 - Each connection maintains `CassandraConnectionState`:
-  - `ready`: Connection ready after STARTUP
-  - `protocol_version`: Negotiated protocol version (v4)
-  - `prepared_statements`: HashMap of statement_id → (query, param_count)
-  - `authenticated`: Auth status (Phase 3)
-  - `username`: Authenticated user (Phase 3)
+    - `ready`: Connection ready after STARTUP
+    - `protocol_version`: Negotiated protocol version (v4)
+    - `prepared_statements`: HashMap of statement_id → (query, param_count)
+    - `authenticated`: Auth status (Phase 3)
+    - `username`: Authenticated user (Phase 3)
 
 ### Query Execution Flow
+
 1. Client sends QUERY frame with CQL string
 2. Parse query from frame body (long string format)
 3. Create `CASSANDRA_QUERY_EVENT` with query string
 4. Call LLM via `call_llm()` with event and protocol
 5. Process action results:
-   - `cassandra_result_rows`: Build RESULT frame with rows
-   - `cassandra_error`: Send ERROR frame
-   - `close_connection`: Close connection
+    - `cassandra_result_rows`: Build RESULT frame with rows
+    - `cassandra_error`: Send ERROR frame
+    - `close_connection`: Close connection
 6. If no action, send empty result set
 
 ### Prepared Statement Flow (Phase 2)
+
 1. Client sends PREPARE frame with CQL query
 2. Generate statement ID from query hash
 3. Count parameters (count `?` occurrences)
@@ -67,6 +75,7 @@ Cassandra/CQL server implementing the native Cassandra binary protocol (CQL v3) 
 12. Send RESULT (Rows)
 
 ### Authentication Flow (Phase 3)
+
 1. During STARTUP, LLM can request authentication (AUTHENTICATE response)
 2. Client sends AUTH_RESPONSE with SASL PLAIN credentials
 3. Parse username/password from SASL format
@@ -78,14 +87,17 @@ Cassandra/CQL server implementing the native Cassandra binary protocol (CQL v3) 
 ### Response Body Formats
 
 **READY** (after STARTUP):
+
 - Empty body
 - Signals connection ready for queries
 
 **SUPPORTED** (after OPTIONS):
+
 - String multimap: {option: [values]}
 - Example: `{"CQL_VERSION": ["3.0.0"], "COMPRESSION": []}`
 
 **RESULT (Rows)**:
+
 - Kind: 0x0002
 - Metadata: flags, column count, global keyspace/table
 - Column specs: name, type code
@@ -93,12 +105,14 @@ Cassandra/CQL server implementing the native Cassandra binary protocol (CQL v3) 
 - Row data: each cell as [bytes] or NULL (-1)
 
 **RESULT (Prepared)**:
+
 - Kind: 0x0004
 - Statement ID: short bytes
 - Result metadata: columns the query will return
 - Parameters metadata: columns for bind variables
 
 **ERROR**:
+
 - Error code: 4 bytes (0x0000, 0x2200, etc.)
 - Error message: string
 
@@ -107,6 +121,7 @@ Cassandra/CQL server implementing the native Cassandra binary protocol (CQL v3) 
 ### Action-Based Responses
 
 **Sync Actions** (network event context required):
+
 - `cassandra_ready`: Send READY after STARTUP
 - `cassandra_supported`: Send SUPPORTED after OPTIONS
 - `cassandra_result_rows`: Return result set with columns/rows
@@ -115,6 +130,7 @@ Cassandra/CQL server implementing the native Cassandra binary protocol (CQL v3) 
 - `cassandra_auth_success`: Authenticate user (Phase 3)
 
 **Event Types**:
+
 - `CASSANDRA_STARTUP_EVENT`: Connection startup
 - `CASSANDRA_OPTIONS_EVENT`: Client requests supported options
 - `CASSANDRA_QUERY_EVENT`: CQL query execution
@@ -125,12 +141,14 @@ Cassandra/CQL server implementing the native Cassandra binary protocol (CQL v3) 
 ### Example LLM Prompts
 
 **STARTUP/OPTIONS**:
+
 ```
 For STARTUP, send cassandra_ready
 For OPTIONS, send cassandra_supported with options={CQL_VERSION:['3.0.0']}
 ```
 
 **SELECT query**:
+
 ```
 For SELECT * FROM users query, use cassandra_result_rows with:
 columns=[{name:'id',type:'int'},{name:'name',type:'varchar'}]
@@ -138,6 +156,7 @@ rows=[[1,'Alice'],[2,'Bob']]
 ```
 
 **Prepared statement**:
+
 ```
 For PREPARE 'SELECT * FROM users WHERE id = ?', use cassandra_prepared with:
 columns=[{name:'id',type:'int'},{name:'name',type:'varchar'}]
@@ -145,6 +164,7 @@ For EXECUTE with parameter '1', use cassandra_result_rows with rows=[[1,'Alice']
 ```
 
 **Error responses**:
+
 ```
 For invalid query, use cassandra_error with error_code=0x2200 message='Table does not exist'
 ```
@@ -152,6 +172,7 @@ For invalid query, use cassandra_error with error_code=0x2200 message='Table doe
 ## Connection Management
 
 ### Connection Lifecycle
+
 1. Server accepts TCP connection on port 9042
 2. Create `CassandraConnectionState` (not ready, v4)
 3. Add connection to `ServerInstance` with `ProtocolConnectionInfo::Cassandra`
@@ -161,6 +182,7 @@ For invalid query, use cassandra_error with error_code=0x2200 message='Table doe
 7. Connection marked closed when stream ends
 
 ### State Tracking
+
 - Connection state stored in `ServerInstance.connections` HashMap
 - Tracks: remote_addr, local_addr, bytes_sent/received, packets_sent/received
 - Protocol-specific: `ready`, `protocol_version`
@@ -168,6 +190,7 @@ For invalid query, use cassandra_error with error_code=0x2200 message='Table doe
 - Last activity timestamp
 
 ### Concurrency
+
 - Multiple connections handled concurrently
 - Each connection has independent state and prepared statements
 - No shared state between connections
@@ -176,6 +199,7 @@ For invalid query, use cassandra_error with error_code=0x2200 message='Table doe
 ## Limitations
 
 ### Protocol Features (Phase 1 Implementation)
+
 - **No authentication by default** - STARTUP → READY without auth (Phase 3 adds auth)
 - **No compression** - NONE compression only
 - **No paging** - full result sets only
@@ -187,12 +211,14 @@ For invalid query, use cassandra_error with error_code=0x2200 message='Table doe
 - **No tracing** - query tracing not implemented
 
 ### Performance
+
 - Each query/execute triggers LLM call
 - No query caching or planning
 - Full result sets in memory (no streaming)
 - Binary encoding overhead
 
 ### Error Handling
+
 - If LLM returns no action, empty result set sent
 - Some error codes not fully implemented
 - Protocol violations may cause connection close
@@ -208,6 +234,7 @@ For invalid query, use cassandra_error with error_code=0x2200 message='Table doe
 ## Example Responses
 
 ### Query Response
+
 ```json
 {
   "actions": [
@@ -227,6 +254,7 @@ For invalid query, use cassandra_error with error_code=0x2200 message='Table doe
 ```
 
 ### Prepared Statement
+
 ```json
 {
   "actions": [
@@ -242,6 +270,7 @@ For invalid query, use cassandra_error with error_code=0x2200 message='Table doe
 ```
 
 ### Error Response
+
 ```json
 {
   "actions": [

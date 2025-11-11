@@ -3,6 +3,7 @@
 ## Test Strategy
 
 Black-box testing using real pip and curl commands to verify PEP 503 compliance. Tests focus on:
+
 1. Package index listing (`/simple/`)
 2. Package-specific file listings (`/simple/<package>/`)
 3. Package file downloads (`/packages/...`)
@@ -15,7 +16,9 @@ Black-box testing using real pip and curl commands to verify PEP 503 compliance.
 ## Test Cases
 
 ### test_pypi_comprehensive
+
 Comprehensive test covering all PyPI endpoints with multiple packages:
+
 - **Setup**: Server with 2 packages (hello-world 1.0.0, example-pkg 2.1.0)
 - **Test 1**: Fetch package index with curl (verify HTML contains both packages)
 - **Test 2**: Fetch hello-world package page (verify wheel file listed)
@@ -24,16 +27,20 @@ Comprehensive test covering all PyPI endpoints with multiple packages:
 - **Test 5**: Test 404 handling for non-existent packages
 
 **LLM Call Budget**: Target 1-2 LLM calls
+
 - 1 call at startup to parse instruction and set up scripting mode
 - 0 calls for subsequent HTTP requests (scripting mode handles all)
 
 **Runtime**: ~5-10 seconds
+
 - 2s server startup
 - 3-5s for curl requests
 - 2-5s for pip query (if pip available)
 
 ### test_pypi_single_package
+
 Minimal test with single package for quick verification:
+
 - **Setup**: Server with 1 package (test-pkg 0.1.0)
 - **Test**: Fetch package index with curl
 
@@ -44,11 +51,13 @@ Minimal test with single package for quick verification:
 ## Test Clients
 
 ### curl
+
 - **Purpose**: HTTP request verification
 - **Availability**: Usually available in CI/test environments
 - **Usage**: Fetch HTML pages, check status codes
 
 ### pip
+
 - **Purpose**: Real-world PyPI client integration
 - **Availability**: May not be available in all test environments
 - **Usage**: `pip index versions` to query package metadata
@@ -57,13 +66,16 @@ Minimal test with single package for quick verification:
 ## Known Issues
 
 ### 1. Wheel File Generation
+
 **Issue**: LLMs struggle to generate valid Python wheel files (zip archives with specific structure).
 
 **Impact**: Full `pip install` will likely fail because downloaded wheel is invalid.
 
-**Workaround**: Tests use `pip index versions` instead of `pip install` to verify PyPI API compatibility without requiring valid wheel contents.
+**Workaround**: Tests use `pip index versions` instead of `pip install` to verify PyPI API compatibility without
+requiring valid wheel contents.
 
 ### 2. HTML Format Strictness
+
 **Issue**: LLMs may not generate perfectly PEP 503-compliant HTML (missing DOCTYPE, incorrect anchor format).
 
 **Impact**: pip may still work if HTML is "close enough", but strict validation would fail.
@@ -71,6 +83,7 @@ Minimal test with single package for quick verification:
 **Workaround**: Tests check for package names in HTML rather than validating full HTML structure.
 
 ### 3. Hash Values
+
 **Issue**: SHA256 hashes in package URLs must match file contents for pip to accept them.
 
 **Impact**: pip will reject packages if hash validation is enabled.
@@ -89,6 +102,7 @@ Minimal test with single package for quick verification:
 Tests are gated with `#![cfg(feature = "pypi")]` to only compile when pypi feature is enabled.
 
 Run tests with:
+
 ```bash
 ./cargo-isolated.sh test --no-default-features --features pypi --test server::pypi::e2e_test
 ```
@@ -118,6 +132,7 @@ Run tests with:
 ## Debugging
 
 If tests fail, check:
+
 1. Server logs in `netget.log` (use `.with_log_level("debug")`)
 2. Full HTTP request/response (add `-v` flag to curl)
 3. pip verbose output (`pip -vvv index versions ...`)

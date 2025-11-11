@@ -1,25 +1,33 @@
 # DNS Client Implementation
 
 ## Overview
-DNS (Domain Name System) client for querying DNS servers. The LLM can send DNS queries for various record types and interpret responses to make follow-up decisions.
+
+DNS (Domain Name System) client for querying DNS servers. The LLM can send DNS queries for various record types and
+interpret responses to make follow-up decisions.
 
 **Status**: Experimental (Client Protocol)
 **RFC**: RFC 1035 (Domain Names), RFC 3596 (AAAA)
 **Transport**: UDP (port 53)
 
 ## Library Choices
-- **hickory-client** (formerly trust-dns-client) - DNS client library
-  - Async DNS client with UDP transport
-  - Supports all standard DNS record types (A, AAAA, MX, TXT, CNAME, NS, SOA, PTR, SRV, etc.)
-  - Handles DNS protocol encoding/decoding automatically
-  - Provides high-level query API with RecordType enums
 
-**Rationale**: hickory-client (part of hickory-dns ecosystem) is the de facto standard for DNS in Rust. It provides a robust, async-first client implementation that abstracts away the DNS wire protocol complexity. The LLM only needs to provide semantic query parameters (domain, type) and can work with structured response data (answers with type-specific fields).
+- **hickory-client** (formerly trust-dns-client) - DNS client library
+    - Async DNS client with UDP transport
+    - Supports all standard DNS record types (A, AAAA, MX, TXT, CNAME, NS, SOA, PTR, SRV, etc.)
+    - Handles DNS protocol encoding/decoding automatically
+    - Provides high-level query API with RecordType enums
+
+**Rationale**: hickory-client (part of hickory-dns ecosystem) is the de facto standard for DNS in Rust. It provides a
+robust, async-first client implementation that abstracts away the DNS wire protocol complexity. The LLM only needs to
+provide semantic query parameters (domain, type) and can work with structured response data (answers with type-specific
+fields).
 
 ## Architecture
 
 ### 1. Query-Response Pattern
+
 DNS client follows a simple request-response pattern:
+
 1. LLM sends `send_dns_query` action with domain and query type
 2. Client sends UDP packet to DNS server
 3. Server responds with DNS answer records
@@ -28,12 +36,16 @@ DNS client follows a simple request-response pattern:
 6. LLM can send follow-up queries based on response
 
 ### 2. Event-Driven LLM Integration
+
 Two events trigger LLM calls:
+
 - **`dns_connected`** - Client connected to DNS server, LLM can send initial query
 - **`dns_response_received`** - Response received, LLM can analyze answers and send follow-up queries
 
 ### 3. Record Type Support
+
 Client supports all major DNS record types with structured parsing:
+
 - **A** - IPv4 address
 - **AAAA** - IPv6 address
 - **CNAME** - Canonical name (alias)
@@ -47,14 +59,19 @@ Client supports all major DNS record types with structured parsing:
 Each record type is parsed into type-specific JSON fields (e.g., MX includes `exchange` and `preference`).
 
 ### 4. Recursive vs Iterative Resolution
+
 The `recursion_desired` parameter (default: true) controls whether the DNS server should:
+
 - **Recursive (true)**: Server resolves the full query by contacting other servers
 - **Iterative (false)**: Server only provides referrals to other servers
 
-Note: hickory-client doesn't expose easy control over the RD (Recursion Desired) flag, so this is noted for future enhancement.
+Note: hickory-client doesn't expose easy control over the RD (Recursion Desired) flag, so this is noted for future
+enhancement.
 
 ### 5. Connection Model
+
 DNS uses UDP, which is connectionless:
+
 - No persistent connection state
 - Each query is independent
 - Client maintains a single UDP socket for all queries
@@ -65,14 +82,17 @@ DNS uses UDP, which is connectionless:
 ### Available Actions
 
 #### `send_dns_query`
+
 Send a DNS query to the server.
 
 **Parameters:**
+
 - `domain` (required) - Domain name to query (e.g., "example.com")
 - `query_type` (required) - Record type (A, AAAA, MX, TXT, CNAME, NS, SOA, PTR, SRV, etc.)
 - `recursion_desired` (optional, default: true) - Request recursive resolution
 
 **Example:**
+
 ```json
 {
   "type": "send_dns_query",
@@ -83,6 +103,7 @@ Send a DNS query to the server.
 ```
 
 #### `disconnect`
+
 Disconnect from the DNS server.
 
 **Parameters:** None
@@ -90,15 +111,19 @@ Disconnect from the DNS server.
 ### Events
 
 #### `dns_connected`
+
 Triggered when client connects to DNS server.
 
 **Parameters:**
+
 - `remote_addr` - DNS server address
 
 #### `dns_response_received`
+
 Triggered when DNS response is received.
 
 **Parameters:**
+
 - `query_id` - DNS transaction ID
 - `domain` - Domain name queried
 - `query_type` - Record type queried
@@ -108,6 +133,7 @@ Triggered when DNS response is received.
 **Answer Structure Examples:**
 
 A record:
+
 ```json
 {
   "type": "A",
@@ -117,6 +143,7 @@ A record:
 ```
 
 MX record:
+
 ```json
 {
   "type": "MX",
@@ -127,6 +154,7 @@ MX record:
 ```
 
 CNAME record:
+
 ```json
 {
   "type": "CNAME",
@@ -138,6 +166,7 @@ CNAME record:
 ## Example Usage Scenarios
 
 ### Simple A Record Query
+
 ```
 Instruction: "Query 8.8.8.8 for the A record of example.com"
 
@@ -148,6 +177,7 @@ Flow:
 ```
 
 ### Follow-the-CNAME
+
 ```
 Instruction: "Resolve www.example.com and follow any CNAMEs"
 
@@ -160,6 +190,7 @@ Flow:
 ```
 
 ### MX Record Lookup
+
 ```
 Instruction: "Find mail servers for example.com"
 
@@ -170,6 +201,7 @@ Flow:
 ```
 
 ### Reverse DNS
+
 ```
 Instruction: "Do reverse DNS lookup for 8.8.8.8"
 
@@ -182,31 +214,37 @@ Flow:
 ## Known Limitations
 
 ### 1. UDP Only
+
 - No TCP support for large responses (RFC 1035 requires TCP fallback for >512 bytes)
 - No EDNS0 support for larger UDP packets
 - Large responses may be truncated
 
 ### 2. No DNSSEC Validation
+
 - DNSSEC signatures are not validated
 - RRSIG, DNSKEY, DS records can be queried but not verified
 - Clients must trust the DNS server
 
 ### 3. No Caching
+
 - Client does not cache DNS responses
 - Each query goes to the server (no local TTL tracking)
 - LLM must manage its own caching logic if needed
 
 ### 4. Limited Recursion Control
+
 - hickory-client doesn't expose easy RD flag control
 - The `recursion_desired` parameter is accepted but may not be fully implemented
 - Future enhancement needed for true iterative mode
 
 ### 5. Single Server Only
+
 - Client connects to one DNS server
 - No fallback to secondary servers
 - No support for DNS server lists
 
 ### 6. No Query Pipelining
+
 - Queries are executed sequentially in the LLM loop
 - hickory-client supports concurrent queries internally
 - But LLM must explicitly send multiple actions to parallelize
@@ -214,22 +252,27 @@ Flow:
 ## Performance Characteristics
 
 ### Latency
+
 - **DNS Query**: 10-100ms (depends on server and network)
 - **LLM Processing**: 2-5 seconds per response
 - **Total per query**: ~2-5 seconds
 
 ### Throughput
+
 - **Limited by LLM**: ~0.2-0.5 queries per second
 - hickory-client can handle thousands of QPS, but LLM is bottleneck
 - Concurrent queries require LLM to generate multiple actions
 
 ### Scripting Compatibility
+
 DNS is an excellent candidate for scripting:
+
 - Deterministic query-response pattern
 - Well-defined record types
 - No complex state machine
 
 With scripting enabled:
+
 - Initial LLM call generates script (~1 call)
 - All subsequent queries handled by script (~0 LLM calls)
 - Dramatically improves throughput
@@ -237,6 +280,7 @@ With scripting enabled:
 ## Implementation Details
 
 ### hickory-client Integration
+
 ```rust
 // Create UDP client stream
 let stream = UdpClientStream::<tokio::net::UdpSocket>::new(dns_server);
@@ -262,29 +306,35 @@ for answer in response.answers() {
 ```
 
 ### Error Handling
+
 - **Connection errors**: Reported as client status error
 - **Query timeout**: hickory-client handles with default timeout (5 seconds)
 - **NXDOMAIN/SERVFAIL**: Reported in response_code, not as error
 - **Invalid domain**: Parsing error before query sent
 
 ### Memory Management
+
 - Client holds `AsyncClient` in `Arc<Mutex<>>` for shared access
 - Background task (`bg`) runs independently to handle I/O
 - Each query creates a temporary future, no persistent state
 
 ## Testing Strategy
+
 See `tests/client/dns/CLAUDE.md` for detailed testing approach.
 
 **Test Servers:**
+
 - Public DNS: 8.8.8.8 (Google), 1.1.1.1 (Cloudflare)
 - Local test: `dnsmasq` or `unbound` in Docker container
 
 **E2E Budget:** < 5 LLM calls
+
 - Test 1: Simple A query (1 call)
 - Test 2: CNAME follow (2 calls)
 - Test 3: MX query (1 call)
 
 ## References
+
 - [RFC 1034: Domain Names - Concepts and Facilities](https://datatracker.ietf.org/doc/html/rfc1034)
 - [RFC 1035: Domain Names - Implementation and Specification](https://datatracker.ietf.org/doc/html/rfc1035)
 - [hickory-dns Documentation](https://docs.rs/hickory-client/latest/hickory_client/)

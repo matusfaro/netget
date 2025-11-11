@@ -9,13 +9,15 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
+use crate::client::saml::actions::{
+    SAML_CLIENT_CONNECTED_EVENT, SAML_CLIENT_RESPONSE_RECEIVED_EVENT,
+};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::saml::actions::{SAML_CLIENT_CONNECTED_EVENT, SAML_CLIENT_RESPONSE_RECEIVED_EVENT};
 
 /// SAML client that authenticates with a SAML Identity Provider
 pub struct SamlClient;
@@ -32,38 +34,42 @@ impl SamlClient {
         // For SAML, "connection" is logical - we're preparing to authenticate
         // The actual communication happens via HTTP requests to the IdP
 
-        info!("SAML client {} initialized for IdP: {}", client_id, remote_addr);
+        info!(
+            "SAML client {} initialized for IdP: {}",
+            client_id, remote_addr
+        );
 
         // Store IdP URL in protocol_data
-        app_state.with_client_mut(client_id, |client| {
-            client.set_protocol_field(
-                "saml_client".to_string(),
-                serde_json::json!("initialized"),
-            );
-            client.set_protocol_field(
-                "idp_url".to_string(),
-                serde_json::json!(remote_addr),
-            );
-            // Default entity ID (can be overridden by startup params)
-            client.set_protocol_field(
-                "entity_id".to_string(),
-                serde_json::json!("urn:netget:sp"),
-            );
-            // Default ACS URL
-            client.set_protocol_field(
-                "acs_url".to_string(),
-                serde_json::json!("http://localhost:8080/saml/acs"),
-            );
-            // Default binding (redirect or post)
-            client.set_protocol_field(
-                "binding".to_string(),
-                serde_json::json!("redirect"),
-            );
-        }).await;
+        app_state
+            .with_client_mut(client_id, |client| {
+                client.set_protocol_field(
+                    "saml_client".to_string(),
+                    serde_json::json!("initialized"),
+                );
+                client.set_protocol_field("idp_url".to_string(), serde_json::json!(remote_addr));
+                // Default entity ID (can be overridden by startup params)
+                client.set_protocol_field(
+                    "entity_id".to_string(),
+                    serde_json::json!("urn:netget:sp"),
+                );
+                // Default ACS URL
+                client.set_protocol_field(
+                    "acs_url".to_string(),
+                    serde_json::json!("http://localhost:8080/saml/acs"),
+                );
+                // Default binding (redirect or post)
+                client.set_protocol_field("binding".to_string(), serde_json::json!("redirect"));
+            })
+            .await;
 
         // Update status
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] SAML client {} ready for IdP: {}", client_id, remote_addr));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] SAML client {} ready for IdP: {}",
+            client_id, remote_addr
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Spawn background task to monitor client lifecycle
@@ -95,21 +101,27 @@ impl SamlClient {
         info!("SAML client {} initiating SSO", client_id);
 
         // Get IdP URL and SP configuration from client
-        let config_opt = app_state.with_client_mut(client_id, |client| {
-            let idp = client.get_protocol_field("idp_url")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            let entity = client.get_protocol_field("entity_id")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            let acs = client.get_protocol_field("acs_url")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            let bind = client.get_protocol_field("binding")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            (idp, entity, acs, bind)
-        }).await;
+        let config_opt = app_state
+            .with_client_mut(client_id, |client| {
+                let idp = client
+                    .get_protocol_field("idp_url")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let entity = client
+                    .get_protocol_field("entity_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let acs = client
+                    .get_protocol_field("acs_url")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let bind = client
+                    .get_protocol_field("binding")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                (idp, entity, acs, bind)
+            })
+            .await;
 
         let (idp_url, entity_id, acs_url, binding) = config_opt.context("Client not found")?;
 
@@ -119,7 +131,7 @@ impl SamlClient {
         let binding = binding.unwrap_or_else(|| "redirect".to_string());
 
         // Generate SAML AuthnRequest
-        let request_id = format!("_{}",  uuid::Uuid::new_v4());
+        let request_id = format!("_{}", uuid::Uuid::new_v4());
         let timestamp = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
         let authn_request = Self::generate_authn_request(
@@ -137,7 +149,10 @@ impl SamlClient {
             Self::encode_request_redirect(&authn_request)?
         } else {
             // HTTP-POST binding uses base64 only
-            base64::engine::Engine::encode(&base64::engine::general_purpose::STANDARD, authn_request.as_bytes())
+            base64::engine::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                authn_request.as_bytes(),
+            )
         };
 
         // Build SSO URL
@@ -149,16 +164,13 @@ impl SamlClient {
         info!("SAML SSO URL generated: {}", sso_url);
 
         // Store request ID for validation
-        app_state.with_client_mut(client_id, |client| {
-            client.set_protocol_field(
-                "request_id".to_string(),
-                serde_json::json!(request_id),
-            );
-            client.set_protocol_field(
-                "sso_url".to_string(),
-                serde_json::json!(sso_url.clone()),
-            );
-        }).await;
+        app_state
+            .with_client_mut(client_id, |client| {
+                client.set_protocol_field("request_id".to_string(), serde_json::json!(request_id));
+                client
+                    .set_protocol_field("sso_url".to_string(), serde_json::json!(sso_url.clone()));
+            })
+            .await;
 
         // Notify LLM about SSO URL
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -172,7 +184,10 @@ impl SamlClient {
                 }),
             );
 
-            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+            let memory = app_state
+                .get_memory_for_client(client_id)
+                .await
+                .unwrap_or_default();
 
             match call_llm_for_client(
                 &llm_client,
@@ -183,8 +198,13 @@ impl SamlClient {
                 Some(&event),
                 protocol.as_ref(),
                 &status_tx,
-            ).await {
-                Ok(ClientLlmResult { actions: _, memory_updates }) => {
+            )
+            .await
+            {
+                Ok(ClientLlmResult {
+                    actions: _,
+                    memory_updates,
+                }) => {
                     if let Some(mem) = memory_updates {
                         app_state.set_memory_for_client(client_id, mem).await;
                     }
@@ -211,18 +231,21 @@ impl SamlClient {
         // Decode base64 SAML response
         let decoded = base64::engine::Engine::decode(
             &base64::engine::general_purpose::STANDARD,
-            saml_response.as_bytes()
+            saml_response.as_bytes(),
         )
         .context("Failed to decode SAML response")?;
 
-        let response_xml = String::from_utf8(decoded)
-            .context("Failed to parse SAML response as UTF-8")?;
+        let response_xml =
+            String::from_utf8(decoded).context("Failed to parse SAML response as UTF-8")?;
 
         // Parse SAML response
         let (success, status_code, assertion_data, attributes) =
             Self::parse_saml_response(&response_xml)?;
 
-        info!("SAML response parsed - Success: {}, Status: {}", success, status_code);
+        info!(
+            "SAML response parsed - Success: {}, Status: {}",
+            success, status_code
+        );
 
         // Call LLM with validation result
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -237,7 +260,10 @@ impl SamlClient {
                 }),
             );
 
-            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+            let memory = app_state
+                .get_memory_for_client(client_id)
+                .await
+                .unwrap_or_default();
 
             match call_llm_for_client(
                 &llm_client,
@@ -248,8 +274,13 @@ impl SamlClient {
                 Some(&event),
                 protocol.as_ref(),
                 &status_tx,
-            ).await {
-                Ok(ClientLlmResult { actions: _, memory_updates }) => {
+            )
+            .await
+            {
+                Ok(ClientLlmResult {
+                    actions: _,
+                    memory_updates,
+                }) => {
                     if let Some(mem) = memory_updates {
                         app_state.set_memory_for_client(client_id, mem).await;
                     }
@@ -287,15 +318,13 @@ impl SamlClient {
         use std::io::Write;
 
         let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
-        encoder.write_all(request.as_bytes())
+        encoder
+            .write_all(request.as_bytes())
             .context("Failed to deflate SAML request")?;
-        let deflated = encoder.finish()
-            .context("Failed to finish deflation")?;
+        let deflated = encoder.finish().context("Failed to finish deflation")?;
 
-        let encoded = base64::engine::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            deflated
-        );
+        let encoded =
+            base64::engine::Engine::encode(&base64::engine::general_purpose::STANDARD, deflated);
 
         Ok(urlencoding::encode(&encoded).to_string())
     }
@@ -303,7 +332,12 @@ impl SamlClient {
     /// Parse SAML response XML
     fn parse_saml_response(
         response_xml: &str,
-    ) -> Result<(bool, String, Option<serde_json::Value>, Option<serde_json::Value>)> {
+    ) -> Result<(
+        bool,
+        String,
+        Option<serde_json::Value>,
+        Option<serde_json::Value>,
+    )> {
         use quick_xml::events::Event;
         use quick_xml::Reader;
 
@@ -327,13 +361,15 @@ impl SamlClient {
                             for attr in e.attributes() {
                                 if let Ok(attr) = attr {
                                     if attr.key.as_ref() == b"Name" {
-                                        if let Ok(value) = attr.decode_and_unescape_value(reader.decoder()) {
+                                        if let Ok(value) =
+                                            attr.decode_and_unescape_value(reader.decoder())
+                                        {
                                             current_attr_name = Some(value.to_string());
                                         }
                                     }
                                 }
                             }
-                        },
+                        }
                         b"saml:NameID" | b"NameID" => {
                             // Read subject
                             if let Ok(Event::Text(e)) = reader.read_event_into(&mut buf) {
@@ -341,17 +377,21 @@ impl SamlClient {
                                     subject = Some(text.to_string());
                                 }
                             }
-                        },
+                        }
                         _ => {}
                     }
                 }
                 Ok(Event::Empty(ref e)) => {
-                    if e.name().as_ref() == b"samlp:StatusCode" || e.name().as_ref() == b"StatusCode" {
+                    if e.name().as_ref() == b"samlp:StatusCode"
+                        || e.name().as_ref() == b"StatusCode"
+                    {
                         // Extract status code
                         for attr in e.attributes() {
                             if let Ok(attr) = attr {
                                 if attr.key.as_ref() == b"Value" {
-                                    if let Ok(value) = attr.decode_and_unescape_value(reader.decoder()) {
+                                    if let Ok(value) =
+                                        attr.decode_and_unescape_value(reader.decoder())
+                                    {
                                         status_code = value.to_string();
                                     }
                                 }
@@ -359,20 +399,19 @@ impl SamlClient {
                         }
                     }
                 }
-                Ok(Event::End(ref e)) => {
-                    match e.name().as_ref() {
-                        b"saml:Attribute" | b"Attribute" => {
-                            in_attribute = false;
-                            current_attr_name = None;
-                        },
-                        _ => {}
+                Ok(Event::End(ref e)) => match e.name().as_ref() {
+                    b"saml:Attribute" | b"Attribute" => {
+                        in_attribute = false;
+                        current_attr_name = None;
                     }
-                }
+                    _ => {}
+                },
                 Ok(Event::Text(e)) => {
                     if in_attribute {
                         if let Some(name) = &current_attr_name {
                             if let Ok(text) = e.unescape() {
-                                attributes.insert(name.clone(), serde_json::json!(text.to_string()));
+                                attributes
+                                    .insert(name.clone(), serde_json::json!(text.to_string()));
                             }
                         }
                     }

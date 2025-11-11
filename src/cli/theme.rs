@@ -90,7 +90,7 @@ impl ColorPalette {
             connection: Color::DarkCyan,
             separator: Color::DarkGreen,
             dimmed: Color::Grey,
-            normal: Color::Reset,  // Use terminal default
+            normal: Color::Reset, // Use terminal default
             success: Color::DarkGreen,
             failure: Color::Red,
             ask: Color::DarkYellow,
@@ -116,18 +116,20 @@ pub fn detect_theme() -> Option<Theme> {
     match termbg::theme(timeout) {
         Ok(termbg::Theme::Light) => Some(Theme::Light),
         Ok(termbg::Theme::Dark) => Some(Theme::Dark),
-        Err(_) => None,  // Detection failed or timed out
+        Err(_) => None, // Detection failed or timed out
     }
 }
 
 /// Parse theme from string (for CLI flag)
 pub fn parse_theme(s: &str) -> anyhow::Result<Option<Theme>> {
     match s.to_lowercase().as_str() {
-        "auto" => Ok(None),  // None means auto-detect
+        "auto" => Ok(None), // None means auto-detect
         "light" => Ok(Some(Theme::Light)),
         "dark" => Ok(Some(Theme::Dark)),
         "neutral" => Ok(Some(Theme::Neutral)),
-        _ => anyhow::bail!("Invalid theme '{}'. Valid options: auto, light, dark, neutral", s),
+        _ => anyhow::bail!(
+            "Invalid theme '{}'. Valid options: auto, light, dark, neutral",
+            s
+        ),
     }
 }
-

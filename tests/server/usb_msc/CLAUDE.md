@@ -4,7 +4,8 @@
 
 **Status**: ⚠️ **Deferred until full SCSI implementation**
 
-The USB MSC E2E tests are currently deferred because the protocol requires full SCSI command implementation, which is not yet complete. The framework exists but functional testing requires:
+The USB MSC E2E tests are currently deferred because the protocol requires full SCSI command implementation, which is
+not yet complete. The framework exists but functional testing requires:
 
 1. Complete UsbInterfaceHandler implementation with BOT protocol
 2. SCSI command dispatcher for all required commands
@@ -23,6 +24,7 @@ The USB MSC E2E tests are currently deferred because the protocol requires full 
 ### Test Scenarios
 
 #### Test 1: Device Attachment (< 2 LLM calls)
+
 ```rust
 #[tokio::test]
 async fn test_msc_device_attachment() {
@@ -35,6 +37,7 @@ async fn test_msc_device_attachment() {
 ```
 
 #### Test 2: Read Operations (< 3 LLM calls)
+
 ```rust
 #[tokio::test]
 async fn test_msc_read_operations() {
@@ -47,6 +50,7 @@ async fn test_msc_read_operations() {
 ```
 
 #### Test 3: Write Operations (< 3 LLM calls)
+
 ```rust
 #[tokio::test]
 async fn test_msc_write_operations() {
@@ -59,6 +63,7 @@ async fn test_msc_write_operations() {
 ```
 
 #### Test 4: Write Protection (< 2 LLM calls)
+
 ```rust
 #[tokio::test]
 async fn test_msc_write_protection() {
@@ -104,19 +109,19 @@ async fn test_msc_write_protection() {
 Once implementation is complete:
 
 1. **Manual Testing First**:
-   - Verify device enumeration
-   - Test with real usbip client
-   - Validate SCSI command responses
+    - Verify device enumeration
+    - Test with real usbip client
+    - Validate SCSI command responses
 
 2. **Automated E2E Tests Second**:
-   - Create minimal test suite
-   - Use small disk images (1-10MB)
-   - Focus on core functionality
+    - Create minimal test suite
+    - Use small disk images (1-10MB)
+    - Focus on core functionality
 
 3. **Performance Testing Last**:
-   - Benchmark read/write throughput
-   - Test with larger disk images
-   - Measure LLM response latency
+    - Benchmark read/write throughput
+    - Test with larger disk images
+    - Measure LLM response latency
 
 ## References
 

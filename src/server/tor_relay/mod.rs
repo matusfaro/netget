@@ -66,24 +66,24 @@ use crate::llm::ollama_client::OllamaClient;
 #[cfg(feature = "tor")]
 use crate::llm::ActionResult;
 #[cfg(feature = "tor")]
-use actions::{TOR_RELAY_CIRCUIT_CREATED_EVENT, TOR_RELAY_RELAY_CELL_EVENT};
+use crate::protocol::Event;
 #[cfg(feature = "tor")]
 use crate::server::TorRelayProtocol;
 #[cfg(feature = "tor")]
-use crate::protocol::Event;
-#[cfg(feature = "tor")]
 use crate::state::app_state::AppState;
+#[cfg(feature = "tor")]
+use actions::{TOR_RELAY_CIRCUIT_CREATED_EVENT, TOR_RELAY_RELAY_CELL_EVENT};
 #[cfg(feature = "tor")]
 use circuit::{CircuitId, CircuitManager, StreamId};
 #[cfg(feature = "tor")]
-use stream::{parse_begin_target, connect_to_target, build_relay_cell, relay_command, end_reason};
+use stream::{build_relay_cell, connect_to_target, end_reason, parse_begin_target, relay_command};
 
+use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio_rustls::rustls::ServerConfig;
 use tokio_rustls::TlsAcceptor;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Tor Relay server - handles OR protocol connections
 pub struct TorRelayServer;
@@ -123,7 +123,10 @@ impl TorRelayServer {
             .context("Failed to get local address")?;
 
         info!("Tor Relay server listening on {}", actual_addr);
-        let _ = status_tx.send(format!("[INFO] Tor Relay (OR protocol) server listening on {}", actual_addr));
+        let _ = status_tx.send(format!(
+            "[INFO] Tor Relay (OR protocol) server listening on {}",
+            actual_addr
+        ));
 
         // Create circuit manager (shared across all connections)
         let circuit_manager = Arc::new(CircuitManager::new());
@@ -131,7 +134,10 @@ impl TorRelayServer {
         // Log relay identity
         let fingerprint = circuit_manager.identity_fingerprint();
         info!("Relay identity fingerprint: {}", hex::encode(fingerprint));
-        let _ = status_tx.send(format!("[INFO] Relay fingerprint: {}", hex::encode(fingerprint)));
+        let _ = status_tx.send(format!(
+            "[INFO] Relay fingerprint: {}",
+            hex::encode(fingerprint)
+        ));
 
         let protocol = Arc::new(TorRelayProtocol::new());
 
@@ -141,9 +147,14 @@ impl TorRelayServer {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
                         let connection_id = crate::server::connection::ConnectionId::new(
-                            app_state.get_next_unified_id().await
+                            app_state.get_next_unified_id().await,
                         );
-                        console_debug!(status_tx, "Tor Relay connection {} from {}", connection_id, remote_addr);
+                        console_debug!(
+                            status_tx,
+                            "Tor Relay connection {} from {}",
+                            connection_id,
+                            remote_addr
+                        );
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -201,10 +212,9 @@ fn generate_tls_certificate() -> Result<(CertificateDer<'static>, PrivateKeyDer<
 
     let mut params = CertificateParams::new(vec!["tor-relay.local".to_string()])?;
     params.distinguished_name = rcgen::DistinguishedName::new();
-    params.distinguished_name.push(
-        rcgen::DnType::CommonName,
-        "NetGet Tor Relay"
-    );
+    params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, "NetGet Tor Relay");
 
     let key_pair = KeyPair::generate()?;
     let cert = params.self_signed(&key_pair)?;
@@ -350,13 +360,22 @@ impl TorRelaySession {
     }
 
     /// Handle individual cell based on type
-    async fn handle_cell(&mut self, cell_info: TorCellInfo, cell_data: &[u8]) -> Result<Option<Vec<u8>>> {
+    async fn handle_cell(
+        &mut self,
+        cell_info: TorCellInfo,
+        cell_data: &[u8],
+    ) -> Result<Option<Vec<u8>>> {
         match cell_info.cell_type.as_str() {
             "CREATE2" => self.handle_create2(cell_info.circuit_id, cell_data).await,
             "RELAY" | "RELAY_EARLY" => self.handle_relay(cell_info.circuit_id, cell_data).await,
             "DESTROY" => {
-                debug!("Received DESTROY for circuit {}", cell_info.circuit_id.as_u32());
-                self.circuit_manager.destroy_circuit(cell_info.circuit_id).await;
+                debug!(
+                    "Received DESTROY for circuit {}",
+                    cell_info.circuit_id.as_u32()
+                );
+                self.circuit_manager
+                    .destroy_circuit(cell_info.circuit_id)
+                    .await;
                 Ok(None)
             }
             "PADDING" => {
@@ -371,7 +390,11 @@ impl TorRelaySession {
     }
 
     /// Handle CREATE2 cell
-    async fn handle_create2(&mut self, circuit_id: CircuitId, cell_data: &[u8]) -> Result<Option<Vec<u8>>> {
+    async fn handle_create2(
+        &mut self,
+        circuit_id: CircuitId,
+        cell_data: &[u8],
+    ) -> Result<Option<Vec<u8>>> {
         debug!("Processing CREATE2 for circuit {}", circuit_id.as_u32());
 
         // Parse CREATE2 cell:
@@ -383,11 +406,13 @@ impl TorRelaySession {
         let htype = u16::from_be_bytes([cell_data[5], cell_data[6]]);
         let hlen = u16::from_be_bytes([cell_data[7], cell_data[8]]);
 
-        if htype != 0x0002 {  // ntor
+        if htype != 0x0002 {
+            // ntor
             return Err(anyhow::anyhow!("Unsupported handshake type: {}", htype));
         }
 
-        if hlen != 84 {  // ntor client handshake is 84 bytes (ID:20 + B:32 + X:32)
+        if hlen != 84 {
+            // ntor client handshake is 84 bytes (ID:20 + B:32 + X:32)
             return Err(anyhow::anyhow!("Invalid ntor handshake length: {}", hlen));
         }
 
@@ -403,16 +428,25 @@ impl TorRelaySession {
         let client_x: [u8; 32] = handshake_data[52..84].try_into()?;
 
         // Perform ntor handshake via circuit manager
-        let (y, auth) = self.circuit_manager.handle_create2(circuit_id, client_x).await?;
+        let (y, auth) = self
+            .circuit_manager
+            .handle_create2(circuit_id, client_x)
+            .await?;
 
         info!("Circuit {} created successfully", circuit_id.as_u32());
-        let _ = self.status_tx.send(format!("[INFO] Circuit {} created", circuit_id.as_u32()));
+        let _ = self
+            .status_tx
+            .send(format!("[INFO] Circuit {} created", circuit_id.as_u32()));
 
         // Log relay statistics
         let stats = self.circuit_manager.get_relay_stats().await;
-        let _ = self.status_tx.send(format!("[DEBUG] Relay stats: {} circuits, {} streams, sent={} received={}",
-            stats.total_circuits, stats.total_streams,
-            stats.total_bytes_sent, stats.total_bytes_received));
+        let _ = self.status_tx.send(format!(
+            "[DEBUG] Relay stats: {} circuits, {} streams, sent={} received={}",
+            stats.total_circuits,
+            stats.total_streams,
+            stats.total_bytes_sent,
+            stats.total_bytes_received
+        ));
 
         // Send event to LLM
         let event = Event::new(
@@ -431,14 +465,15 @@ impl TorRelaySession {
             Some(self.connection_id),
             &event,
             self.protocol.as_ref(),
-        ).await;
+        )
+        .await;
 
         // Build CREATED2 response
         // CircID (4) | Command (1) | HLEN (2) | HDATA (HLEN)
         let mut response = Vec::with_capacity(71);
         response.extend_from_slice(&circuit_id.to_bytes());
-        response.push(10);  // CREATED2 command
-        response.extend_from_slice(&64u16.to_be_bytes());  // HLEN = 64 (Y:32 + AUTH:32)
+        response.push(10); // CREATED2 command
+        response.extend_from_slice(&64u16.to_be_bytes()); // HLEN = 64 (Y:32 + AUTH:32)
         response.extend_from_slice(&y);
         response.extend_from_slice(&auth);
 
@@ -449,30 +484,45 @@ impl TorRelaySession {
     }
 
     /// Handle RELAY cell
-    async fn handle_relay(&mut self, circuit_id: CircuitId, cell_data: &[u8]) -> Result<Option<Vec<u8>>> {
+    async fn handle_relay(
+        &mut self,
+        circuit_id: CircuitId,
+        cell_data: &[u8],
+    ) -> Result<Option<Vec<u8>>> {
         trace!("Processing RELAY cell for circuit {}", circuit_id.as_u32());
 
         // Extract relay payload (skip CircID:4 + Command:1)
         let mut relay_payload = cell_data[5..514].to_vec();
 
         // Decrypt relay cell
-        self.circuit_manager.decrypt_relay_cell(circuit_id, &mut relay_payload).await?;
+        self.circuit_manager
+            .decrypt_relay_cell(circuit_id, &mut relay_payload)
+            .await?;
 
         // Track bytes received from client (entire cell)
         let _ = self.circuit_manager.record_received(circuit_id, 509).await;
 
         // Track RELAY cell for circuit-level flow control - send SENDME if needed
-        let send_circuit_sendme = self.circuit_manager.record_relay_received(circuit_id).await.unwrap_or(false);
+        let send_circuit_sendme = self
+            .circuit_manager
+            .record_relay_received(circuit_id)
+            .await
+            .unwrap_or(false);
         if send_circuit_sendme {
-            debug!("Sending circuit-level SENDME for circuit {}", circuit_id.as_u32());
+            debug!(
+                "Sending circuit-level SENDME for circuit {}",
+                circuit_id.as_u32()
+            );
             let sendme_cell = build_relay_cell(
                 circuit_id.as_u32(),
-                0,  // Stream ID 0 for circuit-level SENDME
+                0, // Stream ID 0 for circuit-level SENDME
                 relay_command::SENDME,
-                &[]
+                &[],
             );
             let mut encrypted = sendme_cell.clone();
-            self.circuit_manager.encrypt_relay_cell(circuit_id, &mut encrypted[5..514]).await?;
+            self.circuit_manager
+                .encrypt_relay_cell(circuit_id, &mut encrypted[5..514])
+                .await?;
             let _ = self.outgoing_tx.send(encrypted);
         }
 
@@ -513,8 +563,13 @@ impl TorRelaySession {
             _ => "UNKNOWN",
         };
 
-        debug!("RELAY cell: command={} ({}), stream={}, length={}",
-            relay_cmd, relay_cmd_name, stream_id.as_u16(), length);
+        debug!(
+            "RELAY cell: command={} ({}), stream={}, length={}",
+            relay_cmd,
+            relay_cmd_name,
+            stream_id.as_u16(),
+            length
+        );
 
         // Handle specific relay commands
         match relay_cmd {
@@ -551,7 +606,9 @@ impl TorRelaySession {
                     Some(self.connection_id),
                     &event,
                     self.protocol.as_ref(),
-                ).await {
+                )
+                .await
+                {
                     // Execute protocol actions
                     for protocol_result in execution_result.protocol_results {
                         match protocol_result {
@@ -575,63 +632,95 @@ impl TorRelaySession {
     }
 
     /// Handle BEGIN cell - establish TCP connection to target
-    async fn handle_begin_cell(&mut self, circuit_id: CircuitId, stream_id: StreamId, data: &[u8]) -> Result<Option<Vec<u8>>> {
+    async fn handle_begin_cell(
+        &mut self,
+        circuit_id: CircuitId,
+        stream_id: StreamId,
+        data: &[u8],
+    ) -> Result<Option<Vec<u8>>> {
         // Parse target address
         let target = parse_begin_target(data)?;
 
-        info!("BEGIN stream {} on circuit {} to {}", stream_id.as_u16(), circuit_id.as_u32(), target);
-        let _ = self.status_tx.send(format!("[INFO] BEGIN stream {} → {}", stream_id.as_u16(), target));
+        info!(
+            "BEGIN stream {} on circuit {} to {}",
+            stream_id.as_u16(),
+            circuit_id.as_u32(),
+            target
+        );
+        let _ = self.status_tx.send(format!(
+            "[INFO] BEGIN stream {} → {}",
+            stream_id.as_u16(),
+            target
+        ));
 
         // Create stream in circuit manager
-        self.circuit_manager.create_stream(circuit_id, stream_id, target.clone()).await?;
+        self.circuit_manager
+            .create_stream(circuit_id, stream_id, target.clone())
+            .await?;
 
         // Attempt to connect to target
         match connect_to_target(&target).await {
             Ok(tcp_stream) => {
                 info!("Connected to {} for stream {}", target, stream_id.as_u16());
-                let _ = self.status_tx.send(format!("→ Connected to {} for stream {}", target, stream_id.as_u16()));
+                let _ = self.status_tx.send(format!(
+                    "→ Connected to {} for stream {}",
+                    target,
+                    stream_id.as_u16()
+                ));
 
                 // Store TCP connection in stream
-                self.circuit_manager.set_stream_active(circuit_id, stream_id, tcp_stream).await?;
+                self.circuit_manager
+                    .set_stream_active(circuit_id, stream_id, tcp_stream)
+                    .await?;
 
                 // Build CONNECTED response
                 let connected_cell = build_relay_cell(
                     circuit_id.as_u32(),
                     stream_id.as_u16(),
                     relay_command::CONNECTED,
-                    &[]
+                    &[],
                 );
 
                 // Encrypt response
                 let mut encrypted = connected_cell.clone();
-                self.circuit_manager.encrypt_relay_cell(circuit_id, &mut encrypted[5..514]).await?;
+                self.circuit_manager
+                    .encrypt_relay_cell(circuit_id, &mut encrypted[5..514])
+                    .await?;
 
                 // Track bytes sent to client
                 let _ = self.circuit_manager.record_sent(circuit_id, 509).await;
 
                 // Start forwarding task for this stream
-                self.spawn_stream_forwarder(circuit_id, stream_id, self.outgoing_tx.clone()).await?;
+                self.spawn_stream_forwarder(circuit_id, stream_id, self.outgoing_tx.clone())
+                    .await?;
 
                 Ok(Some(encrypted))
             }
             Err(e) => {
                 error!("Failed to connect to {}: {}", target, e);
-                let _ = self.status_tx.send(format!("✗ Failed to connect to {}: {}", target, e));
+                let _ = self
+                    .status_tx
+                    .send(format!("✗ Failed to connect to {}: {}", target, e));
 
                 // Close stream
-                let _ = self.circuit_manager.close_stream(circuit_id, stream_id).await;
+                let _ = self
+                    .circuit_manager
+                    .close_stream(circuit_id, stream_id)
+                    .await;
 
                 // Build END response with error reason
                 let end_cell = build_relay_cell(
                     circuit_id.as_u32(),
                     stream_id.as_u16(),
                     relay_command::END,
-                    &[end_reason::CONNECT_REFUSED]
+                    &[end_reason::CONNECT_REFUSED],
                 );
 
                 // Encrypt response
                 let mut encrypted = end_cell.clone();
-                self.circuit_manager.encrypt_relay_cell(circuit_id, &mut encrypted[5..514]).await?;
+                self.circuit_manager
+                    .encrypt_relay_cell(circuit_id, &mut encrypted[5..514])
+                    .await?;
 
                 // Track bytes sent to client
                 let _ = self.circuit_manager.record_sent(circuit_id, 509).await;
@@ -642,50 +731,74 @@ impl TorRelaySession {
     }
 
     /// Handle DATA cell - forward data to TCP connection
-    async fn handle_data_cell(&mut self, circuit_id: CircuitId, stream_id: StreamId, data: &[u8]) -> Result<Option<Vec<u8>>> {
-        trace!("DATA cell for stream {} ({} bytes)", stream_id.as_u16(), data.len());
+    async fn handle_data_cell(
+        &mut self,
+        circuit_id: CircuitId,
+        stream_id: StreamId,
+        data: &[u8],
+    ) -> Result<Option<Vec<u8>>> {
+        trace!(
+            "DATA cell for stream {} ({} bytes)",
+            stream_id.as_u16(),
+            data.len()
+        );
 
         // Track DATA cell for stream-level flow control - send SENDME if needed
-        let send_stream_sendme = self.circuit_manager
+        let send_stream_sendme = self
+            .circuit_manager
             .record_stream_data_received(circuit_id, stream_id)
             .await
             .unwrap_or(false);
 
         if send_stream_sendme {
-            debug!("Sending stream-level SENDME for stream {}", stream_id.as_u16());
+            debug!(
+                "Sending stream-level SENDME for stream {}",
+                stream_id.as_u16()
+            );
             let sendme_cell = build_relay_cell(
                 circuit_id.as_u32(),
                 stream_id.as_u16(),
                 relay_command::SENDME,
-                &[]
+                &[],
             );
             let mut encrypted = sendme_cell.clone();
-            self.circuit_manager.encrypt_relay_cell(circuit_id, &mut encrypted[5..514]).await?;
+            self.circuit_manager
+                .encrypt_relay_cell(circuit_id, &mut encrypted[5..514])
+                .await?;
             let _ = self.circuit_manager.record_sent(circuit_id, 509).await;
             let _ = self.outgoing_tx.send(encrypted);
         }
 
         // Get TCP connection for this stream
-        if let Some(connection) = self.circuit_manager.get_stream_connection(circuit_id, stream_id).await? {
+        if let Some(connection) = self
+            .circuit_manager
+            .get_stream_connection(circuit_id, stream_id)
+            .await?
+        {
             // Write data to TCP connection
             let mut conn = connection.lock().await;
             if let Err(e) = conn.write_all(data).await {
                 error!("Failed to write to stream {}: {}", stream_id.as_u16(), e);
 
                 // Close stream
-                drop(conn);  // Release lock before closing
-                let _ = self.circuit_manager.close_stream(circuit_id, stream_id).await;
+                drop(conn); // Release lock before closing
+                let _ = self
+                    .circuit_manager
+                    .close_stream(circuit_id, stream_id)
+                    .await;
 
                 // Send END cell
                 let end_cell = build_relay_cell(
                     circuit_id.as_u32(),
                     stream_id.as_u16(),
                     relay_command::END,
-                    &[end_reason::MISC]
+                    &[end_reason::MISC],
                 );
 
                 let mut encrypted = end_cell.clone();
-                self.circuit_manager.encrypt_relay_cell(circuit_id, &mut encrypted[5..514]).await?;
+                self.circuit_manager
+                    .encrypt_relay_cell(circuit_id, &mut encrypted[5..514])
+                    .await?;
 
                 // Track bytes sent to client
                 let _ = self.circuit_manager.record_sent(circuit_id, 509).await;
@@ -693,7 +806,11 @@ impl TorRelaySession {
                 return Ok(Some(encrypted));
             }
 
-            trace!("Forwarded {} bytes to stream {}", data.len(), stream_id.as_u16());
+            trace!(
+                "Forwarded {} bytes to stream {}",
+                data.len(),
+                stream_id.as_u16()
+            );
         } else {
             warn!("Stream {} not found or not active", stream_id.as_u16());
         }
@@ -702,28 +819,60 @@ impl TorRelaySession {
     }
 
     /// Handle END cell - close stream
-    async fn handle_end_cell(&mut self, circuit_id: CircuitId, stream_id: StreamId, data: &[u8]) -> Result<Option<Vec<u8>>> {
-        let reason = if data.is_empty() { end_reason::DONE } else { data[0] };
+    async fn handle_end_cell(
+        &mut self,
+        circuit_id: CircuitId,
+        stream_id: StreamId,
+        data: &[u8],
+    ) -> Result<Option<Vec<u8>>> {
+        let reason = if data.is_empty() {
+            end_reason::DONE
+        } else {
+            data[0]
+        };
 
         debug!("END stream {} (reason: {})", stream_id.as_u16(), reason);
-        let _ = self.status_tx.send(format!("[DEBUG] END stream {} (reason: {})", stream_id.as_u16(), reason));
+        let _ = self.status_tx.send(format!(
+            "[DEBUG] END stream {} (reason: {})",
+            stream_id.as_u16(),
+            reason
+        ));
 
         // Close stream
-        let _ = self.circuit_manager.close_stream(circuit_id, stream_id).await;
+        let _ = self
+            .circuit_manager
+            .close_stream(circuit_id, stream_id)
+            .await;
 
         Ok(None)
     }
 
     /// Handle SENDME cell - update flow control windows
-    async fn handle_sendme_cell(&mut self, circuit_id: CircuitId, stream_id: StreamId) -> Result<Option<Vec<u8>>> {
+    async fn handle_sendme_cell(
+        &mut self,
+        circuit_id: CircuitId,
+        stream_id: StreamId,
+    ) -> Result<Option<Vec<u8>>> {
         if stream_id.as_u16() == 0 {
             // Circuit-level SENDME
-            debug!("Received circuit-level SENDME for circuit {}", circuit_id.as_u32());
-            let _ = self.circuit_manager.process_circuit_sendme(circuit_id).await;
+            debug!(
+                "Received circuit-level SENDME for circuit {}",
+                circuit_id.as_u32()
+            );
+            let _ = self
+                .circuit_manager
+                .process_circuit_sendme(circuit_id)
+                .await;
         } else {
             // Stream-level SENDME
-            debug!("Received stream-level SENDME for stream {}", stream_id.as_u16());
-            let _ = self.circuit_manager.process_stream_sendme(circuit_id, stream_id).await;
+            debug!(
+                "Received stream-level SENDME for stream {}",
+                stream_id.as_u16()
+            );
+            let _ = self
+                .circuit_manager
+                .process_stream_sendme(circuit_id, stream_id)
+                .await;
         }
         Ok(None)
     }
@@ -736,14 +885,17 @@ impl TorRelaySession {
         outgoing_tx: mpsc::UnboundedSender<Vec<u8>>,
     ) -> Result<()> {
         // Get TCP connection
-        let connection = self.circuit_manager.get_stream_connection(circuit_id, stream_id).await?
+        let connection = self
+            .circuit_manager
+            .get_stream_connection(circuit_id, stream_id)
+            .await?
             .ok_or_else(|| anyhow::anyhow!("Stream not found"))?;
 
         let circuit_mgr = self.circuit_manager.clone();
         let status_tx = self.status_tx.clone();
 
         tokio::spawn(async move {
-            let mut buffer = vec![0u8; 498];  // Max relay cell data size
+            let mut buffer = vec![0u8; 498]; // Max relay cell data size
 
             loop {
                 let bytes_read = {
@@ -767,12 +919,19 @@ impl TorRelaySession {
                     circuit_id.as_u32(),
                     stream_id.as_u16(),
                     relay_command::DATA,
-                    &buffer[..bytes_read]
+                    &buffer[..bytes_read],
                 );
 
                 // Encrypt relay cell payload
-                if let Err(e) = circuit_mgr.encrypt_relay_cell(circuit_id, &mut data_cell[5..514]).await {
-                    error!("Failed to encrypt DATA cell for stream {}: {}", stream_id.as_u16(), e);
+                if let Err(e) = circuit_mgr
+                    .encrypt_relay_cell(circuit_id, &mut data_cell[5..514])
+                    .await
+                {
+                    error!(
+                        "Failed to encrypt DATA cell for stream {}: {}",
+                        stream_id.as_u16(),
+                        e
+                    );
                     break;
                 }
 
@@ -781,11 +940,19 @@ impl TorRelaySession {
 
                 // Send encrypted cell through channel
                 if let Err(e) = outgoing_tx.send(data_cell) {
-                    error!("Failed to send DATA cell for stream {}: {}", stream_id.as_u16(), e);
+                    error!(
+                        "Failed to send DATA cell for stream {}: {}",
+                        stream_id.as_u16(),
+                        e
+                    );
                     break;
                 }
 
-                trace!("Forwarded {} bytes from stream {} back to client", bytes_read, stream_id.as_u16());
+                trace!(
+                    "Forwarded {} bytes from stream {} back to client",
+                    bytes_read,
+                    stream_id.as_u16()
+                );
             }
 
             // Send END cell when stream closes
@@ -793,11 +960,14 @@ impl TorRelaySession {
                 circuit_id.as_u32(),
                 stream_id.as_u16(),
                 relay_command::END,
-                &[end_reason::DONE]
+                &[end_reason::DONE],
             );
 
             // Encrypt END cell
-            if let Ok(_) = circuit_mgr.encrypt_relay_cell(circuit_id, &mut end_cell[5..514]).await {
+            if let Ok(_) = circuit_mgr
+                .encrypt_relay_cell(circuit_id, &mut end_cell[5..514])
+                .await
+            {
                 let _ = circuit_mgr.record_sent(circuit_id, 509).await;
                 let _ = outgoing_tx.send(end_cell);
             }
@@ -814,9 +984,9 @@ impl TorRelaySession {
     fn create_destroy_cell(&self, circuit_id: CircuitId) -> Vec<u8> {
         let mut cell = Vec::with_capacity(514);
         cell.extend_from_slice(&circuit_id.to_bytes());
-        cell.push(4);  // DESTROY command
-        cell.push(1);  // Reason: protocol error
-        cell.resize(514, 0);  // Pad to 514 bytes
+        cell.push(4); // DESTROY command
+        cell.push(1); // Reason: protocol error
+        cell.resize(514, 0); // Pad to 514 bytes
         cell
     }
 }

@@ -2,7 +2,8 @@
 
 ## Overview
 
-RSS feed client that fetches and parses RSS 2.0 XML feeds with LLM-controlled interpretation. The LLM decides which feeds to fetch and how to process items.
+RSS feed client that fetches and parses RSS 2.0 XML feeds with LLM-controlled interpretation. The LLM decides which
+feeds to fetch and how to process items.
 
 **Status**: Experimental
 
@@ -13,7 +14,8 @@ RSS feed client that fetches and parses RSS 2.0 XML feeds with LLM-controlled in
 - **reqwest** - Modern async HTTP client for Rust
 - **rss v2.0** - RSS 2.0 XML parsing library
 
-**Rationale**: reqwest provides reliable HTTP fetching with TLS support. The `rss` crate handles RSS XML parsing, converting XML into structured Rust types.
+**Rationale**: reqwest provides reliable HTTP fetching with TLS support. The `rss` crate handles RSS XML parsing,
+converting XML into structured Rust types.
 
 ### Architecture
 
@@ -40,6 +42,7 @@ RSS feed client that fetches and parses RSS 2.0 XML feeds with LLM-controlled in
 ### Connection Model
 
 Unlike persistent connections (TCP, WebSocket), RSS client is **request/response** based:
+
 - "Connection" = initialization of HTTP client
 - Each feed fetch is independent HTTP request
 - LLM triggers fetches via actions
@@ -48,20 +51,23 @@ Unlike persistent connections (TCP, WebSocket), RSS client is **request/response
 ### LLM Control
 
 **Async Actions** (user-triggered):
+
 - `fetch_rss_feed` - Fetch and parse RSS feed from URL
-  - Parameters: url (full URL to feed)
-  - Returns Custom result with feed fetch request
+    - Parameters: url (full URL to feed)
+    - Returns Custom result with feed fetch request
 - `disconnect` - Stop RSS client
 
 **Sync Actions** (in response to feed fetched):
+
 - `fetch_rss_feed` - Fetch another feed based on parsed content
 - `wait_for_more` - Wait for user input before fetching more
 
 **Events:**
+
 - `rss_connected` - Fired when client initialized
-  - Data: base_url
+    - Data: base_url
 - `rss_feed_fetched` - Fired when feed parsed
-  - Data: url, feed_title, feed_link, feed_description, item_count, items (array)
+    - Data: url, feed_title, feed_link, feed_description, item_count, items (array)
 
 ### Structured Data (CRITICAL)
 
@@ -113,6 +119,7 @@ LLMs can interpret feed metadata and filter/process items.
 ### Connection State Machine
 
 Prevents concurrent LLM calls:
+
 - **Idle**: Ready for new fetch
 - **Processing**: Currently fetching/parsing feed
 - **Accumulating**: Not used for RSS (no streaming)
@@ -164,6 +171,7 @@ status_tx.send("[RSS CLIENT] Fetching feed");              // → TUI
 **User**: "Connect to example.com:80 via rss and fetch /news.xml"
 
 **LLM Action**:
+
 ```json
 {
   "type": "fetch_rss_feed",
@@ -176,6 +184,7 @@ status_tx.send("[RSS CLIENT] Fetching feed");              // → TUI
 **User**: "Fetch tech feed and show only items from last week"
 
 **LLM Response** (after feed_fetched event):
+
 ```json
 {
   "type": "show_message",
@@ -188,6 +197,7 @@ status_tx.send("[RSS CLIENT] Fetching feed");              // → TUI
 **User**: "Fetch main feed, then fetch any linked feeds"
 
 **LLM Flow**:
+
 1. Fetch main feed
 2. Parse items for feed links
 3. Generate `fetch_rss_feed` actions for discovered feeds
@@ -201,6 +211,7 @@ See `tests/client/rss/CLAUDE.md` for E2E testing approach.
 ### 1. Atom Support
 
 Support Atom 1.0 feeds:
+
 - Use `atom_syndication` crate
 - Auto-detect format (RSS vs Atom)
 - Unified item structure
@@ -208,6 +219,7 @@ Support Atom 1.0 feeds:
 ### 2. Feed Caching
 
 Add caching layer:
+
 - Store feeds in memory with TTL
 - Support ETag and If-Modified-Since headers
 - Conditional requests to save bandwidth
@@ -215,6 +227,7 @@ Add caching layer:
 ### 3. Feed Autodiscovery
 
 Discover feeds from HTML pages:
+
 - Parse `<link rel="alternate">` tags
 - Support autodiscovery per RSS spec
 - Extract multiple feeds from single page
@@ -222,6 +235,7 @@ Discover feeds from HTML pages:
 ### 4. Advanced Filtering
 
 LLM-driven content filtering:
+
 - Filter by keywords, date ranges, authors
 - Deduplicate items across feeds
 - Rank items by relevance
@@ -229,6 +243,7 @@ LLM-driven content filtering:
 ### 5. Enclosure Support
 
 Extract audio/video enclosures:
+
 - Parse `<enclosure>` elements
 - Download podcast audio files
 - Support media RSS extensions
@@ -236,6 +251,7 @@ Extract audio/video enclosures:
 ### 6. Polling & Subscriptions
 
 Automatic feed polling:
+
 - Poll feeds at intervals
 - Notify on new items
 - Track seen items to avoid duplicates

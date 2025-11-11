@@ -33,7 +33,10 @@ impl BitcoinClient {
         // For Bitcoin RPC, "connection" is logical (HTTP-based JSON-RPC)
         // We don't maintain a persistent connection, but verify connectivity
 
-        info!("Bitcoin RPC client {} initialized for {}", client_id, remote_addr);
+        info!(
+            "Bitcoin RPC client {} initialized for {}",
+            client_id, remote_addr
+        );
 
         // Parse remote_addr to extract RPC URL
         // Expected format: "http://user:pass@host:port" or "host:port"
@@ -45,20 +48,21 @@ impl BitcoinClient {
         };
 
         // Store RPC URL and auth in protocol_data
-        app_state.with_client_mut(client_id, |client| {
-            client.set_protocol_field(
-                "rpc_url".to_string(),
-                serde_json::json!(rpc_url),
-            );
-            client.set_protocol_field(
-                "initialized".to_string(),
-                serde_json::json!(true),
-            );
-        }).await;
+        app_state
+            .with_client_mut(client_id, |client| {
+                client.set_protocol_field("rpc_url".to_string(), serde_json::json!(rpc_url));
+                client.set_protocol_field("initialized".to_string(), serde_json::json!(true));
+            })
+            .await;
 
         // Update status
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] Bitcoin RPC client {} ready for {}", client_id, remote_addr));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] Bitcoin RPC client {} ready for {}",
+            client_id, remote_addr
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Call LLM to decide initial action
@@ -84,8 +88,13 @@ impl BitcoinClient {
                     Some(&event),
                     protocol.as_ref(),
                     &status_tx_clone,
-                ).await {
-                    Ok(ClientLlmResult { actions, memory_updates }) => {
+                )
+                .await
+                {
+                    Ok(ClientLlmResult {
+                        actions,
+                        memory_updates,
+                    }) => {
                         // Update memory
                         if let Some(mem) = memory_updates {
                             app_state_clone.set_memory_for_client(client_id, mem).await;
@@ -151,13 +160,21 @@ impl BitcoinClient {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         // Get RPC URL from client
-        let rpc_url = app_state.with_client_mut(client_id, |client| {
-            client.get_protocol_field("rpc_url")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }).await.flatten().context("No RPC URL found")?;
+        let rpc_url = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("rpc_url")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .await
+            .flatten()
+            .context("No RPC URL found")?;
 
-        info!("Bitcoin RPC client {} executing: {} {:?}", client_id, method, params);
+        info!(
+            "Bitcoin RPC client {} executing: {} {:?}",
+            client_id, method, params
+        );
 
         // Build JSON-RPC request
         let request_body = serde_json::json!({
@@ -172,18 +189,23 @@ impl BitcoinClient {
             .timeout(std::time::Duration::from_secs(60))
             .build()?;
 
-        match http_client.post(&rpc_url)
+        match http_client
+            .post(&rpc_url)
             .header("Content-Type", "application/json")
             .json(&request_body)
             .send()
-            .await {
+            .await
+        {
             Ok(response) => {
                 let status = response.status();
 
                 // Get response body
                 let response_text = response.text().await.unwrap_or_default();
 
-                info!("Bitcoin RPC client {} received response: {}", client_id, status);
+                info!(
+                    "Bitcoin RPC client {} received response: {}",
+                    client_id, status
+                );
 
                 // Parse JSON-RPC response
                 let response_json: serde_json::Value = serde_json::from_str(&response_text)
@@ -198,7 +220,8 @@ impl BitcoinClient {
 
                 // Call LLM with response
                 if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                    let protocol = Arc::new(crate::client::bitcoin::actions::BitcoinClientProtocol::new());
+                    let protocol =
+                        Arc::new(crate::client::bitcoin::actions::BitcoinClientProtocol::new());
                     let event = Event::new(
                         &BITCOIN_CLIENT_RESPONSE_RECEIVED_EVENT,
                         serde_json::json!({
@@ -209,7 +232,10 @@ impl BitcoinClient {
                         }),
                     );
 
-                    let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                    let memory = app_state
+                        .get_memory_for_client(client_id)
+                        .await
+                        .unwrap_or_default();
 
                     match call_llm_for_client(
                         &llm_client,
@@ -220,8 +246,13 @@ impl BitcoinClient {
                         Some(&event),
                         protocol.as_ref(),
                         &status_tx,
-                    ).await {
-                        Ok(ClientLlmResult { actions: _, memory_updates }) => {
+                    )
+                    .await
+                    {
+                        Ok(ClientLlmResult {
+                            actions: _,
+                            memory_updates,
+                        }) => {
                             // Update memory
                             if let Some(mem) = memory_updates {
                                 app_state.set_memory_for_client(client_id, mem).await;

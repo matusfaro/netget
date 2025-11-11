@@ -45,28 +45,28 @@ const IKEV1_IDENTITY_PROTECTION: u8 = 2;
 const IKEV1_AGGRESSIVE: u8 = 4;
 
 /// IKE Header Flags (RFC 7296 Section 3.1)
-const FLAG_INITIATOR: u8 = 0x08;  // Initiator bit
-const FLAG_VERSION: u8 = 0x10;     // Version bit (must be 0 for IKEv2)
-const FLAG_RESPONSE: u8 = 0x20;    // Response bit
+const FLAG_INITIATOR: u8 = 0x08; // Initiator bit
+const FLAG_VERSION: u8 = 0x10; // Version bit (must be 0 for IKEv2)
+const FLAG_RESPONSE: u8 = 0x20; // Response bit
 
 /// IKE Payload Types (RFC 7296 Section 3.2)
 const PAYLOAD_NONE: u8 = 0;
-const PAYLOAD_SA: u8 = 33;         // Security Association
-const PAYLOAD_KE: u8 = 34;         // Key Exchange
-const PAYLOAD_IDI: u8 = 35;        // Identification - Initiator
-const PAYLOAD_IDR: u8 = 36;        // Identification - Responder
-const PAYLOAD_CERT: u8 = 37;       // Certificate
-const PAYLOAD_CERTREQ: u8 = 38;    // Certificate Request
-const PAYLOAD_AUTH: u8 = 39;       // Authentication
-const PAYLOAD_NONCE: u8 = 40;      // Nonce
-const PAYLOAD_NOTIFY: u8 = 41;     // Notify
-const PAYLOAD_DELETE: u8 = 42;     // Delete
-const PAYLOAD_VENDOR: u8 = 43;     // Vendor ID
-const PAYLOAD_TSI: u8 = 44;        // Traffic Selector - Initiator
-const PAYLOAD_TSR: u8 = 45;        // Traffic Selector - Responder
-const PAYLOAD_SK: u8 = 46;         // Encrypted and Authenticated
-const PAYLOAD_CP: u8 = 47;         // Configuration
-const PAYLOAD_EAP: u8 = 48;        // Extensible Authentication
+const PAYLOAD_SA: u8 = 33; // Security Association
+const PAYLOAD_KE: u8 = 34; // Key Exchange
+const PAYLOAD_IDI: u8 = 35; // Identification - Initiator
+const PAYLOAD_IDR: u8 = 36; // Identification - Responder
+const PAYLOAD_CERT: u8 = 37; // Certificate
+const PAYLOAD_CERTREQ: u8 = 38; // Certificate Request
+const PAYLOAD_AUTH: u8 = 39; // Authentication
+const PAYLOAD_NONCE: u8 = 40; // Nonce
+const PAYLOAD_NOTIFY: u8 = 41; // Notify
+const PAYLOAD_DELETE: u8 = 42; // Delete
+const PAYLOAD_VENDOR: u8 = 43; // Vendor ID
+const PAYLOAD_TSI: u8 = 44; // Traffic Selector - Initiator
+const PAYLOAD_TSR: u8 = 45; // Traffic Selector - Responder
+const PAYLOAD_SK: u8 = 46; // Encrypted and Authenticated
+const PAYLOAD_CP: u8 = 47; // Configuration
+const PAYLOAD_EAP: u8 = 48; // Extensible Authentication
 
 /// IPSec/IKEv2 enhanced honeypot server
 pub struct IpsecServer;
@@ -133,25 +133,30 @@ impl IpsecServer {
 
             // Parse IKE header
             if len < IKE_HEADER_SIZE {
-                trace!("Received undersized packet from {} ({} bytes)", peer_addr, len);
+                trace!(
+                    "Received undersized packet from {} ({} bytes)",
+                    peer_addr,
+                    len
+                );
                 continue;
             }
 
             // Extract IKE header fields (28 bytes - RFC 7296 Section 3.1)
             let initiator_spi = u64::from_be_bytes([
-                packet[0], packet[1], packet[2], packet[3],
-                packet[4], packet[5], packet[6], packet[7],
+                packet[0], packet[1], packet[2], packet[3], packet[4], packet[5], packet[6],
+                packet[7],
             ]);
             let responder_spi = u64::from_be_bytes([
-                packet[8], packet[9], packet[10], packet[11],
-                packet[12], packet[13], packet[14], packet[15],
+                packet[8], packet[9], packet[10], packet[11], packet[12], packet[13], packet[14],
+                packet[15],
             ]);
             let next_payload = packet[16];
             let version = packet[17];
             let exchange_type = packet[18];
             let flags = packet[19];
             let message_id = u32::from_be_bytes([packet[20], packet[21], packet[22], packet[23]]);
-            let packet_length = u32::from_be_bytes([packet[24], packet[25], packet[26], packet[27]]);
+            let packet_length =
+                u32::from_be_bytes([packet[24], packet[25], packet[26], packet[27]]);
 
             // Analyze flags
             let is_initiator = (flags & FLAG_INITIATOR) != 0;
@@ -248,7 +253,8 @@ impl IpsecServer {
                 break;
             }
 
-            let payload_length = u16::from_be_bytes([packet[offset + 2], packet[offset + 3]]) as usize;
+            let payload_length =
+                u16::from_be_bytes([packet[offset + 2], packet[offset + 3]]) as usize;
             if payload_length < 4 || offset + payload_length > packet.len() {
                 break;
             }
@@ -359,4 +365,3 @@ impl IpsecServer {
         );
     }
 }
-

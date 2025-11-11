@@ -11,8 +11,8 @@ use tokio::sync::mpsc;
 use tracing::info;
 
 use crate::llm::ollama_client::OllamaClient;
-use crate::state::app_state::AppState;
 use crate::server::bluetooth_ble::BluetoothBle;
+use crate::state::app_state::AppState;
 
 /// BLE Beacon server
 pub struct BluetoothBleBeacon;
@@ -44,7 +44,8 @@ impl BluetoothBleBeacon {
             status_tx,
             server_id,
             beacon_instruction,
-        ).await
+        )
+        .await
     }
 }
 
@@ -57,7 +58,9 @@ impl BluetoothBleBeacon {
         _server_id: crate::state::ServerId,
         _instruction: String,
     ) -> Result<std::net::SocketAddr> {
-        anyhow::bail!("BLE beacon support not enabled - compile with --features bluetooth-ble-beacon")
+        anyhow::bail!(
+            "BLE beacon support not enabled - compile with --features bluetooth-ble-beacon"
+        )
     }
 }
 
@@ -83,11 +86,11 @@ pub mod ibeacon {
 
         // iBeacon prefix
         data.extend_from_slice(&[
-            0x02, 0x01, 0x06,           // Flags
-            0x1A, 0xFF,                  // Manufacturer specific data (26 bytes)
-            0x4C, 0x00,                  // Apple company ID
-            0x02,                        // iBeacon type
-            0x15,                        // iBeacon length (21 bytes)
+            0x02, 0x01, 0x06, // Flags
+            0x1A, 0xFF, // Manufacturer specific data (26 bytes)
+            0x4C, 0x00, // Apple company ID
+            0x02, // iBeacon type
+            0x15, // iBeacon length (21 bytes)
         ]);
 
         // UUID (16 bytes)
@@ -118,27 +121,27 @@ pub mod eddystone {
     pub const FRAME_TYPE_EID: u8 = 0x30;
 
     /// URL scheme codes
-    pub const URL_SCHEME_HTTP_WWW: u8 = 0x00;  // http://www.
+    pub const URL_SCHEME_HTTP_WWW: u8 = 0x00; // http://www.
     pub const URL_SCHEME_HTTPS_WWW: u8 = 0x01; // https://www.
-    pub const URL_SCHEME_HTTP: u8 = 0x02;      // http://
-    pub const URL_SCHEME_HTTPS: u8 = 0x03;     // https://
+    pub const URL_SCHEME_HTTP: u8 = 0x02; // http://
+    pub const URL_SCHEME_HTTPS: u8 = 0x03; // https://
 
     /// Build Eddystone-UID advertising data
-    pub fn build_uid_data(
-        namespace: &[u8; 10],
-        instance: &[u8; 6],
-        tx_power: i8,
-    ) -> Vec<u8> {
+    pub fn build_uid_data(namespace: &[u8; 10], instance: &[u8; 6], tx_power: i8) -> Vec<u8> {
         let mut data = Vec::with_capacity(31);
 
         // Eddystone service data
         data.extend_from_slice(&[
-            0x03, 0x03,                  // Complete list of 16-bit UUIDs
-            0xAA, 0xFE,                  // Eddystone service UUID
-            0x17, 0x16,                  // Service data (23 bytes)
-            0xAA, 0xFE,                  // Eddystone service UUID
-            FRAME_TYPE_UID,              // Frame type: UID
-            tx_power as u8,              // Calibrated TX power at 0m
+            0x03,
+            0x03, // Complete list of 16-bit UUIDs
+            0xAA,
+            0xFE, // Eddystone service UUID
+            0x17,
+            0x16, // Service data (23 bytes)
+            0xAA,
+            0xFE,           // Eddystone service UUID
+            FRAME_TYPE_UID, // Frame type: UID
+            tx_power as u8, // Calibrated TX power at 0m
         ]);
 
         // Namespace (10 bytes)
@@ -177,19 +180,20 @@ pub mod eddystone {
 
         // Eddystone service data
         data.extend_from_slice(&[
-            0x03, 0x03,                  // Complete list of 16-bit UUIDs
-            0xAA, 0xFE,                  // Eddystone service UUID
+            0x03, 0x03, // Complete list of 16-bit UUIDs
+            0xAA, 0xFE, // Eddystone service UUID
         ]);
 
         // Service data length (3 + url_body.len() bytes)
         data.push(3 + url_body.len() as u8);
-        data.push(0x16);                 // Service data type
+        data.push(0x16); // Service data type
 
         data.extend_from_slice(&[
-            0xAA, 0xFE,                  // Eddystone service UUID
-            FRAME_TYPE_URL,              // Frame type: URL
-            tx_power as u8,              // Calibrated TX power at 0m
-            scheme_code,                 // URL scheme
+            0xAA,
+            0xFE,           // Eddystone service UUID
+            FRAME_TYPE_URL, // Frame type: URL
+            tx_power as u8, // Calibrated TX power at 0m
+            scheme_code,    // URL scheme
         ]);
 
         // URL body (encoded)
@@ -212,12 +216,16 @@ pub mod eddystone {
 
         // Eddystone service data
         data.extend_from_slice(&[
-            0x03, 0x03,                  // Complete list of 16-bit UUIDs
-            0xAA, 0xFE,                  // Eddystone service UUID
-            0x11, 0x16,                  // Service data (17 bytes)
-            0xAA, 0xFE,                  // Eddystone service UUID
-            FRAME_TYPE_TLM,              // Frame type: TLM
-            0x00,                        // TLM version
+            0x03,
+            0x03, // Complete list of 16-bit UUIDs
+            0xAA,
+            0xFE, // Eddystone service UUID
+            0x11,
+            0x16, // Service data (17 bytes)
+            0xAA,
+            0xFE,           // Eddystone service UUID
+            FRAME_TYPE_TLM, // Frame type: TLM
+            0x00,           // TLM version
         ]);
 
         // Battery voltage (mV, big-endian)

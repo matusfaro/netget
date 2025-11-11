@@ -5,7 +5,7 @@
 
 #[cfg(all(test, feature = "bgp", feature = "bgp"))]
 mod e2e_bgp {
-    use crate::server::helpers::{start_netget_server, ServerConfig, E2EResult};
+    use crate::server::helpers::{start_netget_server, E2EResult, ServerConfig};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
     use tokio::time::{timeout, Duration};
@@ -178,17 +178,21 @@ mod e2e_bgp {
 
         // Read server's OPEN response
         println!("  [TEST] Reading OPEN response from server");
-        let (msg_type, body) = timeout(
-            Duration::from_secs(120),
-            read_bgp_message(&mut client)
-        ).await??;
+        let (msg_type, body) =
+            timeout(Duration::from_secs(120), read_bgp_message(&mut client)).await??;
 
-        assert_eq!(msg_type, BGP_MSG_OPEN, "Expected OPEN message, got type {}", msg_type);
+        assert_eq!(
+            msg_type, BGP_MSG_OPEN,
+            "Expected OPEN message, got type {}",
+            msg_type
+        );
 
         // Parse OPEN message
         let (version, peer_as, hold_time, router_id) = parse_bgp_open(&body)?;
-        println!("  [TEST] Received OPEN: version={}, AS={}, hold_time={}, router_id={}.{}.{}.{}",
-                 version, peer_as, hold_time, router_id[0], router_id[1], router_id[2], router_id[3]);
+        println!(
+            "  [TEST] Received OPEN: version={}, AS={}, hold_time={}, router_id={}.{}.{}.{}",
+            version, peer_as, hold_time, router_id[0], router_id[1], router_id[2], router_id[3]
+        );
 
         assert_eq!(version, 4, "BGP version should be 4");
         assert_eq!(peer_as, 65001, "Peer AS should be 65001");
@@ -202,12 +206,14 @@ mod e2e_bgp {
 
         // Read server's KEEPALIVE response
         println!("  [TEST] Reading KEEPALIVE response from server");
-        let (msg_type, _body) = timeout(
-            Duration::from_secs(120),
-            read_bgp_message(&mut client)
-        ).await??;
+        let (msg_type, _body) =
+            timeout(Duration::from_secs(120), read_bgp_message(&mut client)).await??;
 
-        assert_eq!(msg_type, BGP_MSG_KEEPALIVE, "Expected KEEPALIVE message, got type {}", msg_type);
+        assert_eq!(
+            msg_type, BGP_MSG_KEEPALIVE,
+            "Expected KEEPALIVE message, got type {}",
+            msg_type
+        );
         println!("  [TEST] ✓ BGP peering established successfully");
 
         server.stop().await?;
@@ -240,10 +246,7 @@ mod e2e_bgp {
 
         // Read response - should be NOTIFICATION
         println!("  [TEST] Reading response from server");
-        let read_result = timeout(
-            Duration::from_secs(120),
-            read_bgp_message(&mut client)
-        ).await;
+        let read_result = timeout(Duration::from_secs(120), read_bgp_message(&mut client)).await;
 
         match read_result {
             Ok(Ok((msg_type, body))) => {
@@ -253,17 +256,23 @@ mod e2e_bgp {
                     if body.len() >= 2 {
                         let error_code = body[0];
                         let error_subcode = body[1];
-                        println!("  [TEST]   Error code: {}, subcode: {}", error_code, error_subcode);
+                        println!(
+                            "  [TEST]   Error code: {}, subcode: {}",
+                            error_code, error_subcode
+                        );
                     }
                 } else if msg_type == BGP_MSG_OPEN {
                     println!("  [TEST] ✓ Received OPEN message (LLM may choose to accept invalid version)");
                 } else {
                     println!("  [TEST] ! Received unexpected message type: {}", msg_type);
                 }
-            },
+            }
             Ok(Err(e)) => {
-                println!("  [TEST] ✓ Connection closed (acceptable error handling): {}", e);
-            },
+                println!(
+                    "  [TEST] ✓ Connection closed (acceptable error handling): {}",
+                    e
+                );
+            }
             Err(_) => {
                 println!("  [TEST] ✓ Timeout (acceptable - connection may have been closed)");
             }
@@ -295,10 +304,8 @@ mod e2e_bgp {
         client.flush().await?;
 
         // Read server's OPEN
-        let (_msg_type, _body) = timeout(
-            Duration::from_secs(120),
-            read_bgp_message(&mut client)
-        ).await??;
+        let (_msg_type, _body) =
+            timeout(Duration::from_secs(120), read_bgp_message(&mut client)).await??;
 
         // Send KEEPALIVE
         let keepalive_msg = build_bgp_keepalive();
@@ -306,12 +313,13 @@ mod e2e_bgp {
         client.flush().await?;
 
         // Read server's KEEPALIVE
-        let (msg_type, _body) = timeout(
-            Duration::from_secs(120),
-            read_bgp_message(&mut client)
-        ).await??;
+        let (msg_type, _body) =
+            timeout(Duration::from_secs(120), read_bgp_message(&mut client)).await??;
 
-        assert_eq!(msg_type, BGP_MSG_KEEPALIVE, "Expected KEEPALIVE after peering");
+        assert_eq!(
+            msg_type, BGP_MSG_KEEPALIVE,
+            "Expected KEEPALIVE after peering"
+        );
         println!("  [TEST] ✓ Peering established");
 
         // Now send another KEEPALIVE
@@ -320,10 +328,7 @@ mod e2e_bgp {
         client.flush().await?;
 
         // Server should respond with KEEPALIVE (or no response is also acceptable)
-        let read_result = timeout(
-            Duration::from_secs(120),
-            read_bgp_message(&mut client)
-        ).await;
+        let read_result = timeout(Duration::from_secs(120), read_bgp_message(&mut client)).await;
 
         match read_result {
             Ok(Ok((msg_type, _))) => {
@@ -332,7 +337,7 @@ mod e2e_bgp {
                 } else {
                     println!("  [TEST] ✓ Received message type: {}", msg_type);
                 }
-            },
+            }
             _ => {
                 println!("  [TEST] ✓ No immediate response (acceptable for KEEPALIVE)");
             }
@@ -363,19 +368,15 @@ mod e2e_bgp {
         client.write_all(&open_msg).await?;
         client.flush().await?;
 
-        let (_msg_type, _body) = timeout(
-            Duration::from_secs(120),
-            read_bgp_message(&mut client)
-        ).await??;
+        let (_msg_type, _body) =
+            timeout(Duration::from_secs(120), read_bgp_message(&mut client)).await??;
 
         let keepalive_msg = build_bgp_keepalive();
         client.write_all(&keepalive_msg).await?;
         client.flush().await?;
 
-        let (_msg_type, _body) = timeout(
-            Duration::from_secs(120),
-            read_bgp_message(&mut client)
-        ).await??;
+        let (_msg_type, _body) =
+            timeout(Duration::from_secs(120), read_bgp_message(&mut client)).await??;
 
         println!("  [TEST] ✓ Peering established");
 
@@ -386,18 +387,15 @@ mod e2e_bgp {
         client.flush().await?;
 
         // Server should close the connection or send NOTIFICATION back
-        let read_result = timeout(
-            Duration::from_secs(120),
-            read_bgp_message(&mut client)
-        ).await;
+        let read_result = timeout(Duration::from_secs(120), read_bgp_message(&mut client)).await;
 
         match read_result {
             Ok(Ok((BGP_MSG_NOTIFICATION, _))) => {
                 println!("  [TEST] ✓ Server acknowledged with NOTIFICATION");
-            },
+            }
             Ok(Err(_)) | Err(_) => {
                 println!("  [TEST] ✓ Connection closed gracefully");
-            },
+            }
             Ok(Ok((msg_type, _))) => {
                 println!("  [TEST] ! Received unexpected message type: {}", msg_type);
             }

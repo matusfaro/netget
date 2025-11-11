@@ -2,7 +2,8 @@
 
 ## Overview
 
-End-to-end tests for the Ollama client protocol. Tests spawn NetGet binary as a client and verify it can interact with Ollama servers.
+End-to-end tests for the Ollama client protocol. Tests spawn NetGet binary as a client and verify it can interact with
+Ollama servers.
 
 ## Test Strategy
 
@@ -29,11 +30,12 @@ End-to-end tests for the Ollama client protocol. Tests spawn NetGet binary as a 
 **Purpose**: Verify client can list available models
 
 **Steps**:
+
 1. Start NetGet client with prompt to list models
 2. Wait for client to connect and make request
 3. Validate output:
-   - Shows "Ollama" protocol
-   - Shows "models" or "model" or "found" in response
+    - Shows "Ollama" protocol
+    - Shows "models" or "model" or "found" in response
 4. Stop client
 
 **Runtime**: ~15 seconds
@@ -47,11 +49,12 @@ End-to-end tests for the Ollama client protocol. Tests spawn NetGet binary as a 
 **Purpose**: Verify client can generate text
 
 **Steps**:
+
 1. Start client with prompt to generate text
 2. Wait for generation (up to 30s)
 3. Validate output:
-   - Shows "Ollama" protocol
-   - Shows "response" or "generate" or "received"
+    - Shows "Ollama" protocol
+    - Shows "response" or "generate" or "received"
 4. Stop client
 
 **Runtime**: ~30 seconds
@@ -59,6 +62,7 @@ End-to-end tests for the Ollama client protocol. Tests spawn NetGet binary as a 
 **LLM Calls**: 1 (NetGet) + Ollama backend (not counted)
 
 **Requirements**:
+
 - Ollama server running
 - Model `qwen2.5-coder:0.5b` available
 
@@ -67,11 +71,12 @@ End-to-end tests for the Ollama client protocol. Tests spawn NetGet binary as a 
 **Purpose**: Verify client can send chat requests
 
 **Steps**:
+
 1. Start client with chat prompt
 2. Wait for chat response
 3. Validate:
-   - Protocol is "Ollama"
-   - Output shows "chat" or "message" or "response"
+    - Protocol is "Ollama"
+    - Output shows "chat" or "message" or "response"
 4. Stop client
 
 **Runtime**: ~30 seconds
@@ -83,10 +88,11 @@ End-to-end tests for the Ollama client protocol. Tests spawn NetGet binary as a 
 **Purpose**: Verify client works with explicit endpoint
 
 **Steps**:
+
 1. Start client with explicit "http://localhost:11434" endpoint
 2. Wait for connection
 3. Validate:
-   - Shows "localhost:11434" or "11434" or "Ollama"
+    - Shows "localhost:11434" or "11434" or "Ollama"
 4. Stop client
 
 **Runtime**: ~15 seconds
@@ -98,10 +104,11 @@ End-to-end tests for the Ollama client protocol. Tests spawn NetGet binary as a 
 **Purpose**: Verify client handles connection errors
 
 **Steps**:
+
 1. Start client with invalid endpoint (localhost:99999)
 2. Wait for error
 3. Validate:
-   - Shows "ERROR" or "error" or "failed" or "connect"
+    - Shows "ERROR" or "error" or "failed" or "connect"
 4. Stop client
 
 **Runtime**: ~10 seconds
@@ -113,11 +120,13 @@ End-to-end tests for the Ollama client protocol. Tests spawn NetGet binary as a 
 ## Running Tests
 
 **Feature-specific** (recommended):
+
 ```bash
 ./cargo-isolated.sh test --no-default-features --features ollama --test client::ollama::e2e_test
 ```
 
 **All features** (slow):
+
 ```bash
 ./cargo-isolated.sh test --all-features --test client::ollama::e2e_test
 ```
@@ -190,6 +199,7 @@ test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
 **Symptoms**: Intermittent failures, timeouts
 
 **Fix**:
+
 - Increase timeout in test code
 - Ensure Ollama server is responsive
 - Check system load
@@ -240,16 +250,19 @@ test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
 ## Debugging
 
 **Verbose output**:
+
 ```bash
 ./cargo-isolated.sh test --features ollama --test client::ollama::e2e_test -- --nocapture
 ```
 
 **Check client logs**:
+
 ```bash
 tail -f netget.log
 ```
 
 **Manual testing**:
+
 ```bash
 # Start NetGet client
 ./target/debug/netget "Connect to Ollama at http://localhost:11434 and list models"
@@ -259,6 +272,7 @@ tail -f netget.log
 ```
 
 **Test Ollama server manually**:
+
 ```bash
 # Test if server is responding
 curl http://localhost:11434/api/tags
@@ -271,11 +285,13 @@ curl -X POST http://localhost:11434/api/generate \
 ## CI/CD Considerations
 
 **Environment setup**:
+
 - CI needs Ollama server running
 - Model must be pre-pulled
 - Tests should skip if Ollama unavailable (already implemented)
 
 **Docker example**:
+
 ```dockerfile
 # Install Ollama in CI
 RUN curl -fsSL https://ollama.com/install.sh | sh

@@ -10,15 +10,15 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info, trace};
 
+use crate::client::torrent_tracker::actions::{
+    TRACKER_ANNOUNCE_RESPONSE_EVENT, TRACKER_SCRAPE_RESPONSE_EVENT,
+};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::torrent_tracker::actions::{
-    TRACKER_ANNOUNCE_RESPONSE_EVENT, TRACKER_SCRAPE_RESPONSE_EVENT
-};
 
 /// BitTorrent tracker response (announce)
 #[derive(Debug, Deserialize, Serialize)]
@@ -58,16 +58,26 @@ impl TorrentTrackerClient {
         // BitTorrent tracker is HTTP-based, so we don't maintain a persistent connection
         // We'll just track the tracker URL and make HTTP requests as needed
 
-        info!("BitTorrent Tracker client {} initialized for {}", client_id, remote_addr);
+        info!(
+            "BitTorrent Tracker client {} initialized for {}",
+            client_id, remote_addr
+        );
 
         // Update client state
-        app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] BitTorrent Tracker client {} connected to {}", client_id, remote_addr));
+        app_state
+            .update_client_status(client_id, ClientStatus::Connected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] BitTorrent Tracker client {} connected to {}",
+            client_id, remote_addr
+        ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Call LLM with connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-            let protocol = Arc::new(crate::client::torrent_tracker::actions::TorrentTrackerClientProtocol::new());
+            let protocol = Arc::new(
+                crate::client::torrent_tracker::actions::TorrentTrackerClientProtocol::new(),
+            );
             let event = Event::new(
                 &TRACKER_ANNOUNCE_RESPONSE_EVENT,
                 serde_json::json!({
@@ -76,7 +86,10 @@ impl TorrentTrackerClient {
                 }),
             );
 
-            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+            let memory = app_state
+                .get_memory_for_client(client_id)
+                .await
+                .unwrap_or_default();
 
             // Execute LLM call in background
             let app_state_clone = app_state.clone();
@@ -91,8 +104,13 @@ impl TorrentTrackerClient {
                     Some(&event),
                     protocol.as_ref(),
                     &status_tx_clone,
-                ).await {
-                    Ok(ClientLlmResult { actions, memory_updates }) => {
+                )
+                .await
+                {
+                    Ok(ClientLlmResult {
+                        actions,
+                        memory_updates,
+                    }) => {
                         // Update memory
                         if let Some(mem) = memory_updates {
                             app_state_clone.set_memory_for_client(client_id, mem).await;
@@ -108,7 +126,9 @@ impl TorrentTrackerClient {
                                 &app_state_clone,
                                 &llm_client,
                                 &status_tx_clone,
-                            ).await {
+                            )
+                            .await
+                            {
                                 error!("Failed to execute tracker action: {}", e);
                             }
                         }
@@ -138,13 +158,25 @@ impl TorrentTrackerClient {
 
         match protocol.execute_action(action)? {
             ClientActionResult::Custom { name, data } if name == "tracker_announce" => {
-                let info_hash = data.get("info_hash").and_then(|v| v.as_str()).context("Missing info_hash")?;
-                let peer_id = data.get("peer_id").and_then(|v| v.as_str()).context("Missing peer_id")?;
-                let port = data.get("port").and_then(|v| v.as_u64()).context("Missing port")? as u16;
+                let info_hash = data
+                    .get("info_hash")
+                    .and_then(|v| v.as_str())
+                    .context("Missing info_hash")?;
+                let peer_id = data
+                    .get("peer_id")
+                    .and_then(|v| v.as_str())
+                    .context("Missing peer_id")?;
+                let port = data
+                    .get("port")
+                    .and_then(|v| v.as_u64())
+                    .context("Missing port")? as u16;
                 let uploaded = data.get("uploaded").and_then(|v| v.as_u64()).unwrap_or(0);
                 let downloaded = data.get("downloaded").and_then(|v| v.as_u64()).unwrap_or(0);
                 let left = data.get("left").and_then(|v| v.as_u64()).unwrap_or(0);
-                let event_type = data.get("event").and_then(|v| v.as_str()).unwrap_or("started");
+                let event_type = data
+                    .get("event")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("started");
 
                 // Build announce URL
                 let announce_url = format!(
@@ -152,7 +184,11 @@ impl TorrentTrackerClient {
                     tracker_url, info_hash, peer_id, port, uploaded, downloaded, left, event_type
                 );
 
-                trace!("Tracker client {} announcing to: {}", client_id, announce_url);
+                trace!(
+                    "Tracker client {} announcing to: {}",
+                    client_id,
+                    announce_url
+                );
 
                 // Make HTTP GET request
                 let response = reqwest::get(&announce_url).await?;
@@ -164,7 +200,9 @@ impl TorrentTrackerClient {
                         trace!("Tracker response: {:?}", tracker_resp);
 
                         // Call LLM with announce response
-                        if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
+                        if let Some(instruction) =
+                            app_state.get_instruction_for_client(client_id).await
+                        {
                             let event = Event::new(
                                 &TRACKER_ANNOUNCE_RESPONSE_EVENT,
                                 serde_json::json!({
@@ -175,7 +213,10 @@ impl TorrentTrackerClient {
                                 }),
                             );
 
-                            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                            let memory = app_state
+                                .get_memory_for_client(client_id)
+                                .await
+                                .unwrap_or_default();
                             let protocol_ref = Arc::new(crate::client::torrent_tracker::actions::TorrentTrackerClientProtocol::new());
 
                             match call_llm_for_client(
@@ -187,7 +228,9 @@ impl TorrentTrackerClient {
                                 Some(&event),
                                 protocol_ref.as_ref(),
                                 status_tx,
-                            ).await {
+                            )
+                            .await
+                            {
                                 Ok(ClientLlmResult { memory_updates, .. }) => {
                                     if let Some(mem) = memory_updates {
                                         app_state.set_memory_for_client(client_id, mem).await;
@@ -205,7 +248,10 @@ impl TorrentTrackerClient {
                 }
             }
             ClientActionResult::Custom { name, data } if name == "tracker_scrape" => {
-                let info_hash = data.get("info_hash").and_then(|v| v.as_str()).context("Missing info_hash")?;
+                let info_hash = data
+                    .get("info_hash")
+                    .and_then(|v| v.as_str())
+                    .context("Missing info_hash")?;
 
                 // Build scrape URL
                 let scrape_url = format!("{}?info_hash={}", tracker_url, info_hash);
@@ -222,7 +268,9 @@ impl TorrentTrackerClient {
                         trace!("Scrape response: {:?}", scrape_resp);
 
                         // Call LLM with scrape response
-                        if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
+                        if let Some(instruction) =
+                            app_state.get_instruction_for_client(client_id).await
+                        {
                             let event = Event::new(
                                 &TRACKER_SCRAPE_RESPONSE_EVENT,
                                 serde_json::json!({
@@ -230,7 +278,10 @@ impl TorrentTrackerClient {
                                 }),
                             );
 
-                            let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
+                            let memory = app_state
+                                .get_memory_for_client(client_id)
+                                .await
+                                .unwrap_or_default();
                             let protocol_ref = Arc::new(crate::client::torrent_tracker::actions::TorrentTrackerClientProtocol::new());
 
                             match call_llm_for_client(
@@ -242,7 +293,9 @@ impl TorrentTrackerClient {
                                 Some(&event),
                                 protocol_ref.as_ref(),
                                 status_tx,
-                            ).await {
+                            )
+                            .await
+                            {
                                 Ok(ClientLlmResult { memory_updates, .. }) => {
                                     if let Some(mem) = memory_updates {
                                         app_state.set_memory_for_client(client_id, mem).await;
@@ -261,7 +314,9 @@ impl TorrentTrackerClient {
             }
             ClientActionResult::Disconnect => {
                 info!("Tracker client {} disconnecting", client_id);
-                app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
                 let _ = status_tx.send("__UPDATE_UI__".to_string());
             }
             _ => {}

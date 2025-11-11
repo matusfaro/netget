@@ -1,9 +1,12 @@
 # IMAP Protocol Implementation
 
 ## Overview
-IMAP4rev1 (Internet Message Access Protocol) server implementing RFC 3501 for email retrieval and mailbox management. Supports both plain (port 143) and TLS (port 993) connections.
+
+IMAP4rev1 (Internet Message Access Protocol) server implementing RFC 3501 for email retrieval and mailbox management.
+Supports both plain (port 143) and TLS (port 993) connections.
 
 ## Library Choices
+
 - **Manual Implementation** - No external IMAP library used
 - **Manual parsing** - Line-based command parsing without imap-codec
 - Raw TCP/TLS handling with tokio for async I/O
@@ -12,13 +15,16 @@ IMAP4rev1 (Internet Message Access Protocol) server implementing RFC 3501 for em
 ## Architecture Decisions
 
 ### Session State Machine
+
 IMAP maintains explicit session state transitions:
+
 - **NotAuthenticated** - Initial state after connection
 - **Authenticated** - After successful LOGIN
 - **Selected** - After SELECT/EXAMINE mailbox
 - **Logout** - Terminal state
 
 State stored in `ProtocolConnectionInfo::Imap`:
+
 ```rust
 ImapSessionState: NotAuthenticated | Authenticated | Selected | Logout
 authenticated_user: Option<String>
@@ -27,22 +33,26 @@ mailbox_read_only: bool
 ```
 
 ### LLM Integration
+
 - **Three event types**:
-  - `IMAP_CONNECTION_EVENT` - Initial greeting
-  - `IMAP_AUTH_EVENT` - LOGIN command (special handling)
-  - `IMAP_COMMAND_EVENT` - All other commands (CAPABILITY, SELECT, FETCH, etc.)
+    - `IMAP_CONNECTION_EVENT` - Initial greeting
+    - `IMAP_AUTH_EVENT` - LOGIN command (special handling)
+    - `IMAP_COMMAND_EVENT` - All other commands (CAPABILITY, SELECT, FETCH, etc.)
 - **Action-based responses** - LLM returns JSON actions for all protocol interactions
 - **Tagged responses** - IMAP uses command tags (A001, A002) for request/response correlation
 - **Untagged responses** - Server data (EXISTS, RECENT, FLAGS) sent before tagged completion
 
 ### Connection Management
+
 - Connections tracked in `AppState` with full statistics
 - Each connection spawns independent async task
 - Write operations use `Arc<Mutex<WriteHalf>>` for safe concurrent access
 - Read operations use `BufReader` for line-based parsing
 
 ### Response Actions
+
 The LLM controls IMAP responses through these actions:
+
 - `send_imap_greeting` - Initial `* OK` greeting with capabilities
 - `send_imap_response` - Tagged responses (OK/NO/BAD)
 - `send_imap_untagged` - Untagged informational responses
@@ -59,7 +69,9 @@ The LLM controls IMAP responses through these actions:
 - `close_connection` - Terminate session
 
 ### Command Parsing
+
 Simple 3-field parser splits IMAP commands:
+
 ```rust
 (tag, command, args) = parse_imap_command(line)
 // Example: "A001 LOGIN alice secret"
@@ -69,26 +81,32 @@ Simple 3-field parser splits IMAP commands:
 LOGIN command has special handling for authentication event.
 
 ## State Management
+
 IMAP session state tracked in `AppState`:
+
 - `ImapSessionState` - Current session state
 - `authenticated_user` - Username after successful LOGIN
 - `selected_mailbox` - Currently selected mailbox (INBOX, Sent, etc.)
 - `mailbox_read_only` - Whether mailbox is read-only (EXAMINE vs SELECT)
 
 State transitions:
+
 - `LOGIN OK` → `Authenticated`
 - `SELECT/EXAMINE OK` → `Selected`
 - `CLOSE` → `Authenticated`
 - `LOGOUT` → `Logout`
 
 ## TLS Support
+
 Optional TLS mode (port 993/IMAPS):
+
 - Uses `tokio-native-tls` with self-signed certificates
 - Certificate generated via `rcgen` library
 - Only available when `proxy` feature is enabled
 - Same protocol implementation, different transport
 
 ## Limitations
+
 - **No message persistence** - LLM manages mailbox data in memory/context
 - **No STARTTLS** - Plain or TLS, no upgrade
 - **No SASL AUTH** - Only LOGIN authentication supported
@@ -100,6 +118,7 @@ Optional TLS mode (port 993/IMAPS):
 ## Examples
 
 ### Example LLM Prompt
+
 ```
 listen on port 143 via imap. Support IMAP4rev1, IDLE, NAMESPACE capabilities.
 Allow LOGIN for 'alice' with password 'secret'.
@@ -108,6 +127,7 @@ For FETCH 1, return message with From: test@example.com, Subject: Test.
 ```
 
 ### Example LLM Response (Greeting)
+
 ```json
 {
   "actions": [
@@ -121,6 +141,7 @@ For FETCH 1, return message with From: test@example.com, Subject: Test.
 ```
 
 ### Example LLM Response (LOGIN Success)
+
 ```json
 {
   "actions": [
@@ -135,6 +156,7 @@ For FETCH 1, return message with From: test@example.com, Subject: Test.
 ```
 
 ### Example LLM Response (SELECT)
+
 ```json
 {
   "actions": [
@@ -162,6 +184,7 @@ For FETCH 1, return message with From: test@example.com, Subject: Test.
 ```
 
 ### Example LLM Response (FETCH)
+
 ```json
 {
   "actions": [
@@ -186,6 +209,7 @@ For FETCH 1, return message with From: test@example.com, Subject: Test.
 ```
 
 ## References
+
 - RFC 3501 - IMAP4rev1 Protocol Specification
 - RFC 2595 - Using TLS with IMAP
 - RFC 4551 - IMAP Extension for Conditional STORE (CONDSTORE)

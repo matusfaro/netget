@@ -12,10 +12,10 @@
 pub mod actions;
 
 use crate::llm::ollama_client::OllamaClient;
-use crate::state::app_state::AppState;
-use crate::state::server::{ConnectionState, ProtocolConnectionInfo, ConnectionStatus};
 use crate::server::connection::ConnectionId;
-use anyhow::{Result, Context};
+use crate::state::app_state::AppState;
+use crate::state::server::{ConnectionState, ConnectionStatus, ProtocolConnectionInfo};
+use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -23,10 +23,8 @@ use tokio::sync::{mpsc, RwLock};
 use tracing::{error, info, trace};
 
 use defguard_wireguard_rs::{
-    InterfaceConfiguration, WGApi, WireguardInterfaceApi,
-    host::Peer as WGPeer,
-    key::Key,
-    net::IpAddrMask,
+    host::Peer as WGPeer, key::Key, net::IpAddrMask, InterfaceConfiguration, WGApi,
+    WireguardInterfaceApi,
 };
 
 /// Maximum number of peers to allow
@@ -84,7 +82,9 @@ impl WireguardServer {
         } else if cfg!(target_os = "windows") {
             "netget_wg0".into()
         } else {
-            return Err(anyhow::anyhow!("Unsupported operating system for WireGuard"));
+            return Err(anyhow::anyhow!(
+                "Unsupported operating system for WireGuard"
+            ));
         };
 
         info!("Creating WireGuard interface: {}", interface_name);
@@ -100,7 +100,8 @@ impl WireguardServer {
             .context("Failed to create WireGuard API")?;
 
         // Create interface
-        wgapi.create_interface()
+        wgapi
+            .create_interface()
             .context("Failed to create WireGuard interface")?;
 
         info!("WireGuard interface created successfully");
@@ -118,15 +119,20 @@ impl WireguardServer {
         };
 
         #[cfg(not(windows))]
-        wgapi.configure_interface(&interface_config)
+        wgapi
+            .configure_interface(&interface_config)
             .context("Failed to configure WireGuard interface")?;
 
         #[cfg(windows)]
-        wgapi.configure_interface(&interface_config, &[])
+        wgapi
+            .configure_interface(&interface_config, &[])
             .context("Failed to configure WireGuard interface")?;
 
         info!("WireGuard interface configured on port {}", listen_port);
-        let _ = status_tx.send(format!("[INFO] Interface listening on UDP port {}", listen_port));
+        let _ = status_tx.send(format!(
+            "[INFO] Interface listening on UDP port {}",
+            listen_port
+        ));
         let _ = status_tx.send(format!("[INFO] VPN subnet: 10.20.30.0/24"));
 
         let actual_addr = SocketAddr::new(bind_addr.ip(), listen_port);
@@ -148,16 +154,17 @@ impl WireguardServer {
         let status_clone = status_tx.clone();
         let app_state_clone = app_state.clone();
         tokio::spawn(async move {
-            server_clone.monitor_peers(
-                app_state_clone,
-                server_id,
-                status_clone,
-            ).await;
+            server_clone
+                .monitor_peers(app_state_clone, server_id, status_clone)
+                .await;
         });
 
         info!("WireGuard VPN server ready on {}", actual_addr);
         let _ = status_tx.send(format!("→ WireGuard VPN server ready on {}", actual_addr));
-        let _ = status_tx.send(format!("[INFO] Clients can connect using server public key: {}", public_key_str));
+        let _ = status_tx.send(format!(
+            "[INFO] Clients can connect using server public key: {}",
+            public_key_str
+        ));
 
         Ok(actual_addr)
     }
@@ -187,7 +194,10 @@ impl WireguardServer {
                 }
             };
 
-            trace!("WireGuard interface status: {} peers", interface_data.peers.len());
+            trace!(
+                "WireGuard interface status: {} peers",
+                interface_data.peers.len()
+            );
 
             // Track new peers and update existing
             for (pub_key, peer) in interface_data.peers.iter() {
@@ -211,7 +221,10 @@ impl WireguardServer {
                     let conn_state = ConnectionState {
                         id: connection_id,
                         remote_addr: remote_addr.unwrap_or_else(|| "0.0.0.0:0".parse().unwrap()),
-                        local_addr: SocketAddr::new("10.20.30.1".parse().unwrap(), self.listen_port),
+                        local_addr: SocketAddr::new(
+                            "10.20.30.1".parse().unwrap(),
+                            self.listen_port,
+                        ),
                         bytes_sent: peer.tx_bytes,
                         bytes_received: peer.rx_bytes,
                         packets_sent: 0,
@@ -222,29 +235,36 @@ impl WireguardServer {
                         protocol_info: ProtocolConnectionInfo::empty(),
                     };
 
-                    app_state.add_connection_to_server(server_id, conn_state).await;
+                    app_state
+                        .add_connection_to_server(server_id, conn_state)
+                        .await;
                     let _ = status_tx.send("__UPDATE_UI__".to_string());
                 } else {
                     // Update existing peer stats
                     let connection_id = peers.get(&peer_key).unwrap();
-                    app_state.update_connection_stats(
-                        server_id,
-                        *connection_id,
-                        Some(peer.rx_bytes),
-                        Some(peer.tx_bytes),
-                        None,
-                        None,
-                    ).await;
+                    app_state
+                        .update_connection_stats(
+                            server_id,
+                            *connection_id,
+                            Some(peer.rx_bytes),
+                            Some(peer.tx_bytes),
+                            None,
+                            None,
+                        )
+                        .await;
                 }
             }
 
             // Clean up disconnected peers
-            let current_peer_keys: Vec<String> = interface_data.peers.iter()
+            let current_peer_keys: Vec<String> = interface_data
+                .peers
+                .iter()
                 .map(|(pub_key, _peer)| pub_key.to_string())
                 .collect();
 
             let mut peers = self.peers.write().await;
-            let disconnected_peers: Vec<String> = peers.keys()
+            let disconnected_peers: Vec<String> = peers
+                .keys()
                 .filter(|k| !current_peer_keys.contains(k))
                 .cloned()
                 .collect();
@@ -252,9 +272,12 @@ impl WireguardServer {
             for peer_key in disconnected_peers {
                 if let Some(connection_id) = peers.remove(&peer_key) {
                     info!("WireGuard peer disconnected: {}", peer_key);
-                    let _ = status_tx.send(format!("[INFO] Peer disconnected: {}", &peer_key[..16]));
+                    let _ =
+                        status_tx.send(format!("[INFO] Peer disconnected: {}", &peer_key[..16]));
 
-                    app_state.close_connection_on_server(server_id, connection_id).await;
+                    app_state
+                        .close_connection_on_server(server_id, connection_id)
+                        .await;
                     let _ = status_tx.send("__UPDATE_UI__".to_string());
                 }
             }
@@ -279,18 +302,19 @@ impl WireguardServer {
         };
 
         if peer_count >= MAX_PEERS {
-            return Err(anyhow::anyhow!("Maximum number of peers ({}) reached", MAX_PEERS));
+            return Err(anyhow::anyhow!(
+                "Maximum number of peers ({}) reached",
+                MAX_PEERS
+            ));
         }
 
         // Parse peer public key
-        let peer_key: Key = peer_public_key.parse()
-            .context("Invalid peer public key")?;
+        let peer_key: Key = peer_public_key.parse().context("Invalid peer public key")?;
 
         // Parse allowed IPs
-        let allowed_ip_masks: Vec<IpAddrMask> = allowed_ips.iter()
-            .filter_map(|ip_str| {
-                ip_str.parse::<IpAddrMask>().ok()
-            })
+        let allowed_ip_masks: Vec<IpAddrMask> = allowed_ips
+            .iter()
+            .filter_map(|ip_str| ip_str.parse::<IpAddrMask>().ok())
             .collect();
 
         if allowed_ip_masks.is_empty() {
@@ -307,7 +331,8 @@ impl WireguardServer {
 
         // Configure peer
         let wgapi = self.wgapi.write().await;
-        wgapi.configure_peer(&peer)
+        wgapi
+            .configure_peer(&peer)
             .context("Failed to configure peer")?;
 
         info!("WireGuard peer added successfully: {}", peer_public_key);
@@ -326,12 +351,12 @@ impl WireguardServer {
         let _ = status_tx.send(format!("[INFO] Removing peer: {}", &peer_public_key[..16]));
 
         // Parse peer public key
-        let peer_key: Key = peer_public_key.parse()
-            .context("Invalid peer public key")?;
+        let peer_key: Key = peer_public_key.parse().context("Invalid peer public key")?;
 
         // Remove peer
         let wgapi = self.wgapi.write().await;
-        wgapi.remove_peer(&peer_key)
+        wgapi
+            .remove_peer(&peer_key)
             .context("Failed to remove peer")?;
 
         // Remove from tracking
@@ -364,4 +389,3 @@ impl Drop for WireguardServer {
         info!("WireGuard server shutting down");
     }
 }
-

@@ -21,7 +21,7 @@ mod dhcp_client_tests {
         let server_config = NetGetConfig::new(
             "Listen on port 67 via DHCP. \
             When receiving DHCP DISCOVER, offer IP 192.168.1.100 with subnet mask 255.255.255.0, \
-            router 192.168.1.1, and DNS 8.8.8.8. Lease time 24 hours."
+            router 192.168.1.1, and DNS 8.8.8.8. Lease time 24 hours.",
         );
 
         let mut server = start_netget_server(server_config).await?;
@@ -33,7 +33,7 @@ mod dhcp_client_tests {
         let client_config = NetGetConfig::new(
             "Connect to 127.0.0.1:67 via DHCP. \
             Send DHCP DISCOVER with MAC address 00:11:22:33:44:55. \
-            When receiving OFFER, log the offered IP address and network configuration."
+            When receiving OFFER, log the offered IP address and network configuration.",
         );
 
         let mut client = start_netget_client(client_config).await?;
@@ -66,7 +66,7 @@ mod dhcp_client_tests {
         let server_config = NetGetConfig::new(
             "Listen on port 67 via DHCP. \
             When receiving DHCP DISCOVER, offer IP 192.168.1.100. \
-            When receiving DHCP REQUEST, acknowledge with ACK including subnet mask 255.255.255.0."
+            When receiving DHCP REQUEST, acknowledge with ACK including subnet mask 255.255.255.0.",
         );
 
         let mut server = start_netget_server(server_config).await?;
@@ -78,7 +78,7 @@ mod dhcp_client_tests {
             "Connect to 127.0.0.1:67 via DHCP. \
             Send DHCP DISCOVER with MAC 00:11:22:33:44:55. \
             When receiving OFFER, send DHCP REQUEST for the offered IP. \
-            When receiving ACK, log the assigned IP and disconnect."
+            When receiving ACK, log the assigned IP and disconnect.",
         );
 
         let mut client = start_netget_client(client_config).await?;
@@ -106,7 +106,7 @@ mod dhcp_client_tests {
         // Start DHCP server
         let server_config = NetGetConfig::new(
             "Listen on port 67 via DHCP. \
-            Respond to all DHCP DISCOVER messages with OFFER."
+            Respond to all DHCP DISCOVER messages with OFFER.",
         );
 
         let mut server = start_netget_server(server_config).await?;
@@ -117,7 +117,7 @@ mod dhcp_client_tests {
         let client_config = NetGetConfig::new(
             "Connect to 255.255.255.255:67 via DHCP. \
             Send DHCP DISCOVER as broadcast to find all DHCP servers on the network. \
-            Log any OFFER responses received."
+            Log any OFFER responses received.",
         );
 
         let mut client = start_netget_client(client_config).await?;

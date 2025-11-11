@@ -2,7 +2,8 @@
 
 ## Test Strategy
 
-The MQTT client tests use a **real Mosquitto broker** running in Docker to validate LLM-controlled MQTT operations. Tests verify:
+The MQTT client tests use a **real Mosquitto broker** running in Docker to validate LLM-controlled MQTT operations.
+Tests verify:
 
 1. **Connection establishment** to broker
 2. **LLM-driven subscriptions** with wildcard support
@@ -28,27 +29,28 @@ Each test starts a fresh broker instance and cleans it up afterward.
 ### Call Breakdown
 
 1. **test_mqtt_client_basic** (3 calls)
-   - 1 call on connection (mqtt_connected event)
-   - 1 call on message received (mqtt_message_received event)
-   - 1 call after publishing response
+    - 1 call on connection (mqtt_connected event)
+    - 1 call on message received (mqtt_message_received event)
+    - 1 call after publishing response
 
 2. **test_mqtt_client_qos** (4 calls)
-   - 1 call on connection
-   - 3 calls for messages at different QoS levels
+    - 1 call on connection
+    - 3 calls for messages at different QoS levels
 
 3. **test_mqtt_client_wildcards** (5 calls)
-   - 1 call on connection
-   - 4 calls for messages on different wildcard-matched topics
+    - 1 call on connection
+    - 4 calls for messages on different wildcard-matched topics
 
 4. **test_mqtt_client_retained** (2 calls)
-   - 1 call on connection
-   - 1 call on receiving retained message
+    - 1 call on connection
+    - 1 call on receiving retained message
 
 **Total: ~14 LLM calls** (slightly over budget, but acceptable for comprehensive testing)
 
 ### Optimization Opportunities
 
 To reduce LLM calls further:
+
 - Use scripting mode for repetitive actions
 - Batch message testing
 - Reduce number of test scenarios
@@ -58,10 +60,10 @@ To reduce LLM calls further:
 - **Per test**: 8-15 seconds (including broker startup and shutdown)
 - **Full suite**: ~45-60 seconds
 - **Breakdown**:
-  - Broker startup: 2-3 seconds
-  - Client connection: 1-2 seconds
-  - LLM processing: 3-5 seconds per call
-  - Broker cleanup: 1-2 seconds
+    - Broker startup: 2-3 seconds
+    - Client connection: 1-2 seconds
+    - LLM processing: 3-5 seconds per call
+    - Broker cleanup: 1-2 seconds
 
 ## Test Cases
 
@@ -70,6 +72,7 @@ To reduce LLM calls further:
 **Purpose**: Verify basic MQTT client connection and pub/sub
 
 **Steps**:
+
 1. Start Mosquitto broker
 2. Open MQTT client with instruction to subscribe to `test/topic`
 3. Publish test message using `mosquitto_pub`
@@ -77,6 +80,7 @@ To reduce LLM calls further:
 5. Check no errors occurred
 
 **Expected behavior**:
+
 - Client connects successfully
 - Client subscribes to topic
 - Client receives published message
@@ -87,12 +91,14 @@ To reduce LLM calls further:
 **Purpose**: Test different QoS levels (0, 1, 2)
 
 **Steps**:
+
 1. Start broker
 2. Client subscribes to `qos/#` with QoS 2
 3. Publish messages with QoS 0, 1, and 2
 4. Verify all messages are received
 
 **Expected behavior**:
+
 - QoS 0: At most once delivery
 - QoS 1: At least once delivery
 - QoS 2: Exactly once delivery
@@ -102,17 +108,20 @@ To reduce LLM calls further:
 **Purpose**: Test MQTT topic wildcards (+ and #)
 
 **Steps**:
+
 1. Client subscribes to `sensors/#` (multi-level wildcard)
 2. Publish to various topics under `sensors/`
 3. Verify all matching messages are received
 
 **Topics tested**:
+
 - `sensors/temperature`
 - `sensors/humidity`
 - `sensors/room1/temperature`
 - `sensors/room2/humidity`
 
 **Expected behavior**:
+
 - All topics matching `sensors/#` trigger message events
 
 ### test_mqtt_client_retained
@@ -120,11 +129,13 @@ To reduce LLM calls further:
 **Purpose**: Verify retained message handling
 
 **Steps**:
+
 1. Publish retained message to `retained/status` using mosquitto_pub
 2. Connect client and subscribe to `retained/status`
 3. Verify client immediately receives retained message
 
 **Expected behavior**:
+
 - Client receives retained message upon subscription
 - No need to wait for new publish
 

@@ -22,8 +22,12 @@ For any other path, return 404 with body: "Not Found"
 Set Content-Type header appropriately (text/plain for /, application/json for /api/*)."#;
 
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new_no_scripts(prompt.to_string())).await?;
-    println!("Server started: {} stack on port {}", server.stack, server.port);
+    let server =
+        helpers::start_netget_server(ServerConfig::new_no_scripts(prompt.to_string())).await?;
+    println!(
+        "Server started: {} stack on port {}",
+        server.stack, server.port
+    );
 
     // Verify it's actually an HTTP/2 server
     assert!(
@@ -36,9 +40,7 @@ Set Content-Type header appropriately (text/plain for /, application/json for /a
     sleep(Duration::from_secs(2)).await;
 
     // Create HTTP/2 client (with prior knowledge - no TLS, direct HTTP/2)
-    let client = reqwest::Client::builder()
-        .http2_prior_knowledge()
-        .build()?;
+    let client = reqwest::Client::builder().http2_prior_knowledge().build()?;
 
     // Test 1: GET /
     println!("Test 1: GET /");
@@ -48,9 +50,17 @@ Set Content-Type header appropriately (text/plain for /, application/json for /a
         .await?;
 
     assert_eq!(response.status(), 200, "Expected 200 OK for /");
-    assert_eq!(response.version(), reqwest::Version::HTTP_2, "Expected HTTP/2");
+    assert_eq!(
+        response.version(),
+        reqwest::Version::HTTP_2,
+        "Expected HTTP/2"
+    );
     let body = response.text().await?;
-    assert!(body.contains("Welcome to HTTP/2"), "Expected welcome message, got: {}", body);
+    assert!(
+        body.contains("Welcome to HTTP/2"),
+        "Expected welcome message, got: {}",
+        body
+    );
     println!("✓ GET / returned 200 with welcome message");
 
     // Test 2: GET /api/users
@@ -61,10 +71,17 @@ Set Content-Type header appropriately (text/plain for /, application/json for /a
         .await?;
 
     assert_eq!(response.status(), 200, "Expected 200 OK for /api/users");
-    assert_eq!(response.version(), reqwest::Version::HTTP_2, "Expected HTTP/2");
+    assert_eq!(
+        response.version(),
+        reqwest::Version::HTTP_2,
+        "Expected HTTP/2"
+    );
     let body = response.text().await?;
     let json: serde_json::Value = serde_json::from_str(&body)?;
-    assert!(json.get("users").is_some(), "Expected 'users' field in response");
+    assert!(
+        json.get("users").is_some(),
+        "Expected 'users' field in response"
+    );
     println!("✓ GET /api/users returned JSON with users");
 
     // Test 3: GET /api/status
@@ -75,7 +92,11 @@ Set Content-Type header appropriately (text/plain for /, application/json for /a
         .await?;
 
     assert_eq!(response.status(), 200, "Expected 200 OK for /api/status");
-    assert_eq!(response.version(), reqwest::Version::HTTP_2, "Expected HTTP/2");
+    assert_eq!(
+        response.version(),
+        reqwest::Version::HTTP_2,
+        "Expected HTTP/2"
+    );
     let body = response.text().await?;
     let json: serde_json::Value = serde_json::from_str(&body)?;
     assert_eq!(json.get("status").and_then(|v| v.as_str()), Some("ok"));
@@ -89,7 +110,11 @@ Set Content-Type header appropriately (text/plain for /, application/json for /a
         .await?;
 
     assert_eq!(response.status(), 404, "Expected 404 for /nonexistent");
-    assert_eq!(response.version(), reqwest::Version::HTTP_2, "Expected HTTP/2");
+    assert_eq!(
+        response.version(),
+        reqwest::Version::HTTP_2,
+        "Expected HTTP/2"
+    );
     let body = response.text().await?;
     assert!(body.contains("Not Found"), "Expected 'Not Found' message");
     println!("✓ GET /nonexistent returned 404");
@@ -112,16 +137,15 @@ For POST /api/users, parse the JSON body and return 201 with a success message i
 Set Content-Type: application/json for all responses."#;
 
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new_no_scripts(prompt.to_string())).await?;
+    let server =
+        helpers::start_netget_server(ServerConfig::new_no_scripts(prompt.to_string())).await?;
     println!("Server started on port {}", server.port);
 
     // Give server time to initialize
     sleep(Duration::from_secs(2)).await;
 
     // Create HTTP/2 client
-    let client = reqwest::Client::builder()
-        .http2_prior_knowledge()
-        .build()?;
+    let client = reqwest::Client::builder().http2_prior_knowledge().build()?;
 
     // Test 1: POST /echo with text body
     println!("Test 1: POST /echo with text body");
@@ -132,9 +156,16 @@ Set Content-Type: application/json for all responses."#;
         .await?;
 
     assert_eq!(response.status(), 200, "Expected 200 OK for POST /echo");
-    assert_eq!(response.version(), reqwest::Version::HTTP_2, "Expected HTTP/2");
+    assert_eq!(
+        response.version(),
+        reqwest::Version::HTTP_2,
+        "Expected HTTP/2"
+    );
     let body = response.text().await?;
-    assert!(body.contains("Hello HTTP/2") || body.contains("POST"), "Expected echo response containing request data");
+    assert!(
+        body.contains("Hello HTTP/2") || body.contains("POST"),
+        "Expected echo response containing request data"
+    );
     println!("✓ POST /echo returned response with request data");
 
     // Test 2: POST /api/users with JSON
@@ -150,12 +181,23 @@ Set Content-Type: application/json for all responses."#;
         .send()
         .await?;
 
-    assert_eq!(response.status(), 201, "Expected 201 Created for POST /api/users");
-    assert_eq!(response.version(), reqwest::Version::HTTP_2, "Expected HTTP/2");
+    assert_eq!(
+        response.status(),
+        201,
+        "Expected 201 Created for POST /api/users"
+    );
+    assert_eq!(
+        response.version(),
+        reqwest::Version::HTTP_2,
+        "Expected HTTP/2"
+    );
     let body = response.text().await?;
     // LLM should include the name "Charlie" in the response
-    assert!(body.contains("Charlie") || body.to_lowercase().contains("success"),
-            "Expected response containing user name or success message, got: {}", body);
+    assert!(
+        body.contains("Charlie") || body.to_lowercase().contains("success"),
+        "Expected response containing user name or success message, got: {}",
+        body
+    );
     println!("✓ POST /api/users returned 201 with success message");
 
     // Stop the server
@@ -175,16 +217,15 @@ For GET /data, return 200 with JSON: {"data": "test", "timestamp": "2025-01-01T0
 Set Content-Type: application/json."#;
 
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new_no_scripts(prompt.to_string())).await?;
+    let server =
+        helpers::start_netget_server(ServerConfig::new_no_scripts(prompt.to_string())).await?;
     println!("Server started on port {}", server.port);
 
     // Give server time to initialize
     sleep(Duration::from_secs(2)).await;
 
     // Create HTTP/2 client (reuses connection for multiplexing)
-    let client = reqwest::Client::builder()
-        .http2_prior_knowledge()
-        .build()?;
+    let client = reqwest::Client::builder().http2_prior_knowledge().build()?;
 
     // Send 3 concurrent requests over the same connection
     println!("Sending 3 concurrent requests...");

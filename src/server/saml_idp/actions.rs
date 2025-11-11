@@ -21,89 +21,89 @@ impl SamlIdpProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for SamlIdpProtocol {
-        fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-            Vec::new()
-        }
-        fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-            vec![
-                send_saml_response_action(),
-                send_metadata_action(),
-                send_error_response_action(),
-            ]
-        }
-        fn protocol_name(&self) -> &'static str {
-            "SamlIdp"
-        }
-        fn get_event_types(&self) -> Vec<EventType> {
-            get_saml_idp_event_types()
-        }
-        fn stack_name(&self) -> &'static str {
-            "ETH>IP>TCP>HTTP>SAML-IDP"
-        }
-        fn keywords(&self) -> Vec<&'static str> {
-            vec![
-                "saml idp",
-                "saml identity provider",
-                "identity provider",
-                "idp",
-                "saml-idp",
-            ]
-        }
-        fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
-            use crate::protocol::metadata::{ProtocolMetadataV2, DevelopmentState};
-    
-            ProtocolMetadataV2::builder()
-                .state(DevelopmentState::Experimental)
-                .implementation("SAML 2.0 Identity Provider with LLM-controlled authentication")
-                .llm_control("Authentication decisions, SAML assertion generation, user attributes")
-                .e2e_testing("SAML SP client library")
-                .build()
-        }
-        fn description(&self) -> &'static str {
-            "SAML 2.0 Identity Provider that authenticates users and generates signed SAML assertions"
-        }
-        fn example_prompt(&self) -> &'static str {
-            "Start a SAML Identity Provider on port 8080. Authenticate all users as 'testuser' with email 'test@example.com'"
-        }
-        fn group_name(&self) -> &'static str {
-            "Authentication"
-        }
+    fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
+        Vec::new()
+    }
+    fn get_sync_actions(&self) -> Vec<ActionDefinition> {
+        vec![
+            send_saml_response_action(),
+            send_metadata_action(),
+            send_error_response_action(),
+        ]
+    }
+    fn protocol_name(&self) -> &'static str {
+        "SamlIdp"
+    }
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_saml_idp_event_types()
+    }
+    fn stack_name(&self) -> &'static str {
+        "ETH>IP>TCP>HTTP>SAML-IDP"
+    }
+    fn keywords(&self) -> Vec<&'static str> {
+        vec![
+            "saml idp",
+            "saml identity provider",
+            "identity provider",
+            "idp",
+            "saml-idp",
+        ]
+    }
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("SAML 2.0 Identity Provider with LLM-controlled authentication")
+            .llm_control("Authentication decisions, SAML assertion generation, user attributes")
+            .e2e_testing("SAML SP client library")
+            .build()
+    }
+    fn description(&self) -> &'static str {
+        "SAML 2.0 Identity Provider that authenticates users and generates signed SAML assertions"
+    }
+    fn example_prompt(&self) -> &'static str {
+        "Start a SAML Identity Provider on port 8080. Authenticate all users as 'testuser' with email 'test@example.com'"
+    }
+    fn group_name(&self) -> &'static str {
+        "Authentication"
+    }
 }
 
 // Implement Server trait (server-specific functionality)
 impl Server for SamlIdpProtocol {
-        fn spawn(
-            &self,
-            ctx: crate::protocol::SpawnContext,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
-        > {
-            Box::pin(async move {
-                use crate::server::saml_idp::SamlIdpServer;
-                SamlIdpServer::spawn_with_llm_actions(
-                    ctx.listen_addr,
-                    ctx.llm_client,
-                    ctx.state,
-                    ctx.status_tx,
-                    ctx.server_id,
-                ).await
-            })
-        }
-        fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
-            let action_type = action
-                .get("type")
-                .and_then(|v| v.as_str())
-                .context("Missing 'type' field in action")?;
-    
-            match action_type {
-                "send_saml_response" => self.execute_send_saml_response(action),
-                "send_metadata" => self.execute_send_metadata(action),
-                "send_error_response" => self.execute_send_error_response(action),
-                _ => Err(anyhow::anyhow!("Unknown SAML IDP action: {action_type}")),
-            }
-        }
-}
+    fn spawn(
+        &self,
+        ctx: crate::protocol::SpawnContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            use crate::server::saml_idp::SamlIdpServer;
+            SamlIdpServer::spawn_with_llm_actions(
+                ctx.listen_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.server_id,
+            )
+            .await
+        })
+    }
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let action_type = action
+            .get("type")
+            .and_then(|v| v.as_str())
+            .context("Missing 'type' field in action")?;
 
+        match action_type {
+            "send_saml_response" => self.execute_send_saml_response(action),
+            "send_metadata" => self.execute_send_metadata(action),
+            "send_error_response" => self.execute_send_error_response(action),
+            _ => Err(anyhow::anyhow!("Unknown SAML IDP action: {action_type}")),
+        }
+    }
+}
 
 impl SamlIdpProtocol {
     /// Execute send_saml_response sync action
@@ -113,9 +113,7 @@ impl SamlIdpProtocol {
             .and_then(|v| v.as_str())
             .context("Missing 'assertion_xml' field")?;
 
-        let relay_state = action
-            .get("relay_state")
-            .and_then(|v| v.as_str());
+        let relay_state = action.get("relay_state").and_then(|v| v.as_str());
 
         // Build HTTP POST form response (SAML HTTP-POST binding)
         let form_html = build_saml_post_form(assertion_xml, relay_state);
@@ -186,12 +184,19 @@ impl SamlIdpProtocol {
 
 /// Build SAML HTTP-POST form for assertion delivery
 fn build_saml_post_form(assertion_xml: &str, relay_state: Option<&str>) -> String {
-    let encoded_assertion = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, assertion_xml);
-    let relay_state_field = relay_state.map(|rs| {
-        format!(r#"<input type="hidden" name="RelayState" value="{}" />"#, rs)
-    }).unwrap_or_default();
+    let encoded_assertion =
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, assertion_xml);
+    let relay_state_field = relay_state
+        .map(|rs| {
+            format!(
+                r#"<input type="hidden" name="RelayState" value="{}" />"#,
+                rs
+            )
+        })
+        .unwrap_or_default();
 
-    format!(r#"<!DOCTYPE html>
+    format!(
+        r#"<!DOCTYPE html>
 <html>
 <head>
     <title>SAML POST Binding</title>
@@ -208,19 +213,24 @@ fn build_saml_post_form(assertion_xml: &str, relay_state: Option<&str>) -> Strin
         </noscript>
     </form>
 </body>
-</html>"#, encoded_assertion, relay_state_field)
+</html>"#,
+        encoded_assertion, relay_state_field
+    )
 }
 
 /// Action definition for send_saml_response (sync)
 fn send_saml_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_saml_response".to_string(),
-        description: "Send a SAML response with authentication assertion to the Service Provider".to_string(),
+        description: "Send a SAML response with authentication assertion to the Service Provider"
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "assertion_xml".to_string(),
                 type_hint: "string".to_string(),
-                description: "SAML assertion XML containing authentication statement and user attributes".to_string(),
+                description:
+                    "SAML assertion XML containing authentication statement and user attributes"
+                        .to_string(),
                 required: true,
             },
             Parameter {
@@ -242,15 +252,14 @@ fn send_saml_response_action() -> ActionDefinition {
 fn send_metadata_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_metadata".to_string(),
-        description: "Send IDP metadata XML describing SSO endpoints and signing certificates".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "metadata_xml".to_string(),
-                type_hint: "string".to_string(),
-                description: "SAML IDP metadata XML".to_string(),
-                required: true,
-            },
-        ],
+        description: "Send IDP metadata XML describing SSO endpoints and signing certificates"
+            .to_string(),
+        parameters: vec![Parameter {
+            name: "metadata_xml".to_string(),
+            type_hint: "string".to_string(),
+            description: "SAML IDP metadata XML".to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "send_metadata",
             "metadata_xml": "<EntityDescriptor>...</EntityDescriptor>"
@@ -293,7 +302,7 @@ fn send_error_response_action() -> ActionDefinition {
 pub static SAML_IDP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "saml_idp_request",
-        "Received SAML authentication request or metadata request"
+        "Received SAML authentication request or metadata request",
     )
     .with_parameters(vec![
         Parameter {

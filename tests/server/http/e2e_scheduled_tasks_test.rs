@@ -5,7 +5,7 @@
 
 #![cfg(feature = "http")]
 
-use super::super::super::helpers::{self, ServerConfig, E2EResult};
+use super::super::super::helpers::{self, E2EResult, ServerConfig};
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -28,13 +28,16 @@ The task should use the schedule_task action with:
 Initialize the heartbeat counter to 0 when the server starts."#;
 
     // Start the server
-    let server = helpers::start_netget_server(
-        ServerConfig::new(prompt).with_log_level("debug")
-    ).await?;
+    let server =
+        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("debug")).await?;
     println!("HTTP server started on port {}", server.port);
 
     // Verify it's actually an HTTP server
-    assert_eq!(server.stack, "HTTP", "Expected HTTP server but got {}", server.stack);
+    assert_eq!(
+        server.stack, "HTTP",
+        "Expected HTTP server but got {}",
+        server.stack
+    );
 
     // Wait for task to be created and execute a few times
     println!("Waiting for scheduled task to execute...");
@@ -55,9 +58,14 @@ Initialize the heartbeat counter to 0 when the server starts."#;
     // The counter should have incremented at least once
     // We're lenient here because LLM timing may vary
     // Just verify that the response mentions a number > 0
-    let has_nonzero = body.contains("1") || body.contains("2") || body.contains("3")
-        || body.contains("4") || body.contains("one") || body.contains("two")
-        || body.contains("three") || body.contains("four");
+    let has_nonzero = body.contains("1")
+        || body.contains("2")
+        || body.contains("3")
+        || body.contains("4")
+        || body.contains("one")
+        || body.contains("two")
+        || body.contains("three")
+        || body.contains("four");
 
     assert!(
         has_nonzero,
@@ -91,13 +99,16 @@ The task should use the schedule_task action with:
 Initialize the ready flag to false when the server starts."#;
 
     // Start the server
-    let server = helpers::start_netget_server(
-        ServerConfig::new(prompt).with_log_level("debug")
-    ).await?;
+    let server =
+        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("debug")).await?;
     println!("HTTP server started on port {}", server.port);
 
     // Verify it's actually an HTTP server
-    assert_eq!(server.stack, "HTTP", "Expected HTTP server but got {}", server.stack);
+    assert_eq!(
+        server.stack, "HTTP",
+        "Expected HTTP server but got {}",
+        server.stack
+    );
 
     let client = reqwest::Client::new();
     let url = format!("http://127.0.0.1:{}/status", server.port);
@@ -110,7 +121,8 @@ Initialize the ready flag to false when the server starts."#;
 
     println!("Status before task: {}", body_before);
     assert!(
-        body_before.to_lowercase().contains("initializing") || body_before.to_lowercase().contains("not ready"),
+        body_before.to_lowercase().contains("initializing")
+            || body_before.to_lowercase().contains("not ready"),
         "Expected status to be 'initializing' before task, got: {}",
         body_before
     );
@@ -158,13 +170,16 @@ Use the open_server action with the scheduled_tasks parameter to define these ta
 Initialize metrics counter to 0 and initialized flag to false."#;
 
     // Start the server
-    let server = helpers::start_netget_server(
-        ServerConfig::new(prompt).with_log_level("debug")
-    ).await?;
+    let server =
+        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("debug")).await?;
     println!("HTTP server started on port {}", server.port);
 
     // Verify it's actually an HTTP server
-    assert_eq!(server.stack, "HTTP", "Expected HTTP server but got {}", server.stack);
+    assert_eq!(
+        server.stack, "HTTP",
+        "Expected HTTP server but got {}",
+        server.stack
+    );
 
     let client = reqwest::Client::new();
 
@@ -196,8 +211,10 @@ Initialize metrics counter to 0 and initialized flag to false."#;
     println!("Metrics: {}", metrics_body);
 
     // Should have incremented at least once
-    let has_increment = metrics_body.contains("1") || metrics_body.contains("2")
-        || metrics_body.contains("3") || metrics_body.contains("one");
+    let has_increment = metrics_body.contains("1")
+        || metrics_body.contains("2")
+        || metrics_body.contains("3")
+        || metrics_body.contains("one");
     assert!(
         has_increment,
         "Expected metrics counter to be > 0, got: {}",

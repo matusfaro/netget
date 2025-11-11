@@ -2,9 +2,11 @@
 
 ## Overview
 
-**OSPF protocol simulator** that speaks real OSPF (IP protocol 89) but has **LLM-generated responses** instead of real routing logic.
+**OSPF protocol simulator** that speaks real OSPF (IP protocol 89) but has **LLM-generated responses** instead of real
+routing logic.
 
 **Philosophy**: NetGet handles protocol details, LLM controls behavior
+
 - ✅ Real OSPF protocol (IP 89)
 - ✅ Multicast support (224.0.0.5)
 - ✅ LLM generates responses
@@ -19,28 +21,36 @@
 ## Use Cases
 
 ### 1. OSPF Honeypot
+
 Detect OSPF reconnaissance and attacks:
+
 ```
 netget> Listen on interface 192.168.1.100 as OSPF router 10.0.0.1 in area 0
 LLM: "Respond to Hellos but log all LSA requests. Advertise fake routes."
 ```
 
 ### 2. Protocol Testing
+
 Test real OSPF routers with controlled responses:
+
 ```
 netget> OSPF on 10.0.1.1, area 0, be the DR
 LLM: "Claim DR priority 255, advertise 3 fake routes, vary LSA ages"
 ```
 
 ### 3. Route Injection
+
 Inject test routes into OSPF networks:
+
 ```
 netget> OSPF router, inject route 192.168.99.0/24
 LLM: "Generate Router LSA with fake link to 192.168.99.0/24, metric 10"
 ```
 
 ### 4. OSPF Education
+
 Learn OSPF without setting up real routers:
+
 ```
 netget> Be an OSPF router, explain what you're doing
 LLM: "Received Hello from 2.2.2.2. Sending Hello back with priority 1..."
@@ -62,6 +72,7 @@ let socket = create_ospf_raw_socket(interface_ip, true, false)?;
 ### Packet Flow
 
 **Incoming**:
+
 ```
 Real Router → OSPF packet (IP proto 89) → NetGet
                                            ↓
@@ -75,6 +86,7 @@ Real Router → OSPF packet (IP proto 89) → NetGet
 ```
 
 **Outgoing**:
+
 ```
 LLM → JSON action → execute_action() → ActionResult::Output(packet_bytes)
                                            ↓
@@ -85,11 +97,14 @@ LLM → JSON action → execute_action() → ActionResult::Output(packet_bytes)
                                Raw sendto() to 224.0.0.5 (multicast)
 ```
 
-**Architecture**: LLM actions return `ActionResult::Output` with raw OSPF packet bytes. The mod.rs event handler processes these results and calls `send_ospf_packet()` with the raw socket FD from `OspfState`. Currently sends to multicast (224.0.0.5) by default; unicast destination support is TODO.
+**Architecture**: LLM actions return `ActionResult::Output` with raw OSPF packet bytes. The mod.rs event handler
+processes these results and calls `send_ospf_packet()` with the raw socket FD from `OspfState`. Currently sends to
+multicast (224.0.0.5) by default; unicast destination support is TODO.
 
 ### No Real Routing
 
 **What we DON'T implement**:
+
 - SPF (Dijkstra) calculation
 - Real routing table
 - Route installation (netlink)
@@ -98,6 +113,7 @@ LLM → JSON action → execute_action() → ActionResult::Output(packet_bytes)
 - Proper LSDB synchronization
 
 **What LLM controls**:
+
 - Whether to respond to Hellos
 - What routes to advertise (fake or real)
 - DR/BDR claim (just set priority)
@@ -132,6 +148,7 @@ When OSPF Hello received:
 ### Action Structure (Output from LLM)
 
 **Send Hello Response**:
+
 ```json
 {
   "type": "send_hello",
@@ -147,6 +164,7 @@ When OSPF Hello received:
 ```
 
 **Send Database Description (unicast to specific neighbor)**:
+
 ```json
 {
   "type": "send_database_description",
@@ -161,6 +179,7 @@ When OSPF Hello received:
 ```
 
 **Generate Fake Router LSA** (TODO):
+
 ```json
 {
   "type": "send_lsa",
@@ -191,6 +210,7 @@ struct OspfNeighbor {
 ```
 
 **State Transitions** (simplified):
+
 - Down → Init (receive first Hello)
 - Init → 2-Way (bidirectional Hello)
 - 2-Way → ExStart (form adjacency - TODO)
@@ -203,6 +223,7 @@ struct OspfNeighbor {
 ### No LSDB
 
 No real Link State Database. LLM generates LSAs on demand:
+
 - LLM remembers what it advertised (via conversation history)
 - LLM generates fake LSAs when requested
 - No LSA aging, no MaxAge, no refresh timers
@@ -278,6 +299,7 @@ unsafe {
 ## Current Implementation Status
 
 ### ✅ Completed
+
 - Raw IP socket creation (protocol 89)
 - Multicast group join (224.0.0.5)
 - IP header parsing
@@ -288,14 +310,15 @@ unsafe {
 - Hello packet construction
 - Packet transmission function
 - Connect LLM actions to packet sending
-  - LLM JSON responses converted to OSPF packets
-  - Packets sent to multicast (224.0.0.5) by default
-  - Full logging (dual tracing + status_tx)
+    - LLM JSON responses converted to OSPF packets
+    - Packets sent to multicast (224.0.0.5) by default
+    - Full logging (dual tracing + status_tx)
 - Unicast destination support
-  - LLM can specify "multicast" (224.0.0.5), "dr_multicast" (224.0.0.6), or unicast IP (e.g., "192.168.1.2")
-  - Useful for targeted Database Description/LSU exchanges with specific neighbors
+    - LLM can specify "multicast" (224.0.0.5), "dr_multicast" (224.0.0.6), or unicast IP (e.g., "192.168.1.2")
+    - Useful for targeted Database Description/LSU exchanges with specific neighbors
 
 ### 📋 TODO
+
 - LSA packet construction (Router, Network, Summary)
 - Database Description handling
 - LSR/LSU/LSAck handling
@@ -308,6 +331,7 @@ unsafe {
 ### With Real OSPF Router (FRR)
 
 **Setup FRR**:
+
 ```bash
 # On Linux router
 sudo apt install frr
@@ -322,6 +346,7 @@ interface eth0
 ```
 
 **Start NetGet** (requires root):
+
 ```bash
 sudo ./netget
 netget> Listen on interface 192.168.1.100 as OSPF router 192.168.1.100 in area 0
@@ -333,6 +358,7 @@ netget> Listen on interface 192.168.1.100 as OSPF router 192.168.1.100 in area 0
 ```
 
 **Observe FRR**:
+
 ```bash
 sudo vtysh -c "show ip ospf neighbor"
 # Should see NetGet router if LLM responds correctly
@@ -341,6 +367,7 @@ sudo vtysh -c "show ip ospf neighbor"
 ### Current Limitations
 
 **Cannot test yet**:
+
 - Full adjacency formation (need DD/LSR/LSU)
 - Route advertisement (need LSA generation)
 - Route redistribution
@@ -348,6 +375,7 @@ sudo vtysh -c "show ip ospf neighbor"
 - Multi-area OSPF
 
 **Can test**:
+
 - Hello packet exchange
 - Neighbor discovery
 - State transitions (Down/Init/2-Way)
@@ -359,6 +387,7 @@ sudo vtysh -c "show ip ospf neighbor"
 ### Honeypot Mode
 
 Detect OSPF attacks:
+
 - Neighbor scanning
 - Route poisoning attempts
 - LSA flooding
@@ -369,12 +398,14 @@ LLM can log malicious behavior and respond defensively.
 ### Route Injection Risks
 
 **Be careful**: Advertising fake routes in production networks can:
+
 - Cause routing loops
 - Black-hole traffic
 - Break connectivity
 - Trigger security alerts
 
 **Use only**:
+
 - Test networks
 - Isolated environments
 - With network admin permission
@@ -423,6 +454,7 @@ LLM generates:
 **What's Missing**: Actions can send empty LSU packets, but can't construct LSA contents.
 
 **How to Implement**:
+
 1. Add LSA parameters to `send_link_state_update` action:
    ```json
    {
@@ -444,13 +476,13 @@ LLM generates:
    ```
 
 2. Update `execute_send_link_state_update()` in actions.rs:
-   - Parse `lsas` array from JSON
-   - For each LSA, serialize to OSPF LSA format:
-     - LSA header (20 bytes): age, options, type, link state ID, advertising router, sequence, checksum, length
-     - LSA body varies by type
-   - Router LSA (Type 1): links array with type, ID, data, metric
-   - Network LSA (Type 2): network mask + attached routers
-   - Summary LSA (Type 3): network + mask + metric
+    - Parse `lsas` array from JSON
+    - For each LSA, serialize to OSPF LSA format:
+        - LSA header (20 bytes): age, options, type, link state ID, advertising router, sequence, checksum, length
+        - LSA body varies by type
+    - Router LSA (Type 1): links array with type, ID, data, metric
+    - Network LSA (Type 2): network mask + attached routers
+    - Summary LSA (Type 3): network + mask + metric
 
 3. LSA checksum: Use Fletcher checksum over LSA header+body (same as packet checksum but excludes age field)
 
@@ -463,19 +495,20 @@ LLM generates:
 **What's Missing**: Can receive DD packets, but LLM doesn't track exchange state or LSA headers.
 
 **How to Implement**:
+
 1. Add DD event parsing in mod.rs:
-   - Extract DD flags (I, M, MS), sequence number, MTU
-   - Parse LSA headers from DD body (20 bytes each)
-   - Send structured JSON to LLM with LSA summaries
+    - Extract DD flags (I, M, MS), sequence number, MTU
+    - Parse LSA headers from DD body (20 bytes each)
+    - Send structured JSON to LLM with LSA summaries
 
 2. Add connection state tracking:
-   - Current: `OspfNeighborState` is an enum (Down/Init/2-Way/...)
-   - Add: `dd_sequence: u32`, `dd_master: bool`, `lsa_requests: Vec<LsaHeader>`
+    - Current: `OspfNeighborState` is an enum (Down/Init/2-Way/...)
+    - Add: `dd_sequence: u32`, `dd_master: bool`, `lsa_requests: Vec<LsaHeader>`
 
 3. LLM prompt additions:
-   - "You received Database Description with LSA headers: ..."
-   - "You are master/slave in DD exchange"
-   - "Respond with your LSA headers or send LSR for missing LSAs"
+    - "You received Database Description with LSA headers: ..."
+    - "You are master/slave in DD exchange"
+    - "Respond with your LSA headers or send LSR for missing LSAs"
 
 **Effort**: Low (1-2 hours). Mostly parsing + state tracking.
 
@@ -486,22 +519,23 @@ LLM generates:
 **What's Missing**: Can send these packet types (empty), but doesn't parse incoming ones or maintain state.
 
 **How to Implement**:
+
 1. Parse incoming LSR in mod.rs:
-   - Extract requested LSA identifiers (type, ID, advertising router)
-   - Send JSON event to LLM: `{"event": "ospf_lsr", "requests": [...]}`
+    - Extract requested LSA identifiers (type, ID, advertising router)
+    - Send JSON event to LLM: `{"event": "ospf_lsr", "requests": [...]}`
 
 2. LLM decides:
-   - If we "have" the LSA → `send_link_state_update` with LSA content
-   - If we don't → ignore or log
+    - If we "have" the LSA → `send_link_state_update` with LSA content
+    - If we don't → ignore or log
 
 3. Parse incoming LSU:
-   - Extract LSAs from packet body
-   - Send to LLM: `{"event": "ospf_lsu", "lsas": [...]}`
-   - LLM can log, respond with LSAck, or ignore
+    - Extract LSAs from packet body
+    - Send to LLM: `{"event": "ospf_lsu", "lsas": [...]}`
+    - LLM can log, respond with LSAck, or ignore
 
 4. Parse incoming LSAck:
-   - Extract acknowledged LSA headers
-   - Send to LLM for logging
+    - Extract acknowledged LSA headers
+    - Send to LLM for logging
 
 **Effort**: Medium (2-3 hours). Parsing is straightforward, but LLM guidance needs refinement.
 
@@ -512,6 +546,7 @@ LLM generates:
 **What's Missing**: Server only responds to incoming packets. Doesn't proactively send Hellos.
 
 **How to Implement**:
+
 1. Use NetGet's scheduled tasks system (see CLAUDE.md § Scheduled Tasks):
    ```rust
    // In spawn_with_llm_actions, add server-scoped task
@@ -549,6 +584,7 @@ LLM generates:
 **What's Missing**: Neighbors never time out. last_hello timestamp tracked but not checked.
 
 **How to Implement**:
+
 1. Add connection-scoped task for each neighbor:
    ```rust
    // When neighbor transitions to Init/2-Way
@@ -590,19 +626,20 @@ LLM generates:
 **What's Missing**: LLM manually claims DR/BDR via Hello priority. No automatic election.
 
 **How to Implement**:
+
 1. After receiving Hello from all neighbors, run election:
-   - Highest priority router with no DR → becomes DR
-   - Second-highest → becomes BDR
-   - In tie, highest router ID wins
+    - Highest priority router with no DR → becomes DR
+    - Second-highest → becomes BDR
+    - In tie, highest router ID wins
 
 2. Update Hello responses:
-   - If we won election → send Hello with dr="our_ip"
-   - If we lost → send Hello with dr="winner_ip"
+    - If we won election → send Hello with dr="our_ip"
+    - If we lost → send Hello with dr="winner_ip"
 
 3. Implementation options:
-   - **Pure LLM**: Send neighbor list + priorities to LLM, let it decide
-   - **Hybrid**: Run election in Rust, send result to LLM for approval
-   - **Manual**: Keep current behavior (LLM decides in prompts)
+    - **Pure LLM**: Send neighbor list + priorities to LLM, let it decide
+    - **Hybrid**: Run election in Rust, send result to LLM for approval
+    - **Manual**: Keep current behavior (LLM decides in prompts)
 
 **Effort**: Medium (2-3 hours for full election, 30min for hybrid).
 
@@ -616,17 +653,17 @@ LLM generates:
 
 ## Comparison: Full Router vs Simulator
 
-| Feature | Full OSPF Router | NetGet Simulator |
-|---------|------------------|------------------|
-| Packet RX/TX | ✅ | ✅ |
-| Neighbor states | ✅ | ✅ (partial) |
-| DR/BDR election | ✅ Algorithm | ❌ LLM claims |
-| LSA flooding | ✅ Automatic | ❌ LLM manual |
-| LSDB sync | ✅ Real sync | ❌ No LSDB |
-| SPF calculation | ✅ Dijkstra | ❌ None |
-| Routing table | ✅ Real routes | ❌ Fake routes |
-| Route install | ✅ Kernel | ❌ None |
-| Code complexity | ~10,000 lines | ~500 lines |
-| Use case | Production routing | Testing/honeypot |
+| Feature         | Full OSPF Router   | NetGet Simulator |
+|-----------------|--------------------|------------------|
+| Packet RX/TX    | ✅                  | ✅                |
+| Neighbor states | ✅                  | ✅ (partial)      |
+| DR/BDR election | ✅ Algorithm        | ❌ LLM claims     |
+| LSA flooding    | ✅ Automatic        | ❌ LLM manual     |
+| LSDB sync       | ✅ Real sync        | ❌ No LSDB        |
+| SPF calculation | ✅ Dijkstra         | ❌ None           |
+| Routing table   | ✅ Real routes      | ❌ Fake routes    |
+| Route install   | ✅ Kernel           | ❌ None           |
+| Code complexity | ~10,000 lines      | ~500 lines       |
+| Use case        | Production routing | Testing/honeypot |
 
 **Winner**: Simulator for NetGet's use cases! 🎉

@@ -2,7 +2,8 @@
 
 ## Overview
 
-Testing strategy for WebRTC client implementation. WebRTC presents unique testing challenges due to peer-to-peer nature and signaling requirements.
+Testing strategy for WebRTC client implementation. WebRTC presents unique testing challenges due to peer-to-peer nature
+and signaling requirements.
 
 ## Test Categories
 
@@ -11,6 +12,7 @@ Testing strategy for WebRTC client implementation. WebRTC presents unique testin
 **File**: `tests/client/webrtc/e2e_test.rs` (non-E2E tests)
 
 **Coverage**:
+
 - Protocol registration verification
 - Client state management
 - Action parsing
@@ -20,6 +22,7 @@ Testing strategy for WebRTC client implementation. WebRTC presents unique testin
 **Runtime**: < 1 second
 
 **Example**:
+
 ```bash
 ./cargo-isolated.sh test --no-default-features --features webrtc \
   --test client::webrtc::e2e_test test_webrtc_protocol_registered
@@ -30,22 +33,26 @@ Testing strategy for WebRTC client implementation. WebRTC presents unique testin
 **File**: `tests/client/webrtc/e2e_test.rs`
 
 **Coverage**:
+
 - Client initialization
 - SDP offer generation
 - Connection state management
 
 **LLM Call Budget**: < 5 calls
+
 - 1 call for initial connection event
 - No additional calls without peer
 
 **Runtime**: ~10 seconds
 
 **Limitations**:
+
 - Cannot complete full connection without peer
 - No message exchange testing (requires peer)
 - SDP answer application not tested (requires peer)
 
 **Example**:
+
 ```bash
 ./cargo-isolated.sh test --no-default-features --features webrtc \
   --test client::webrtc::e2e_test test_webrtc_client_offer_generation -- --ignored
@@ -58,32 +65,35 @@ Testing strategy for WebRTC client implementation. WebRTC presents unique testin
 **Problem**: WebRTC requires two peers to establish connection
 
 **Solutions**:
+
 1. **Manual Testing**: Use web browser as peer
-   - Open https://webrtc.github.io/samples/src/content/datachannel/basic/
-   - Exchange SDP with NetGet client
-   - Test message exchange manually
+    - Open https://webrtc.github.io/samples/src/content/datachannel/basic/
+    - Exchange SDP with NetGet client
+    - Test message exchange manually
 
 2. **Dual NetGet Instances**: Run two NetGet instances
-   - Instance A generates offer
-   - Instance B generates answer
-   - Exchange SDPs between instances
-   - Test P2P messaging
+    - Instance A generates offer
+    - Instance B generates answer
+    - Exchange SDPs between instances
+    - Test P2P messaging
 
 3. **Mock Peer** (future): Implement test peer
-   - Automated SDP exchange
-   - Simulate data channel messages
-   - Enable automated E2E tests
+    - Automated SDP exchange
+    - Simulate data channel messages
+    - Enable automated E2E tests
 
 ### Challenge 2: Signaling
 
 **Problem**: Manual SDP exchange required
 
 **Current Approach**:
+
 - Test only offer generation
 - Skip answer application in automated tests
 - Manual testing for full connection
 
 **Future Improvement**:
+
 - WebSocket signaling server for tests
 - Loopback connections
 - Test peer with automated exchange
@@ -93,6 +103,7 @@ Testing strategy for WebRTC client implementation. WebRTC presents unique testin
 **Problem**: ICE gathering takes time (2-5 seconds)
 
 **Approach**:
+
 - Use `gathering_complete_promise()` to wait
 - 10-second timeout in tests
 - Verify SDP offer existence, not content
@@ -105,11 +116,13 @@ Testing strategy for WebRTC client implementation. WebRTC presents unique testin
 **LLM Calls**: 1-2
 
 **Steps**:
+
 1. Create WebRTC client
 2. Verify SDP offer generated
 3. Check protocol_data fields
 
 **Expected**:
+
 - Client status: Connecting
 - SDP offer stored in protocol_data
 - Offer contains ICE candidates
@@ -120,6 +133,7 @@ Testing strategy for WebRTC client implementation. WebRTC presents unique testin
 **LLM Calls**: 3-4
 
 **Steps**:
+
 1. Generate SDP offer
 2. Exchange with peer (manual)
 3. Apply SDP answer
@@ -127,6 +141,7 @@ Testing strategy for WebRTC client implementation. WebRTC presents unique testin
 5. Verify `webrtc_connected` event
 
 **Expected**:
+
 - Client status: Connected
 - Data channel ready
 - LLM receives connected event
@@ -137,6 +152,7 @@ Testing strategy for WebRTC client implementation. WebRTC presents unique testin
 **LLM Calls**: 5-8
 
 **Steps**:
+
 1. Establish connection (see Scenario 2)
 2. Send message via LLM action
 3. Peer receives message
@@ -145,6 +161,7 @@ Testing strategy for WebRTC client implementation. WebRTC presents unique testin
 6. LLM sends response
 
 **Expected**:
+
 - Messages delivered reliably
 - LLM responds to peer messages
 - State machine handles queueing
@@ -155,11 +172,13 @@ Testing strategy for WebRTC client implementation. WebRTC presents unique testin
 **LLM Calls**: 2
 
 **Steps**:
+
 1. Create client
 2. Trigger disconnect action
 3. Verify cleanup
 
 **Expected**:
+
 - Client removed from state
 - Pointers cleaned up
 - No memory leaks
@@ -174,8 +193,8 @@ Testing strategy for WebRTC client implementation. WebRTC presents unique testin
    ```
 
 2. **Open Browser Peer**:
-   - Navigate to: https://webrtc.github.io/samples/src/content/datachannel/basic/
-   - Or use: https://appr.tc/ (Google WebRTC demo)
+    - Navigate to: https://webrtc.github.io/samples/src/content/datachannel/basic/
+    - Or use: https://appr.tc/ (Google WebRTC demo)
 
 3. **Run NetGet**:
    ```bash
@@ -190,20 +209,20 @@ Testing strategy for WebRTC client implementation. WebRTC presents unique testin
    ```
 
 2. **Copy SDP Offer**:
-   - NetGet displays SDP offer JSON
-   - Copy entire offer block
+    - NetGet displays SDP offer JSON
+    - Copy entire offer block
 
 3. **Paste in Browser**:
-   - If using samples: Paste in "Remote peer's answer" field
-   - If using appr.tc: Enter room code and paste offer
+    - If using samples: Paste in "Remote peer's answer" field
+    - If using appr.tc: Enter room code and paste offer
 
 4. **Copy SDP Answer**:
-   - Browser generates answer
-   - Copy answer SDP
+    - Browser generates answer
+    - Copy answer SDP
 
 5. **Apply Answer in NetGet**:
-   - Paste answer when prompted
-   - LLM should generate `apply_answer` action
+    - Paste answer when prompted
+    - LLM should generate `apply_answer` action
 
 6. **Send Messages**:
    ```
@@ -211,10 +230,10 @@ Testing strategy for WebRTC client implementation. WebRTC presents unique testin
    ```
 
 7. **Verify Exchange**:
-   - Browser should receive message
-   - Send reply from browser
-   - NetGet LLM should see `webrtc_message_received` event
-   - LLM generates response
+    - Browser should receive message
+    - Send reply from browser
+    - NetGet LLM should see `webrtc_message_received` event
+    - LLM generates response
 
 ### Expected Results
 
@@ -246,19 +265,19 @@ Testing strategy for WebRTC client implementation. WebRTC presents unique testin
    ```
 
 2. **Loopback Connections**:
-   - Two WebRTC clients in same process
-   - Automated SDP exchange
-   - Full message flow testing
+    - Two WebRTC clients in same process
+    - Automated SDP exchange
+    - Full message flow testing
 
 3. **Mock Data Channel**:
-   - Stub out webrtc-rs for unit tests
-   - Test LLM integration without real connection
-   - Faster test execution
+    - Stub out webrtc-rs for unit tests
+    - Test LLM integration without real connection
+    - Faster test execution
 
 4. **Signaling Server**:
-   - WebSocket server for SDP exchange
-   - Enable multi-instance testing
-   - Automated E2E flows
+    - WebSocket server for SDP exchange
+    - Enable multi-instance testing
+    - Automated E2E flows
 
 ## Performance Targets
 

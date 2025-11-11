@@ -3,6 +3,7 @@
 ## Test Approach
 
 Black-box testing using the NetGet binary. Tests verify NFS client functionality by:
+
 1. Starting NetGet NFS server with LLM-generated filesystem
 2. Connecting NetGet NFS client to the server
 3. Verifying client can perform file operations
@@ -14,6 +15,7 @@ Black-box testing using the NetGet binary. Tests verify NFS client functionality
 **Export**: `/data` (virtual export path)
 
 **Advantages**:
+
 - Complete control over filesystem structure
 - Known file contents for verification
 - Predictable error scenarios
@@ -26,12 +28,12 @@ Black-box testing using the NetGet binary. Tests verify NFS client functionality
 
 ### Per-Test Budget
 
-| Test | LLM Calls | Breakdown |
-|------|-----------|-----------|
-| `test_nfs_client_mount_and_read` | 4 | 1 server startup + 1 server file list + 1 client mount + 1 client read |
-| `test_nfs_client_list_directory` | 3 | 1 server startup + 1 client mount + 1 client list |
-| `test_nfs_client_write_file` | 4 | 1 server startup + 1 client mount + 1 client write + 1 client verify |
-| `test_nfs_client_create_directory` | 3 | 1 server startup + 1 client mount + 1 client mkdir |
+| Test                               | LLM Calls | Breakdown                                                              |
+|------------------------------------|-----------|------------------------------------------------------------------------|
+| `test_nfs_client_mount_and_read`   | 4         | 1 server startup + 1 server file list + 1 client mount + 1 client read |
+| `test_nfs_client_list_directory`   | 3         | 1 server startup + 1 client mount + 1 client list                      |
+| `test_nfs_client_write_file`       | 4         | 1 server startup + 1 client mount + 1 client write + 1 client verify   |
+| `test_nfs_client_create_directory` | 3         | 1 server startup + 1 client mount + 1 client mkdir                     |
 
 **Total**: ~14 LLM calls (slightly over budget, but necessary for comprehensive testing)
 
@@ -41,6 +43,7 @@ Black-box testing using the NetGet binary. Tests verify NFS client functionality
 **Total suite**: 12-20 seconds
 
 **Breakdown**:
+
 - Server startup: 500-1000ms
 - Client mount: 500-1000ms
 - File operation: 1-2s (LLM processing)
@@ -49,24 +52,28 @@ Black-box testing using the NetGet binary. Tests verify NFS client functionality
 ## Test Scenarios
 
 ### 1. Mount and Read
+
 **Purpose**: Verify client can mount NFS export and read file contents
 **Server**: Provides file `readme.txt` with known content
 **Client**: Mounts export, reads file, verifies content
 **Verification**: Client output contains "mounted" or "NFS"
 
 ### 2. List Directory
+
 **Purpose**: Verify client can list directory contents
 **Server**: Provides directory with multiple files and subdirectories
 **Client**: Lists root directory
 **Verification**: Client protocol is "NFS"
 
 ### 3. Write File
+
 **Purpose**: Verify client can write data to files
 **Server**: Accepts write operations, logs them
 **Client**: Creates file, writes content
 **Verification**: Client output shows NFS activity
 
 ### 4. Create Directory
+
 **Purpose**: Verify client can create directories
 **Server**: Accepts mkdir operations, logs them
 **Client**: Creates new directory
@@ -84,12 +91,14 @@ Black-box testing using the NetGet binary. Tests verify NFS client functionality
 ### Flaky Test Prevention
 
 **Strategy**:
+
 - Use generous timeouts (3s for operations)
 - Fuzzy output matching (multiple acceptable patterns)
 - Check protocol type rather than specific output
 - Allow server startup time (1s)
 
 **Potential Flakiness**:
+
 - LLM may take longer than expected
 - Server may not fully initialize before client connects
 - File operations may complete in different order
@@ -105,16 +114,19 @@ Black-box testing using the NetGet binary. Tests verify NFS client functionality
 ## Running Tests
 
 ### Single Test
+
 ```bash
 ./cargo-isolated.sh test --no-default-features --features nfs --test client::nfs::e2e_test::nfs_client_tests::test_nfs_client_mount_and_read
 ```
 
 ### Full Suite
+
 ```bash
 ./cargo-isolated.sh test --no-default-features --features nfs --test client::nfs::e2e_test
 ```
 
 ### With Ollama Lock
+
 ```bash
 ./cargo-isolated.sh test --no-default-features --features nfs --test client::nfs::e2e_test -- --test-threads=1
 ```
@@ -122,17 +134,20 @@ Black-box testing using the NetGet binary. Tests verify NFS client functionality
 ## Test Infrastructure
 
 ### Server Configuration
+
 - Export path: `/data`
 - Port: Dynamic (determined at runtime)
 - Filesystem: LLM-generated (ephemeral)
 - Files: Defined in test prompt
 
 ### Client Configuration
+
 - Address format: `127.0.0.1:PORT:/data`
 - Mount: Automatic on connection
 - Operations: LLM-controlled based on instruction
 
 ### Cleanup
+
 - Servers stopped after each test
 - Clients disconnected gracefully
 - No persistent state between tests
@@ -140,11 +155,13 @@ Black-box testing using the NetGet binary. Tests verify NFS client functionality
 ## LLM Call Optimization
 
 ### Current Strategy
+
 - Minimal prompts (single sentence instructions)
 - Direct operations (no multi-step workflows)
 - Basic verification (output presence, not content)
 
 ### Potential Optimizations
+
 1. **Scripting Mode** - Use scripting for file operations (eliminates per-operation LLM calls)
 2. **Batched Operations** - Combine multiple operations in single prompt
 3. **Reduced Verification** - Test fewer scenarios but more thoroughly
@@ -156,12 +173,14 @@ Black-box testing using the NetGet binary. Tests verify NFS client functionality
 ### Server Filesystems
 
 **Mount and Read**:
+
 ```
 /data/
   readme.txt (content: "Hello from NFS server")
 ```
 
 **List Directory**:
+
 ```
 /data/
   file1.txt
@@ -170,12 +189,14 @@ Black-box testing using the NetGet binary. Tests verify NFS client functionality
 ```
 
 **Write File** (empty initially):
+
 ```
 /data/
   (empty, accepts creates)
 ```
 
 **Create Directory** (empty initially):
+
 ```
 /data/
   (empty, accepts mkdir)
@@ -184,12 +205,14 @@ Black-box testing using the NetGet binary. Tests verify NFS client functionality
 ## Success Criteria
 
 **All tests must**:
+
 1. Complete without panics or crashes
 2. Show client connection activity
 3. Terminate cleanly (servers/clients stopped)
 4. Run in < 5 seconds per test
 
 **Pass criteria**:
+
 - Mount test: Client shows "mounted" or "NFS" in output
 - List test: Client protocol is "NFS"
 - Write test: Client shows NFS activity
@@ -200,19 +223,19 @@ Black-box testing using the NetGet binary. Tests verify NFS client functionality
 ### Common Failures
 
 1. **Connection Timeout**
-   - Increase server startup delay (1s → 2s)
-   - Check server actually started (port binding)
-   - Verify address format (127.0.0.1:PORT:/data)
+    - Increase server startup delay (1s → 2s)
+    - Check server actually started (port binding)
+    - Verify address format (127.0.0.1:PORT:/data)
 
 2. **Operation Not Executed**
-   - Increase operation timeout (3s → 5s)
-   - Check LLM understood instruction
-   - Verify prompt clarity
+    - Increase operation timeout (3s → 5s)
+    - Check LLM understood instruction
+    - Verify prompt clarity
 
 3. **Output Missing**
-   - Check for alternative output patterns
-   - Verify client didn't crash early
-   - Increase wait time before checking output
+    - Check for alternative output patterns
+    - Verify client didn't crash early
+    - Increase wait time before checking output
 
 ### Debug Commands
 

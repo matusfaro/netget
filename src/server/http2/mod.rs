@@ -1,7 +1,7 @@
 //! HTTP/2 server implementation using hyper and h2
 pub mod actions;
-pub mod push;
 pub mod h2_server;
+pub mod push;
 
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -17,13 +17,13 @@ use hyper_util::rt::TokioIo;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info};
 
-use crate::server::connection::ConnectionId;
-use actions::HTTP2_REQUEST_EVENT;
-use crate::server::Http2Protocol;
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
+use crate::server::connection::ConnectionId;
+use crate::server::Http2Protocol;
 use crate::state::app_state::AppState;
+use actions::HTTP2_REQUEST_EVENT;
 
 // Re-export for convenience
 pub use h2_server::H2Server;
@@ -41,30 +41,43 @@ impl Http2Server {
         server_id: crate::state::ServerId,
         tls_config: Option<Arc<rustls::ServerConfig>>,
     ) -> anyhow::Result<SocketAddr> {
-        let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let listener =
+            crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
 
-        let protocol_name = if tls_config.is_some() { "HTTP/2 (TLS)" } else { "HTTP/2 (h2c)" };
-        info!("{} server (action-based) listening on {}", protocol_name, local_addr);
+        let protocol_name = if tls_config.is_some() {
+            "HTTP/2 (TLS)"
+        } else {
+            "HTTP/2 (h2c)"
+        };
+        info!(
+            "{} server (action-based) listening on {}",
+            protocol_name, local_addr
+        );
 
         let protocol = Arc::new(Http2Protocol::new());
 
         // Create TLS acceptor if TLS is enabled
-        let tls_acceptor = tls_config.map(|config| {
-            tokio_rustls::TlsAcceptor::from(config)
-        });
+        let tls_acceptor = tls_config.map(|config| tokio_rustls::TlsAcceptor::from(config));
 
         // Spawn server loop
         tokio::spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
-                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        info!("Accepted {} connection {} from {}", protocol_name, connection_id, remote_addr);
+                        info!(
+                            "Accepted {} connection {} from {}",
+                            protocol_name, connection_id, remote_addr
+                        );
 
                         // Add connection to ServerInstance
-                        use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -81,7 +94,9 @@ impl Http2Server {
                                 "recent_requests": []
                             })),
                         };
-                        app_state.add_connection_to_server(server_id, conn_state).await;
+                        app_state
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let llm_client_clone = llm_client.clone();
@@ -96,8 +111,14 @@ impl Http2Server {
                             if let Some(acceptor) = tls_acceptor_clone {
                                 match acceptor.accept(stream).await {
                                     Ok(tls_stream) => {
-                                        debug!("{} TLS handshake complete with {}", protocol_name, remote_addr);
-                                        let _ = status_tx_clone.send(format!("[DEBUG] {} TLS handshake complete with {}", protocol_name, remote_addr));
+                                        debug!(
+                                            "{} TLS handshake complete with {}",
+                                            protocol_name, remote_addr
+                                        );
+                                        let _ = status_tx_clone.send(format!(
+                                            "[DEBUG] {} TLS handshake complete with {}",
+                                            protocol_name, remote_addr
+                                        ));
                                         let io = TokioIo::new(tls_stream);
                                         Self::serve_connection(
                                             io,
@@ -107,11 +128,15 @@ impl Http2Server {
                                             app_state_clone.clone(),
                                             status_tx_clone.clone(),
                                             protocol_clone,
-                                        ).await;
+                                        )
+                                        .await;
                                     }
                                     Err(e) => {
                                         error!("{} TLS handshake failed: {}", protocol_name, e);
-                                        let _ = status_tx_clone.send(format!("[ERROR] {} TLS handshake failed: {}", protocol_name, e));
+                                        let _ = status_tx_clone.send(format!(
+                                            "[ERROR] {} TLS handshake failed: {}",
+                                            protocol_name, e
+                                        ));
                                     }
                                 }
                             } else {
@@ -125,12 +150,18 @@ impl Http2Server {
                                     app_state_clone.clone(),
                                     status_tx_clone.clone(),
                                     protocol_clone,
-                                ).await;
+                                )
+                                .await;
                             }
 
                             // Mark connection as closed
-                            app_state_clone.close_connection_on_server(server_id, connection_id).await;
-                            let _ = status_tx_clone.send(format!("✗ {} connection {connection_id} closed", protocol_name));
+                            app_state_clone
+                                .close_connection_on_server(server_id, connection_id)
+                                .await;
+                            let _ = status_tx_clone.send(format!(
+                                "✗ {} connection {connection_id} closed",
+                                protocol_name
+                            ));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
@@ -199,21 +230,21 @@ async fn handle_http2_request_with_llm_actions(
     protocol: Arc<Http2Protocol>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     // Use shared request extraction logic
-    let request_data = crate::server::http_common::handler::extract_request_data(
-        req,
-        "HTTP/2",
-        &status_tx,
-    ).await;
+    let request_data =
+        crate::server::http_common::handler::extract_request_data(req, "HTTP/2", &status_tx).await;
 
     // Create HTTP/2 request event (includes version field)
     let body_text = String::from_utf8_lossy(&request_data.body_bytes);
-    let event = Event::new(&HTTP2_REQUEST_EVENT, serde_json::json!({
-        "method": request_data.method,
-        "uri": request_data.uri,
-        "version": request_data.version,
-        "headers": request_data.headers,
-        "body": if body_text.is_empty() { "" } else { body_text.as_ref() }
-    }));
+    let event = Event::new(
+        &HTTP2_REQUEST_EVENT,
+        serde_json::json!({
+            "method": request_data.method,
+            "uri": request_data.uri,
+            "version": request_data.version,
+            "headers": request_data.headers,
+            "body": if body_text.is_empty() { "" } else { body_text.as_ref() }
+        }),
+    );
 
     // Call LLM to generate HTTP/2 response
     match call_llm(
@@ -223,7 +254,9 @@ async fn handle_http2_request_with_llm_actions(
         Some(connection_id),
         &event,
         protocol.as_ref(),
-    ).await {
+    )
+    .await
+    {
         Ok(execution_result) => {
             debug!("LLM HTTP/2 response received");
 

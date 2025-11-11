@@ -79,7 +79,10 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
         .expect("Failed to receive REGISTER response");
     let response = String::from_utf8_lossy(&buf[..len]);
     println!("Response:\n{}", response);
-    assert!(response.contains("SIP/2.0 200"), "Expected 200 OK for alice");
+    assert!(
+        response.contains("SIP/2.0 200"),
+        "Expected 200 OK for alice"
+    );
     assert!(response.contains("Expires:"), "Expected Expires header");
     println!("✓ alice registered successfully");
 
@@ -128,7 +131,10 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
         .expect("Failed to receive OPTIONS response");
     let response = String::from_utf8_lossy(&buf[..len]);
     println!("Response:\n{}", response);
-    assert!(response.contains("SIP/2.0 200"), "Expected 200 OK for OPTIONS");
+    assert!(
+        response.contains("SIP/2.0 200"),
+        "Expected 200 OK for OPTIONS"
+    );
     assert!(
         response.contains("Allow:"),
         "Expected Allow header in OPTIONS response"
@@ -317,6 +323,13 @@ fn build_sip_bye(from: &str, to: &str, server_addr: &SocketAddr, call_id: &str) 
          CSeq: 2 BYE\r\n\
          Content-Length: 0\r\n\
          \r\n",
-        to, server_addr.ip(), branch, from, from, to, to, call_id
+        to,
+        server_addr.ip(),
+        branch,
+        from,
+        from,
+        to,
+        to,
+        call_id
     )
 }

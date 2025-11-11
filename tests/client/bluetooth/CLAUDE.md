@@ -5,6 +5,7 @@
 ### Challenge: Real Hardware Required
 
 Unlike network protocols that can use localhost or netcat, Bluetooth Low Energy (BLE) requires:
+
 - Real BLE hardware (Bluetooth 4.0+ adapter)
 - Real BLE peripheral device (sensor, beacon, development kit)
 - OR simulated BLE environment (limited availability)
@@ -26,31 +27,33 @@ Unit Tests            ← Action parsing, EventType construction
 **Test Scope**: Action execution, EventType construction, UUID parsing
 
 **Test Cases**:
+
 1. **Action Parsing**:
-   - `scan_devices` with default duration (5 secs)
-   - `scan_devices` with custom duration (10 secs)
-   - `connect_device` by address
-   - `connect_device` by name
-   - `connect_device` error (neither address nor name)
-   - `read_characteristic` with valid UUIDs
-   - `write_characteristic` with hex data
-   - `subscribe_notifications` / `unsubscribe_notifications`
-   - `disconnect`
+    - `scan_devices` with default duration (5 secs)
+    - `scan_devices` with custom duration (10 secs)
+    - `connect_device` by address
+    - `connect_device` by name
+    - `connect_device` error (neither address nor name)
+    - `read_characteristic` with valid UUIDs
+    - `write_characteristic` with hex data
+    - `subscribe_notifications` / `unsubscribe_notifications`
+    - `disconnect`
 
 2. **UUID Validation**:
-   - Standard GATT UUIDs (16-bit format expanded to 128-bit)
-   - Custom vendor UUIDs (full 128-bit)
-   - Invalid UUIDs (should error gracefully)
+    - Standard GATT UUIDs (16-bit format expanded to 128-bit)
+    - Custom vendor UUIDs (full 128-bit)
+    - Invalid UUIDs (should error gracefully)
 
 3. **Hex Data Encoding**:
-   - `write_characteristic` hex string → bytes conversion
-   - Invalid hex strings → error handling
+    - `write_characteristic` hex string → bytes conversion
+    - Invalid hex strings → error handling
 
 **LLM Call Budget**: 0 (unit tests, no LLM)
 
 **Runtime**: < 1 second
 
 **Example**:
+
 ```rust
 #[cfg(all(test, feature = "bluetooth-ble"))]
 mod tests {
@@ -102,6 +105,7 @@ mod tests {
 **Status**: Not implemented (btleplug doesn't provide mocking interface)
 
 **Future Work**: If btleplug adds mock support or we create our own abstraction layer, we can test:
+
 - Scan lifecycle (start → results → stop)
 - Connection lifecycle (connect → discover → operations → disconnect)
 - Notification handling (subscribe → receive → unsubscribe)
@@ -109,6 +113,7 @@ mod tests {
 ## E2E Tests (Real Hardware)
 
 **Requirements**:
+
 - Real BLE adapter (built-in laptop Bluetooth or USB dongle)
 - Real BLE peripheral device with known services
 - Ollama running with suitable model
@@ -117,22 +122,26 @@ mod tests {
 ### Recommended Test Device
 
 **Option 1: Nordic Semiconductor nRF52 Development Kit** ($40-60)
+
 - Programmable BLE peripheral
 - Can simulate Battery Service, Heart Rate Service, etc.
 - Well-documented, widely available
 - Can run custom GATT servers for testing
 
 **Option 2: ESP32 Development Board** ($5-15)
+
 - Supports BLE with Arduino/ESP-IDF
 - Easy to program custom GATT services
 - Widely available, very cheap
 
 **Option 3: Commercial BLE Sensor** (e.g., Xiaomi Mi Band, fitness tracker)
+
 - Real-world device with standard GATT services
 - May require pairing/bonding
 - Less predictable behavior
 
 **Option 4: Simulated Device** (Platform-Dependent)
+
 - **Linux**: `bluetoothctl` with `bluetoothd` virtual controllers
 - **macOS**: Xcode's Bluetooth Simulator (requires Xcode installation)
 - **Windows**: No good simulator available
@@ -141,6 +150,7 @@ mod tests {
 ### E2E Test Scenarios
 
 #### Scenario 1: Scan and Connect (< 2 LLM calls)
+
 ```
 Test: Scan for BLE devices and verify results
 
@@ -163,6 +173,7 @@ Runtime: ~7 seconds (5 sec scan + 2 sec LLM)
 ```
 
 #### Scenario 2: Read Battery Level (< 5 LLM calls)
+
 ```
 Test: Connect to device and read Battery Service
 
@@ -194,6 +205,7 @@ Runtime: ~10 seconds
 ```
 
 #### Scenario 3: Subscribe to Notifications (< 6 LLM calls)
+
 ```
 Test: Subscribe to Heart Rate notifications
 
@@ -223,6 +235,7 @@ Runtime: ~15 seconds
 **Total for all E2E tests**: < 10 LLM calls
 
 Strategy to minimize calls:
+
 - Reuse scan results across tests (scan once, connect multiple times)
 - Use scripting mode where possible
 - Bundle multiple operations in single prompt
@@ -239,21 +252,25 @@ Strategy to minimize calls:
 ### Known Test Issues
 
 #### Flaky Tests
+
 - BLE advertising may be intermittent (device sleep mode)
 - Connection timeouts on weak signal
 - Notification timing varies by device
 
 **Mitigation**:
+
 - Retry connection failures (up to 3 attempts)
 - Longer timeouts for weak signal environments
 - Use development board with reliable advertising
 
 #### Platform-Specific Issues
+
 - **macOS**: May require notarization for Bluetooth access in tests
 - **Linux**: May need `sudo` or `bluetooth` group membership
 - **Windows**: Generally works, but Bluetooth drivers vary
 
 #### CI/CD Challenges
+
 - GitHub Actions runners don't have Bluetooth adapters
 - **Solution**: Mark E2E tests as `#[ignore]` by default
 - **Manual testing**: Run locally with `--include-ignored` flag
@@ -261,6 +278,7 @@ Strategy to minimize calls:
 ### Test Isolation
 
 **Bluetooth adapter is shared resource**:
+
 - Only run one BLE test at a time (Ollama lock handles serialization)
 - Disconnect from device after each test
 - Clear adapter scan cache between tests (may require adapter restart)
@@ -268,6 +286,7 @@ Strategy to minimize calls:
 ### Test Data Privacy
 
 **No external endpoints**:
+
 - All BLE operations are local (no network traffic)
 - LLM only sees device addresses/names (no sensitive data)
 - Safe for localhost-only testing
@@ -337,6 +356,6 @@ Before release, manually verify:
 
 - btleplug examples: https://github.com/deviceplug/btleplug/tree/master/examples
 - Bluetooth GATT testing tools:
-  - **Linux**: `bluetoothctl`, `gatttool`
-  - **macOS**: `blueutil`, Xcode's Bluetooth Simulator
-  - **Cross-platform**: `nRF Connect` mobile app (device testing)
+    - **Linux**: `bluetoothctl`, `gatttool`
+    - **macOS**: `blueutil`, Xcode's Bluetooth Simulator
+    - **Cross-platform**: `nRF Connect` mobile app (device testing)
