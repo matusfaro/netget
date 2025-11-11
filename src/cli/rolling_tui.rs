@@ -1421,31 +1421,59 @@ async fn handle_key_event(
             return Ok(false);
         }
 
-        // Alt+Backspace or Ctrl+Backspace - delete word backward
-        KeyCode::Backspace if modifiers.contains(KeyModifiers::ALT) || modifiers.contains(KeyModifiers::CONTROL) => {
+        // Ctrl+W - delete word backward (standard Unix keybinding)
+        KeyCode::Char('w') | KeyCode::Char('W') if modifiers.contains(KeyModifiers::CONTROL) => {
             footer.input_mut().delete_word();
             update_slash_suggestions_and_render(app, footer, &mut stdout())?;
             return Ok(false);
         }
 
-        // Alt+Delete or Ctrl+Delete - delete word forward
-        KeyCode::Delete if modifiers.contains(KeyModifiers::ALT) || modifiers.contains(KeyModifiers::CONTROL) => {
+        // Alt+Backspace - delete word backward (macOS/modern editor keybinding)
+        KeyCode::Backspace if modifiers.contains(KeyModifiers::ALT) => {
+            footer.input_mut().delete_word();
+            update_slash_suggestions_and_render(app, footer, &mut stdout())?;
+            return Ok(false);
+        }
+
+        // Alt+Delete - delete word forward
+        KeyCode::Delete if modifiers.contains(KeyModifiers::ALT) => {
             footer.input_mut().delete_word_forward();
             update_slash_suggestions_and_render(app, footer, &mut stdout())?;
             return Ok(false);
         }
 
-        // Alt+Left or Ctrl+Left - move cursor word left
-        KeyCode::Left if modifiers.contains(KeyModifiers::ALT) || modifiers.contains(KeyModifiers::CONTROL) => {
+        // Alt+Left - move cursor word left
+        KeyCode::Left if modifiers.contains(KeyModifiers::ALT) => {
             footer.input_mut().move_cursor_word_left();
             footer.render_input_only(&mut stdout())?;
             return Ok(false);
         }
 
-        // Alt+Right or Ctrl+Right - move cursor word right
-        KeyCode::Right if modifiers.contains(KeyModifiers::ALT) || modifiers.contains(KeyModifiers::CONTROL) => {
+        // Alt+Right - move cursor word right
+        KeyCode::Right if modifiers.contains(KeyModifiers::ALT) => {
             footer.input_mut().move_cursor_word_right();
             footer.render_input_only(&mut stdout())?;
+            return Ok(false);
+        }
+
+        // Alt+b (common terminal sequence for Option+Left on macOS) - move cursor word left
+        KeyCode::Char('b') if modifiers.contains(KeyModifiers::ALT) => {
+            footer.input_mut().move_cursor_word_left();
+            footer.render_input_only(&mut stdout())?;
+            return Ok(false);
+        }
+
+        // Alt+f (common terminal sequence for Option+Right on macOS) - move cursor word right
+        KeyCode::Char('f') if modifiers.contains(KeyModifiers::ALT) => {
+            footer.input_mut().move_cursor_word_right();
+            footer.render_input_only(&mut stdout())?;
+            return Ok(false);
+        }
+
+        // Alt+d (common terminal sequence for Option+Delete on macOS) - delete word forward
+        KeyCode::Char('d') if modifiers.contains(KeyModifiers::ALT) => {
+            footer.input_mut().delete_word_forward();
+            update_slash_suggestions_and_render(app, footer, &mut stdout())?;
             return Ok(false);
         }
 
