@@ -92,7 +92,7 @@ pub struct Args {
     /// Include disabled protocols (for testing honeypot-only protocols like IPSec, OpenVPN)
     #[clap(
         long = "include-disabled-protocols",
-        help = "Include disabled protocols in available options (useful for testing honeypot protocols)"
+        help = "Includes experimental protocols for testing purposes"
     )]
     pub include_disabled_protocols: bool,
 
