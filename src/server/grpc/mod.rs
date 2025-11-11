@@ -39,6 +39,7 @@ use hyper::{Request, Response, body::Incoming, StatusCode};
 use http_body_util::{BodyExt, Full};
 #[cfg(feature = "grpc")]
 use bytes::Bytes;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// gRPC server with dynamic schema support
 pub struct GrpcServer;
@@ -678,7 +679,6 @@ impl DynamicGrpcService {
             Kind::Bytes => {
                 use base64::engine::general_purpose::STANDARD;
                 use base64::Engine;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                 let s = json.as_str().context("Expected base64 string")?;
                 let bytes = STANDARD.decode(s).context("Invalid base64")?;
                 Value::Bytes(bytes.into())

@@ -23,6 +23,7 @@ use actions::{SOCKET_FILE_CONNECTION_OPENED_EVENT, SOCKET_FILE_DATA_RECEIVED_EVE
 use crate::server::SocketFileProtocol;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -84,7 +85,6 @@ impl SocketFileServer {
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         // Use a dummy SocketAddr since Unix sockets don't have IP addresses
                         let dummy_addr = "127.0.0.1:0".parse().unwrap();

@@ -16,6 +16,7 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 use crate::client::turn::actions::{
     TURN_CLIENT_CONNECTED_EVENT, TURN_CLIENT_ALLOCATED_EVENT,
     TURN_CLIENT_DATA_RECEIVED_EVENT, TURN_CLIENT_PERMISSION_CREATED_EVENT,
@@ -297,7 +298,6 @@ impl TurnClient {
         client_id: ClientId,
     ) -> Result<()> {
         use crate::llm::actions::client_trait::ClientActionResult;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         match action_result {
             ClientActionResult::Custom { name, data } => {

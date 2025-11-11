@@ -25,6 +25,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::ssh_agent::actions::{SSH_AGENT_CLIENT_CONNECTED_EVENT, SSH_AGENT_CLIENT_RESPONSE_RECEIVED_EVENT};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// SSH Agent message types
 const SSH_AGENTC_REQUEST_IDENTITIES: u8 = 11;
@@ -227,7 +228,6 @@ impl SshAgentClient {
                                                     // Execute actions
                                                     for action in actions {
                                                         use crate::llm::actions::client_trait::Client;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                                                         match protocol.as_ref().execute_action(action) {
                                                             Ok(ClientActionResult::Custom { name, data }) => {
                                                                 if let Err(e) = Self::handle_custom_action(

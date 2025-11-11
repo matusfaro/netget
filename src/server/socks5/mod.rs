@@ -28,6 +28,7 @@ use crate::server::Socks5Protocol;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::ServerId;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// SOCKS5 protocol constants
 const SOCKS5_VERSION: u8 = 0x05;
@@ -101,6 +102,10 @@ impl Socks5Server {
                         match method_str {
                             "none" => config.auth_methods.push(AUTH_METHOD_NO_AUTH),
                             "username_password" => config.auth_methods.push(AUTH_METHOD_USERNAME_PASSWORD),
+                            _ => {}
+                        }
+                    }
+                }
             }
 
             // Parse default action
@@ -364,7 +369,6 @@ impl Socks5Server {
         server_id: ServerId,
     ) -> Result<()> {
         use actions::{SOCKS5_DATA_TO_TARGET_EVENT, SOCKS5_DATA_FROM_TARGET_EVENT};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         console_info!(status_tx, "[INFO] SOCKS5 {} MITM relay active", connection_id);
 

@@ -20,6 +20,7 @@ use crate::client::bootp::actions::{BOOTP_CLIENT_CONNECTED_EVENT, BOOTP_REPLY_RE
 
 #[cfg(feature = "bootp")]
 use dhcproto::v4;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -354,7 +355,6 @@ impl BootpClient {
         {
             use dhcproto::Decodable;
             use dhcproto::decoder::Decoder;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
             let mut decoder = Decoder::new(data);
             let msg = v4::Message::decode(&mut decoder)

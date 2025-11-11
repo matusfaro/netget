@@ -24,6 +24,7 @@ use crate::state::server::{ConnectionState as ServerConnectionState, ConnectionS
 use crate::state::ServerId;
 
 use actions::SMB_OPERATION_EVENT;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// SMB server that provides LLM-controlled file system
 pub struct SmbServer;
@@ -894,7 +895,6 @@ impl SmbServer {
     #[cfg(feature = "smb")]
     fn generate_file_handle() -> Vec<u8> {
         use std::time::SystemTime;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         // Simple file handle generation using timestamp + random-ish data
         let now = SystemTime::now()

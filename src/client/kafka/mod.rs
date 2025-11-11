@@ -22,8 +22,8 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::kafka::actions::{
 use crate::{console_trace, console_debug, console_info, console_warn, console_error};
+use crate::client::kafka::actions::{
     KAFKA_CLIENT_CONNECTED_EVENT, KAFKA_CLIENT_MESSAGE_DELIVERED_EVENT,
     KAFKA_CLIENT_MESSAGE_RECEIVED_EVENT,
 };

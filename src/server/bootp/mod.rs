@@ -20,6 +20,7 @@ use crate::state::app_state::AppState;
 use dhcproto::{v4, Decodable, Decoder};
 #[cfg(feature = "bootp")]
 use actions::BootpRequestContext;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// BOOTP server that forwards requests to LLM
 pub struct BootpServer;
@@ -63,7 +64,6 @@ impl BootpServer {
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
 
                         #[cfg(feature = "bootp")]

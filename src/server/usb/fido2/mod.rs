@@ -74,6 +74,7 @@ use ctaphid::{CtapHidCommand, CtapHidHandler, CtapHidPacket};
 use u2f::U2fHandler;
 #[cfg(feature = "usb-fido2")]
 use ctap2::Ctap2Handler;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// USB FIDO2 Security Key server
 #[cfg(feature = "usb-fido2")]
@@ -191,7 +192,6 @@ impl usbip::UsbInterfaceHandler for Fido2HidHandler {
         data: &[u8],
     ) -> std::result::Result<Vec<u8>, std::io::Error> {
         use crate::server::usb::common::{descriptor_type, hid_request, request, request_type};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         // Check if this is a control transfer (endpoint 0) or data transfer
         if endpoint.address == 0 {

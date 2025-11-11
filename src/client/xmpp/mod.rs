@@ -28,6 +28,7 @@ use xmpp_parsers::{
     presence::{Presence, Show as PresenceShow, Type as PresenceType},
 };
 use futures::StreamExt;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -417,7 +418,6 @@ impl XmppClientConnection {
                         }
 
                         use tokio_xmpp::Stanza;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         if let Err(e) = stanza_tx.send(Stanza::Presence(presence)) {
                             console_error!(status_tx, "[ERROR] Failed to send XMPP presence: {}", e);
                         } else {

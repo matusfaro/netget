@@ -36,6 +36,7 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::server::connection::ConnectionId;
 use crate::server::mercurial::actions::MercurialProtocol;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Mercurial HTTP server
 pub struct MercurialServer;
@@ -70,7 +71,6 @@ impl MercurialServer {
 
                         // Add connection to ServerInstance
                         use crate::state::server::{
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                             ConnectionState as ServerConnectionState, ConnectionStatus,
                             ProtocolConnectionInfo,
                         };

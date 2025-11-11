@@ -17,6 +17,7 @@ use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use actions::TorrentPeerProtocol;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// BitTorrent Peer Wire Protocol server
 pub struct TorrentPeerServer;
@@ -234,7 +235,6 @@ impl TorrentPeerServer {
         status_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         use tokio::io::AsyncWriteExt;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         // Display messages from LLM
         for message in &execution_result.messages {

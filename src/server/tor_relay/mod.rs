@@ -83,6 +83,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio_rustls::rustls::ServerConfig;
 use tokio_rustls::TlsAcceptor;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Tor Relay server - handles OR protocol connections
 pub struct TorRelayServer;
@@ -195,7 +196,6 @@ impl TorRelayServer {
 /// Generate self-signed TLS certificate for OR protocol
 fn generate_tls_certificate() -> Result<(CertificateDer<'static>, PrivateKeyDer<'static>)> {
     use rcgen::{CertificateParams, KeyPair};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
     let mut params = CertificateParams::new(vec!["tor-relay.local".to_string()])?;
     params.distinguished_name = rcgen::DistinguishedName::new();

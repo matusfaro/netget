@@ -27,6 +27,7 @@ use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// OAuth2 authorization server
 pub struct OAuth2Server;
@@ -58,7 +59,6 @@ impl OAuth2Server {
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
                         use serde_json::json;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,

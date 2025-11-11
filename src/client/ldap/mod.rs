@@ -22,6 +22,7 @@ use crate::client::ldap::actions::{
 };
 
 use ldap3::{LdapConn, Scope, Mod};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// LDAP client that connects to an LDAP server
 pub struct LdapClient;
@@ -248,7 +249,6 @@ impl LdapClient {
                         let mut json_entries = Vec::new();
                         for entry in entries {
                             use ldap3::SearchEntry;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                             let search_entry = SearchEntry::construct(entry);
                             let mut attrs_map = serde_json::Map::new();
                             for (attr_name, attr_values) in search_entry.attrs {

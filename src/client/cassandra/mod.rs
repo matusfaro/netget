@@ -22,6 +22,7 @@ use serde_json::json;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::frame::Compression;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Cassandra client that connects to a Cassandra/ScyllaDB server
 pub struct CassandraClient;
@@ -209,7 +210,6 @@ impl CassandraClient {
                                 // Convert result to JSON using scylla 1.3 API
                                 // First convert to RowsResult, then deserialize rows
                                 use scylla::value::Row;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
                                 let rows_data: Vec<serde_json::Value>;
                                 let row_count: usize;

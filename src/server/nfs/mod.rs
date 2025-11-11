@@ -20,6 +20,7 @@ use actions::NFS_OPERATION_EVENT;
 use crate::server::NfsProtocol;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// NFS server that provides LLM-controlled file system
 pub struct NfsServer;
@@ -758,7 +759,6 @@ impl NFSFileSystem for LlmNfsFileSystem {
 
     async fn symlink(&self, dirid: fileid3, linkname: &filename3, symlink: &nfspath3, attr: &sattr3) -> Result<(fileid3, fattr3), nfsstat3> {
         use nfsserve::nfs::set_mode3;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         let linkname_str = String::from_utf8_lossy(linkname).to_string();
         let target_str = String::from_utf8_lossy(symlink).to_string();

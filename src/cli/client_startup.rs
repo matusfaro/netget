@@ -10,6 +10,7 @@ use crate::events::ActionExecutionError;
 use crate::llm::OllamaClient;
 use crate::state::app_state::AppState;
 use crate::state::ClientId;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Start a specific client by ID
 pub async fn start_client_by_id(
@@ -163,7 +164,6 @@ pub async fn start_client_from_action(
         for task_def in tasks {
             use crate::state::task::{ScheduledTask, TaskScope, TaskType, TaskStatus, TaskId};
             use std::time::{Duration, Instant};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
             // Determine task type
             let task_type = if task_def.recurring {

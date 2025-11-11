@@ -18,6 +18,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::telnet::actions::TELNET_CLIENT_DATA_RECEIVED_EVENT;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Telnet protocol constants
 const IAC: u8 = 255;  // Interpret As Command
@@ -160,7 +161,6 @@ impl TelnetClient {
                                             // Execute actions
                                             for action in actions {
                                                 use crate::llm::actions::client_trait::Client;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                                                 match protocol.as_ref().execute_action(action) {
                                                     Ok(crate::llm::actions::client_trait::ClientActionResult::SendData(bytes)) => {
                                                         if let Ok(_) = write_half_arc.lock().await.write_all(&bytes).await {

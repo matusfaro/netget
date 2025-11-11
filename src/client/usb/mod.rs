@@ -17,6 +17,7 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 use crate::client::usb::actions::{
     USB_BULK_DATA_RECEIVED_EVENT, USB_CONTROL_RESPONSE_EVENT, USB_DEVICE_OPENED_EVENT,
     USB_INTERRUPT_DATA_RECEIVED_EVENT,
@@ -296,7 +297,6 @@ impl UsbClient {
         client_data: &Arc<Mutex<ClientData>>,
     ) {
         use crate::llm::actions::client_trait::Client;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         for action in actions {
             match protocol.as_ref().execute_action(action) {

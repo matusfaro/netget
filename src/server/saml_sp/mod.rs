@@ -27,6 +27,7 @@ use crate::protocol::Event;
 use crate::server::SamlSpProtocol;
 use crate::state::app_state::AppState;
 use actions::SAML_SP_REQUEST_EVENT;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// SAML SP server that delegates authentication and assertion generation to LLM
 pub struct SamlSpServer;
@@ -232,7 +233,6 @@ async fn handle_saml_sp_request(
             } else {
                 // Parse HTTP response from protocol results
                 use crate::llm::actions::protocol_trait::ActionResult;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
                 let mut status_code = 200u16;
                 let mut response_headers = std::collections::HashMap::new();

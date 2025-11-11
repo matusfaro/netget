@@ -17,6 +17,7 @@ use dav_server::{fakels::FakeLs, memfs::MemFs, DavHandler};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// WebDAV server that provides LLM-controlled file operations
 pub struct WebDavServer;
@@ -65,7 +66,6 @@ impl WebDavServer {
 
                         // Add connection to ServerInstance
                         use crate::state::server::{
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                             ConnectionState as ServerConnectionState, ConnectionStatus,
                             ProtocolConnectionInfo,
                         };

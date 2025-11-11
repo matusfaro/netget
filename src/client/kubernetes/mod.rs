@@ -16,6 +16,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::kubernetes::actions::K8S_CLIENT_RESOURCE_RECEIVED_EVENT;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Kubernetes client that interacts with Kubernetes API server
 pub struct KubernetesClient;
@@ -389,7 +390,6 @@ impl KubernetesClient {
     ) -> Result<serde_json::Value> {
         use k8s_openapi::api::core::v1::Service;
         use kube::Api;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         let services: Api<Service> = Api::namespaced(client.clone(), namespace);
 

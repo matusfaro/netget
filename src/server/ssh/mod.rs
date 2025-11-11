@@ -12,7 +12,6 @@ use actions::{
 };
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use russh::server::{Auth, Msg, Server as RusshServer, Session};
@@ -23,6 +22,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// SSH server configuration
 #[derive(Clone, Debug)]

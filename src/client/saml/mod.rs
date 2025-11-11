@@ -16,6 +16,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::saml::actions::{SAML_CLIENT_CONNECTED_EVENT, SAML_CLIENT_RESPONSE_RECEIVED_EVENT};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// SAML client that authenticates with a SAML Identity Provider
 pub struct SamlClient;
@@ -306,7 +307,6 @@ impl SamlClient {
     ) -> Result<(bool, String, Option<serde_json::Value>, Option<serde_json::Value>)> {
         use quick_xml::events::Event;
         use quick_xml::Reader;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         let mut reader = Reader::from_str(response_xml);
         reader.config_mut().trim_text(true);

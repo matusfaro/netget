@@ -28,6 +28,7 @@ use rasn_smi::v2::{SimpleSyntax as V2SimpleSyntax, ObjectSyntax as V2ObjectSynta
 use rasn::types::{Integer, ObjectIdentifier};
 use rasn::ber;
 use serde_json::Value;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// SNMP client configuration
 #[derive(Debug, Clone)]
@@ -560,7 +561,6 @@ impl SnmpClient {
     /// Format v2 value for JSON
     fn format_v2_value(value: &v2::VarBindValue) -> Value {
         use v2::VarBindValue;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
         match value {
             VarBindValue::Unspecified => serde_json::json!(null),
             VarBindValue::NoSuchObject => serde_json::json!("(no such object)"),

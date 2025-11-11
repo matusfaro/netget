@@ -15,6 +15,7 @@ use actions::SYSLOG_MESSAGE_EVENT;
 use crate::server::SyslogProtocol;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Syslog server that forwards messages to LLM
 pub struct SyslogServer;
@@ -141,7 +142,6 @@ impl SyslogServer {
     /// Parse syslog message and extract relevant information
     pub fn parse_syslog_message(data: &[u8]) -> Result<ParsedSyslogInfo> {
         use syslog_loose::{parse_message, ProcId, Variant};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         // Convert bytes to string
         let message_str = String::from_utf8_lossy(data);

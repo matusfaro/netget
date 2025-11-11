@@ -27,6 +27,7 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::{Event, StartupParams};
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// gRPC client connection state
 #[derive(Debug, Clone)]
@@ -675,7 +676,6 @@ fn dynamic_message_to_json(msg: &DynamicMessage) -> Result<serde_json::Value> {
 /// Convert protobuf value to JSON
 fn proto_value_to_json(value: &ProtoValue) -> Result<serde_json::Value> {
     use base64::{Engine as _, engine::general_purpose};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
     Ok(match value {
         ProtoValue::Bool(b) => serde_json::Value::Bool(*b),

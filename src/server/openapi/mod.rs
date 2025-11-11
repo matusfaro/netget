@@ -34,6 +34,7 @@ use crate::state::app_state::AppState;
 use matchit::Router;
 #[cfg(feature = "openapi")]
 use openapi_rs::model::parse::OpenAPI;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Metadata for a matched route
 #[cfg(feature = "openapi")]
@@ -518,7 +519,6 @@ impl OpenApiServer {
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,

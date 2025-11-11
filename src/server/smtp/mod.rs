@@ -23,6 +23,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 #[cfg(feature = "smtp")]
 use tokio_rustls::TlsAcceptor;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// SMTP server that forwards mail to LLM
 pub struct SmtpServer;
@@ -319,7 +320,6 @@ impl SmtpSession {
         protocol: Arc<SmtpProtocol>,
     ) -> Result<()> {
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         let (read_half, mut write_half) = tokio::io::split(&mut stream);
         let mut reader = BufReader::new(read_half);

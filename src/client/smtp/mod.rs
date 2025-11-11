@@ -19,6 +19,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::smtp::actions::SMTP_CLIENT_CONNECTED_EVENT;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// SMTP client that sends emails via SMTP servers
 pub struct SmtpClient;
@@ -138,7 +139,6 @@ impl SmtpClient {
 
         // Build email message
         use lettre::message::Message;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
         let mut message_builder = Message::builder()
             .from(from.parse().context("Invalid 'from' address")?)
             .subject(subject);

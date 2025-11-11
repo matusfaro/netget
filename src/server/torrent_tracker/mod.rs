@@ -18,6 +18,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::server::connection::ConnectionId;
 use actions::TorrentTrackerProtocol;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// BitTorrent Tracker server
 pub struct TorrentTrackerServer;
@@ -107,7 +108,6 @@ impl TorrentTrackerServer {
         protocol: Arc<TorrentTrackerProtocol>,
     ) -> Result<()> {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         let (mut read_half, mut write_half) = tokio::io::split(stream);
         let mut buffer = vec![0u8; 8192];

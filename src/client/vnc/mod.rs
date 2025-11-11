@@ -24,6 +24,7 @@ use crate::client::vnc::actions::{
     VNC_CLIENT_SERVER_CUT_TEXT_EVENT,
 };
 use serde_json::Value as JsonValue;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -570,7 +571,6 @@ impl VncClient {
         W: AsyncWriteExt + Unpin,
     {
         use crate::llm::actions::client_trait::Client;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         match protocol.as_ref().execute_action(action)? {
             ClientActionResult::Custom { name, data } => {

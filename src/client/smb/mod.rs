@@ -24,6 +24,7 @@ use crate::client::smb::actions::{
 
 use pavao::{SmbClient as PavaoSmbClient, SmbCredentials, SmbOptions, SmbDirent, SmbDirentType, SmbOpenOptions};
 use std::io::{Read as IoRead, Write as IoWrite};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// SMB client that connects to an SMB/CIFS server
 pub struct SmbClient;
@@ -281,7 +282,6 @@ impl SmbClient {
                                     text
                                 } else {
                                     use base64::{Engine as _, engine::general_purpose};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                                     format!("base64:{}", general_purpose::STANDARD.encode(&content_bytes))
                                 };
 

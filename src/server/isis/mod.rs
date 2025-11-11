@@ -20,6 +20,7 @@ use actions::ISIS_HELLO_EVENT;
 use crate::server::IsisProtocol;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 // IS-IS Constants (ISO/IEC 10589, RFC 1195)
 const ISIS_INTRADOMAIN_ROUTING_PROTOCOL_DISCRIMINATOR: u8 = 0x83;
@@ -566,7 +567,6 @@ impl IsisServer {
         #[cfg(target_os = "linux")]
         {
             use std::fs;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
             let path = format!("/sys/class/net/{}/address", interface);
             if let Ok(contents) = fs::read_to_string(&path) {
                 let parts: Vec<&str> = contents.trim().split(':').collect();

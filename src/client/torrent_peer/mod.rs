@@ -18,6 +18,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::torrent_peer::actions::{PEER_HANDSHAKE_EVENT, PEER_MESSAGE_EVENT};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Peer wire message types
 #[repr(u8)]
@@ -286,7 +287,6 @@ impl TorrentPeerClient {
         protocol: &dyn crate::llm::actions::client_trait::Client,
     ) -> Result<()> {
         use crate::llm::actions::client_trait::ClientActionResult;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         match protocol.execute_action(action)? {
             ClientActionResult::Custom { name, data } if name == "peer_handshake" => {

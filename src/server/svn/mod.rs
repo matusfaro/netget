@@ -14,6 +14,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 pub struct SvnServer;
 
@@ -318,7 +319,6 @@ async fn handle_svn_connection(
 
     // Update connection status to closed
     use crate::state::server::ConnectionStatus;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
     app_state
         .update_connection_status(server_id, connection_id, ConnectionStatus::Closed)
         .await;

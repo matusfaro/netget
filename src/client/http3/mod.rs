@@ -18,6 +18,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::http3::actions::HTTP3_CLIENT_RESPONSE_RECEIVED_EVENT;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// HTTP/3 client that makes requests to remote HTTP/3 servers over QUIC
 pub struct Http3Client;
@@ -213,7 +214,6 @@ impl Http3Client {
         let mut body_bytes = Vec::new();
         while let Some(mut chunk) = stream.recv_data().await? {
             use bytes::Buf;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
             body_bytes.extend_from_slice(chunk.chunk());
             chunk.advance(chunk.remaining());
         }

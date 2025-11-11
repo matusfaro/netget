@@ -17,6 +17,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::rip::actions::{RIP_CLIENT_CONNECTED_EVENT, RIP_CLIENT_RESPONSE_RECEIVED_EVENT};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// RIP protocol version
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -361,7 +362,6 @@ impl RipClient {
                                                     // Execute actions
                                                     for action in actions {
                                                         use crate::llm::actions::client_trait::Client;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                                                         match protocol.as_ref().execute_action(action) {
                                                             Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) => {
                                                                 if name == "send_rip_request" {

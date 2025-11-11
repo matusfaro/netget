@@ -21,6 +21,7 @@ use crate::server::LdapProtocol;
 use crate::protocol::Event;
 #[cfg(feature = "ldap")]
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// LDAP server that handles directory operations with LLM
 pub struct LdapServer;
@@ -107,7 +108,6 @@ struct LdapSession {
 impl LdapSession {
     async fn handle(&mut self) -> Result<()> {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         loop {
             // Read LDAP message (ASN.1 BER encoded)

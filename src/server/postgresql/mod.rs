@@ -23,6 +23,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace, warn};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// PostgreSQL server implementation
 pub struct PostgresqlServer {
@@ -94,7 +95,6 @@ impl PostgresqlServer {
                         // Track the connection
                         if let Some(server_id) = server.server_id {
                             use crate::state::server::{
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                                 ConnectionState as ServerConnectionState, ConnectionStatus,
                                 ProtocolConnectionInfo,
                             };

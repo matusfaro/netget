@@ -11,6 +11,7 @@ use crate::llm::OllamaClient;
 use crate::llm::{execute_actions, CommonAction, Server};
 use crate::state::app_state::{AppState, Mode};
 use crate::ui::App;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Event handler that coordinates all event processing
 #[derive(Clone)]
@@ -1407,7 +1408,6 @@ impl EventHandler {
                     CommonAction::OpenClient { protocol, remote_addr, instruction, startup_params, initial_memory, event_handlers, scheduled_tasks } => {
                         // Execute open_client action via client startup
                         use crate::cli::client_startup;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
                         match client_startup::start_client_from_action(
                             &self.state,

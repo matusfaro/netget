@@ -18,6 +18,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::irc::actions::{IRC_CLIENT_CONNECTED_EVENT, IRC_CLIENT_MESSAGE_RECEIVED_EVENT};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -305,7 +306,6 @@ impl IrcClient {
                 // Execute actions
                 for action in actions {
                     use crate::llm::actions::client_trait::Client;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                     match protocol.as_ref().execute_action(action) {
                         Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) => {
                             Self::execute_irc_action(&name, data, write_half, client_data).await?;

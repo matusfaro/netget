@@ -16,6 +16,7 @@ use crate::protocol::{Event, StartupParams};
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::openai::actions::OPENAI_CLIENT_RESPONSE_RECEIVED_EVENT;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// OpenAI client that connects to the OpenAI API
 pub struct OpenAiClient;
@@ -356,7 +357,6 @@ impl OpenAiClient {
 
         // Build OpenAI client
         use async_openai::{Client as OpenAiApiClient, types::*};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         let mut config = async_openai::config::OpenAIConfig::new()
             .with_api_key(&api_key);

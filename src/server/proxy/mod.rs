@@ -33,6 +33,7 @@ use crate::state::ServerId;
 use rcgen::{Certificate, CertificateParams, KeyPair};
 use regex::Regex;
 use serde_json::json;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// HTTP/HTTPS Proxy server that intercepts and forwards requests via LLM
 pub struct ProxyServer;
@@ -709,7 +710,6 @@ impl ProxyServer {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         use tokio::io::{AsyncWriteExt, AsyncReadExt};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         // Parse host:port
         let (dest_host, dest_port) = if let Some(colon_pos) = host.find(':') {

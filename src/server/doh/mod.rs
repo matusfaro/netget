@@ -27,6 +27,7 @@ use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio_rustls::TlsAcceptor;
 use tracing::{debug, error, info, trace, warn};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// DNS-over-HTTPS server
 pub struct DohServer {
@@ -352,7 +353,6 @@ impl DohServer {
 fn base64_url_decode(encoded: &str) -> Result<Vec<u8>> {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
     URL_SAFE_NO_PAD
         .decode(encoded)

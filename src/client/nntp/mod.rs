@@ -18,6 +18,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::nntp::actions::{NNTP_CLIENT_CONNECTED_EVENT, NNTP_CLIENT_RESPONSE_RECEIVED_EVENT};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -318,7 +319,6 @@ impl NntpClient {
         status_tx: &mpsc::UnboundedSender<String>,
     ) {
         use crate::llm::actions::client_trait::Client;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         for action in actions {
             match protocol.as_ref().execute_action(action) {

@@ -12,6 +12,7 @@ use std::time::Duration;
 use tokio::sync::{mpsc, RwLock};
 use tokio::time;
 use tracing::{debug, error, info, warn};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 // Platform-specific WGApi type
 #[cfg(target_os = "macos")]
@@ -115,7 +116,6 @@ impl WireguardClient {
 
         // Parse client address (e.g., "10.20.30.2/32")
         use defguard_wireguard_rs::net::IpAddrMask;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
         let client_addr_mask: IpAddrMask = params.client_address.parse().context("Invalid client address")?;
 
         // Parse server endpoint

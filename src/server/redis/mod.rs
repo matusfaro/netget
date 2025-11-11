@@ -17,6 +17,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Redis server implementation
 pub struct RedisServer {
@@ -79,7 +80,6 @@ impl RedisServer {
                         // Track the connection
                         if let Some(server_id) = server.server_id {
                             use crate::state::server::{
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                                 ConnectionState as ServerConnectionState, ConnectionStatus,
                                 ProtocolConnectionInfo,
                             };

@@ -31,6 +31,7 @@ use crate::llm::ActionResult;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use crate::state::server::{ConnectionState as ServerConnectionState, ConnectionStatus, ProtocolConnectionInfo, ServerId};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 pub use actions::XmlRpcProtocol;
 
@@ -547,7 +548,6 @@ fn write_value(writer: &mut Writer<Cursor<Vec<u8>>>, value: &XmlRpcValue) {
         }
         XmlRpcValue::Base64(bytes) => {
             use base64::Engine;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
             let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
             writer
                 .write_event(XmlEvent::Start(BytesStart::new("base64")))

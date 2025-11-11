@@ -21,9 +21,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{error, info, trace};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 use defguard_wireguard_rs::{
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
     InterfaceConfiguration, WGApi, WireguardInterfaceApi,
     host::Peer as WGPeer,
     key::Key,

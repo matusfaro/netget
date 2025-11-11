@@ -17,6 +17,7 @@ use crate::llm::ollama_client::OllamaClient;
 use actions::{IGMP_QUERY_RECEIVED_EVENT, IGMP_REPORT_RECEIVED_EVENT, IGMP_LEAVE_RECEIVED_EVENT};
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// IGMP message types (RFC 2236)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -374,7 +375,6 @@ impl IgmpServer {
 
                                     // Process async custom actions (join_group/leave_group)
                                     use crate::llm::actions::protocol_trait::ActionResult;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                                     for protocol_result in &execution_result.protocol_results {
                                         if let ActionResult::Custom { name, data } = protocol_result {
                                             match name.as_str() {

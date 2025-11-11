@@ -16,6 +16,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::maven::actions::MAVEN_CLIENT_CONNECTED_EVENT;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Maven client that interacts with Maven repositories
 pub struct MavenClient;
@@ -640,7 +641,6 @@ impl MavenClient {
                                 // Execute actions from LLM response
                                 for action in actions {
                                     use crate::llm::actions::client_trait::Client;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                                     match protocol.as_ref().execute_action(action) {
                                         Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) => {
                                             Self::execute_maven_action(

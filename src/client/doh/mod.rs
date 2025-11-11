@@ -20,6 +20,7 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// DoH client that makes DNS queries over HTTPS
 pub struct DohClient;
@@ -164,7 +165,6 @@ impl DohClient {
                     let response_result = if use_get {
                         // GET method with base64url-encoded query
                         use base64::Engine as _;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&query_bytes);
                         http_client
                             .get(&format!("{}?dns={}", server_url, encoded))

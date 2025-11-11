@@ -18,8 +18,8 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::client::http_proxy::actions::{
 use crate::{console_trace, console_debug, console_info, console_warn, console_error};
+use crate::client::http_proxy::actions::{
     HTTP_PROXY_CLIENT_CONNECTED_EVENT,
     HTTP_PROXY_TUNNEL_ESTABLISHED_EVENT,
     HTTP_PROXY_RESPONSE_RECEIVED_EVENT,

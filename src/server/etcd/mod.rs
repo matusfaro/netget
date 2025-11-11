@@ -33,6 +33,7 @@ use http_body_util::{BodyExt, Full};
 use bytes::Bytes;
 #[cfg(feature = "etcd")]
 use prost::Message;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 // Include generated protobuf code
 #[cfg(feature = "etcd")]
@@ -175,7 +176,6 @@ impl EtcdServer {
     ) -> Result<()> {
         use hyper::service::service_fn;
         use hyper_util::rt::TokioIo;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         let io = TokioIo::new(stream);
 

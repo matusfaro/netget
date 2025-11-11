@@ -17,6 +17,7 @@ use actions::{TURN_ALLOCATE_REQUEST_EVENT, TURN_REFRESH_REQUEST_EVENT, TURN_CREA
 use crate::server::TurnProtocol;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// TURN allocation information
 #[derive(Clone, Debug)]
@@ -71,7 +72,6 @@ impl TurnServer {
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
 
                         // Get allocation info for this client

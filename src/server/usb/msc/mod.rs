@@ -43,6 +43,7 @@ use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 #[cfg(feature = "usb-msc")]
 use actions::USB_MSC_ATTACHED_EVENT;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Connection state for LLM processing
 #[cfg(feature = "usb-msc")]
@@ -112,7 +113,6 @@ impl UsbMscServer {
 
                         // Add connection to ServerInstance
                         use crate::state::server::{
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                             ConnectionState as ServerConnectionState, ConnectionStatus,
                             ProtocolConnectionInfo,
                         };
