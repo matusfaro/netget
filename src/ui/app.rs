@@ -42,9 +42,9 @@ impl LogLevel {
         match self {
             LogLevel::Error => "ERROR",
             LogLevel::Warn => "WARN",
-            LogLevel::Info => "TRANSACTIONAL",
+            LogLevel::Info => "INFO",
             LogLevel::Debug => "DEBUG",
-            LogLevel::Trace => "VERBOSE",
+            LogLevel::Trace => "TRACE",
         }
     }
 
@@ -317,7 +317,7 @@ impl App {
         let all_commands = vec![
             "/exit - Exit the application",
             "/model [<name>] - List/select a model",
-            "/log [<level>] - Show/set log level (VERBOSE=trace, TRANSACTIONAL=info, ERROR=error, or debug, warn)",
+            "/log [<level>] - Show/set log level (error, warn, info, debug, trace)",
             "/script [<env>] - Show/set scripting environment (llm, python, javascript, go)",
             "/web [on/off/ask] - Show/set web search mode",
             "/test_ask - Test web search approval prompt",
