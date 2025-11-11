@@ -22,7 +22,6 @@ use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// HTTP server that delegates request handling to LLM
 pub struct HttpServer;
@@ -357,6 +356,7 @@ where
 {
     use h2::server;
     use crate::server::Http2Protocol;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
     info!("Starting h2c connection for {}", connection_id);
 

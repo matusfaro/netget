@@ -16,7 +16,6 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::webdav::actions::WEBDAV_CLIENT_RESPONSE_RECEIVED_EVENT;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// WebDAV client that makes requests to remote WebDAV servers
 pub struct WebdavClient;
@@ -126,6 +125,7 @@ impl WebdavClient {
         _instruction: &str,
     ) -> Result<()> {
         use crate::llm::actions::client_trait::{Client, ClientActionResult};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         let result = protocol.as_ref().execute_action(action)?;
 

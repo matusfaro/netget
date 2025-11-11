@@ -15,7 +15,6 @@ use actions::NTP_REQUEST_EVENT;
 use crate::server::NtpProtocol;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// NTP server that forwards requests to LLM
 pub struct NtpServer;
@@ -80,6 +79,7 @@ impl NtpServer {
                         tokio::spawn(async move {
                             // Get current Unix timestamp
                             use std::time::{SystemTime, UNIX_EPOCH};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                             let current_unix_time = SystemTime::now()
                                 .duration_since(UNIX_EPOCH)
                                 .unwrap()

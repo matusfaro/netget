@@ -17,7 +17,6 @@ use crate::protocol::{Event, StartupParams};
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::datalink::actions::DATALINK_CLIENT_FRAME_CAPTURED_EVENT;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -185,6 +184,7 @@ impl DataLinkClient {
                                                     // Execute actions
                                                     for action in actions {
                                                         use crate::llm::actions::client_trait::Client;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                                                         match protocol.as_ref().execute_action(action) {
                                                             Ok(crate::llm::actions::client_trait::ClientActionResult::SendData(frame_bytes)) => {
                                                                 // Send frame injection command

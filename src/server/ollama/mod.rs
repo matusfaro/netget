@@ -28,7 +28,6 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::llm::call_llm_with_protocol;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Ollama-compatible API server with LLM control
 pub struct OllamaServer;
@@ -62,6 +61,7 @@ impl OllamaServer {
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,

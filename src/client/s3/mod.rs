@@ -17,7 +17,6 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::s3::actions::S3_CLIENT_RESPONSE_RECEIVED_EVENT;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// S3 client that interacts with AWS S3 or S3-compatible services
 pub struct S3Client;
@@ -254,6 +253,7 @@ impl S3Client {
         // Build AWS SDK client
         use aws_config::BehaviorVersion;
         use aws_sdk_s3::config::{Credentials, Region};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         let creds = Credentials::new(
             &access_key_id,

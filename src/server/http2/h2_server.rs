@@ -20,7 +20,6 @@ use crate::state::app_state::AppState;
 
 use super::actions::HTTP2_REQUEST_EVENT;
 use super::push::{PendingPush, PushManager};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// HTTP/2 server with full server push support
 pub struct H2Server;
@@ -59,6 +58,7 @@ impl H2Server {
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,

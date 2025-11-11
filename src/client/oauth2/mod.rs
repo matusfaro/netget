@@ -24,7 +24,6 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId as NetGetClientId, ClientStatus};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 use crate::client::oauth2::actions::{
     OAUTH2_CLIENT_CONNECTED_EVENT, OAUTH2_DEVICE_CODE_EVENT, OAUTH2_ERROR_EVENT,
     OAUTH2_TOKEN_OBTAINED_EVENT,
@@ -229,6 +228,7 @@ impl OAuth2Client {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         use crate::llm::actions::client_trait::Client;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         let protocol = OAuth2ClientProtocol::new();
         let action_result = protocol.execute_action(action)?;

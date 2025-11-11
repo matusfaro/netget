@@ -17,7 +17,6 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::sip::actions::{SIP_CLIENT_CONNECTED_EVENT, SIP_CLIENT_RESPONSE_RECEIVED_EVENT};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -713,6 +712,7 @@ impl SipClient {
     /// Generate a random branch parameter
     fn generate_branch() -> String {
         use rand::Rng;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
         let branch: u32 = rand::thread_rng().gen();
         format!("{:x}", branch)
     }

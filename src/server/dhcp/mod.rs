@@ -20,7 +20,6 @@ use crate::state::app_state::AppState;
 use dhcproto::{v4, Decodable, Decoder};
 #[cfg(feature = "dhcp")]
 use actions::DhcpRequestContext;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// DHCP server that forwards requests to LLM
 pub struct DhcpServer;
@@ -230,6 +229,7 @@ impl DhcpServer {
     #[cfg(feature = "dhcp")]
     fn parse_dhcp_message(data: &[u8]) -> Option<(String, Option<DhcpRequestContext>)> {
         use std::net::Ipv4Addr;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         match v4::Message::decode(&mut Decoder::new(data)) {
             Ok(msg) => {

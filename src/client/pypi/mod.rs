@@ -15,8 +15,8 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 use crate::client::pypi::actions::{
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
     PYPI_PACKAGE_INFO_EVENT, PYPI_SEARCH_RESULTS_EVENT, PYPI_FILE_DOWNLOADED_EVENT,
 };
 

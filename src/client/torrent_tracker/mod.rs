@@ -16,7 +16,6 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 use crate::client::torrent_tracker::actions::{
     TRACKER_ANNOUNCE_RESPONSE_EVENT, TRACKER_SCRAPE_RESPONSE_EVENT
 };
@@ -135,6 +134,7 @@ impl TorrentTrackerClient {
         status_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         use crate::llm::actions::client_trait::ClientActionResult;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         match protocol.execute_action(action)? {
             ClientActionResult::Custom { name, data } if name == "tracker_announce" => {

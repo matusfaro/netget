@@ -24,7 +24,6 @@ use crate::server::connection::ConnectionId;
 use crate::server::openai::actions::OpenAiProtocol;
 use crate::llm::ollama_client::OllamaClient;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// OpenAI-compatible API server that delegates to LLM/Ollama
 pub struct OpenAiServer;
@@ -56,6 +55,7 @@ impl OpenAiServer {
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,

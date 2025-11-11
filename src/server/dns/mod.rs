@@ -15,7 +15,6 @@ use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// DNS server that integrates with LLM for query handling
 pub struct DnsServer;
@@ -46,6 +45,7 @@ impl DnsServer {
 
                         // Add connection to ServerInstance (DNS "connection" = recent query)
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,

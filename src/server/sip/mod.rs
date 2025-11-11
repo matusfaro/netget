@@ -18,7 +18,6 @@ use actions::{
 use crate::protocol::Event;
 use crate::server::SipProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// SIP server that handles VoIP signaling
 pub struct SipServer;
@@ -427,6 +426,7 @@ impl SipServer {
     /// Generate a random tag for SIP responses
     fn generate_tag() -> String {
         use rand::Rng;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
         let tag: u32 = rand::thread_rng().gen();
         format!("{:x}", tag)
     }

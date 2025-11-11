@@ -24,7 +24,6 @@ use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 // Re-export for convenience
 pub use h2_server::H2Server;
@@ -66,6 +65,7 @@ impl Http2Server {
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,

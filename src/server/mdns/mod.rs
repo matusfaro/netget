@@ -19,7 +19,6 @@ use crate::server::MdnsProtocol;
 use crate::protocol::Event;
 #[cfg(feature = "mdns")]
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// mDNS server that advertises services based on LLM instructions
 pub struct MdnsServer;
@@ -140,6 +139,7 @@ impl MdnsServer {
 #[cfg(feature = "mdns")]
 fn get_local_ip() -> Option<String> {
     use std::net::UdpSocket;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
     // Try to get local IP by connecting to a public DNS server
     // This doesn't actually send any packets, just determines the local IP

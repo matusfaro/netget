@@ -17,7 +17,6 @@ use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use actions::TorrentDhtProtocol;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// BitTorrent DHT server
 pub struct TorrentDhtServer;
@@ -218,6 +217,7 @@ impl TorrentDhtServer {
 
     fn bencode_to_json(value: &serde_bencode::value::Value) -> serde_json::Value {
         use serde_bencode::value::Value;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         match value {
             Value::Int(i) => serde_json::json!(i),

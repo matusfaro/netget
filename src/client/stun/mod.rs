@@ -16,7 +16,6 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::stun::actions::{STUN_CLIENT_CONNECTED_EVENT, STUN_CLIENT_BINDING_RESPONSE_EVENT};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// STUN client for discovering external IP/port behind NAT
 pub struct StunClient;
@@ -135,6 +134,7 @@ impl StunClient {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         use crate::llm::actions::client_trait::Client;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
         let protocol = Arc::new(StunClientProtocol::new());
 
         match protocol.as_ref().execute_action(action)? {

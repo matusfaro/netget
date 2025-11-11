@@ -31,7 +31,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace, warn};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Cassandra server implementation
 pub struct CassandraServer {
@@ -764,6 +763,7 @@ impl CassandraServer {
         // Generate statement ID from query hash
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
         let mut hasher = DefaultHasher::new();
         query.hash(&mut hasher);
         let hash = hasher.finish();

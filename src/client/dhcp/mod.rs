@@ -20,7 +20,6 @@ use actions::{DHCP_CLIENT_CONNECTED_EVENT, DHCP_CLIENT_RESPONSE_RECEIVED_EVENT};
 
 #[cfg(feature = "dhcp")]
 use dhcproto::{v4, Decodable, Decoder};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -494,6 +493,7 @@ impl DhcpClient {
     #[cfg(feature = "dhcp")]
     fn parse_dhcp_response(data: &[u8]) -> Option<(String, serde_json::Value)> {
         use std::net::Ipv4Addr;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         match v4::Message::decode(&mut Decoder::new(data)) {
             Ok(msg) => {

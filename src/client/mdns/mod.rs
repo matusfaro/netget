@@ -18,7 +18,6 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::mdns::actions::{MDNS_CLIENT_CONNECTED_EVENT, MDNS_CLIENT_SERVICE_FOUND_EVENT, MDNS_CLIENT_SERVICE_RESOLVED_EVENT};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// mDNS client that performs service discovery on the local network
 pub struct MdnsClient;
@@ -133,6 +132,7 @@ impl MdnsClient {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         use crate::llm::actions::client_trait::Client;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
         let protocol = Arc::new(crate::client::mdns::actions::MdnsClientProtocol::new());
 
         match protocol.as_ref().execute_action(action.clone()) {

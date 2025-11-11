@@ -25,7 +25,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, trace, warn};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Kafka broker server state
 pub struct KafkaServer {
@@ -747,6 +746,7 @@ impl KafkaServer {
     ) -> Result<Vec<u8>> {
         use kafka_protocol::messages::offset_commit_response::{OffsetCommitResponseTopic, OffsetCommitResponsePartition};
         use kafka_protocol::protocol::StrBytes;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         console_debug!(status_tx, "[DEBUG] Handling OffsetCommit request");
 

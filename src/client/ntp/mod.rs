@@ -17,7 +17,6 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::ntp::actions::NTP_CLIENT_RESPONSE_RECEIVED_EVENT;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// NTP client that queries NTP servers
 pub struct NtpClient;
@@ -169,6 +168,7 @@ impl NtpClient {
 
         // Set transmit timestamp to current time
         use std::time::{SystemTime, UNIX_EPOCH};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
         let unix_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()

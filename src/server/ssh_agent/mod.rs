@@ -23,7 +23,6 @@ use actions::*;
 use crate::server::SshAgentProtocol;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// SSH Agent message types (from SSH Agent Protocol specification)
 const SSH_AGENTC_REQUEST_IDENTITIES: u8 = 11;
@@ -99,6 +98,7 @@ impl SshAgentServer {
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         let dummy_addr = "127.0.0.1:0".parse().unwrap();
                         let conn_state = ServerConnectionState {

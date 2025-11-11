@@ -15,7 +15,6 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 use crate::client::elasticsearch::actions::{
     ELASTICSEARCH_CLIENT_CONNECTED_EVENT,
     ELASTICSEARCH_CLIENT_RESPONSE_RECEIVED_EVENT,
@@ -98,6 +97,7 @@ impl ElasticsearchClient {
 
                     // Execute initial actions
                     use crate::llm::actions::client_trait::{Client, ClientActionResult};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                     for action in actions {
                         match protocol.execute_action(action) {
                             Ok(ClientActionResult::Custom { name, data }) => {

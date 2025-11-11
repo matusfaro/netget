@@ -15,7 +15,6 @@ use actions::RIP_REQUEST_EVENT;
 use crate::server::RipProtocol;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// RIP server that forwards routing requests to LLM
 pub struct RipServer;
@@ -47,6 +46,7 @@ impl RipServer {
 
                         // Add connection to ServerInstance (RIP "connection" = recent peer)
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,

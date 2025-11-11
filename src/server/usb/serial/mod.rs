@@ -13,7 +13,6 @@ use tracing::{error, info};
 
 #[cfg(feature = "usb-serial")]
 use crate::{llm::OllamaClient, server::connection::ConnectionId, state::app_state::AppState};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 #[cfg(feature = "usb-serial")]
 #[derive(Debug, Clone, PartialEq)]
@@ -63,6 +62,7 @@ impl UsbSerialServer {
                         info!("USB/IP connection {} from {} (USB serial)", connection_id, remote_addr);
 
                         use crate::state::server::{ConnectionState as ServerConnectionState, ConnectionStatus, ProtocolConnectionInfo};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,

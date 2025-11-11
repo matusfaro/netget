@@ -28,7 +28,6 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::llm::action_helper::call_llm;
 use crate::state::app_state::AppState;
 use crate::protocol::EventType;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// NPM registry server that delegates to LLM
 pub struct NpmServer;
@@ -262,6 +261,7 @@ async fn process_npm_action_result(
     status_tx: &mpsc::UnboundedSender<String>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     use crate::llm::ActionResult;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
     match action_result {
         ActionResult::Custom { name, data } => {

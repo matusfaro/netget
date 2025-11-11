@@ -22,7 +22,6 @@ use crate::client::openidconnect::actions::{
     OIDC_CLIENT_TOKEN_RECEIVED_EVENT,
     OIDC_CLIENT_USERINFO_RECEIVED_EVENT,
 };
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 use openidconnect::{
     core::{
@@ -1108,6 +1107,7 @@ impl OpenIdConnectClient {
         };
 
         use openidconnect::AccessToken;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
         let userinfo: CoreUserInfoClaims = client
             .user_info(AccessToken::new(access_token_str), None)
             .context("UserInfo endpoint not available")?

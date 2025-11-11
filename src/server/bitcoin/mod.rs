@@ -22,7 +22,6 @@ use crate::protocol::Event;
 use crate::server::BitcoinProtocol;
 use crate::state::app_state::AppState;
 use actions::{BITCOIN_CONNECTION_OPENED_EVENT, BITCOIN_MESSAGE_RECEIVED_EVENT};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -89,6 +88,7 @@ impl BitcoinServer {
 
                         // Add connection to ServerInstance
                         use crate::state::server::{
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                             ConnectionState as ServerConnectionState, ConnectionStatus,
                             ProtocolConnectionInfo,
                         };

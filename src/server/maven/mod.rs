@@ -24,7 +24,6 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Maven repository server that delegates artifact requests to LLM
 pub struct MavenServer;
@@ -363,6 +362,7 @@ async fn handle_maven_request_with_llm(
                             } else if let Some(body_bytes) = json_value.get("body_base64").and_then(|v| v.as_str()) {
                                 // Support base64-encoded binary content
                                 use base64::Engine;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                                 if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(body_bytes) {
                                     response_body = decoded;
                                 }

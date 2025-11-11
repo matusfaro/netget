@@ -39,7 +39,6 @@ use crate::state::app_state::AppState;
 use crate::state::server::{ConnectionStatus, ImapSessionState, ProtocolConnectionInfo, ProtocolState, ServerId};
 #[cfg(feature = "imap")]
 use serde_json::json;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// IMAP server that handles mail retrieval with LLM
 pub struct ImapServer;
@@ -620,6 +619,7 @@ fn parse_imap_command(line: &str) -> (String, String, String) {
 #[cfg(all(feature = "imap", feature = "proxy"))]
 fn generate_self_signed_cert() -> Result<Vec<u8>> {
     use rcgen::{CertificateParams, DistinguishedName};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
     let mut params = CertificateParams::new(vec!["localhost".to_string()])?;
     let mut dn = DistinguishedName::new();

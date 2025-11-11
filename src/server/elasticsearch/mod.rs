@@ -23,7 +23,6 @@ use crate::server::ElasticsearchProtocol;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Elasticsearch server that delegates search/index operations to LLM
 pub struct ElasticsearchServer;
@@ -55,6 +54,7 @@ impl ElasticsearchServer {
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,

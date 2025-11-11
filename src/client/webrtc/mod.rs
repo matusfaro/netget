@@ -26,7 +26,6 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 use crate::client::webrtc::actions::{
     WEBRTC_CLIENT_CONNECTED_EVENT, WEBRTC_CLIENT_MESSAGE_RECEIVED_EVENT,
 };
@@ -213,6 +212,7 @@ impl WebRtcClient {
                                     // Execute actions
                                     for action in actions {
                                         use crate::llm::actions::client_trait::Client;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                                         match protocol.as_ref().execute_action(action) {
                                             Ok(crate::llm::actions::client_trait::ClientActionResult::SendData(bytes)) => {
                                                 match dc.send_text(String::from_utf8_lossy(&bytes).to_string()).await {

@@ -52,7 +52,6 @@ use actions::{
 };
 #[cfg(feature = "mcp")]
 use session::McpSession;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// MCP server shared state
 #[derive(Clone)]
@@ -736,6 +735,7 @@ async fn handle_prompts_get(
     // Process action results
     for protocol_result in &execution_result.protocol_results {
         use crate::llm::actions::protocol_trait::ActionResult;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
         if let ActionResult::Custom { name, data } = protocol_result {
             if name == "mcp_prompts_get" {
                 if let Some(response) = data.get("response") {

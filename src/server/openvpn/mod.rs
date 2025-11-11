@@ -34,7 +34,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, trace, warn};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Maximum number of peers to allow
 const MAX_PEERS: usize = 100;
@@ -412,6 +411,7 @@ impl OpenvpnServer {
         // In a full implementation, this would derive keys from TLS master secret
         // For MVP, we use a simplified approach with hardcoded keys
         use crypto::derive_data_keys;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         let master_secret = b"simplified_master_secret_for_mvp";
         let client_random = b"client_random_data_12345678";

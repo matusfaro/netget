@@ -20,7 +20,6 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 use crate::client::bluetooth::actions::{
     BLUETOOTH_CONNECTED_EVENT, BLUETOOTH_DATA_READ_EVENT,
     BLUETOOTH_NOTIFICATION_RECEIVED_EVENT, BLUETOOTH_SCAN_COMPLETE_EVENT,
@@ -436,6 +435,7 @@ impl BluetoothClient {
     ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
         use crate::llm::actions::client_trait::Client;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
         let protocol = BluetoothClientProtocol::new();
 
         match protocol.execute_action(action)? {

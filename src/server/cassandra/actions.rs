@@ -12,7 +12,6 @@ use serde_json::json;
 use std::sync::{Arc, LazyLock};
 use tokio::sync::mpsc;
 use tracing::debug;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Cassandra protocol action handler
 pub struct CassandraProtocol {
@@ -106,6 +105,7 @@ impl Server for CassandraProtocol {
         > {
             Box::pin(async move {
                 use crate::server::cassandra::CassandraServer;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                 let send_first = ctx.startup_params
                     .as_ref()
                     .and_then(|p| p.get_optional_bool("send_first"))

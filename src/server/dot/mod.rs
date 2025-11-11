@@ -22,7 +22,6 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tokio_rustls::TlsAcceptor;
 use tracing::{debug, error, info, trace, warn};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// DNS-over-TLS server
 pub struct DotServer {
@@ -220,6 +219,7 @@ impl DotServer {
                     // Execute actions from LLM response
                     for protocol_result in &execution_result.protocol_results {
                         use crate::llm::actions::protocol_trait::ActionResult;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         match protocol_result {
                             ActionResult::Output(bytes) => {
                                 // DNS action returned binary response directly

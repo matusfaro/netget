@@ -17,7 +17,6 @@ use crate::protocol::{Event, StartupParams};
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::dynamodb::actions::DYNAMODB_CLIENT_RESPONSE_RECEIVED_EVENT;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// DynamoDB client that interacts with AWS DynamoDB or local instances
 pub struct DynamoDbClient;
@@ -376,6 +375,7 @@ impl DynamoDbClient {
         map: &std::collections::HashMap<String, aws_sdk_dynamodb::types::AttributeValue>,
     ) -> serde_json::Value {
         use aws_sdk_dynamodb::types::AttributeValue;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         let mut json_map = serde_json::Map::new();
         for (key, value) in map {

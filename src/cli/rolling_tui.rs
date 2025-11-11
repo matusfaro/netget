@@ -29,7 +29,6 @@ use crate::ui::{app::LogLevel, App};
 use super::input_state::InputState;
 use super::sticky_footer::{ConnectionInfo, FooterContent, StickyFooter};
 use super::theme::ColorPalette;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Format scripting mode for display in status bar
 /// Returns "LLM", "Python", or "JavaScript" based on selected mode
@@ -2031,6 +2030,7 @@ async fn handle_load(
         // Try to parse as common action
         if let Ok(common_action) = crate::llm::actions::common::CommonAction::from_json(action) {
             use crate::llm::actions::common::CommonAction;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
             match common_action {
                 CommonAction::OpenServer { port, base_stack, send_first, initial_memory, instruction, startup_params, event_handlers, scheduled_tasks } => {

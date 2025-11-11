@@ -19,7 +19,6 @@ use actions::SNMP_REQUEST_EVENT;
 use crate::server::SnmpProtocol;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Get LLM context and output format instructions for SNMP stack
 pub fn get_llm_protocol_prompt() -> (&'static str, &'static str) {
@@ -228,6 +227,7 @@ impl SnmpServer {
 
                         // Add connection to ServerInstance (SNMP "connection" = recent peer)
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,

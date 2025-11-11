@@ -18,7 +18,6 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::udp::actions::{UDP_CLIENT_CONNECTED_EVENT, UDP_CLIENT_DATAGRAM_RECEIVED_EVENT};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -266,6 +265,7 @@ impl UdpClient {
         let protocol = Arc::new(UdpClientProtocol::new());
         for action in llm_result.actions {
             use crate::llm::actions::client_trait::Client;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
             let action_result = protocol.as_ref().execute_action(action)?;
 
             match action_result {
