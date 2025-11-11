@@ -23,7 +23,7 @@ use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use crate::state::server::{ConnectionState, ConnectionStatus, ProtocolConnectionInfo};
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::{console_error, console_info};
 use actions::OPENVPN_PEER_CONNECTED_EVENT;
 use anyhow::{Context, Result};
 use packet::{ControlPacket, DataPacket, Opcode, PacketHeader};

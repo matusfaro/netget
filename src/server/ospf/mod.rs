@@ -33,7 +33,7 @@ use crate::server::socket_helpers::create_ospf_raw_socket;
 use crate::state::app_state::AppState;
 #[cfg(feature = "ospf")]
 use crate::state::server::OspfNeighborState;
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::console_info;
 #[cfg(feature = "ospf")]
 use actions::{OspfProtocol, OSPF_HELLO_EVENT};
 

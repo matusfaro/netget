@@ -19,7 +19,7 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::console_error;
 use serde_json::{json, Value};
 
 /// JSON-RPC 2.0 request message

@@ -25,7 +25,7 @@ use crate::state::server::{
 };
 use crate::state::ServerId;
 
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::{console_info, console_warn};
 use actions::SMB_OPERATION_EVENT;
 
 /// SMB server that provides LLM-controlled file system

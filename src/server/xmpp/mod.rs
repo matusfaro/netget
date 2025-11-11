@@ -14,7 +14,7 @@ use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::console_error;
 use actions::{XmppProtocol, XMPP_DATA_RECEIVED_EVENT};
 
 /// XMPP server that forwards XML stanzas to LLM

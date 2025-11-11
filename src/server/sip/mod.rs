@@ -7,14 +7,14 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::server::SipProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::{console_error, console_trace};
 use actions::{
     SIP_ACK_EVENT, SIP_BYE_EVENT, SIP_CANCEL_EVENT, SIP_INVITE_EVENT, SIP_OPTIONS_EVENT,
     SIP_REGISTER_EVENT,

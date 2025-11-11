@@ -9,13 +9,13 @@ use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::{console_error, console_info, console_trace, console_warn};
+use crate::{console_info, console_trace};
 use actions::{
     BluetoothBleProtocol, BLUETOOTH_BLE_STARTED_EVENT, BLUETOOTH_READ_REQUEST_EVENT,
     BLUETOOTH_STATE_CHANGED_EVENT, BLUETOOTH_SUBSCRIBE_EVENT, BLUETOOTH_WRITE_REQUEST_EVENT,

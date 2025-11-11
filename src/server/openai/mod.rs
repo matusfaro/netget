@@ -24,7 +24,7 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::server::connection::ConnectionId;
 use crate::server::openai::actions::OpenAiProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::{console_debug, console_error, console_info, console_trace};
 
 /// OpenAI-compatible API server that delegates to LLM/Ollama
 pub struct OpenAiServer;

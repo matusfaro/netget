@@ -1,7 +1,7 @@
 //! Shared HTTP request/response handling logic
 
 use crate::llm::ActionResult;
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::console_trace;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;

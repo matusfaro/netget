@@ -9,7 +9,7 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::server::connection::ConnectionId;
 use crate::server::KafkaProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::{console_debug, console_error, console_trace};
 use anyhow::Result;
 use bytes::Bytes;
 use kafka_protocol::messages::{
@@ -27,7 +27,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, warn};
 
 /// Kafka broker server state
 pub struct KafkaServer {

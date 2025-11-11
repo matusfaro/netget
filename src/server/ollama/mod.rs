@@ -28,7 +28,7 @@ use crate::server::ollama::actions::{
     OLLAMA_MODELS_REQUEST_EVENT,
 };
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::{console_debug, console_error, console_info};
 
 /// Ollama-compatible API server with LLM control
 pub struct OllamaServer;

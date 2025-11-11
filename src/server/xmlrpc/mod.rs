@@ -33,7 +33,7 @@ use crate::state::app_state::AppState;
 use crate::state::server::{
     ConnectionState as ServerConnectionState, ConnectionStatus, ProtocolConnectionInfo, ServerId,
 };
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::console_error;
 
 pub use actions::XmlRpcProtocol;
 

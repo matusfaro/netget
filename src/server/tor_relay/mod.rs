@@ -78,7 +78,7 @@ use circuit::{CircuitId, CircuitManager, StreamId};
 #[cfg(feature = "tor")]
 use stream::{build_relay_cell, connect_to_target, end_reason, parse_begin_target, relay_command};
 
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::console_debug;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};

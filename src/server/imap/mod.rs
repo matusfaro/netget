@@ -37,7 +37,7 @@ use crate::state::app_state::AppState;
 use crate::state::server::{
     ConnectionStatus, ImapSessionState, ProtocolConnectionInfo, ProtocolState, ServerId,
 };
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::console_info;
 #[cfg(feature = "imap")]
 use actions::{IMAP_AUTH_EVENT, IMAP_COMMAND_EVENT, IMAP_CONNECTION_EVENT};
 #[cfg(feature = "imap")]

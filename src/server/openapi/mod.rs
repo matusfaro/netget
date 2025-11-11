@@ -20,7 +20,7 @@ use serde_json::json;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, trace};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::actions::protocol_trait::ActionResult;
@@ -30,7 +30,7 @@ use crate::server::connection::ConnectionId;
 use crate::server::openapi::actions::OpenApiProtocol;
 use crate::state::app_state::AppState;
 
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::{console_error, console_info, console_trace, console_warn};
 #[cfg(feature = "openapi")]
 use matchit::Router;
 #[cfg(feature = "openapi")]

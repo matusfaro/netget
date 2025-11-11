@@ -15,7 +15,7 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::server::NntpProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::console_error;
 use actions::NNTP_COMMAND_RECEIVED_EVENT;
 
 /// NNTP server that forwards commands to LLM

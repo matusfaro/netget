@@ -30,7 +30,7 @@ use crate::state::app_state::AppState;
 use crate::state::ServerId;
 use actions::{PROXY_HTTPS_CONNECT_EVENT, PROXY_HTTP_REQUEST_EVENT};
 
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::console_debug;
 use rcgen::{Certificate, CertificateParams, KeyPair};
 use regex::Regex;
 use serde_json::json;

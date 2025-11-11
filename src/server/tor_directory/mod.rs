@@ -21,7 +21,7 @@ use crate::protocol::Event;
 use crate::server::TorDirectoryProtocol;
 #[cfg(feature = "tor")]
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::console_debug;
 #[cfg(feature = "tor")]
 use actions::TOR_DIRECTORY_REQUEST_EVENT;
 

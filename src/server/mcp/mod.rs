@@ -45,7 +45,7 @@ use crate::server::McpProtocol;
 use crate::state::app_state::AppState;
 #[cfg(feature = "mcp")]
 use crate::state::server::{ConnectionStatus, ProtocolConnectionInfo, ServerId};
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::console_error;
 #[cfg(feature = "mcp")]
 use actions::{
     MCP_INITIALIZE_EVENT, MCP_PROMPTS_GET_EVENT, MCP_PROMPTS_LIST_EVENT, MCP_RESOURCES_LIST_EVENT,

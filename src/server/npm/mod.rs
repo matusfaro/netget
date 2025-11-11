@@ -28,7 +28,7 @@ use crate::protocol::EventType;
 use crate::server::connection::ConnectionId;
 use crate::server::npm::actions::NpmProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::{console_debug, console_error, console_info};
 
 /// NPM registry server that delegates to LLM
 pub struct NpmServer;

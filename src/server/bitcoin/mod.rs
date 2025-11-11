@@ -21,7 +21,7 @@ use crate::llm::ActionResult;
 use crate::protocol::Event;
 use crate::server::BitcoinProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::{console_error, console_info, console_trace};
 use actions::{BITCOIN_CONNECTION_OPENED_EVENT, BITCOIN_MESSAGE_RECEIVED_EVENT};
 
 /// Connection state for LLM processing

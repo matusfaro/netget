@@ -16,7 +16,7 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::server::TurnProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::{console_debug, console_trace};
 use actions::{
     TURN_ALLOCATE_REQUEST_EVENT, TURN_CREATE_PERMISSION_REQUEST_EVENT, TURN_REFRESH_REQUEST_EVENT,
     TURN_SEND_INDICATION_EVENT,

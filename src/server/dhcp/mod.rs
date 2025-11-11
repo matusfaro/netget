@@ -16,7 +16,7 @@ use crate::server::DhcpProtocol;
 use crate::state::app_state::AppState;
 use actions::DHCP_REQUEST_EVENT;
 
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::{console_debug, console_trace};
 #[cfg(feature = "dhcp")]
 use actions::DhcpRequestContext;
 #[cfg(feature = "dhcp")]

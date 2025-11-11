@@ -20,7 +20,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::console_error;
 use futures::StreamExt;
 use tokio_xmpp::jid::Jid;
 use tokio_xmpp::{Client as XmppClient, Event as XmppEvent};

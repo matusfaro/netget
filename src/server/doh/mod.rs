@@ -27,7 +27,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio_rustls::TlsAcceptor;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, warn};
 
 /// DNS-over-HTTPS server
 pub struct DohServer {

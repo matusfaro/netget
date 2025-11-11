@@ -30,7 +30,7 @@ use crate::server::oauth2::actions::{
     OAUTH2_TOKEN_EVENT,
 };
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::console_info;
 
 /// OAuth2 authorization server
 pub struct OAuth2Server;

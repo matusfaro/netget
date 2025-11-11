@@ -24,7 +24,7 @@ use crate::llm::ActionResult;
 use crate::server::connection::ConnectionId;
 use crate::server::DynamoProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::{console_error, console_info};
 
 /// DynamoDB server that delegates API operations to LLM
 pub struct DynamoServer;

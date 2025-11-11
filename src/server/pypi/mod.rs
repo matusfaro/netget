@@ -17,7 +17,7 @@ use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, trace};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
@@ -26,7 +26,7 @@ use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::server::PypiProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::{console_error, console_info};
 use actions::PYPI_REQUEST_EVENT;
 
 /// PyPI server that delegates package serving to LLM

@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info};
 
 use super::connection::ConnectionId;
 use crate::llm::action_helper::call_llm;
@@ -16,7 +16,7 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::{console_debug, console_trace};
 use actions::{
     Http3Protocol, HTTP3_CONNECTION_OPENED_EVENT, HTTP3_DATA_RECEIVED_EVENT,
     HTTP3_STREAM_OPENED_EVENT,

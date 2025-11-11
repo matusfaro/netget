@@ -23,7 +23,7 @@ use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::server::MavenProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::{console_debug, console_error, console_info};
 use actions::MAVEN_ARTIFACT_REQUEST_EVENT;
 
 /// Maven repository server that delegates artifact requests to LLM

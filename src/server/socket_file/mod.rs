@@ -22,7 +22,7 @@ use crate::llm::ActionResult;
 use crate::protocol::Event;
 use crate::server::SocketFileProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::{console_debug, console_trace};
 use actions::{SOCKET_FILE_CONNECTION_OPENED_EVENT, SOCKET_FILE_DATA_RECEIVED_EVENT};
 
 /// Connection state for LLM processing

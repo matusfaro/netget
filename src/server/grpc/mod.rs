@@ -9,7 +9,7 @@ use anyhow::{bail, Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, info, trace};
 
 #[cfg(feature = "grpc")]
 use crate::llm::action_helper::call_llm;
@@ -25,7 +25,7 @@ use crate::server::grpc::actions::GRPC_UNARY_REQUEST_EVENT;
 use crate::server::GrpcProtocol;
 #[cfg(feature = "grpc")]
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::{console_error, console_info};
 #[cfg(feature = "grpc")]
 use bytes::Bytes;
 #[cfg(feature = "grpc")]

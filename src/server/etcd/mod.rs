@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error, info, trace};
+use tracing::{error, trace};
 
 #[cfg(feature = "etcd")]
 use crate::llm::action_helper::call_llm;
@@ -44,7 +44,7 @@ mod mvccpb {
     include!(concat!(env!("OUT_DIR"), "/mvccpb.rs"));
 }
 
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::{console_debug, console_error, console_info};
 #[cfg(feature = "etcd")]
 use etcdserverpb::{
     CompactionRequest, CompactionResponse, DeleteRangeRequest, DeleteRangeResponse, PutRequest,

@@ -10,7 +10,7 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use crate::state::server::{ConnectionState, ConnectionStatus, ProtocolConnectionInfo};
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::{console_debug, console_info};
 use anyhow::{anyhow, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;

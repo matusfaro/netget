@@ -18,7 +18,7 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::server::SnmpProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::{console_debug, console_trace};
 use actions::SNMP_REQUEST_EVENT;
 
 /// Get LLM context and output format instructions for SNMP stack

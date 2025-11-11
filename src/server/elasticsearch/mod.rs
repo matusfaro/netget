@@ -23,7 +23,7 @@ use crate::llm::ActionResult;
 use crate::server::connection::ConnectionId;
 use crate::server::ElasticsearchProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::{console_error, console_info};
 
 /// Elasticsearch server that delegates search/index operations to LLM
 pub struct ElasticsearchServer;

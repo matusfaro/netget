@@ -24,7 +24,7 @@ use crate::server::BgpProtocol;
 use crate::state::app_state::AppState;
 #[cfg(feature = "bgp")]
 use crate::state::server::BgpSessionState;
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::{console_error, console_info};
 #[cfg(feature = "bgp")]
 use actions::{BGP_NOTIFICATION_EVENT, BGP_OPEN_EVENT, BGP_UPDATE_EVENT};
 

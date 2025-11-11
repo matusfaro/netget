@@ -16,7 +16,7 @@ use crate::server::BootpProtocol;
 use crate::state::app_state::AppState;
 use actions::BOOTP_REQUEST_EVENT;
 
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::{console_debug, console_trace};
 #[cfg(feature = "bootp")]
 use actions::BootpRequestContext;
 #[cfg(feature = "bootp")]

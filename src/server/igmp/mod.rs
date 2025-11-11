@@ -16,7 +16,7 @@ use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::{console_debug, console_trace};
 use actions::{IGMP_LEAVE_RECEIVED_EVENT, IGMP_QUERY_RECEIVED_EVENT, IGMP_REPORT_RECEIVED_EVENT};
 
 /// IGMP message types (RFC 2236)
