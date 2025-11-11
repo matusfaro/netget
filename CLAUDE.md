@@ -510,6 +510,23 @@ russh-keys = { version = "0.40", optional = true }
 
 **Errors**: PAUSE if error in unmodified code. **Shared files** (`Cargo.toml`, `protocol/registry.rs`, `server/mod.rs`, `server_startup.rs`, `state/server.rs`): NEVER overwrite, use Edit tool, add incrementally. **Kill**: `./cargo-isolated-kill.sh` (NEVER `pkill cargo`).
 
-## Git Commits
+# Git Commit (CRITICAL)
 
-Only commit when user requests. DO NOT add AI references ("Generated with Claude Code", "Co-Authored-By"). Keep messages professional and concise.
+Always Commit using my identity only.
+Configure git before any commit with:
+
+- git config user.name 'Matus Faro'
+- git config user.email 'matus@matus.io'
+- git config commit.gpgsign true
+- git config user.signingkey matus@matus.io
+
+All commits must be GPG‑signed by this
+key and verifiable; if not, amend and
+re‑sign before proceeding. Do not add
+co-authors or bot attributions in any
+commit message or trailers; specifically,
+never include ‘Co-Authored-By: Claude’
+or ‘🤖 Generated with Claude Code’.
+Keep messages concise, Conventional
+Commits style, and scoped to one logical
+change.
