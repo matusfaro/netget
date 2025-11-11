@@ -219,7 +219,7 @@ impl InputState {
         self.cursor_col = new_col;
     }
 
-    /// Move cursor to end of current or next word (Alt+Right, Ctrl+Right)
+    /// Move cursor to beginning of next word (Alt+Right, Ctrl+Right)
     pub fn move_cursor_word_right(&mut self) {
         let line = &self.lines[self.cursor_row];
         if self.cursor_col >= line.len() {
@@ -234,13 +234,15 @@ impl InputState {
         let chars: Vec<char> = line.chars().collect();
         let mut new_col = self.cursor_col;
 
-        // Skip leading whitespace
-        while new_col < chars.len() && chars[new_col].is_whitespace() {
-            new_col += 1;
+        // Skip current word if we're in one
+        if new_col < chars.len() && !chars[new_col].is_whitespace() {
+            while new_col < chars.len() && !chars[new_col].is_whitespace() {
+                new_col += 1;
+            }
         }
 
-        // Skip word characters
-        while new_col < chars.len() && !chars[new_col].is_whitespace() {
+        // Skip whitespace to reach beginning of next word
+        while new_col < chars.len() && chars[new_col].is_whitespace() {
             new_col += 1;
         }
 
