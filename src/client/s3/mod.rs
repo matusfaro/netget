@@ -109,8 +109,8 @@ impl S3Client {
 
         // Update status
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] S3 client {} ready for {}", client_id, remote_addr));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] S3 client {} ready for {}", client_id, remote_addr);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Call LLM initially with connected event
         let remote_addr_clone = remote_addr.clone();
@@ -253,6 +253,7 @@ impl S3Client {
         // Build AWS SDK client
         use aws_config::BehaviorVersion;
         use aws_sdk_s3::config::{Credentials, Region};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         let creds = Credentials::new(
             &access_key_id,

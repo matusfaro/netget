@@ -58,6 +58,7 @@ impl H2Server {
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -75,7 +76,7 @@ impl H2Server {
                             })),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_info!(status_tx, "__UPDATE_UI__");
 
                         let llm_client_clone = llm_client.clone();
                         let app_state_clone = app_state.clone();
@@ -224,8 +225,7 @@ pub async fn handle_h2_request(
                 let _ = body_stream.flow_control().release_capacity(chunk.len());
             }
             Some(Err(e)) => {
-                warn!("Error reading request body: {}", e);
-                let _ = status_tx.send(format!("[WARN] Error reading body: {}", e));
+                console_warn!(status_tx, "[WARN] Error reading body: {}", e);
                 break;
             }
             None => {
@@ -236,14 +236,7 @@ pub async fn handle_h2_request(
     }
 
     // Log request
-    debug!(
-        "HTTP/2 request: {} {} {} ({} bytes) from {:?}",
-        method, uri, version, body_bytes.len(), connection_id
-    );
-    let _ = status_tx.send(format!(
-        "[DEBUG] HTTP/2 request: {} {} {} ({} bytes)",
-        method, uri, version, body_bytes.len()
-    ));
+    console_debug!(status_tx, "[DEBUG] HTTP/2 request: {} {} {} ({} bytes)");
 
     // Create event for LLM
     let body_text = String::from_utf8_lossy(&body_bytes);
@@ -368,8 +361,7 @@ pub async fn handle_h2_request(
                                         if let Err(e) = stream.send_data(Bytes::from(push.body), true) {
                                             warn!("Failed to send push body for {}: {}", push.path, e);
                                         } else {
-                                            debug!("Successfully pushed {}", push.path);
-                                            let _ = status_tx.send(format!("⬆ Pushed {} ({} bytes)", push.path, push_body_len));
+                                            console_debug!(status_tx, "⬆ Pushed {} ({} bytes)", push.path, push_body_len);
                                         }
                                     }
                                     Err(e) => {
@@ -386,10 +378,7 @@ pub async fn handle_h2_request(
             }
 
             // Send main response
-            let _ = status_tx.send(format!(
-                "→ HTTP/2 {} {} → {} ({} bytes)",
-                method, uri, status_code, response_body.len()
-            ));
+            console_info!(status_tx, "→ HTTP/2 {} {} → {} ({} bytes)");
 
             let mut response = Response::builder().status(status_code);
             for (name, value) in response_headers {
@@ -401,8 +390,7 @@ pub async fn handle_h2_request(
             stream.send_data(Bytes::from(response_body), true)?;
         }
         Err(e) => {
-            error!("LLM error generating HTTP/2 response: {}", e);
-            let _ = status_tx.send(format!("✗ LLM error for {} {}: {}", method, uri, e));
+            console_error!(status_tx, "✗ LLM error for {} {}: {}", method, uri, e);
 
             let response = Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)

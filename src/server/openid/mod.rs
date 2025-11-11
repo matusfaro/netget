@@ -261,14 +261,7 @@ async fn handle_llm_response(
         status_code = 500;
     }
 
-    let _ = status_tx.send(format!(
-        "→ OpenID {} {} → {} ({} bytes{})",
-        method,
-        path,
-        status_code,
-        response_body.len(),
-        if redirect_location.is_some() { ", redirect" } else { "" }
-    ));
+    console_info!(status_tx, "→ OpenID {} {} → {} ({} bytes{})");
 
     // Build the HTTP response
     let mut response = Response::builder().status(status_code);
@@ -303,8 +296,7 @@ impl OpenIdServer {
             let mut state = openid_state.write().await;
 
             if let Some(issuer) = params.get_optional_string("issuer") {
-                info!("OpenID issuer configured: {}", issuer);
-                let _ = status_tx.send(format!("[INFO] OpenID issuer: {}", issuer));
+                console_info!(status_tx, "[INFO] OpenID issuer: {}", issuer);
                 state.issuer = Some(issuer);
             }
 
@@ -314,21 +306,18 @@ impl OpenIdServer {
                     .filter_map(|v| v.as_str().map(|s| s.to_string()))
                     .collect();
                 if !scopes.is_empty() {
-                    info!("OpenID scopes configured: {:?}", scopes);
-                    let _ = status_tx.send(format!("[INFO] OpenID scopes: {:?}", scopes));
+                    console_info!(status_tx, "[INFO] OpenID scopes: {:?}", scopes);
                     state.supported_scopes = scopes;
                 }
             }
         }
 
-        info!("Starting OpenID Connect server...");
-        let _ = status_tx.send("[INFO] Starting OpenID Connect server...".to_string());
+        console_info!(status_tx, "[INFO] Starting OpenID Connect server...");
 
         // Start HTTP server
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("OpenID server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] OpenID server listening on {}", local_addr));
+        console_info!(status_tx, "[INFO] OpenID server listening on {}", local_addr);
 
         // Spawn server loop
         tokio::spawn(async move {
@@ -337,11 +326,11 @@ impl OpenIdServer {
                     Ok((stream, remote_addr)) => {
                         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        info!("OpenID connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!("[INFO] OpenID connection from {}", remote_addr));
+                        console_info!(status_tx, "[INFO] OpenID connection from {}", remote_addr);
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -360,7 +349,7 @@ impl OpenIdServer {
                             })),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_info!(status_tx, "__UPDATE_UI__");
 
                         let llm_client_clone = llm_client.clone();
                         let app_state_clone = app_state.clone();
@@ -408,8 +397,7 @@ impl OpenIdServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept OpenID connection: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to accept OpenID connection: {}", e));
+                        console_error!(status_tx, "[ERROR] Failed to accept OpenID connection: {}", e);
                         break;
                     }
                 }
@@ -479,10 +467,7 @@ async fn handle_openid_request(
         body_bytes.len(),
         connection_id
     );
-    let _ = status_tx.send(format!(
-        "[DEBUG] OpenID {} {} ({})",
-        method, path, endpoint_type
-    ));
+    console_debug!(status_tx, "[DEBUG] OpenID {} {} ({})");
 
     // TRACE: Log full request details
     trace!("OpenID request headers:");
@@ -531,8 +516,7 @@ async fn handle_openid_request(
             ).await
         }
         Err(e) => {
-            error!("LLM error generating OpenID response: {}", e);
-            let _ = status_tx.send(format!("✗ LLM error for {} {}: {}", method, path, e));
+            console_error!(status_tx, "✗ LLM error for {} {}: {}", method, path, e);
 
             Ok(Response::builder()
                 .status(500)

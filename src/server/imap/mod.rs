@@ -56,8 +56,7 @@ impl ImapServer {
         let listener =
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("IMAP server (action-based) listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] IMAP server listening on {}", local_addr));
+        console_info!(status_tx, "[INFO] IMAP server listening on {}", local_addr);
 
         let protocol = Arc::new(ImapProtocol::new());
 
@@ -66,11 +65,7 @@ impl ImapServer {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
                         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
-                        debug!("IMAP connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!(
-                            "→ IMAP connection {} from {}",
-                            connection_id, remote_addr
-                        ));
+                        console_debug!(status_tx, "→ IMAP connection {} from {}");
 
                         // Track connection in server state
                         let local_addr = stream.local_addr().unwrap_or(listen_addr);
@@ -134,11 +129,7 @@ impl ImapServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept IMAP connection: {}", e);
-                        let _ = status_tx.send(format!(
-                            "[ERROR] Failed to accept IMAP connection: {}",
-                            e
-                        ));
+                        console_error!(status_tx, "[ERROR] Failed to accept IMAP connection: {}");
                         break;
                     }
                 }
@@ -169,8 +160,7 @@ impl ImapServer {
         let listener =
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("IMAPS server (TLS) listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] IMAPS server (TLS) listening on {}", local_addr));
+        console_info!(status_tx, "[INFO] IMAPS server (TLS) listening on {}", local_addr);
 
         let protocol = Arc::new(ImapProtocol::new());
 
@@ -185,19 +175,12 @@ impl ImapServer {
                         let tls_stream = match acceptor.accept(stream).await {
                             Ok(s) => s,
                             Err(e) => {
-                                error!("TLS handshake failed for {}: {}", connection_id, e);
-                                let _ = status_tx.send(format!(
-                                    "[ERROR] IMAPS TLS handshake failed: {}",
-                                    e
-                                ));
+                                console_error!(status_tx, "[ERROR] IMAPS TLS handshake failed: {}");
                                 continue;
                             }
                         };
 
-                        let _ = status_tx.send(format!(
-                            "→ IMAPS connection {} from {}",
-                            connection_id, remote_addr
-                        ));
+                        console_info!(status_tx, "→ IMAPS connection {} from {}");
 
                         // Track connection in server state
                         let local_addr = listen_addr;
@@ -260,11 +243,7 @@ impl ImapServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept IMAPS connection: {}", e);
-                        let _ = status_tx.send(format!(
-                            "[ERROR] Failed to accept IMAPS connection: {}",
-                            e
-                        ));
+                        console_error!(status_tx, "[ERROR] Failed to accept IMAPS connection: {}");
                         break;
                     }
                 }
@@ -305,8 +284,7 @@ impl<R: tokio::io::AsyncRead + Unpin, W: tokio::io::AsyncWrite + Unpin> ImapSess
                     break;
                 }
                 Ok(n) => {
-                    trace!("IMAP received {} bytes from {}: {}", n, self.connection_id, line.trim());
-                    let _ = self.status_tx.send(format!("[TRACE] IMAP command: {}", line.trim()));
+                    console_trace!(self.status_tx, "[TRACE] IMAP command: {}", line.trim());
 
                     // Update bytes received
                     self.app_state
@@ -322,8 +300,7 @@ impl<R: tokio::io::AsyncRead + Unpin, W: tokio::io::AsyncWrite + Unpin> ImapSess
 
                     // Parse and handle IMAP command
                     if let Err(e) = self.handle_command(&line).await {
-                        error!("Error handling IMAP command: {}", e);
-                        let _ = self.status_tx.send(format!("[ERROR] IMAP command error: {}", e));
+                        console_error!(self.status_tx, "[ERROR] IMAP command error: {}", e);
 
                         // Send BAD response
                         let (tag, _, _) = parse_imap_command(&line);
@@ -610,8 +587,7 @@ impl<R: tokio::io::AsyncRead + Unpin, W: tokio::io::AsyncWrite + Unpin> ImapSess
             )
             .await;
 
-        trace!("IMAP sent {} bytes to {}", data.len(), self.connection_id);
-        let _ = self.status_tx.send(format!("[TRACE] IMAP sent {} bytes", data.len()));
+        console_trace!(self.status_tx, "[TRACE] IMAP sent {} bytes", data.len());
 
         Ok(())
     }
@@ -643,6 +619,7 @@ fn parse_imap_command(line: &str) -> (String, String, String) {
 #[cfg(all(feature = "imap", feature = "proxy"))]
 fn generate_self_signed_cert() -> Result<Vec<u8>> {
     use rcgen::{CertificateParams, DistinguishedName};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
     let mut params = CertificateParams::new(vec!["localhost".to_string()])?;
     let mut dn = DistinguishedName::new();

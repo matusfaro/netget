@@ -196,11 +196,8 @@ impl UsbClient {
         app_state
             .update_client_status(client_id, ClientStatus::Connected)
             .await;
-        let _ = status_tx.send(format!(
-            "[CLIENT] USB client {} connected to VID:{:04x} PID:{:04x}",
-            client_id, device_info.vendor_id, device_info.product_id
-        ));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] USB client {} connected to VID:{:04x} PID:{:04x}");
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Initialize client data
         let client_data = Arc::new(Mutex::new(ClientData {
@@ -299,6 +296,7 @@ impl UsbClient {
         client_data: &Arc<Mutex<ClientData>>,
     ) {
         use crate::llm::actions::client_trait::Client;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         for action in actions {
             match protocol.as_ref().execute_action(action) {
@@ -558,11 +556,10 @@ impl UsbClient {
                     }
                 }
                 Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
-                    info!("USB client {} disconnecting", client_id);
                     app_state
                         .update_client_status(client_id, ClientStatus::Disconnected)
                         .await;
-                    let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    console_info!(status_tx, "__UPDATE_UI__");
                     break;
                 }
                 Ok(_) => {}

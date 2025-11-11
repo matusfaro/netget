@@ -82,8 +82,8 @@ impl SmbClient {
 
         // Update client state
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] SMB client {} connected", client_id));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] SMB client {} connected", client_id);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         info!("SMB client {} connected to {}", client_id, remote_addr);
 
@@ -281,6 +281,7 @@ impl SmbClient {
                                     text
                                 } else {
                                     use base64::{Engine as _, engine::general_purpose};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                                     format!("base64:{}", general_purpose::STANDARD.encode(&content_bytes))
                                 };
 
@@ -405,8 +406,7 @@ impl SmbClient {
 
                         match smb_client.mkdir(path, pavao::SmbMode::from(0o755)) {
                             Ok(()) => {
-                                info!("SMB client {} created directory {}", client_id, path);
-                                let _ = status_tx.send(format!("[CLIENT] SMB client {} created directory: {}", client_id, path));
+                                console_info!(status_tx, "[CLIENT] SMB client {} created directory: {}", client_id, path);
                             }
                             Err(e) => {
                                 error!("SMB client {} mkdir error: {}", client_id, e);
@@ -440,8 +440,7 @@ impl SmbClient {
 
                         match smb_client.unlink(path) {
                             Ok(()) => {
-                                info!("SMB client {} deleted file {}", client_id, path);
-                                let _ = status_tx.send(format!("[CLIENT] SMB client {} deleted file: {}", client_id, path));
+                                console_info!(status_tx, "[CLIENT] SMB client {} deleted file: {}", client_id, path);
                             }
                             Err(e) => {
                                 error!("SMB client {} unlink error: {}", client_id, e);
@@ -475,8 +474,7 @@ impl SmbClient {
 
                         match smb_client.rmdir(path) {
                             Ok(()) => {
-                                info!("SMB client {} deleted directory {}", client_id, path);
-                                let _ = status_tx.send(format!("[CLIENT] SMB client {} deleted directory: {}", client_id, path));
+                                console_info!(status_tx, "[CLIENT] SMB client {} deleted directory: {}", client_id, path);
                             }
                             Err(e) => {
                                 error!("SMB client {} rmdir error: {}", client_id, e);
@@ -506,10 +504,9 @@ impl SmbClient {
                 }
             }
             crate::llm::actions::client_trait::ClientActionResult::Disconnect => {
-                info!("SMB client {} disconnecting", client_id);
                 app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                let _ = status_tx.send(format!("[CLIENT] SMB client {} disconnected", client_id));
-                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                console_info!(status_tx, "[CLIENT] SMB client {} disconnected", client_id);
+                console_info!(status_tx, "__UPDATE_UI__");
             }
             crate::llm::actions::client_trait::ClientActionResult::WaitForMore => {
                 debug!("SMB client {} waiting for more", client_id);

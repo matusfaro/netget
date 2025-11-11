@@ -21,6 +21,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::imap::actions::IMAP_CLIENT_CONNECTED_EVENT;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// IMAP client that connects to an IMAP server
 pub struct ImapClient;
@@ -78,8 +79,8 @@ impl ImapClient {
         app_state
             .update_client_status(client_id, ClientStatus::Connected)
             .await;
-        let _ = status_tx.send(format!("[CLIENT] IMAP client {} connected and authenticated", client_id));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] IMAP client {} connected and authenticated", client_id);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Get initial instruction
         let instruction = if let Some(inst) = app_state.get_instruction_for_client(client_id).await {
@@ -176,11 +177,10 @@ impl ImapClient {
                 .await?;
             }
             ClientActionResult::Disconnect => {
-                info!("IMAP client {} disconnecting", client_id);
                 app_state
                     .update_client_status(client_id, ClientStatus::Disconnected)
                     .await;
-                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                console_info!(status_tx, "__UPDATE_UI__");
             }
             ClientActionResult::WaitForMore => {
                 debug!("IMAP client {} waiting for more events", client_id);

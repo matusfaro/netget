@@ -45,8 +45,8 @@ impl DohClient {
 
         // Update status to connected
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] DoH client {} connected to {}", client_id, server_url));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] DoH client {} connected to {}", client_id, server_url);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         info!("DoH client {} connected to {}", client_id, server_url);
 
@@ -164,6 +164,7 @@ impl DohClient {
                     let response_result = if use_get {
                         // GET method with base64url-encoded query
                         use base64::Engine as _;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&query_bytes);
                         http_client
                             .get(&format!("{}?dns={}", server_url, encoded))
@@ -278,9 +279,8 @@ impl DohClient {
                     }
                 }
                 Ok(ClientActionResult::Disconnect) => {
-                    info!("DoH client {} disconnecting", client_id);
                     app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                    let _ = status_tx.send(format!("[CLIENT] DoH client {} disconnected", client_id));
+                    console_info!(status_tx, "[CLIENT] DoH client {} disconnected", client_id);
                     break;
                 }
                 Ok(ClientActionResult::WaitForMore) => {

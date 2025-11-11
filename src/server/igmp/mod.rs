@@ -133,8 +133,7 @@ impl IgmpServer {
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
     ) -> Result<SocketAddr> {
-        info!("IGMP server starting with raw IP sockets (requires root privileges)");
-        let _ = status_tx.send("[INFO] IGMP server starting with raw IP sockets (requires root privileges)".to_string());
+        console_info!(status_tx, "[INFO] IGMP server starting with raw IP sockets (requires root privileges)");
 
         // Create raw socket for IGMP (protocol 2)
         // This requires CAP_NET_RAW capability or root privileges
@@ -238,26 +237,23 @@ impl IgmpServer {
                         };
                         drop(state);
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_info!(status_tx, "__UPDATE_UI__");
 
                         // Parse IGMP message
                         let igmp_msg = match IgmpMessage::parse(&data) {
                             Ok(msg) => msg,
                             Err(e) => {
-                                debug!("IGMP received non-IGMP packet ({} bytes): {}", data.len(), e);
-                                let _ = status_tx.send(format!("[DEBUG] IGMP received non-IGMP packet ({} bytes): {}", data.len(), e));
+                                console_debug!(status_tx, "[DEBUG] IGMP received non-IGMP packet ({} bytes): {}", data.len(), e);
                                 continue;
                             }
                         };
 
                         // DEBUG: Log summary
-                        debug!("IGMP received from {}: {}", peer_addr, igmp_msg.description());
-                        let _ = status_tx.send(format!("[DEBUG] IGMP received from {}: {}", peer_addr, igmp_msg.description()));
+                        console_debug!(status_tx, "[DEBUG] IGMP received from {}: {}", peer_addr, igmp_msg.description());
 
                         // TRACE: Log full payload
                         let hex_str = hex::encode(&data);
-                        trace!("IGMP data (hex): {}", hex_str);
-                        let _ = status_tx.send(format!("[TRACE] IGMP data (hex): {}", hex_str));
+                        console_trace!(status_tx, "[TRACE] IGMP data (hex): {}", hex_str);
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -378,6 +374,7 @@ impl IgmpServer {
 
                                     // Process async custom actions (join_group/leave_group)
                                     use crate::llm::actions::protocol_trait::ActionResult;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                                     for protocol_result in &execution_result.protocol_results {
                                         if let ActionResult::Custom { name, data } = protocol_result {
                                             match name.as_str() {

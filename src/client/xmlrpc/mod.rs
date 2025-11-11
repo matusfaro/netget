@@ -18,6 +18,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::xmlrpc::actions::{XMLRPC_CLIENT_CONNECTED_EVENT, XMLRPC_CLIENT_RESPONSE_RECEIVED_EVENT};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// XML-RPC client that calls methods on remote servers
 pub struct XmlRpcClient;
@@ -53,8 +54,8 @@ impl XmlRpcClient {
 
         // Update status
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] XML-RPC client {} ready for {}", client_id, server_url));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] XML-RPC client {} ready for {}", client_id, server_url);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Call LLM with initial connected event to trigger first action
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -327,8 +328,7 @@ impl XmlRpcClient {
                 Err(anyhow::anyhow!("XML-RPC error: {}", fault_msg))
             }
             Err(e) => {
-                error!("XML-RPC client {} call failed: {}", client_id, e);
-                let _ = status_tx.send(format!("[ERROR] XML-RPC call failed: {}", e));
+                console_error!(status_tx, "[ERROR] XML-RPC call failed: {}", e);
                 Err(e.into())
             }
         }

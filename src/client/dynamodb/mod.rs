@@ -79,13 +79,8 @@ impl DynamoDbClient {
 
         // Update status
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!(
-            "[CLIENT] DynamoDB client {} ready for region {}{}",
-            client_id,
-            region,
-            endpoint_url.as_ref().map(|e| format!(" (endpoint: {})", e)).unwrap_or_default()
-        ));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] DynamoDB client {} ready for region {}{}");
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Spawn background monitor task
         tokio::spawn(async move {
@@ -380,6 +375,7 @@ impl DynamoDbClient {
         map: &std::collections::HashMap<String, aws_sdk_dynamodb::types::AttributeValue>,
     ) -> serde_json::Value {
         use aws_sdk_dynamodb::types::AttributeValue;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         let mut json_map = serde_json::Map::new();
         for (key, value) in map {

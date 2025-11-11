@@ -61,8 +61,7 @@ impl PostgresqlServer {
         let listener = TcpListener::bind(listen_addr).await?;
         let actual_addr = listener.local_addr()?;
 
-        info!("PostgreSQL server starting on {}", actual_addr);
-        let _ = status_tx.send(format!("[INFO] PostgreSQL server listening on {}", actual_addr));
+        console_info!(status_tx, "[INFO] PostgreSQL server listening on {}", actual_addr);
 
         let server = Arc::new(PostgresqlServer::new(
             llm_client,
@@ -78,8 +77,7 @@ impl PostgresqlServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, addr)) => {
-                        debug!("PostgreSQL connection from {}", addr);
-                        let _ = status_tx.send(format!("[DEBUG] PostgreSQL connection from {}", addr));
+                        console_debug!(status_tx, "[DEBUG] PostgreSQL connection from {}", addr);
 
                         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(actual_addr);
@@ -96,6 +94,7 @@ impl PostgresqlServer {
                         // Track the connection
                         if let Some(server_id) = server.server_id {
                             use crate::state::server::{
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                                 ConnectionState as ServerConnectionState, ConnectionStatus,
                                 ProtocolConnectionInfo,
                             };
@@ -132,8 +131,7 @@ impl PostgresqlServer {
                         });
                     }
                     Err(e) => {
-                        error!("PostgreSQL accept error: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] PostgreSQL accept error: {}", e));
+                        console_error!(status_tx, "[ERROR] PostgreSQL accept error: {}", e);
                     }
                 }
             }
@@ -344,10 +342,7 @@ impl SimpleQueryHandler for PostgresqlHandler {
                                         .unwrap_or("Unknown error")
                                         .to_string();
 
-                                    let _ = self.status_tx.send(format!(
-                                        "[ERROR] PostgreSQL error {} {}: {}",
-                                        severity, code, message
-                                    ));
+                                    console_error!(self.status_tx, "[ERROR] PostgreSQL error {} {}: {}");
 
                                     return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
                                         severity,
@@ -448,13 +443,11 @@ impl ExtendedQueryHandler for PostgresqlHandler {
         match llm_result {
             Ok(execution_result) => {
                 let num_results = execution_result.protocol_results.len();
-                debug!("Extended query handler received {} protocol results", num_results);
-                let _ = self.status_tx.send(format!("[DEBUG] Extended query handler received {num_results} protocol results"));
+                console_debug!(self.status_tx, "[DEBUG] Extended query handler received {num_results} protocol results");
 
                 // Process action results to find PostgreSQL responses
                 for (idx, result) in execution_result.protocol_results.into_iter().enumerate() {
-                    debug!("Processing protocol result {}: {:?}", idx, result);
-                    let _ = self.status_tx.send(format!("[DEBUG] Processing protocol result {idx}: {result:?}"));
+                    console_debug!(self.status_tx, "[DEBUG] Processing protocol result {idx}: {result:?}");
 
                     match result {
                         ActionResult::Custom { name, data } => {
@@ -470,8 +463,7 @@ impl ExtendedQueryHandler for PostgresqlHandler {
                                         .cloned()
                                         .unwrap_or_default();
 
-                                    debug!("Found postgresql_query_response with {} columns and {} rows", columns.len(), rows.len());
-                                    let _ = self.status_tx.send(format!("[DEBUG] Found postgresql_query_response with {} columns and {} rows", columns.len(), rows.len()));
+                                    console_debug!(self.status_tx, "[DEBUG] Found postgresql_query_response with {} columns and {} rows", columns.len(), rows.len());
 
                                     // Convert columns to FieldInfo
                                     let field_infos: Vec<FieldInfo> = columns
@@ -546,10 +538,7 @@ impl ExtendedQueryHandler for PostgresqlHandler {
                                         .unwrap_or("Unknown error")
                                         .to_string();
 
-                                    let _ = self.status_tx.send(format!(
-                                        "[ERROR] PostgreSQL error {} {}: {}",
-                                        severity, code, message
-                                    ));
+                                    console_error!(self.status_tx, "[ERROR] PostgreSQL error {} {}: {}");
 
                                     return Err(PgWireError::UserError(Box::new(ErrorInfo::new(
                                         severity,
@@ -577,13 +566,11 @@ impl ExtendedQueryHandler for PostgresqlHandler {
                 }
 
                 // No PostgreSQL-specific response found, return empty result set
-                warn!("Extended query handler: No PostgreSQL response found in {} results, returning OK", num_results);
-                let _ = self.status_tx.send(format!("[WARN] No PostgreSQL response action found from LLM after processing {} results", num_results));
+                console_warn!(self.status_tx, "[WARN] No PostgreSQL response action found from LLM after processing {} results", num_results);
 
                 // For SELECT queries, return an empty result set instead of OK
                 if sql.trim_start().to_uppercase().starts_with("SELECT") {
-                    debug!("Returning empty result set for SELECT query");
-                    let _ = self.status_tx.send("[DEBUG] Returning empty result set for SELECT query".to_string());
+                    console_debug!(self.status_tx, "[DEBUG] Returning empty result set for SELECT query");
                     let empty_fields = vec![];
                     let empty_stream = futures::stream::empty();
                     Ok(Response::Query(QueryResponse::new(
@@ -595,14 +582,12 @@ impl ExtendedQueryHandler for PostgresqlHandler {
                 }
             }
             Err(e) => {
-                error!("LLM error for PostgreSQL query (extended): {}", e);
-                let _ = self.status_tx.send(format!("[ERROR] LLM error (extended): {}", e));
+                console_error!(self.status_tx, "[ERROR] LLM error (extended): {}", e);
 
                 // For SELECT queries, try to return an empty result set instead of error
                 // This prevents the client from seeing "invalid column" errors
                 if sql.trim_start().to_uppercase().starts_with("SELECT") {
-                    warn!("Returning empty result set for SELECT after LLM error");
-                    let _ = self.status_tx.send("[WARN] Returning empty result set after LLM error".to_string());
+                    console_warn!(self.status_tx, "[WARN] Returning empty result set after LLM error");
                     let empty_fields = vec![];
                     let empty_stream = futures::stream::empty();
                     Ok(Response::Query(QueryResponse::new(

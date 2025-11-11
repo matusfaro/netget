@@ -16,6 +16,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::npm::actions::{NPM_CLIENT_PACKAGE_INFO_RECEIVED_EVENT, NPM_CLIENT_SEARCH_RESULTS_RECEIVED_EVENT};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// NPM Registry client that queries packages
 pub struct NpmClient;
@@ -61,8 +62,8 @@ impl NpmClient {
 
         // Update status
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] NPM client {} ready for {}", client_id, registry_url));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] NPM client {} ready for {}", client_id, registry_url);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Spawn background task to monitor for disconnection
         tokio::spawn(async move {
@@ -121,8 +122,7 @@ impl NpmClient {
 
                 if !status.is_success() {
                     let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-                    error!("NPM client {} failed to get package {}: {} - {}", client_id, package_name, status, error_text);
-                    let _ = status_tx.send(format!("[ERROR] NPM request failed: {} - {}", status, error_text));
+                    console_error!(status_tx, "[ERROR] NPM request failed: {} - {}", status, error_text);
                     return Err(anyhow::anyhow!("NPM request failed: {}", status));
                 }
 
@@ -202,8 +202,7 @@ impl NpmClient {
                 Ok(())
             }
             Err(e) => {
-                error!("NPM client {} request failed: {}", client_id, e);
-                let _ = status_tx.send(format!("[ERROR] NPM request failed: {}", e));
+                console_error!(status_tx, "[ERROR] NPM request failed: {}", e);
                 Err(e.into())
             }
         }
@@ -239,8 +238,7 @@ impl NpmClient {
 
                 if !status.is_success() {
                     let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-                    error!("NPM client {} search failed: {} - {}", client_id, status, error_text);
-                    let _ = status_tx.send(format!("[ERROR] NPM search failed: {} - {}", status, error_text));
+                    console_error!(status_tx, "[ERROR] NPM search failed: {} - {}", status, error_text);
                     return Err(anyhow::anyhow!("NPM search failed: {}", status));
                 }
 
@@ -307,8 +305,7 @@ impl NpmClient {
                 Ok(())
             }
             Err(e) => {
-                error!("NPM client {} search failed: {}", client_id, e);
-                let _ = status_tx.send(format!("[ERROR] NPM search failed: {}", e));
+                console_error!(status_tx, "[ERROR] NPM search failed: {}", e);
                 Err(e.into())
             }
         }
@@ -375,8 +372,7 @@ impl NpmClient {
         tokio::fs::write(&output_path, bytes).await
             .context("Failed to write tarball")?;
 
-        info!("NPM client {} downloaded tarball to: {}", client_id, output_path);
-        let _ = status_tx.send(format!("[CLIENT] NPM tarball downloaded to: {}", output_path));
+        console_info!(status_tx, "[CLIENT] NPM tarball downloaded to: {}", output_path);
 
         Ok(())
     }

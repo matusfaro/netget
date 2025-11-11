@@ -30,8 +30,7 @@ impl RipServer {
     ) -> Result<SocketAddr> {
         let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
         let local_addr = socket.local_addr()?;
-        info!("RIP server (action-based) listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] RIP server listening on {}", local_addr));
+        console_info!(status_tx, "[INFO] RIP server listening on {}", local_addr);
 
         let protocol = Arc::new(RipProtocol::new());
 
@@ -47,6 +46,7 @@ impl RipServer {
 
                         // Add connection to ServerInstance (RIP "connection" = recent peer)
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -62,12 +62,11 @@ impl RipServer {
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_info!(status_tx, "__UPDATE_UI__");
 
                         // Parse RIP packet to determine message type
                         if n < 4 {
-                            debug!("RIP received invalid packet (too short: {} bytes) from {}", n, peer_addr);
-                            let _ = status_tx.send(format!("[DEBUG] RIP received invalid packet (too short: {} bytes) from {}", n, peer_addr));
+                            console_debug!(status_tx, "[DEBUG] RIP received invalid packet (too short: {} bytes) from {}", n, peer_addr);
                             continue;
                         }
 
@@ -76,19 +75,11 @@ impl RipServer {
                         let num_entries = (n - 4) / 20;
 
                         // DEBUG: Log summary
-                        debug!(
-                            "RIP received {} bytes from {} (cmd={}, ver={}, entries={})",
-                            n, peer_addr, command, version, num_entries
-                        );
-                        let _ = status_tx.send(format!(
-                            "[DEBUG] RIP received {} bytes from {} (cmd={}, ver={}, entries={})",
-                            n, peer_addr, command, version, num_entries
-                        ));
+                        console_debug!(status_tx, "[DEBUG] RIP received {} bytes from {} (cmd={}, ver={}, entries={})");
 
                         // TRACE: Log full payload (hex)
                         let hex_str = hex::encode(&data);
-                        trace!("RIP data (hex): {}", hex_str);
-                        let _ = status_tx.send(format!("[TRACE] RIP data (hex): {}", hex_str));
+                        console_trace!(status_tx, "[TRACE] RIP data (hex): {}", hex_str);
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -203,8 +194,7 @@ impl RipServer {
                         });
                     }
                     Err(e) => {
-                        error!("RIP receive error: {}", e);
-                        let _ = status_tx.send(format!("✗ RIP receive error: {}", e));
+                        console_error!(status_tx, "✗ RIP receive error: {}", e);
                         break;
                     }
                 }

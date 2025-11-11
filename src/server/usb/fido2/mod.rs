@@ -191,6 +191,7 @@ impl usbip::UsbInterfaceHandler for Fido2HidHandler {
         data: &[u8],
     ) -> std::result::Result<Vec<u8>, std::io::Error> {
         use crate::server::usb::common::{descriptor_type, hid_request, request, request_type};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         // Check if this is a control transfer (endpoint 0) or data transfer
         if endpoint.address == 0 {
@@ -356,11 +357,7 @@ impl UsbFido2Server {
         // Create USB/IP server (not wrapped in Arc - usbip::server takes ownership)
         let server = usbip::UsbIpServer::new_simulated(vec![device]);
 
-        info!("USB FIDO2 server starting on {}", listen_addr);
-        let _ = status_tx.send(format!(
-            "USB FIDO2/U2F Security Key starting on {} (connect with 'usbip attach')",
-            listen_addr
-        ));
+        console_info!(status_tx, "USB FIDO2/U2F Security Key starting on {} (connect with 'usbip attach')");
 
         // Spawn USB/IP protocol server (creates its own TCP listener)
         tokio::spawn(async move {

@@ -83,12 +83,11 @@ impl SshAgentClient {
             .await
             .context(format!("Failed to connect to SSH Agent at {:?}", socket_path))?;
 
-        info!("SSH Agent client {} connected", client_id);
 
         // Update client state
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] SSH Agent client {} connected to {:?}", client_id, socket_path));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] SSH Agent client {} connected to {:?}", client_id, socket_path);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Split stream
         let (mut read_half, write_half) = tokio::io::split(stream);
@@ -179,10 +178,9 @@ impl SshAgentClient {
             loop {
                 match read_half.read(&mut buffer).await {
                     Ok(0) => {
-                        info!("SSH Agent client {} disconnected", client_id);
                         app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                        let _ = status_tx.send(format!("[CLIENT] SSH Agent client {} disconnected", client_id));
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_info!(status_tx, "[CLIENT] SSH Agent client {} disconnected", client_id);
+                        console_info!(status_tx, "__UPDATE_UI__");
                         break;
                     }
                     Ok(n) => {
@@ -229,6 +227,7 @@ impl SshAgentClient {
                                                     // Execute actions
                                                     for action in actions {
                                                         use crate::llm::actions::client_trait::Client;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                                                         match protocol.as_ref().execute_action(action) {
                                                             Ok(ClientActionResult::Custom { name, data }) => {
                                                                 if let Err(e) = Self::handle_custom_action(

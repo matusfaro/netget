@@ -313,8 +313,7 @@ async fn handle_llm_response(
                         if let Some(llm_on_invalid) = data.get("llm_on_invalid").and_then(|v| v.as_bool()) {
                             let mut state = openapi_state.write().await;
                             state.llm_on_invalid = llm_on_invalid;
-                            info!("OpenAPI llm_on_invalid set to: {}", llm_on_invalid);
-                            let _ = status_tx.send(format!("[INFO] OpenAPI llm_on_invalid: {}", llm_on_invalid));
+                            console_info!(status_tx, "[INFO] OpenAPI llm_on_invalid: {}", llm_on_invalid);
                         }
                     }
                     _ => {
@@ -350,15 +349,13 @@ async fn handle_llm_response(
         // Try to parse spec
         match openapi_rs::model::parse::OpenAPI::yaml(&spec) {
             Ok(parsed_spec) => {
-                info!("OpenAPI spec loaded successfully: {} bytes", spec.len());
-                let _ = status_tx.send(format!("[INFO] OpenAPI spec loaded: {} bytes", spec.len()));
+                console_info!(status_tx, "[INFO] OpenAPI spec loaded: {} bytes", spec.len());
 
                 // Build router from parsed spec
                 match build_router(&parsed_spec) {
                     Ok(router) => {
                         let route_count = parsed_spec.paths.len();
-                        info!("Built OpenAPI router with {} routes", route_count);
-                        let _ = status_tx.send(format!("[INFO] Built OpenAPI router with {} routes", route_count));
+                        console_info!(status_tx, "[INFO] Built OpenAPI router with {} routes", route_count);
 
                         state.spec = Some(spec);
                         state.spec_valid = true;
@@ -366,16 +363,14 @@ async fn handle_llm_response(
                         state.router = Some(router);
                     }
                     Err(e) => {
-                        error!("Failed to build OpenAPI router: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to build router: {}", e));
+                        console_error!(status_tx, "[ERROR] Failed to build router: {}", e);
                         state.spec = Some(spec);
                         state.spec_valid = false;
                     }
                 }
             }
             Err(e) => {
-                error!("Failed to parse OpenAPI spec: {}", e);
-                let _ = status_tx.send(format!("[ERROR] Failed to parse OpenAPI spec: {}", e));
+                console_error!(status_tx, "[ERROR] Failed to parse OpenAPI spec: {}", e);
                 state.spec = Some(spec);
                 state.spec_valid = false;
             }
@@ -392,10 +387,7 @@ async fn handle_llm_response(
         response_headers.insert("content-type".to_string(), "application/json".to_string());
     }
 
-    let _ = status_tx.send(format!(
-        "→ OpenAPI {} {} → {} ({} bytes)",
-        method, path, status_code, response_body.len()
-    ));
+    console_info!(status_tx, "→ OpenAPI {} {} → {} ({} bytes)");
 
     // Build the HTTP response
     let mut response = Response::builder().status(status_code);
@@ -457,14 +449,12 @@ impl OpenApiServer {
             // Extract required spec parameter
             let spec_content = if let Some(spec_str) = params.get_optional_string("spec") {
                 // Spec provided (LLM must read file and provide content)
-                info!("OpenAPI spec provided via startup_params ({} bytes)", spec_str.len());
-                let _ = status_tx.send(format!("[INFO] OpenAPI spec provided ({} bytes)", spec_str.len()));
+                console_info!(status_tx, "[INFO] OpenAPI spec provided ({} bytes)", spec_str.len());
                 Some(spec_str)
             } else {
                 // spec parameter is required
                 let msg = "OpenAPI server requires 'spec' parameter in startup_params. LLM must read the spec file and provide content.";
-                error!("{}", msg);
-                let _ = status_tx.send(format!("[ERROR] {}", msg));
+                console_error!(status_tx, "[ERROR] {}", msg);
                 return Err(anyhow::anyhow!(msg));
             };
 
@@ -478,8 +468,7 @@ impl OpenApiServer {
                         match build_router(&parsed) {
                             Ok(router) => {
                                 let route_count = parsed.paths.len();
-                                info!("Successfully built OpenAPI router with {} routes", route_count);
-                                let _ = status_tx.send(format!("[INFO] Built OpenAPI router with {} routes", route_count));
+                                console_info!(status_tx, "[INFO] Built OpenAPI router with {} routes", route_count);
                                 state.parsed_spec = Some(parsed);
                                 state.router = Some(router);
                                 state.spec_valid = true;
@@ -487,8 +476,7 @@ impl OpenApiServer {
                             }
                             Err(e) => {
                                 let msg = format!("Failed to build router: {}", e);
-                                error!("{}", msg);
-                                let _ = status_tx.send(format!("[ERROR] {}", msg));
+                                console_error!(status_tx, "[ERROR] {}", msg);
                                 state.spec_valid = false;
                                 return Err(anyhow::anyhow!(msg));
                             }
@@ -496,8 +484,7 @@ impl OpenApiServer {
                     }
                     Err(e) => {
                         let msg = format!("Failed to parse OpenAPI spec: {}", e);
-                        error!("{}", msg);
-                        let _ = status_tx.send(format!("[ERROR] {}", msg));
+                        console_error!(status_tx, "[ERROR] {}", msg);
                         state.spec_valid = false;
                         return Err(anyhow::anyhow!(msg));
                     }
@@ -510,18 +497,15 @@ impl OpenApiServer {
         };
 
         if !spec_loaded {
-            info!("Starting OpenAPI server (spec will be provided by LLM on first request)...");
-            let _ = status_tx.send("[INFO] Starting OpenAPI server...".to_string());
+            console_info!(status_tx, "[INFO] Starting OpenAPI server...");
         } else {
-            info!("Starting OpenAPI server with pre-loaded spec...");
-            let _ = status_tx.send("[INFO] Starting OpenAPI server with pre-loaded spec...".to_string());
+            console_info!(status_tx, "[INFO] Starting OpenAPI server with pre-loaded spec...");
         }
 
         // Start HTTP server
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("OpenAPI server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] OpenAPI server listening on {}", local_addr));
+        console_info!(status_tx, "[INFO] OpenAPI server listening on {}", local_addr);
 
         // Spawn server loop
         tokio::spawn(async move {
@@ -530,11 +514,11 @@ impl OpenApiServer {
                     Ok((stream, remote_addr)) => {
                         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        info!("OpenAPI connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!("[INFO] OpenAPI connection from {}", remote_addr));
+                        console_info!(status_tx, "[INFO] OpenAPI connection from {}", remote_addr);
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -550,7 +534,7 @@ impl OpenApiServer {
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_info!(status_tx, "__UPDATE_UI__");
 
                         let llm_client_clone = llm_client.clone();
                         let app_state_clone = app_state.clone();
@@ -598,8 +582,7 @@ impl OpenApiServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept OpenAPI connection: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to accept OpenAPI connection: {}", e));
+                        console_error!(status_tx, "[ERROR] Failed to accept OpenAPI connection: {}", e);
                         break;
                     }
                 }
@@ -651,31 +634,24 @@ async fn handle_openapi_request(
         body_bytes.len(),
         connection_id
     );
-    let _ = status_tx.send(format!(
-        "[DEBUG] OpenAPI {} {} ({} bytes)",
-        method, path, body_bytes.len()
-    ));
+    console_debug!(status_tx, "[DEBUG] OpenAPI {} {} ({} bytes)");
 
     // TRACE: Log full request details
     trace!("OpenAPI request headers:");
     for (name, value) in &headers {
-        trace!("  {}: {}", name, value);
-        let _ = status_tx.send(format!("[TRACE] OpenAPI header: {}: {}", name, value));
+        console_trace!(status_tx, "[TRACE] OpenAPI header: {}: {}", name, value);
     }
     if !body_bytes.is_empty() {
         if let Ok(body_str) = std::str::from_utf8(&body_bytes) {
             // Try to pretty-print if it's JSON
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(body_str) {
                 let pretty = serde_json::to_string_pretty(&json).unwrap_or(body_str.to_string());
-                trace!("OpenAPI request body (JSON):\n{}", pretty);
-                let _ = status_tx.send(format!("[TRACE] OpenAPI request body (JSON):\r\n{}", pretty.replace('\n', "\r\n")));
+                console_trace!(status_tx, "[TRACE] OpenAPI request body (JSON):\r\n{}", pretty.replace('\n', "\r\n"));
             } else {
-                trace!("OpenAPI request body:\n{}", body_str);
-                let _ = status_tx.send(format!("[TRACE] OpenAPI request body:\r\n{}", body_str.replace('\n', "\r\n")));
+                console_trace!(status_tx, "[TRACE] OpenAPI request body:\r\n{}", body_str.replace('\n', "\r\n"));
             }
         } else {
-            trace!("OpenAPI request body (binary): {} bytes", body_bytes.len());
-            let _ = status_tx.send(format!("[TRACE] OpenAPI request body (binary): {} bytes", body_bytes.len()));
+            console_trace!(status_tx, "[TRACE] OpenAPI request body (binary): {} bytes", body_bytes.len());
         }
     }
 
@@ -711,8 +687,7 @@ async fn handle_openapi_request(
                 if !llm_on_invalid {
                     let body_text = String::from_utf8_lossy(&body_bytes);
                     if let Err(e) = validate_request(&metadata.operation_json, &method, &path, &headers, &body_text) {
-                        warn!("OpenAPI validation error: {}", e);
-                        let _ = status_tx.send(format!("[WARN] OpenAPI validation error: {}", e));
+                        console_warn!(status_tx, "[WARN] OpenAPI validation error: {}", e);
                         return Ok(immediate_400(e.to_string()));
                     }
                 }
@@ -753,8 +728,7 @@ async fn handle_openapi_request(
                         ).await;
                     }
                     Err(e) => {
-                        error!("LLM error generating OpenAPI response: {}", e);
-                        let _ = status_tx.send(format!("✗ LLM error for {} {}: {}", method, path, e));
+                        console_error!(status_tx, "✗ LLM error for {} {}: {}", method, path, e);
                         return Ok(Response::builder()
                             .status(500)
                             .header("Content-Type", "application/json")
@@ -772,8 +746,7 @@ async fn handle_openapi_request(
                     debug!("OpenAPI 405 Method Not Allowed (LLM will handle): {} {}", method, path);
                 } else {
                     // Immediate 405 response
-                    info!("OpenAPI 405 Method Not Allowed: {} {} (allowed: {})", method, path, allowed_methods.join(", "));
-                    let _ = status_tx.send(format!("[INFO] OpenAPI 405: {} {} (allowed: {})", method, path, allowed_methods.join(", ")));
+                    console_info!(status_tx, "[INFO] OpenAPI 405: {} {} (allowed: {})", method, path, allowed_methods.join(", "));
                     return Ok(immediate_405(allowed_methods));
                 }
             }
@@ -783,8 +756,7 @@ async fn handle_openapi_request(
                     debug!("OpenAPI 404 Not Found (LLM will handle): {} {}", method, path);
                 } else {
                     // Immediate 404 response
-                    info!("OpenAPI 404 Not Found: {} {}", method, path);
-                    let _ = status_tx.send(format!("[INFO] OpenAPI 404: {} {}", method, path));
+                    console_info!(status_tx, "[INFO] OpenAPI 404: {} {}", method, path);
                     return Ok(immediate_404());
                 }
             }
@@ -836,8 +808,7 @@ async fn handle_openapi_request(
                 .unwrap())
         }
         Err(e) => {
-            error!("LLM error generating OpenAPI response: {}", e);
-            let _ = status_tx.send(format!("✗ LLM error for {} {}: {}", method, path, e));
+            console_error!(status_tx, "✗ LLM error for {} {}: {}", method, path, e);
 
             Ok(Response::builder()
                 .status(500)

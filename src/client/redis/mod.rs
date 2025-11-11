@@ -19,6 +19,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::redis::actions::REDIS_CLIENT_RESPONSE_RECEIVED_EVENT;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Redis client that connects to a Redis server
 pub struct RedisClient;
@@ -40,12 +41,11 @@ impl RedisClient {
         let local_addr = stream.local_addr()?;
         let remote_sock_addr = stream.peer_addr()?;
 
-        info!("Redis client {} connected to {} (local: {})", client_id, remote_sock_addr, local_addr);
 
         // Update client state
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] Redis client {} connected", client_id));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] Redis client {} connected", client_id);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Split stream
         let (read_half, write_half) = tokio::io::split(stream);
@@ -60,10 +60,9 @@ impl RedisClient {
                 let mut line = String::new();
                 match reader.read_line(&mut line).await {
                     Ok(0) => {
-                        info!("Redis client {} disconnected", client_id);
                         app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                        let _ = status_tx.send(format!("[CLIENT] Redis client {} disconnected", client_id));
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_info!(status_tx, "[CLIENT] Redis client {} disconnected", client_id);
+                        console_info!(status_tx, "__UPDATE_UI__");
                         break;
                     }
                     Ok(_) => {
@@ -123,9 +122,8 @@ impl RedisClient {
                         }
                     }
                     Err(e) => {
-                        error!("Redis client {} read error: {}", client_id, e);
                         app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_error!(status_tx, "__UPDATE_UI__");
                         break;
                     }
                 }

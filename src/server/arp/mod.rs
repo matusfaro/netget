@@ -21,6 +21,7 @@ use crate::llm::ollama_client::OllamaClient;
 use actions::{ArpProtocol, ARP_REQUEST_RECEIVED_EVENT};
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Get LLM context and output format instructions for ARP stack
 pub fn get_llm_protocol_prompt() -> (&'static str, &'static str) {
@@ -64,8 +65,7 @@ impl ArpServer {
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
     ) -> Result<String> {
-        info!("Starting ARP capture on interface: {}", interface);
-        let _ = status_tx.send(format!("[INFO] Starting ARP capture on interface: {}", interface));
+        console_info!(status_tx, "[INFO] Starting ARP capture on interface: {}", interface);
 
         let protocol = Arc::new(ArpProtocol::new());
 
@@ -77,8 +77,7 @@ impl ArpServer {
             let device = match Self::find_device(&interface_clone) {
                 Ok(d) => d,
                 Err(e) => {
-                    error!("Failed to find device: {}", e);
-                    let _ = status_tx.send(format!("[ERROR] Failed to find device: {}", e));
+                    console_error!(status_tx, "[ERROR] Failed to find device: {}", e);
                     return;
                 }
             };
@@ -90,16 +89,14 @@ impl ArpServer {
             {
                 Ok(c) => c,
                 Err(e) => {
-                    error!("Failed to open capture: {}", e);
-                    let _ = status_tx.send(format!("[ERROR] Failed to open capture: {}", e));
+                    console_error!(status_tx, "[ERROR] Failed to open capture: {}", e);
                     return;
                 }
             };
 
             // Apply ARP filter to receiving capture
             if let Err(e) = cap_rx.filter("arp", true) {
-                error!("Failed to apply ARP filter: {}", e);
-                let _ = status_tx.send(format!("[ERROR] Failed to apply ARP filter: {}", e));
+                console_error!(status_tx, "[ERROR] Failed to apply ARP filter: {}", e);
                 return;
             }
 
@@ -110,8 +107,7 @@ impl ArpServer {
             {
                 Ok(c) => c,
                 Err(e) => {
-                    error!("Failed to open capture for sending: {}", e);
-                    let _ = status_tx.send(format!("[ERROR] Failed to open capture for sending: {}", e));
+                    console_error!(status_tx, "[ERROR] Failed to open capture for sending: {}", e);
                     return;
                 }
             };
@@ -176,19 +172,11 @@ impl ArpServer {
                             target_mac,
                             target_ip
                         );
-                        let _ = status_tx.send(format!(
-                            "[DEBUG] ARP {} from {} ({}) for {} ({})",
-                            operation_to_string(operation),
-                            sender_mac,
-                            sender_ip,
-                            target_mac,
-                            target_ip
-                        ));
+                        console_debug!(status_tx, "[DEBUG] ARP {} from {} ({}) for {} ({})");
 
                         // TRACE: Log full packet
                         let hex_str = hex::encode(&data);
-                        trace!("ARP packet (hex): {}", hex_str);
-                        let _ = status_tx.send(format!("[TRACE] ARP packet (hex): {}", hex_str));
+                        console_trace!(status_tx, "[TRACE] ARP packet (hex): {}", hex_str);
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -270,8 +258,7 @@ impl ArpServer {
                         continue;
                     }
                     Err(e) => {
-                        error!("Packet capture error: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Packet capture error: {}", e));
+                        console_error!(status_tx, "[ERROR] Packet capture error: {}", e);
                         break;
                     }
                 }

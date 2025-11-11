@@ -30,11 +30,7 @@ impl SvnServer {
         let local_addr = listener.local_addr()?;
 
         // INFO: Log lifecycle event
-        info!("SVN server (action-based) listening on {}", local_addr);
-        let _ = status_tx.send(format!(
-            "[INFO] SVN server (action-based) listening on {}",
-            local_addr
-        ));
+        console_info!(status_tx, "[INFO] SVN server (action-based) listening on {}");
 
         let protocol = Arc::new(actions::SvnProtocol::new());
 
@@ -72,7 +68,7 @@ impl SvnServer {
                         app_state
                             .add_connection_to_server(server_id, conn_state)
                             .await;
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_info!(status_tx, "__UPDATE_UI__");
 
                         // DEBUG: Log connection summary
                         debug!("SVN client connected from {}", peer_addr);
@@ -101,8 +97,7 @@ impl SvnServer {
                     }
                     Err(e) => {
                         // ERROR: Critical failure
-                        error!("SVN accept error: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] SVN accept error: {}", e));
+                        console_error!(status_tx, "[ERROR] SVN accept error: {}", e);
                         break;
                     }
                 }
@@ -129,8 +124,7 @@ async fn handle_svn_connection(
     // Send greeting event to LLM
     let greeting_event = Event::new(&SVN_GREETING_EVENT, serde_json::json!({}));
 
-    debug!("SVN sending greeting to {}", peer_addr);
-    let _ = status_tx.send(format!("[DEBUG] SVN sending greeting to {}", peer_addr));
+    console_debug!(status_tx, "[DEBUG] SVN sending greeting to {}", peer_addr);
 
     match call_llm(
         &llm_client,
@@ -145,16 +139,14 @@ async fn handle_svn_connection(
         Ok(execution_result) => {
             // Display messages from LLM
             for message in &execution_result.messages {
-                info!("{}", message);
-                let _ = status_tx.send(format!("[INFO] {}", message));
+                console_info!(status_tx, "[INFO] {}", message);
             }
 
             // Send greeting responses
             for protocol_result in execution_result.protocol_results {
                 if let crate::llm::actions::protocol_trait::ActionResult::Output(output_data) = protocol_result {
                     if let Err(e) = writer.write_all(&output_data).await {
-                        error!("SVN write error: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] SVN write error: {}", e));
+                        console_error!(status_tx, "[ERROR] SVN write error: {}", e);
                         return;
                     }
 
@@ -170,14 +162,12 @@ async fn handle_svn_connection(
                         )
                         .await;
 
-                    trace!("SVN sent greeting: {}", String::from_utf8_lossy(&output_data));
-                    let _ = status_tx.send(format!("[TRACE] SVN sent greeting: {}", String::from_utf8_lossy(&output_data).trim()));
+                    console_trace!(status_tx, "[TRACE] SVN sent greeting: {}", String::from_utf8_lossy(&output_data).trim());
                 }
             }
         }
         Err(e) => {
-            error!("SVN LLM call failed during greeting: {}", e);
-            let _ = status_tx.send(format!("✗ SVN LLM error: {}", e));
+            console_error!(status_tx, "✗ SVN LLM error: {}", e);
             return;
         }
     }
@@ -199,7 +189,7 @@ async fn handle_svn_connection(
                 app_state
                     .update_connection_status(server_id, connection_id, ConnectionStatus::Closed)
                     .await;
-                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                console_info!(status_tx, "__UPDATE_UI__");
                 break;
             }
             Ok(n) => {
@@ -219,15 +209,10 @@ async fn handle_svn_connection(
                 let command_line = buffer.trim().to_string();
 
                 // DEBUG: Log summary
-                debug!("SVN received {} bytes from {}", n, peer_addr);
-                let _ = status_tx.send(format!(
-                    "[DEBUG] SVN received {} bytes from {}",
-                    n, peer_addr
-                ));
+                console_debug!(status_tx, "[DEBUG] SVN received {} bytes from {}");
 
                 // TRACE: Log full payload
-                trace!("SVN command: {}", command_line);
-                let _ = status_tx.send(format!("[TRACE] SVN command: {}", command_line));
+                console_trace!(status_tx, "[TRACE] SVN command: {}", command_line);
 
                 // Parse SVN protocol command
                 let parsed_command = parse_svn_command(&command_line);
@@ -243,11 +228,7 @@ async fn handle_svn_connection(
                 );
 
                 // DEBUG: Log LLM call
-                debug!("SVN calling LLM for command from {}", peer_addr);
-                let _ = status_tx.send(format!(
-                    "[DEBUG] SVN calling LLM for command from {}",
-                    peer_addr
-                ));
+                console_debug!(status_tx, "[DEBUG] SVN calling LLM for command from {}");
 
                 // Call LLM
                 match call_llm(
@@ -263,19 +244,11 @@ async fn handle_svn_connection(
                     Ok(execution_result) => {
                         // Display messages from LLM
                         for message in &execution_result.messages {
-                            info!("{}", message);
-                            let _ = status_tx.send(format!("[INFO] {}", message));
+                            console_info!(status_tx, "[INFO] {}", message);
                         }
 
                         // DEBUG: Log protocol results count
-                        debug!(
-                            "SVN got {} protocol results",
-                            execution_result.protocol_results.len()
-                        );
-                        let _ = status_tx.send(format!(
-                            "[DEBUG] SVN got {} protocol results",
-                            execution_result.protocol_results.len()
-                        ));
+                        console_debug!(status_tx, "[DEBUG] SVN got {} protocol results");
 
                         // Send all outputs to client and check for close
                         let mut should_close = false;
@@ -303,29 +276,13 @@ async fn handle_svn_connection(
                                         .await;
 
                                     // DEBUG: Log summary
-                                    debug!("SVN sent {} bytes to {}", output_data.len(), peer_addr);
-                                    let _ = status_tx.send(format!(
-                                        "[DEBUG] SVN sent {} bytes to {}",
-                                        output_data.len(),
-                                        peer_addr
-                                    ));
+                                    console_debug!(status_tx, "[DEBUG] SVN sent {} bytes to {}");
 
                                     // TRACE: Log full payload
-                                    trace!(
-                                        "SVN response: {}",
-                                        String::from_utf8_lossy(&output_data)
-                                    );
-                                    let _ = status_tx.send(format!(
-                                        "[TRACE] SVN response: {}",
-                                        String::from_utf8_lossy(&output_data).trim()
-                                    ));
+                                    console_trace!(status_tx, "[TRACE] SVN response: {}");
 
                                     // INFO: User-facing message
-                                    let _ = status_tx.send(format!(
-                                        "→ SVN response to {} ({} bytes)",
-                                        peer_addr,
-                                        output_data.len()
-                                    ));
+                                    console_info!(status_tx, "→ SVN response to {} ({} bytes)");
                                 }
                                 crate::llm::actions::protocol_trait::ActionResult::CloseConnection => {
                                     should_close = true;
@@ -344,8 +301,7 @@ async fn handle_svn_connection(
                     }
                     Err(e) => {
                         // ERROR: LLM call failed
-                        error!("SVN LLM call failed: {}", e);
-                        let _ = status_tx.send(format!("✗ SVN LLM error: {}", e));
+                        console_error!(status_tx, "✗ SVN LLM error: {}", e);
                         break;
                     }
                 }
@@ -362,10 +318,11 @@ async fn handle_svn_connection(
 
     // Update connection status to closed
     use crate::state::server::ConnectionStatus;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
     app_state
         .update_connection_status(server_id, connection_id, ConnectionStatus::Closed)
         .await;
-    let _ = status_tx.send("__UPDATE_UI__".to_string());
+    console_info!(status_tx, "__UPDATE_UI__");
 }
 
 #[derive(Debug, Clone)]

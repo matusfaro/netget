@@ -64,8 +64,8 @@ impl ElasticsearchClient {
 
         // Update status
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] Elasticsearch client {} ready for {}", client_id, cluster_url));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] Elasticsearch client {} ready for {}", client_id, cluster_url);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Call LLM with connected event to get initial instructions
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -97,6 +97,7 @@ impl ElasticsearchClient {
 
                     // Execute initial actions
                     use crate::llm::actions::client_trait::{Client, ClientActionResult};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                     for action in actions {
                         match protocol.execute_action(action) {
                             Ok(ClientActionResult::Custom { name, data }) => {

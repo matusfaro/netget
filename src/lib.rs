@@ -9,6 +9,7 @@ pub mod display;
 pub mod docs;
 pub mod events;
 pub mod llm;
+pub mod logging;
 pub mod privilege;
 pub mod protocol;
 pub mod scripting;

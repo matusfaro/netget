@@ -54,8 +54,8 @@ impl WebdavClient {
 
         // Update status
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] WebDAV client {} ready for {}", client_id, remote_addr));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] WebDAV client {} ready for {}", client_id, remote_addr);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Send initial connected event to LLM
         tokio::spawn(async move {
@@ -125,6 +125,7 @@ impl WebdavClient {
         _instruction: &str,
     ) -> Result<()> {
         use crate::llm::actions::client_trait::{Client, ClientActionResult};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         let result = protocol.as_ref().execute_action(action)?;
 
@@ -208,10 +209,9 @@ impl WebdavClient {
                 ).await?;
             }
             ClientActionResult::Disconnect => {
-                info!("WebDAV client {} disconnecting", client_id);
                 app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                let _ = status_tx.send(format!("[CLIENT] WebDAV client {} disconnected", client_id));
-                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                console_info!(status_tx, "[CLIENT] WebDAV client {} disconnected", client_id);
+                console_info!(status_tx, "__UPDATE_UI__");
             }
             _ => {
                 return Err(anyhow::anyhow!("Unexpected action result: {:?}", result));
@@ -344,8 +344,7 @@ impl WebdavClient {
                 Ok(())
             }
             Err(e) => {
-                error!("WebDAV client {} request failed: {}", client_id, e);
-                let _ = status_tx.send(format!("[ERROR] WebDAV request failed: {}", e));
+                console_error!(status_tx, "[ERROR] WebDAV request failed: {}", e);
                 Err(e.into())
             }
         }

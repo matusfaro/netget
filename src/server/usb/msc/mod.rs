@@ -93,11 +93,7 @@ impl UsbMscServer {
         let listener =
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("USB Mass Storage server listening on {}", local_addr);
-        let _ = status_tx.send(format!(
-            "USB Mass Storage server listening on {}",
-            local_addr
-        ));
+        console_info!(status_tx, "USB Mass Storage server listening on {}");
 
         let connections = Arc::new(Mutex::new(HashMap::new()));
         let protocol = Arc::new(crate::server::usb::msc::UsbMscProtocol::new());
@@ -116,6 +112,7 @@ impl UsbMscServer {
 
                         // Add connection to ServerInstance
                         use crate::state::server::{
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                             ConnectionState as ServerConnectionState, ConnectionStatus,
                             ProtocolConnectionInfo,
                         };
@@ -140,7 +137,7 @@ impl UsbMscServer {
                         app_state
                             .add_connection_to_server(server_id, conn_state)
                             .await;
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_info!(status_tx, "__UPDATE_UI__");
 
                         // Handle USB/IP connection
                         let llm_client_clone = llm_client.clone();
@@ -291,16 +288,7 @@ impl UsbMscServer {
             debug!("USB/IP server task completed for MSC connection");
         });
 
-        info!(
-            "USB MSC device exported via USB/IP on {} (connection {})",
-            usbip_addr, connection_id
-        );
-        let _ = status_tx.send(format!(
-            "USB MSC device ready: {} ({} MB, {} sectors)",
-            disk_path.display(),
-            disk_size_mb,
-            total_sectors
-        ));
+        console_info!(status_tx, "USB MSC device ready: {} ({} MB, {} sectors)");
 
         // Call LLM to notify device attached
         Self::call_llm_on_attach(

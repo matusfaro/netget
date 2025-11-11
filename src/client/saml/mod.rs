@@ -63,8 +63,8 @@ impl SamlClient {
 
         // Update status
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] SAML client {} ready for IdP: {}", client_id, remote_addr));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] SAML client {} ready for IdP: {}", client_id, remote_addr);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Spawn background task to monitor client lifecycle
         tokio::spawn(async move {
@@ -306,6 +306,7 @@ impl SamlClient {
     ) -> Result<(bool, String, Option<serde_json::Value>, Option<serde_json::Value>)> {
         use quick_xml::events::Event;
         use quick_xml::Reader;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         let mut reader = Reader::from_str(response_xml);
         reader.config_mut().trim_text(true);

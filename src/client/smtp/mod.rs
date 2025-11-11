@@ -55,8 +55,8 @@ impl SmtpClient {
 
         // Update status to connected
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] SMTP client {} ready for {}", client_id, remote_addr));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] SMTP client {} ready for {}", client_id, remote_addr);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Call LLM with connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -138,6 +138,7 @@ impl SmtpClient {
 
         // Build email message
         use lettre::message::Message;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
         let mut message_builder = Message::builder()
             .from(from.parse().context("Invalid 'from' address")?)
             .subject(subject);
@@ -180,8 +181,7 @@ impl SmtpClient {
             mailer.send(&email)
         }).await.context("Task join error")??;
 
-        info!("SMTP client {} sent email successfully: {:?}", client_id, result);
-        let _ = status_tx.send("[CLIENT] SMTP email sent successfully".to_string());
+        console_info!(status_tx, "[CLIENT] SMTP email sent successfully");
 
         // Call LLM with sent event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {

@@ -88,8 +88,7 @@ impl McpServer {
         let listener = tokio::net::TcpListener::bind(listen_addr).await?;
         let local_addr = listener.local_addr()?;
 
-        info!("MCP server (JSON-RPC 2.0) listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] MCP server listening on {}", local_addr));
+        console_info!(status_tx, "[INFO] MCP server listening on {}", local_addr);
 
         let protocol = Arc::new(McpProtocol::new());
         let sessions = Arc::new(Mutex::new(HashMap::new()));
@@ -112,8 +111,7 @@ impl McpServer {
         // Spawn server
         tokio::spawn(async move {
             if let Err(e) = axum::serve(listener, app).await {
-                error!("MCP server error: {}", e);
-                let _ = status_tx.send(format!("[ERROR] MCP server error: {}", e));
+                console_error!(status_tx, "[ERROR] MCP server error: {}", e);
             }
         });
 
@@ -737,6 +735,7 @@ async fn handle_prompts_get(
     // Process action results
     for protocol_result in &execution_result.protocol_results {
         use crate::llm::actions::protocol_trait::ActionResult;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
         if let ActionResult::Custom { name, data } = protocol_result {
             if name == "mcp_prompts_get" {
                 if let Some(response) = data.get("response") {

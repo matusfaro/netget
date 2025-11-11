@@ -30,8 +30,7 @@ impl XmppServer {
     ) -> Result<SocketAddr> {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("XMPP server (action-based) listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] XMPP server listening on {}", local_addr));
+        console_info!(status_tx, "[INFO] XMPP server listening on {}", local_addr);
 
         let protocol = Arc::new(XmppProtocol::new());
 
@@ -55,6 +54,7 @@ impl XmppServer {
 
                             // Add connection to ServerInstance
                             use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                             let now = std::time::Instant::now();
                             let conn_state = ServerConnectionState {
                                 id: connection_id,
@@ -185,8 +185,7 @@ impl XmppServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept XMPP connection: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to accept XMPP connection: {}", e));
+                        console_error!(status_tx, "[ERROR] Failed to accept XMPP connection: {}", e);
                         break;
                     }
                 }

@@ -42,8 +42,7 @@ impl PypiServer {
     ) -> anyhow::Result<SocketAddr> {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("PyPI server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] PyPI server listening on {}", local_addr));
+        console_info!(status_tx, "[INFO] PyPI server listening on {}", local_addr);
 
         let protocol = Arc::new(PypiProtocol::new());
 
@@ -54,11 +53,11 @@ impl PypiServer {
                     Ok((stream, remote_addr)) => {
                         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        info!("Accepted PyPI connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!("[INFO] Accepted PyPI connection {} from {}", connection_id, remote_addr));
+                        console_info!(status_tx, "[INFO] Accepted PyPI connection {} from {}", connection_id, remote_addr);
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -74,7 +73,7 @@ impl PypiServer {
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_info!(status_tx, "__UPDATE_UI__");
 
                         let llm_client_clone = llm_client.clone();
                         let app_state_clone = app_state.clone();
@@ -119,8 +118,7 @@ impl PypiServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept PyPI connection: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to accept PyPI connection: {}", e));
+                        console_error!(status_tx, "[ERROR] Failed to accept PyPI connection: {}", e);
                         break;
                     }
                 }
@@ -158,8 +156,7 @@ async fn handle_pypi_request_with_llm_actions(
     let body_bytes = match req.into_body().collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
-            error!("Failed to read request body: {}", e);
-            let _ = status_tx.send(format!("[ERROR] Failed to read request body: {}", e));
+            console_error!(status_tx, "[ERROR] Failed to read request body: {}", e);
             Bytes::new()
         }
     };
@@ -199,10 +196,7 @@ async fn handle_pypi_request_with_llm_actions(
         body_bytes.len(),
         connection_id
     );
-    let _ = status_tx.send(format!(
-        "[DEBUG] PyPI request: {} {} [{}] ({} bytes)",
-        method, uri, request_type, body_bytes.len()
-    ));
+    console_debug!(status_tx, "[DEBUG] PyPI request: {} {} [{}] ({} bytes)");
 
     // TRACE: Log full request details
     trace!("PyPI request headers:");
@@ -232,8 +226,7 @@ async fn handle_pypi_request_with_llm_actions(
         protocol.as_ref(),
     ).await {
         Ok(execution_result) => {
-            debug!("LLM PyPI response received");
-            let _ = status_tx.send("[DEBUG] LLM PyPI response received".to_string());
+            console_debug!(status_tx, "[DEBUG] LLM PyPI response received");
 
             // Display messages
             for msg in execution_result.messages {
@@ -267,10 +260,7 @@ async fn handle_pypi_request_with_llm_actions(
                 }
             }
 
-            let _ = status_tx.send(format!(
-                "→ PyPI {} {} → {} ({} bytes)",
-                method, uri, status_code, response_body.len()
-            ));
+            console_info!(status_tx, "→ PyPI {} {} → {} ({} bytes)");
 
             // Build the HTTP response
             let mut response = Response::builder().status(status_code);
@@ -283,8 +273,7 @@ async fn handle_pypi_request_with_llm_actions(
             Ok(response.body(Full::new(Bytes::from(response_body))).unwrap())
         }
         Err(e) => {
-            error!("LLM error generating PyPI response: {}", e);
-            let _ = status_tx.send(format!("✗ LLM error for {} {}: {}", method, uri, e));
+            console_error!(status_tx, "✗ LLM error for {} {}: {}", method, uri, e);
 
             Ok(Response::builder()
                 .status(500)

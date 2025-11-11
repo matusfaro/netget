@@ -73,8 +73,8 @@ impl KubernetesClient {
 
         // Update status
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] Kubernetes client {} ready for cluster", client_id));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] Kubernetes client {} ready for cluster", client_id);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Spawn a background task to monitor for client disconnection
         tokio::spawn(async move {
@@ -217,8 +217,7 @@ impl KubernetesClient {
                 Ok(())
             }
             Err(e) => {
-                error!("Kubernetes client {} operation failed: {}", client_id, e);
-                let _ = status_tx.send(format!("[ERROR] Kubernetes operation failed: {}", e));
+                console_error!(status_tx, "[ERROR] Kubernetes operation failed: {}", e);
                 Err(e)
             }
         }
@@ -390,6 +389,7 @@ impl KubernetesClient {
     ) -> Result<serde_json::Value> {
         use k8s_openapi::api::core::v1::Service;
         use kube::Api;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         let services: Api<Service> = Api::namespaced(client.clone(), namespace);
 

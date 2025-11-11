@@ -54,8 +54,8 @@ impl StunClient {
 
         // Update status
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] STUN client {} ready for {}", client_id, remote_addr));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] STUN client {} ready for {}", client_id, remote_addr);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Call LLM with connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -134,6 +134,7 @@ impl StunClient {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         use crate::llm::actions::client_trait::Client;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
         let protocol = Arc::new(StunClientProtocol::new());
 
         match protocol.as_ref().execute_action(action)? {
@@ -143,10 +144,9 @@ impl StunClient {
                 }
             }
             crate::llm::actions::client_trait::ClientActionResult::Disconnect => {
-                info!("STUN client {} disconnecting", client_id);
                 app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                let _ = status_tx.send(format!("[CLIENT] STUN client {} disconnected", client_id));
-                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                console_info!(status_tx, "[CLIENT] STUN client {} disconnected", client_id);
+                console_info!(status_tx, "__UPDATE_UI__");
             }
             _ => {}
         }
@@ -236,8 +236,7 @@ impl StunClient {
                 Ok(())
             }
             Err(e) => {
-                error!("STUN client {} binding request failed: {}", client_id, e);
-                let _ = status_tx.send(format!("[ERROR] STUN binding request failed: {}", e));
+                console_error!(status_tx, "[ERROR] STUN binding request failed: {}", e);
                 Err(e.into())
             }
         }

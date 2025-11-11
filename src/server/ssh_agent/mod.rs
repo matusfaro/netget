@@ -77,8 +77,7 @@ impl SshAgentServer {
         let listener = tokio::net::UnixListener::bind(&socket_path)
             .with_context(|| format!("Failed to bind to socket path: {:?}", socket_path))?;
 
-        info!("SSH Agent server listening on {:?}", socket_path);
-        let _ = status_tx.send(format!("SSH Agent server listening on {:?}", socket_path));
+        console_info!(status_tx, "SSH Agent server listening on {:?}", socket_path);
 
         let connections = Arc::new(Mutex::new(HashMap::new()));
         let protocol = Arc::new(SshAgentProtocol::new());
@@ -91,8 +90,7 @@ impl SshAgentServer {
                 match listener.accept().await {
                     Ok((stream, _)) => {
                         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
-                        info!("Accepted SSH Agent connection {}", connection_id);
-                        let _ = status_tx.send(format!("✓ SSH Agent connection {} opened", connection_id));
+                        console_info!(status_tx, "✓ SSH Agent connection {} opened", connection_id);
 
                         // Split stream
                         let (read_half, write_half) = tokio::io::split(stream);
@@ -100,6 +98,7 @@ impl SshAgentServer {
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         let dummy_addr = "127.0.0.1:0".parse().unwrap();
                         let conn_state = ServerConnectionState {
@@ -119,7 +118,7 @@ impl SshAgentServer {
                             })),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_info!(status_tx, "__UPDATE_UI__");
 
                         // Handle connection with LLM integration
                         let llm_client_clone = llm_client.clone();
@@ -572,8 +571,8 @@ impl SshAgentServer {
             ActionResult::CloseConnection => {
                 connections.lock().await.remove(&connection_id);
                 app_state.close_connection_on_server(server_id, connection_id).await;
-                let _ = status_tx.send(format!("✗ SSH Agent connection {} closed", connection_id));
-                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                console_error!(status_tx, "✗ SSH Agent connection {} closed", connection_id);
+                console_info!(status_tx, "__UPDATE_UI__");
             }
             _ => {}
         }

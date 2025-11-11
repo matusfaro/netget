@@ -39,8 +39,7 @@ impl MavenServer {
     ) -> anyhow::Result<SocketAddr> {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("Maven repository server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] Maven repository server listening on {}", local_addr));
+        console_info!(status_tx, "[INFO] Maven repository server listening on {}", local_addr);
 
         let protocol = Arc::new(MavenProtocol::new());
 
@@ -51,8 +50,7 @@ impl MavenServer {
                     Ok((stream, remote_addr)) => {
                         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        info!("Accepted Maven connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!("[INFO] Maven connection {} from {}", connection_id, remote_addr));
+                        console_info!(status_tx, "[INFO] Maven connection {} from {}", connection_id, remote_addr);
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
@@ -71,7 +69,7 @@ impl MavenServer {
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_info!(status_tx, "__UPDATE_UI__");
 
                         let llm_client_clone = llm_client.clone();
                         let app_state_clone = app_state.clone();
@@ -116,8 +114,7 @@ impl MavenServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept Maven connection: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to accept Maven connection: {}", e));
+                        console_error!(status_tx, "[ERROR] Failed to accept Maven connection: {}", e);
                         break;
                     }
                 }
@@ -279,27 +276,18 @@ async fn handle_maven_request_with_llm(
     let _body_bytes = match req.into_body().collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
-            error!("Failed to read request body: {}", e);
-            let _ = status_tx.send(format!("[ERROR] Failed to read request body: {}", e));
+            console_error!(status_tx, "[ERROR] Failed to read request body: {}", e);
             Bytes::new()
         }
     };
 
-    debug!("Maven request: {} {} from {:?}", method, uri, connection_id);
-    let _ = status_tx.send(format!("[DEBUG] Maven request: {} {}", method, uri));
+    console_debug!(status_tx, "[DEBUG] Maven request: {} {}", method, uri);
 
     // Parse Maven artifact from URI
     let artifact = MavenArtifact::parse(&uri);
 
     if let Some(ref art) = artifact {
-        trace!("Parsed Maven artifact: {:?}", art);
-        let _ = status_tx.send(format!(
-            "[TRACE] Maven artifact: {}:{}:{} ({})",
-            art.group_id,
-            art.artifact_id,
-            art.version.as_deref().unwrap_or("metadata"),
-            art.extension
-        ));
+        console_trace!(status_tx, "[TRACE] Maven artifact: {}:{}:{} ({})");
     }
 
     // Create Maven artifact request event
@@ -319,8 +307,7 @@ async fn handle_maven_request_with_llm(
         })
     } else {
         // Invalid Maven path format
-        debug!("Invalid Maven artifact path: {}", uri);
-        let _ = status_tx.send(format!("[DEBUG] Invalid Maven artifact path: {}", uri));
+        console_debug!(status_tx, "[DEBUG] Invalid Maven artifact path: {}", uri);
 
         return Ok(Response::builder()
             .status(404)
@@ -375,6 +362,7 @@ async fn handle_maven_request_with_llm(
                             } else if let Some(body_bytes) = json_value.get("body_base64").and_then(|v| v.as_str()) {
                                 // Support base64-encoded binary content
                                 use base64::Engine;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                                 if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(body_bytes) {
                                     response_body = decoded;
                                 }
@@ -384,10 +372,7 @@ async fn handle_maven_request_with_llm(
                 }
             }
 
-            let _ = status_tx.send(format!(
-                "→ Maven {} {} → {} ({} bytes)",
-                method, uri, status_code, response_body.len()
-            ));
+            console_info!(status_tx, "→ Maven {} {} → {} ({} bytes)");
 
             // Build the HTTP response
             let mut response = Response::builder().status(status_code);
@@ -400,8 +385,7 @@ async fn handle_maven_request_with_llm(
             Ok(response.body(Full::new(Bytes::from(response_body))).unwrap())
         }
         Err(e) => {
-            error!("LLM error generating Maven response: {}", e);
-            let _ = status_tx.send(format!("✗ LLM error for {} {}: {}", method, uri, e));
+            console_error!(status_tx, "✗ LLM error for {} {}: {}", method, uri, e);
 
             Ok(Response::builder()
                 .status(500)

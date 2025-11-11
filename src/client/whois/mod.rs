@@ -19,6 +19,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::whois::actions::{WHOIS_CLIENT_CONNECTED_EVENT, WHOIS_CLIENT_RESPONSE_RECEIVED_EVENT};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// WHOIS client that connects to a WHOIS server
 pub struct WhoisClient;
@@ -40,12 +41,11 @@ impl WhoisClient {
         let local_addr = stream.local_addr()?;
         let remote_sock_addr = stream.peer_addr()?;
 
-        info!("WHOIS client {} connected to {} (local: {})", client_id, remote_sock_addr, local_addr);
 
         // Update client state
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] WHOIS client {} connected", client_id));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] WHOIS client {} connected", client_id);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Split stream
         let (mut read_half, write_half) = tokio::io::split(stream);
@@ -104,9 +104,8 @@ impl WhoisClient {
                             let query_bytes = format!("{}\r\n", query);
 
                             if let Err(e) = write_half_arc.lock().await.write_all(query_bytes.as_bytes()).await {
-                                error!("WHOIS client {} failed to send query: {}", client_id, e);
                                 app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
-                                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                                console_error!(status_tx, "__UPDATE_UI__");
                                 return;
                             }
 
@@ -152,27 +151,23 @@ impl WhoisClient {
                                     }
 
                                     // WHOIS is one-shot, connection closes after response
-                                    info!("WHOIS client {} query complete", client_id);
                                     app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                                    let _ = status_tx.send(format!("[CLIENT] WHOIS client {} disconnected", client_id));
-                                    let _ = status_tx.send("__UPDATE_UI__".to_string());
+                                    console_info!(status_tx, "[CLIENT] WHOIS client {} disconnected", client_id);
+                                    console_info!(status_tx, "__UPDATE_UI__");
                                 }
                                 Err(e) => {
-                                    error!("WHOIS client {} read error: {}", client_id, e);
                                     app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
-                                    let _ = status_tx.send("__UPDATE_UI__".to_string());
+                                    console_error!(status_tx, "__UPDATE_UI__");
                                 }
                             }
                         } else {
-                            info!("WHOIS client {} did not provide a query, closing", client_id);
                             app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                            let _ = status_tx.send("__UPDATE_UI__".to_string());
+                            console_info!(status_tx, "__UPDATE_UI__");
                         }
                     }
                     Err(e) => {
-                        error!("LLM error for WHOIS client {}: {}", client_id, e);
                         app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_error!(status_tx, "__UPDATE_UI__");
                     }
                 }
             }

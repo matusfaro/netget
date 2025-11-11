@@ -126,8 +126,8 @@ impl MavenClient {
 
         // Update status
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] Maven client {} connected to repository: {}", client_id, repo_url));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] Maven client {} connected to repository: {}", client_id, repo_url);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Call LLM with connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -345,14 +345,7 @@ impl MavenClient {
             &packaging,
         );
 
-        info!(
-            "Maven client {} downloading artifact: {}:{}:{}",
-            client_id, group_id, artifact_id, version
-        );
-        let _ = status_tx.send(format!(
-            "[CLIENT] Downloading artifact from: {}",
-            artifact_url
-        ));
+        console_info!(status_tx, "[CLIENT] Downloading artifact from: {}");
 
         // Build HTTP client
         let http_client = reqwest::Client::builder()
@@ -439,14 +432,12 @@ impl MavenClient {
                     Ok(())
                 } else {
                     let error_msg = format!("Artifact not found: HTTP {}", status_code);
-                    error!("Maven client {} error: {}", client_id, error_msg);
-                    let _ = status_tx.send(format!("[ERROR] {}", error_msg));
+                    console_error!(status_tx, "[ERROR] {}", error_msg);
                     Err(anyhow::anyhow!(error_msg))
                 }
             }
             Err(e) => {
-                error!("Maven client {} download failed: {}", client_id, e);
-                let _ = status_tx.send(format!("[ERROR] Download failed: {}", e));
+                console_error!(status_tx, "[ERROR] Download failed: {}", e);
                 Err(e.into())
             }
         }
@@ -476,14 +467,7 @@ impl MavenClient {
             &version,
         );
 
-        info!(
-            "Maven client {} downloading POM: {}:{}:{}",
-            client_id, group_id, artifact_id, version
-        );
-        let _ = status_tx.send(format!(
-            "[CLIENT] Downloading POM from: {}",
-            pom_url
-        ));
+        console_info!(status_tx, "[CLIENT] Downloading POM from: {}");
 
         // Build HTTP client
         let http_client = reqwest::Client::builder()
@@ -567,14 +551,12 @@ impl MavenClient {
                     Ok(())
                 } else {
                     let error_msg = format!("POM not found: HTTP {}", status_code);
-                    error!("Maven client {} error: {}", client_id, error_msg);
-                    let _ = status_tx.send(format!("[ERROR] {}", error_msg));
+                    console_error!(status_tx, "[ERROR] {}", error_msg);
                     Err(anyhow::anyhow!(error_msg))
                 }
             }
             Err(e) => {
-                error!("Maven client {} POM download failed: {}", client_id, e);
-                let _ = status_tx.send(format!("[ERROR] POM download failed: {}", e));
+                console_error!(status_tx, "[ERROR] POM download failed: {}", e);
                 Err(e.into())
             }
         }
@@ -602,14 +584,7 @@ impl MavenClient {
             &artifact_id,
         );
 
-        info!(
-            "Maven client {} searching versions: {}:{}",
-            client_id, group_id, artifact_id
-        );
-        let _ = status_tx.send(format!(
-            "[CLIENT] Fetching metadata from: {}",
-            metadata_url
-        ));
+        console_info!(status_tx, "[CLIENT] Fetching metadata from: {}");
 
         // Build HTTP client
         let http_client = reqwest::Client::builder()
@@ -665,6 +640,7 @@ impl MavenClient {
                                 // Execute actions from LLM response
                                 for action in actions {
                                     use crate::llm::actions::client_trait::Client;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                                     match protocol.as_ref().execute_action(action) {
                                         Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) => {
                                             Self::execute_maven_action(
@@ -692,14 +668,12 @@ impl MavenClient {
                     Ok(())
                 } else {
                     let error_msg = format!("Metadata not found: HTTP {}", status_code);
-                    error!("Maven client {} error: {}", client_id, error_msg);
-                    let _ = status_tx.send(format!("[ERROR] {}", error_msg));
+                    console_error!(status_tx, "[ERROR] {}", error_msg);
                     Err(anyhow::anyhow!(error_msg))
                 }
             }
             Err(e) => {
-                error!("Maven client {} metadata fetch failed: {}", client_id, e);
-                let _ = status_tx.send(format!("[ERROR] Metadata fetch failed: {}", e));
+                console_error!(status_tx, "[ERROR] Metadata fetch failed: {}", e);
                 Err(e.into())
             }
         }

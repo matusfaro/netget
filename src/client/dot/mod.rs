@@ -26,6 +26,7 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -54,8 +55,7 @@ impl DotClient {
         status_tx: mpsc::UnboundedSender<String>,
         client_id: ClientId,
     ) -> Result<SocketAddr> {
-        info!("DoT client {} connecting to {}", client_id, remote_addr);
-        let _ = status_tx.send(format!("[CLIENT] DoT client {} connecting to {}", client_id, remote_addr));
+        console_info!(status_tx, "[CLIENT] DoT client {} connecting to {}", client_id, remote_addr);
 
         // Parse remote address
         let remote_socket_addr: SocketAddr = remote_addr.parse()
@@ -96,12 +96,11 @@ impl DotClient {
             .await
             .context("TLS handshake failed")?;
 
-        info!("DoT client {} connected to {}", client_id, remote_addr);
-        let _ = status_tx.send(format!("[CLIENT] DoT client {} connected", client_id));
+        console_info!(status_tx, "[CLIENT] DoT client {} connected", client_id);
 
         // Update status
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Split stream for bidirectional communication
         let (read_half, write_half) = tokio::io::split(tls_stream);
@@ -206,8 +205,7 @@ impl DotClient {
             match read_half.read_exact(&mut len_buf).await {
                 Ok(_) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                    debug!("DoT client {} connection closed by server", client_id);
-                    let _ = status_tx.send(format!("[CLIENT] DoT client {} disconnected", client_id));
+                    console_debug!(status_tx, "[CLIENT] DoT client {} disconnected", client_id);
                     app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
                     break;
                 }
@@ -406,11 +404,10 @@ impl DotClient {
                 ).await?;
             }
             ClientActionResult::Disconnect => {
-                info!("DoT client {} disconnecting", client_id);
                 // Remove client from app state, which will cause the read loop to exit
                 app_state.remove_client(client_id).await;
-                let _ = status_tx.send(format!("[CLIENT] DoT client {} disconnected", client_id));
-                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                console_info!(status_tx, "[CLIENT] DoT client {} disconnected", client_id);
+                console_info!(status_tx, "__UPDATE_UI__");
             }
             ClientActionResult::WaitForMore => {
                 debug!("DoT client {} waiting for more data", client_id);
@@ -430,8 +427,7 @@ impl DotClient {
         write_half: &Arc<Mutex<WriteHalf<TlsStream<TcpStream>>>>,
         status_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<()> {
-        info!("DoT client {} querying {} {}", client_id, domain, query_type);
-        let _ = status_tx.send(format!("[CLIENT] DoT query: {} {}", domain, query_type));
+        console_info!(status_tx, "[CLIENT] DoT query: {} {}", domain, query_type);
 
         // Parse record type
         let record_type = RecordType::from_str(&query_type)

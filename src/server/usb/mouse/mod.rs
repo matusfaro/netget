@@ -75,11 +75,7 @@ impl UsbMouseServer {
         let listener =
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("USB Mouse server listening on {}", local_addr);
-        let _ = status_tx.send(format!(
-            "USB Mouse server listening on {}",
-            local_addr
-        ));
+        console_info!(status_tx, "USB Mouse server listening on {}");
 
         let connections = Arc::new(Mutex::new(HashMap::new()));
         let protocol = Arc::new(crate::server::usb::mouse::UsbMouseProtocol::new());
@@ -98,6 +94,7 @@ impl UsbMouseServer {
 
                         // Add connection to ServerInstance
                         use crate::state::server::{
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                             ConnectionState as ServerConnectionState, ConnectionStatus,
                             ProtocolConnectionInfo,
                         };
@@ -120,7 +117,7 @@ impl UsbMouseServer {
                         app_state
                             .add_connection_to_server(server_id, conn_state)
                             .await;
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_info!(status_tx, "__UPDATE_UI__");
 
                         // Handle USB/IP connection
                         let llm_client_clone = llm_client.clone();
@@ -190,14 +187,7 @@ impl UsbMouseServer {
         // TODO: USB mouse handler not yet available in usbip crate
         // Once usbip crate adds UsbHidMouseHandler, uncomment the code below
 
-        warn!(
-            "USB mouse protocol registered but not yet functional - waiting for usbip crate mouse support (connection {})",
-            connection_id
-        );
-        let _ = status_tx.send(format!(
-            "USB mouse device for connection {} from {} - NOT YET FUNCTIONAL (waiting for usbip crate mouse support)",
-            connection_id, remote_addr
-        ));
+        console_warn!(status_tx, "USB mouse device for connection {} from {} - NOT YET FUNCTIONAL (waiting for usbip crate mouse support)");
 
         // Placeholder: Would create HID mouse handler here
         // let handler = Arc::new(std::sync::Mutex::new(

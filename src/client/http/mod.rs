@@ -16,6 +16,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::http::actions::HTTP_CLIENT_RESPONSE_RECEIVED_EVENT;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// HTTP client that makes requests to remote HTTP servers
 pub struct HttpClient;
@@ -56,8 +57,8 @@ impl HttpClient {
 
         // Update status
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] HTTP client {} ready for {}", client_id, remote_addr));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] HTTP client {} ready for {}", client_id, remote_addr);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // For HTTP client, we'll spawn a background task that processes LLM-requested actions
         // The actual requests are made on-demand via actions, not in a read loop
@@ -194,8 +195,7 @@ impl HttpClient {
                 Ok(())
             }
             Err(e) => {
-                error!("HTTP client {} request failed: {}", client_id, e);
-                let _ = status_tx.send(format!("[ERROR] HTTP request failed: {}", e));
+                console_error!(status_tx, "[ERROR] HTTP request failed: {}", e);
                 Err(e.into())
             }
         }

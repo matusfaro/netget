@@ -61,16 +61,14 @@ impl NtpServer {
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_info!(status_tx, "__UPDATE_UI__");
 
                         // DEBUG: Log summary
-                        debug!("NTP received {} bytes from {}", n, peer_addr);
-                        let _ = status_tx.send(format!("[DEBUG] NTP received {} bytes from {}", n, peer_addr));
+                        console_debug!(status_tx, "[DEBUG] NTP received {} bytes from {}", n, peer_addr);
 
                         // TRACE: Log full payload (always hex for NTP)
                         let hex_str = hex::encode(&data);
-                        trace!("NTP data (hex): {}", hex_str);
-                        let _ = status_tx.send(format!("[TRACE] NTP data (hex): {}", hex_str));
+                        console_trace!(status_tx, "[TRACE] NTP data (hex): {}", hex_str);
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -81,6 +79,7 @@ impl NtpServer {
                         tokio::spawn(async move {
                             // Get current Unix timestamp
                             use std::time::{SystemTime, UNIX_EPOCH};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                             let current_unix_time = SystemTime::now()
                                 .duration_since(UNIX_EPOCH)
                                 .unwrap()

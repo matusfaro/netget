@@ -19,6 +19,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::http_proxy::actions::{
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
     HTTP_PROXY_CLIENT_CONNECTED_EVENT,
     HTTP_PROXY_TUNNEL_ESTABLISHED_EVENT,
     HTTP_PROXY_RESPONSE_RECEIVED_EVENT,
@@ -60,12 +61,11 @@ impl HttpProxyClient {
         let local_addr = stream.local_addr()?;
         let remote_sock_addr = stream.peer_addr()?;
 
-        info!("HTTP proxy client {} connected to proxy {} (local: {})", client_id, remote_sock_addr, local_addr);
 
         // Update client state
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] HTTP proxy client {} connected to {}", client_id, remote_sock_addr));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] HTTP proxy client {} connected to {}", client_id, remote_sock_addr);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Call LLM with connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {

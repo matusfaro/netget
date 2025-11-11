@@ -70,12 +70,11 @@ impl IrcClient {
         let local_addr = stream.local_addr()?;
         let remote_sock_addr = stream.peer_addr()?;
 
-        info!("IRC client {} connecting to {} (local: {})", client_id, remote_sock_addr, local_addr);
 
         // Update client state
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] IRC client {} connected to {}", client_id, remote_sock_addr));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] IRC client {} connected to {}", client_id, remote_sock_addr);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Split stream
         let (read_half, write_half) = tokio::io::split(stream);
@@ -112,10 +111,9 @@ impl IrcClient {
                 line.clear();
                 match reader.read_line(&mut line).await {
                     Ok(0) => {
-                        info!("IRC client {} disconnected", client_id);
                         app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                        let _ = status_tx.send(format!("[CLIENT] IRC client {} disconnected", client_id));
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_info!(status_tx, "[CLIENT] IRC client {} disconnected", client_id);
+                        console_info!(status_tx, "__UPDATE_UI__");
                         break;
                     }
                     Ok(_) => {
@@ -229,9 +227,8 @@ impl IrcClient {
                         }
                     }
                     Err(e) => {
-                        error!("IRC client {} read error: {}", client_id, e);
                         app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_error!(status_tx, "__UPDATE_UI__");
                         break;
                     }
                 }
@@ -308,6 +305,7 @@ impl IrcClient {
                 // Execute actions
                 for action in actions {
                     use crate::llm::actions::client_trait::Client;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                     match protocol.as_ref().execute_action(action) {
                         Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) => {
                             Self::execute_irc_action(&name, data, write_half, client_data).await?;

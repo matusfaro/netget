@@ -29,6 +29,7 @@ use crate::protocol::{Event, StartupParams};
 use crate::server::socket_helpers::create_ospf_raw_socket;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 // OSPF Constants
 const OSPF_VERSION: u8 = 2;
@@ -119,11 +120,8 @@ impl OspfClient {
         app_state
             .update_client_status(client_id, ClientStatus::Connected)
             .await;
-        let _ = status_tx.send(format!(
-            "[CLIENT] OSPF client {} on {} (requires root)",
-            client_id, interface_ip
-        ));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] OSPF client {} on {} (requires root)");
+        console_info!(status_tx, "__UPDATE_UI__");
 
         let local_addr = SocketAddr::new(IpAddr::V4(interface_ip), 0);
 
@@ -305,12 +303,11 @@ impl OspfClient {
                 }
             }
 
-            warn!("OSPF client {} receive loop terminated", client_id);
             app_state
                 .update_client_status(client_id, ClientStatus::Disconnected)
                 .await;
-            let _ = status_tx.send(format!("[CLIENT] OSPF client {} disconnected", client_id));
-            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            console_warn!(status_tx, "[CLIENT] OSPF client {} disconnected", client_id);
+            console_warn!(status_tx, "__UPDATE_UI__");
         });
 
         Ok(local_addr)
@@ -394,15 +391,11 @@ impl OspfClient {
                                 }
                             }
                             Ok(ClientActionResult::Disconnect) => {
-                                info!("OSPF client {} disconnecting", client_id);
                                 app_state
                                     .update_client_status(client_id, ClientStatus::Disconnected)
                                     .await;
-                                let _ = status_tx.send(format!(
-                                    "[CLIENT] OSPF client {} disconnected",
-                                    client_id
-                                ));
-                                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                                console_info!(status_tx, "[CLIENT] OSPF client {} disconnected");
+                                console_info!(status_tx, "__UPDATE_UI__");
                                 return;
                             }
                             Ok(ClientActionResult::WaitForMore) => {
@@ -416,8 +409,7 @@ impl OspfClient {
                     }
                 }
                 Err(e) => {
-                    error!("OSPF client {} LLM call failed: {}", client_id, e);
-                    let _ = status_tx.send(format!("✗ OSPF client {} LLM error: {}", client_id, e));
+                    console_error!(status_tx, "✗ OSPF client {} LLM error: {}", client_id, e);
                 }
             }
             }

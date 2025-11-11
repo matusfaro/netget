@@ -35,8 +35,7 @@ impl BootpServer {
     ) -> Result<SocketAddr> {
         let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
         let local_addr = socket.local_addr()?;
-        info!("BOOTP server (action-based) listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] BOOTP server listening on {}", local_addr));
+        console_info!(status_tx, "[INFO] BOOTP server listening on {}", local_addr);
 
         let protocol = Arc::new(BootpProtocol::new());
 
@@ -50,13 +49,11 @@ impl BootpServer {
                         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
 
                         // DEBUG: Log summary
-                        debug!("BOOTP received {} bytes from {}", n, peer_addr);
-                        let _ = status_tx.send(format!("[DEBUG] BOOTP received {} bytes from {}", n, peer_addr));
+                        console_debug!(status_tx, "[DEBUG] BOOTP received {} bytes from {}", n, peer_addr);
 
                         // TRACE: Log full payload (always hex for BOOTP)
                         let hex_str = hex::encode(&data);
-                        trace!("BOOTP data (hex): {}", hex_str);
-                        let _ = status_tx.send(format!("[TRACE] BOOTP data (hex): {}", hex_str));
+                        console_trace!(status_tx, "[TRACE] BOOTP data (hex): {}", hex_str);
 
                         #[cfg(feature = "bootp")]
                         let parsed_info = Self::parse_bootp_message(&data);
@@ -66,6 +63,7 @@ impl BootpServer {
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
 
                         #[cfg(feature = "bootp")]
@@ -90,7 +88,7 @@ impl BootpServer {
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_info!(status_tx, "__UPDATE_UI__");
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -177,8 +175,7 @@ impl BootpServer {
                         });
                     }
                     Err(e) => {
-                        error!("BOOTP receive error: {}", e);
-                        let _ = status_tx.send(format!("✗ BOOTP receive error: {}", e));
+                        console_error!(status_tx, "✗ BOOTP receive error: {}", e);
                         break;
                     }
                 }
