@@ -9,6 +9,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, trace};
 use crate::llm::ActionResult;
 use std::convert::Infallible;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Extracted request data common to HTTP and HTTP/2
 #[derive(Debug)]
@@ -80,8 +81,7 @@ pub async fn extract_request_data(
                 let _ = status_tx.send(format!("[TRACE] {} request body:\r\n{}", protocol_label, body_str.replace('\n', "\r\n")));
             }
         } else {
-            trace!("{} request body (binary): {} bytes", protocol_label, body_bytes.len());
-            let _ = status_tx.send(format!("[TRACE] {} request body (binary): {} bytes", protocol_label, body_bytes.len()));
+            console_trace!(status_tx, "{} request body (binary): {} bytes", protocol_label, body_bytes.len());
         }
     }
 

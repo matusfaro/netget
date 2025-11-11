@@ -28,6 +28,7 @@ use xmpp_parsers::{
     presence::{Presence, Show as PresenceShow, Type as PresenceType},
 };
 use futures::StreamExt;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -137,8 +138,7 @@ impl XmppClientConnection {
                     // Handle outgoing stanzas
                     Some(stanza) = stanza_rx.recv() => {
                         if let Err(e) = xmpp_client.send_stanza(stanza).await {
-                            error!("Failed to send XMPP stanza: {}", e);
-                            let _ = status_tx.send(format!("[ERROR] Failed to send XMPP stanza: {}", e));
+                            console_error!(status_tx, "Failed to send XMPP stanza: {}", e);
                         }
                     }
                     // Handle incoming events
@@ -392,8 +392,7 @@ impl XmppClientConnection {
 
                                 use tokio_xmpp::Stanza;
                                 if let Err(e) = stanza_tx.send(Stanza::Message(message)) {
-                                    error!("Failed to send XMPP message: {}", e);
-                                    let _ = status_tx.send(format!("[ERROR] Failed to send XMPP message: {}", e));
+                                    console_error!(status_tx, "Failed to send XMPP message: {}", e);
                                 } else {
                                     trace!("XMPP client {} sent message to {}", client_id, to);
                                 }
@@ -422,8 +421,7 @@ impl XmppClientConnection {
 
                         use tokio_xmpp::Stanza;
                         if let Err(e) = stanza_tx.send(Stanza::Presence(presence)) {
-                            error!("Failed to send XMPP presence: {}", e);
-                            let _ = status_tx.send(format!("[ERROR] Failed to send XMPP presence: {}", e));
+                            console_error!(status_tx, "Failed to send XMPP presence: {}", e);
                         } else {
                             trace!("XMPP client {} sent presence", client_id);
                         }

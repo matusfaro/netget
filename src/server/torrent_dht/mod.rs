@@ -17,6 +17,7 @@ use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use actions::TorrentDhtProtocol;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// BitTorrent DHT server
 pub struct TorrentDhtServer;
@@ -65,13 +66,11 @@ impl TorrentDhtServer {
                         app_state.add_connection_to_server(server_id, conn_state).await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
-                        debug!("BitTorrent DHT received {} bytes from {}", n, peer_addr);
-                        let _ = status_tx.send(format!("[DEBUG] BitTorrent DHT received {} bytes from {}", n, peer_addr));
+                        console_debug!(status_tx, "BitTorrent DHT received {} bytes from {}", n, peer_addr);
 
                         // TRACE: Log full payload
                         let hex_str = hex::encode(&data);
-                        trace!("BitTorrent DHT data (hex): {}", hex_str);
-                        let _ = status_tx.send(format!("[TRACE] BitTorrent DHT data (hex): {}", hex_str));
+                        console_trace!(status_tx, "BitTorrent DHT data (hex): {}", hex_str);
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();

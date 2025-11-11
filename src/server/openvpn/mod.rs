@@ -34,6 +34,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, trace, warn};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Maximum number of peers to allow
 const MAX_PEERS: usize = 100;
@@ -128,8 +129,7 @@ impl OpenvpnServer {
             return Err(anyhow::anyhow!("Unsupported operating system for OpenVPN"));
         };
 
-        info!("Creating TUN interface: {}", interface_name);
-        let _ = status_tx.send(format!("[INFO] Creating TUN interface: {}", interface_name));
+        console_info!(status_tx, "Creating TUN interface: {}", interface_name);
 
         // Create TUN device
         let mut tun_config = tun::Configuration::default();
@@ -311,8 +311,7 @@ impl OpenvpnServer {
         server_id: crate::state::ServerId,
         status_tx: &mpsc::UnboundedSender<String>,
     ) {
-        info!("OpenVPN handshake from {}", peer_addr);
-        let _ = status_tx.send(format!("[INFO] OpenVPN handshake from {}", peer_addr));
+        console_info!(status_tx, "OpenVPN handshake from {}", peer_addr);
 
         // Check peer limit
         if self.peer_manager.count().await >= MAX_PEERS {
@@ -339,8 +338,7 @@ impl OpenvpnServer {
             }
         };
 
-        info!("Allocated VPN IP {} to {}", vpn_ip, peer_addr);
-        let _ = status_tx.send(format!("[INFO] Allocated VPN IP {} to {}", vpn_ip, peer_addr));
+        console_info!(status_tx, "Allocated VPN IP {} to {}", vpn_ip, peer_addr);
 
         peer.mark_connected(vpn_ip);
 
@@ -408,8 +406,7 @@ impl OpenvpnServer {
         let serialized = response.serialize();
 
         if let Err(e) = self.socket.send_to(&serialized, peer.addr).await {
-            error!("Failed to send handshake response: {}", e);
-            let _ = status_tx.send(format!("[ERROR] Failed to send handshake response: {}", e));
+            console_error!(status_tx, "Failed to send handshake response: {}", e);
         } else {
             debug!("Sent handshake response to {}", peer.addr);
         }

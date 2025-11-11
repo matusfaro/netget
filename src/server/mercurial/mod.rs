@@ -36,6 +36,7 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::server::connection::ConnectionId;
 use crate::server::mercurial::actions::MercurialProtocol;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Mercurial HTTP server
 pub struct MercurialServer;
@@ -53,8 +54,7 @@ impl MercurialServer {
         let listener =
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("Mercurial server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] Mercurial server listening on {}", local_addr));
+        console_info!(status_tx, "Mercurial server listening on {}", local_addr);
 
         let protocol = Arc::new(MercurialProtocol::new());
 
@@ -244,8 +244,7 @@ async fn handle_mercurial_request(
             let body_bytes = match req.collect().await {
                 Ok(collected) => collected.to_bytes(),
                 Err(e) => {
-                    error!("Failed to read request body: {}", e);
-                    let _ = status_tx.send(format!("[ERROR] Failed to read request body: {}", e));
+                    console_error!(status_tx, "Failed to read request body: {}", e);
                     return Ok(build_error_response(
                         StatusCode::BAD_REQUEST,
                         "Failed to read request body",
@@ -374,8 +373,7 @@ Provide standard Mercurial capabilities for this repository."#,
     let model_str = match crate::llm::ensure_model_selected(model).await {
         Ok(m) => m,
         Err(e) => {
-            error!("Failed to select model: {}", e);
-            let _ = status_tx.send(format!("[ERROR] Failed to select model: {}", e));
+            console_error!(status_tx, "Failed to select model: {}", e);
             return Ok(build_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &format!("Model selection failed: {}", e),
@@ -392,8 +390,7 @@ Provide standard Mercurial capabilities for this repository."#,
     {
         Ok(response) => response,
         Err(e) => {
-            error!("LLM call failed: {}", e);
-            let _ = status_tx.send(format!("[ERROR] LLM call failed: {}", e));
+            console_error!(status_tx, "LLM call failed: {}", e);
             return Ok(build_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &format!("Internal error: {}", e),
@@ -408,8 +405,7 @@ Provide standard Mercurial capabilities for this repository."#,
     let actions_result: Value = match serde_json::from_str(&llm_response) {
         Ok(v) => v,
         Err(e) => {
-            error!("Failed to parse LLM response: {}", e);
-            let _ = status_tx.send(format!("[ERROR] Failed to parse LLM response: {}", e));
+            console_error!(status_tx, "Failed to parse LLM response: {}", e);
             return Ok(build_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Invalid LLM response",
@@ -541,8 +537,7 @@ Provide repository heads."#,
     let model_str = match crate::llm::ensure_model_selected(model).await {
         Ok(m) => m,
         Err(e) => {
-            error!("Failed to select model: {}", e);
-            let _ = status_tx.send(format!("[ERROR] Failed to select model: {}", e));
+            console_error!(status_tx, "Failed to select model: {}", e);
             return Ok(build_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &format!("Model selection failed: {}", e),
@@ -555,8 +550,7 @@ Provide repository heads."#,
     {
         Ok(response) => response,
         Err(e) => {
-            error!("LLM call failed: {}", e);
-            let _ = status_tx.send(format!("[ERROR] LLM call failed: {}", e));
+            console_error!(status_tx, "LLM call failed: {}", e);
             return Ok(build_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &format!("Internal error: {}", e),
@@ -685,8 +679,7 @@ Provide branch mappings for this repository."#,
     let model_str = match crate::llm::ensure_model_selected(model).await {
         Ok(m) => m,
         Err(e) => {
-            error!("Failed to select model: {}", e);
-            let _ = status_tx.send(format!("[ERROR] Failed to select model: {}", e));
+            console_error!(status_tx, "Failed to select model: {}", e);
             return Ok(build_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &format!("Model selection failed: {}", e),
@@ -844,8 +837,7 @@ Provide key-value mappings for this namespace."#,
     let model_str = match crate::llm::ensure_model_selected(model).await {
         Ok(m) => m,
         Err(e) => {
-            error!("Failed to select model: {}", e);
-            let _ = status_tx.send(format!("[ERROR] Failed to select model: {}", e));
+            console_error!(status_tx, "Failed to select model: {}", e);
             return Ok(build_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &format!("Model selection failed: {}", e),
@@ -991,8 +983,7 @@ Generate a bundle response."#,
     let model_str = match crate::llm::ensure_model_selected(model).await {
         Ok(m) => m,
         Err(e) => {
-            error!("Failed to select model: {}", e);
-            let _ = status_tx.send(format!("[ERROR] Failed to select model: {}", e));
+            console_error!(status_tx, "Failed to select model: {}", e);
             return Ok(build_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &format!("Model selection failed: {}", e),

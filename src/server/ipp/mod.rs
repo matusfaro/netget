@@ -25,6 +25,7 @@ use crate::server::IppProtocol;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// IPP server that delegates request handling to LLM
 pub struct IppServer;
@@ -41,8 +42,7 @@ impl IppServer {
     ) -> anyhow::Result<SocketAddr> {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("IPP server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] IPP server listening on {}", local_addr));
+        console_info!(status_tx, "IPP server listening on {}", local_addr);
 
         let protocol = Arc::new(IppProtocol::new());
 
@@ -117,8 +117,7 @@ impl IppServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept IPP connection: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to accept IPP connection: {}", e));
+                        console_error!(status_tx, "Failed to accept IPP connection: {}", e);
                         break;
                     }
                 }
@@ -155,8 +154,7 @@ async fn handle_ipp_request_with_llm(
     let body_bytes = match req.into_body().collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
-            error!("Failed to read IPP request body: {}", e);
-            let _ = status_tx.send(format!("[ERROR] Failed to read IPP request body: {}", e));
+            console_error!(status_tx, "Failed to read IPP request body: {}", e);
             Bytes::new()
         }
     };
@@ -242,8 +240,7 @@ async fn handle_ipp_request_with_llm(
                 .unwrap())
         }
         Err(e) => {
-            error!("LLM error for IPP request: {}", e);
-            let _ = status_tx.send(format!("[ERROR] LLM error for IPP request: {}", e));
+            console_error!(status_tx, "LLM error for IPP request: {}", e);
 
             Ok(Response::builder()
                 .status(500)

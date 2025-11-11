@@ -31,6 +31,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace, warn};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Cassandra server implementation
 pub struct CassandraServer {
@@ -95,8 +96,7 @@ impl CassandraServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, addr)) => {
-                        debug!("Cassandra connection from {}", addr);
-                        let _ = status_tx.send(format!("[DEBUG] Cassandra connection from {}", addr));
+                        console_debug!(status_tx, "Cassandra connection from {}", addr);
 
                         let server_clone = server.clone();
                         let status_tx_clone = status_tx.clone();
@@ -161,8 +161,7 @@ impl CassandraServer {
             // Read data from stream
             let n = match stream.read_buf(&mut buffer).await {
                 Ok(0) => {
-                    debug!("Cassandra client {} disconnected", addr);
-                    let _ = status_tx.send(format!("[DEBUG] Cassandra client {} disconnected", addr));
+                    console_debug!(status_tx, "Cassandra client {} disconnected", addr);
                     break;
                 }
                 Ok(n) => n,
@@ -331,8 +330,7 @@ impl CassandraServer {
 
         // Show messages
         for message in &execution_result.messages {
-            info!("{}", message);
-            let _ = status_tx.send(format!("[INFO] {}", message));
+            console_info!(status_tx, "{}", message);
         }
 
         // Execute the protocol actions
@@ -404,8 +402,7 @@ impl CassandraServer {
 
         // Show messages
         for message in &execution_result.messages {
-            info!("{}", message);
-            let _ = status_tx.send(format!("[INFO] {}", message));
+            console_info!(status_tx, "{}", message);
         }
 
         // Execute the protocol actions
@@ -487,8 +484,7 @@ impl CassandraServer {
 
         // Show messages
         for message in &execution_result.messages {
-            info!("{}", message);
-            let _ = status_tx.send(format!("[INFO] {}", message));
+            console_info!(status_tx, "{}", message);
         }
 
         // Execute the protocol actions
@@ -823,8 +819,7 @@ impl CassandraServer {
 
         // Show messages
         for message in &execution_result.messages {
-            info!("{}", message);
-            let _ = status_tx.send(format!("[INFO] {}", message));
+            console_info!(status_tx, "{}", message);
         }
 
         // Execute the protocol actions
@@ -931,8 +926,7 @@ impl CassandraServer {
 
         // Show messages
         for message in &execution_result.messages {
-            info!("{}", message);
-            let _ = status_tx.send(format!("[INFO] {}", message));
+            console_info!(status_tx, "{}", message);
         }
 
         // Execute the protocol actions
@@ -1248,8 +1242,7 @@ impl CassandraServer {
 
         // Show messages
         for message in &execution_result.messages {
-            info!("{}", message);
-            let _ = status_tx.send(format!("[INFO] {}", message));
+            console_info!(status_tx, "{}", message);
         }
 
         // Execute the protocol actions

@@ -15,6 +15,7 @@ use actions::NTP_REQUEST_EVENT;
 use crate::server::NtpProtocol;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// NTP server that forwards requests to LLM
 pub struct NtpServer;
@@ -64,13 +65,11 @@ impl NtpServer {
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         // DEBUG: Log summary
-                        debug!("NTP received {} bytes from {}", n, peer_addr);
-                        let _ = status_tx.send(format!("[DEBUG] NTP received {} bytes from {}", n, peer_addr));
+                        console_debug!(status_tx, "NTP received {} bytes from {}", n, peer_addr);
 
                         // TRACE: Log full payload (always hex for NTP)
                         let hex_str = hex::encode(&data);
-                        trace!("NTP data (hex): {}", hex_str);
-                        let _ = status_tx.send(format!("[TRACE] NTP data (hex): {}", hex_str));
+                        console_trace!(status_tx, "NTP data (hex): {}", hex_str);
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();

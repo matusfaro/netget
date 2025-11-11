@@ -20,6 +20,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// MySQL server implementation
 pub struct MysqlServer {
@@ -74,8 +75,7 @@ impl MysqlServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, addr)) => {
-                        debug!("MySQL connection from {}", addr);
-                        let _ = status_tx.send(format!("[DEBUG] MySQL connection from {}", addr));
+                        console_debug!(status_tx, "MySQL connection from {}", addr);
 
                         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(actual_addr);
@@ -124,8 +124,7 @@ impl MysqlServer {
                         });
                     }
                     Err(e) => {
-                        error!("MySQL accept error: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] MySQL accept error: {}", e));
+                        console_error!(status_tx, "MySQL accept error: {}", e);
                     }
                 }
             }

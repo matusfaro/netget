@@ -24,6 +24,7 @@ use crate::server::DynamoProtocol;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// DynamoDB server that delegates API operations to LLM
 pub struct DynamoServer;
@@ -40,8 +41,7 @@ impl DynamoServer {
     ) -> anyhow::Result<SocketAddr> {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("DynamoDB server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] DynamoDB server listening on {}", local_addr));
+        console_info!(status_tx, "DynamoDB server listening on {}", local_addr);
 
         let protocol = Arc::new(DynamoProtocol::new());
 
@@ -116,8 +116,7 @@ impl DynamoServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept DynamoDB connection: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to accept DynamoDB connection: {}", e));
+                        console_error!(status_tx, "Failed to accept DynamoDB connection: {}", e);
                         break;
                     }
                 }
@@ -155,8 +154,7 @@ async fn handle_dynamo_request_with_llm(
     let body_bytes = match req.into_body().collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
-            error!("Failed to read DynamoDB request body: {}", e);
-            let _ = status_tx.send(format!("[ERROR] Failed to read DynamoDB request body: {}", e));
+            console_error!(status_tx, "Failed to read DynamoDB request body: {}", e);
             Bytes::new()
         }
     };
@@ -263,8 +261,7 @@ async fn handle_dynamo_request_with_llm(
                 .unwrap())
         }
         Err(e) => {
-            error!("LLM error for DynamoDB request: {}", e);
-            let _ = status_tx.send(format!("[ERROR] LLM error for DynamoDB request: {}", e));
+            console_error!(status_tx, "LLM error for DynamoDB request: {}", e);
 
             // Return DynamoDB error format
             let error_response = serde_json::json!({

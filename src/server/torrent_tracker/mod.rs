@@ -18,6 +18,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::server::connection::ConnectionId;
 use actions::TorrentTrackerProtocol;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// BitTorrent Tracker server
 pub struct TorrentTrackerServer;
@@ -87,8 +88,7 @@ impl TorrentTrackerServer {
                         });
                     }
                     Err(e) => {
-                        error!("BitTorrent Tracker accept error: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] BitTorrent Tracker accept error: {}", e));
+                        console_error!(status_tx, "BitTorrent Tracker accept error: {}", e);
                     }
                 }
             }
@@ -124,21 +124,18 @@ impl TorrentTrackerServer {
         let request_data = buffer[..n].to_vec();
 
         // DEBUG: Log summary
-        debug!("BitTorrent Tracker received {} bytes from {}", n, peer_addr);
-        let _ = status_tx.send(format!("[DEBUG] BitTorrent Tracker received {} bytes from {}", n, peer_addr));
+        console_debug!(status_tx, "BitTorrent Tracker received {} bytes from {}", n, peer_addr);
 
         // TRACE: Log full request
         if let Ok(request_str) = std::str::from_utf8(&request_data) {
-            trace!("BitTorrent Tracker request: {}", request_str);
-            let _ = status_tx.send(format!("[TRACE] BitTorrent Tracker request: {}", request_str));
+            console_trace!(status_tx, "BitTorrent Tracker request: {}", request_str);
         }
 
         // Parse HTTP request
         let request_str = String::from_utf8_lossy(&request_data);
         let (request_type, request_params) = Self::parse_http_request(&request_str)?;
 
-        debug!("BitTorrent Tracker request type: {}", request_type);
-        let _ = status_tx.send(format!("[DEBUG] BitTorrent Tracker request type: {}", request_type));
+        console_debug!(status_tx, "BitTorrent Tracker request type: {}", request_type);
 
         // Create event for LLM
         let event_type = match request_type.as_str() {
@@ -148,8 +145,7 @@ impl TorrentTrackerServer {
         };
         let event = Event::new(event_type, serde_json::json!(request_params));
 
-        debug!("BitTorrent Tracker calling LLM for {} request", request_type);
-        let _ = status_tx.send(format!("[DEBUG] BitTorrent Tracker calling LLM for {} request", request_type));
+        console_debug!(status_tx, "BitTorrent Tracker calling LLM for {} request", request_type);
 
         // Call LLM
         match call_llm(
@@ -163,25 +159,21 @@ impl TorrentTrackerServer {
             Ok(execution_result) => {
                 // Display messages from LLM
                 for message in &execution_result.messages {
-                    info!("{}", message);
-                    let _ = status_tx.send(format!("[INFO] {}", message));
+                    console_info!(status_tx, "{}", message);
                 }
 
-                debug!("BitTorrent Tracker got {} protocol results", execution_result.protocol_results.len());
-                let _ = status_tx.send(format!("[DEBUG] BitTorrent Tracker got {} protocol results", execution_result.protocol_results.len()));
+                console_debug!(status_tx, "BitTorrent Tracker got {} protocol results", execution_result.protocol_results.len());
 
                 // Send responses
                 for protocol_result in execution_result.protocol_results {
                     if let Some(output_data) = protocol_result.get_all_output().first() {
                         write_half.write_all(output_data).await?;
 
-                        debug!("BitTorrent Tracker sent {} bytes to {}", output_data.len(), peer_addr);
-                        let _ = status_tx.send(format!("[DEBUG] BitTorrent Tracker sent {} bytes to {}", output_data.len(), peer_addr));
+                        console_debug!(status_tx, "BitTorrent Tracker sent {} bytes to {}", output_data.len(), peer_addr);
 
                         // TRACE: Log full response
                         if let Ok(response_str) = std::str::from_utf8(output_data) {
-                            trace!("BitTorrent Tracker response: {}", response_str);
-                            let _ = status_tx.send(format!("[TRACE] BitTorrent Tracker response: {}", response_str));
+                            console_trace!(status_tx, "BitTorrent Tracker response: {}", response_str);
                         }
                     }
                 }

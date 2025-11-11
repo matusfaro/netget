@@ -27,6 +27,7 @@ use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio_rustls::TlsAcceptor;
 use tracing::{debug, error, info, trace, warn};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// DNS-over-HTTPS server
 pub struct DohServer {
@@ -53,8 +54,7 @@ impl DohServer {
         let tls_config = crate::server::tls_cert_manager::generate_default_tls_config()
             .context("Failed to generate TLS configuration")?;
 
-        info!("Starting DoH server on {}", bind_addr);
-        let _ = status_tx.send(format!("[INFO] Starting DoH server on {}", bind_addr));
+        console_info!(status_tx, "Starting DoH server on {}", bind_addr);
 
         let handle = tokio::spawn(async move {
             if let Err(e) = server.run(tls_config, llm_client, app_state, server_id, status_tx).await {
@@ -80,14 +80,12 @@ impl DohServer {
 
         let acceptor = TlsAcceptor::from(tls_config);
 
-        info!("DoH server listening on {}", self.bind_addr);
-        let _ = status_tx.send(format!("[INFO] DoH server listening on {}", self.bind_addr));
+        console_info!(status_tx, "DoH server listening on {}", self.bind_addr);
 
         loop {
             match listener.accept().await {
                 Ok((stream, peer_addr)) => {
-                    debug!("DoH TCP connection from {}", peer_addr);
-                    let _ = status_tx.send(format!("[DEBUG] DoH TCP connection from {}", peer_addr));
+                    console_debug!(status_tx, "DoH TCP connection from {}", peer_addr);
 
                     let acceptor = acceptor.clone();
                     let llm_client = llm_client.clone();
@@ -111,8 +109,7 @@ impl DohServer {
                     });
                 }
                 Err(e) => {
-                    warn!("Failed to accept DoH TCP connection: {}", e);
-                    let _ = status_tx.send(format!("[WARN] Failed to accept DoH TCP connection: {}", e));
+                    console_warn!(status_tx, "Failed to accept DoH TCP connection: {}", e);
                 }
             }
         }
@@ -134,8 +131,7 @@ impl DohServer {
             .await
             .context("TLS handshake failed")?;
 
-        debug!("DoH TLS handshake complete with {}", peer_addr);
-        let _ = status_tx.send(format!("[DEBUG] DoH TLS handshake complete with {}", peer_addr));
+        console_debug!(status_tx, "DoH TLS handshake complete with {}", peer_addr);
 
         // Wrap in TokioIo for hyper compatibility
         let io = TokioIo::new(tls_stream);
@@ -184,8 +180,7 @@ impl DohServer {
         let method = req.method().clone();
         let uri = req.uri().clone();
 
-        debug!("DoH request: {} {}", method, uri);
-        let _ = status_tx.send(format!("[DEBUG] DoH request: {} {}", method, uri));
+        console_debug!(status_tx, "DoH request: {} {}", method, uri);
 
         // Extract DNS query based on method
         let dns_bytes = match method {
@@ -207,8 +202,7 @@ impl DohServer {
                         match base64_url_decode(encoded) {
                             Ok(bytes) => bytes,
                             Err(e) => {
-                                warn!("Invalid base64url DNS query: {}", e);
-                                let _ = status_tx.send(format!("[WARN] Invalid base64url DNS query: {}", e));
+                                console_warn!(status_tx, "Invalid base64url DNS query: {}", e);
                                 return Ok(error_response(StatusCode::BAD_REQUEST, "Invalid DNS query encoding"));
                             }
                         }
@@ -239,17 +233,14 @@ impl DohServer {
                 body.to_vec()
             }
             _ => {
-                warn!("Unsupported DoH method: {}", method);
-                let _ = status_tx.send(format!("[WARN] Unsupported DoH method: {}", method));
+                console_warn!(status_tx, "Unsupported DoH method: {}", method);
                 return Ok(error_response(StatusCode::METHOD_NOT_ALLOWED, "Only GET and POST are supported"));
             }
         };
 
-        debug!("DoH received {} bytes", dns_bytes.len());
-        let _ = status_tx.send(format!("[DEBUG] DoH received {} bytes", dns_bytes.len()));
+        console_debug!(status_tx, "DoH received {} bytes", dns_bytes.len());
 
-        trace!("DoH DNS query hex: {}", hex::encode(&dns_bytes));
-        let _ = status_tx.send(format!("[TRACE] DoH DNS query hex: {}", hex::encode(&dns_bytes)));
+        console_trace!(status_tx, "DoH DNS query hex: {}", hex::encode(&dns_bytes));
 
         // Parse DNS query
         let dns_message = match DnsMessage::from_vec(&dns_bytes) {
@@ -274,8 +265,7 @@ impl DohServer {
         let query_type = format!("{:?}", query.query_type());
         let query_id = dns_message.id();
 
-        info!("DoH query: {} {} (ID: {})", domain, query_type, query_id);
-        let _ = status_tx.send(format!("[INFO] DoH query: {} {} (ID: {})", domain, query_type, query_id));
+        console_info!(status_tx, "DoH query: {} {} (ID: {})", domain, query_type, query_id);
 
         // Create event for LLM
         let event = Event::new(&DOH_QUERY_EVENT, json!({
@@ -289,8 +279,7 @@ impl DohServer {
         // Get protocol actions
         let protocol = Arc::new(DohProtocol::new());
 
-        debug!("DoH calling LLM for query from {}", peer_addr);
-        let _ = status_tx.send(format!("[DEBUG] DoH calling LLM for query from {}", peer_addr));
+        console_debug!(status_tx, "DoH calling LLM for query from {}", peer_addr);
 
         // Call LLM
         let execution_result = match call_llm(
@@ -303,20 +292,17 @@ impl DohServer {
         ).await {
             Ok(result) => result,
             Err(e) => {
-                error!("DoH LLM call failed: {}", e);
-                let _ = status_tx.send(format!("[ERROR] DoH LLM call failed: {}", e));
+                console_error!(status_tx, "DoH LLM call failed: {}", e);
                 return Ok(error_response(StatusCode::INTERNAL_SERVER_ERROR, "LLM error"));
             }
         };
 
         // Display messages from LLM
         for message in &execution_result.messages {
-            info!("{}", message);
-            let _ = status_tx.send(format!("[INFO] {}", message));
+            console_info!(status_tx, "{}", message);
         }
 
-        debug!("DoH got {} protocol results", execution_result.protocol_results.len());
-        let _ = status_tx.send(format!("[DEBUG] DoH got {} protocol results", execution_result.protocol_results.len()));
+        console_debug!(status_tx, "DoH got {} protocol results", execution_result.protocol_results.len());
 
         // Execute actions from LLM response
         for protocol_result in &execution_result.protocol_results {
@@ -327,8 +313,7 @@ impl DohServer {
                     debug!("DoH sending {} bytes response", bytes.len());
                     let _ = status_tx.send(format!("[DEBUG] DoH sending {} bytes", bytes.len()));
 
-                    trace!("DoH response hex: {}", hex::encode(bytes));
-                    let _ = status_tx.send(format!("[TRACE] DoH response hex: {}", hex::encode(bytes)));
+                    console_trace!(status_tx, "DoH response hex: {}", hex::encode(bytes));
 
                     // Return DNS response with correct Content-Type
                     return Ok(Response::builder()
@@ -345,8 +330,7 @@ impl DohServer {
                             debug!("DoH sending {} bytes response", response_bytes.len());
                             let _ = status_tx.send(format!("[DEBUG] DoH sending {} bytes", response_bytes.len()));
 
-                            trace!("DoH response hex: {}", output_data);
-                            let _ = status_tx.send(format!("[TRACE] DoH response hex: {}", output_data));
+                            console_trace!(status_tx, "DoH response hex: {}", output_data);
 
                             // Return DNS response with correct Content-Type
                             return Ok(Response::builder()

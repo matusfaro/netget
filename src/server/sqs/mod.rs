@@ -24,6 +24,7 @@ use crate::server::SqsProtocol;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// SQS server that delegates queue operations to LLM
 pub struct SqsServer;
@@ -40,8 +41,7 @@ impl SqsServer {
     ) -> anyhow::Result<SocketAddr> {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("SQS server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] SQS server listening on {}", local_addr));
+        console_info!(status_tx, "SQS server listening on {}", local_addr);
 
         let protocol = Arc::new(SqsProtocol::new());
 
@@ -116,8 +116,7 @@ impl SqsServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept SQS connection: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to accept SQS connection: {}", e));
+                        console_error!(status_tx, "Failed to accept SQS connection: {}", e);
                         break;
                     }
                 }
@@ -155,8 +154,7 @@ async fn handle_sqs_request_with_llm(
     let body_bytes = match req.into_body().collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
-            error!("Failed to read SQS request body: {}", e);
-            let _ = status_tx.send(format!("[ERROR] Failed to read SQS request body: {}", e));
+            console_error!(status_tx, "Failed to read SQS request body: {}", e);
             Bytes::new()
         }
     };

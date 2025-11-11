@@ -39,6 +39,7 @@ use hyper::{Request, Response, body::Incoming, StatusCode};
 use http_body_util::{BodyExt, Full};
 #[cfg(feature = "grpc")]
 use bytes::Bytes;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// gRPC server with dynamic schema support
 pub struct GrpcServer;
@@ -131,8 +132,7 @@ impl GrpcServer {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let actual_addr = listener.local_addr()?;
 
-        info!("gRPC server listening on {}", actual_addr);
-        let _ = status_tx.send(format!("[INFO] gRPC server listening on {}", actual_addr));
+        console_info!(status_tx, "gRPC server listening on {}", actual_addr);
 
         // Spawn server loop
         let service = Arc::new(dynamic_service);
@@ -197,8 +197,7 @@ impl GrpcServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept gRPC connection: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to accept gRPC connection: {}", e));
+                        console_error!(status_tx, "Failed to accept gRPC connection: {}", e);
                         break;
                     }
                 }

@@ -15,6 +15,7 @@ use actions::STUN_BINDING_REQUEST_EVENT;
 use crate::server::StunProtocol;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// STUN server that handles binding requests
 pub struct StunServer;
@@ -64,13 +65,11 @@ impl StunServer {
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         // DEBUG: Log summary
-                        debug!("STUN received {} bytes from {}", n, peer_addr);
-                        let _ = status_tx.send(format!("[DEBUG] STUN received {} bytes from {}", n, peer_addr));
+                        console_debug!(status_tx, "STUN received {} bytes from {}", n, peer_addr);
 
                         // TRACE: Log full payload
                         let hex_str = hex::encode(&data);
-                        trace!("STUN data (hex): {}", hex_str);
-                        let _ = status_tx.send(format!("[TRACE] STUN data (hex): {}", hex_str));
+                        console_trace!(status_tx, "STUN data (hex): {}", hex_str);
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();

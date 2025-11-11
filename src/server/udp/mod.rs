@@ -16,6 +16,7 @@ use crate::llm::ollama_client::OllamaClient;
 use actions::UDP_DATAGRAM_RECEIVED_EVENT;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// UDP server that manages UDP connections
 pub struct UdpServer;
@@ -71,20 +72,16 @@ impl UdpServer {
                             } else {
                                 data_str.to_string()
                             };
-                            debug!("UDP received {} bytes from {}: {}", n, peer_addr, preview);
-                            let _ = status_tx.send(format!("[DEBUG] UDP received {} bytes from {}: {}", n, peer_addr, preview));
+                            console_debug!(status_tx, "UDP received {} bytes from {}: {}", n, peer_addr, preview);
 
                             // TRACE: Log full text payload
-                            trace!("UDP data (text): {:?}", data_str);
-                            let _ = status_tx.send(format!("[TRACE] UDP data (text): {:?}", data_str));
+                            console_trace!(status_tx, "UDP data (text): {:?}", data_str);
                         } else {
-                            debug!("UDP received {} bytes from {} (binary data)", n, peer_addr);
-                            let _ = status_tx.send(format!("[DEBUG] UDP received {} bytes from {} (binary data)", n, peer_addr));
+                            console_debug!(status_tx, "UDP received {} bytes from {} (binary data)", n, peer_addr);
 
                             // TRACE: Log full hex payload
                             let hex_str = hex::encode(&data);
-                            trace!("UDP data (hex): {}", hex_str);
-                            let _ = status_tx.send(format!("[TRACE] UDP data (hex): {}", hex_str));
+                            console_trace!(status_tx, "UDP data (hex): {}", hex_str);
                         }
 
                         let llm_clone = llm_client.clone();

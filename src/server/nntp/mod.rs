@@ -16,6 +16,7 @@ use actions::NNTP_COMMAND_RECEIVED_EVENT;
 use crate::server::NntpProtocol;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// NNTP server that forwards commands to LLM
 pub struct NntpServer;
@@ -206,8 +207,7 @@ impl NntpServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept NNTP connection: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to accept NNTP connection: {}", e));
+                        console_error!(status_tx, "Failed to accept NNTP connection: {}", e);
                     }
                 }
             }

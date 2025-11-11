@@ -23,6 +23,7 @@ use crate::server::ElasticsearchProtocol;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Elasticsearch server that delegates search/index operations to LLM
 pub struct ElasticsearchServer;
@@ -39,8 +40,7 @@ impl ElasticsearchServer {
     ) -> anyhow::Result<SocketAddr> {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("Elasticsearch server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] Elasticsearch server listening on {}", local_addr));
+        console_info!(status_tx, "Elasticsearch server listening on {}", local_addr);
 
         let protocol = Arc::new(ElasticsearchProtocol::new());
 
@@ -115,8 +115,7 @@ impl ElasticsearchServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept Elasticsearch connection: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to accept Elasticsearch connection: {}", e));
+                        console_error!(status_tx, "Failed to accept Elasticsearch connection: {}", e);
                         break;
                     }
                 }
@@ -146,8 +145,7 @@ async fn handle_elasticsearch_request_with_llm(
     let body_bytes = match req.into_body().collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
-            error!("Failed to read Elasticsearch request body: {}", e);
-            let _ = status_tx.send(format!("[ERROR] Failed to read Elasticsearch request body: {}", e));
+            console_error!(status_tx, "Failed to read Elasticsearch request body: {}", e);
             Bytes::new()
         }
     };
@@ -242,8 +240,7 @@ async fn handle_elasticsearch_request_with_llm(
                 .unwrap())
         }
         Err(e) => {
-            error!("LLM error for Elasticsearch request: {}", e);
-            let _ = status_tx.send(format!("[ERROR] LLM error for Elasticsearch request: {}", e));
+            console_error!(status_tx, "LLM error for Elasticsearch request: {}", e);
 
             let error_response = serde_json::json!({
                 "error": {

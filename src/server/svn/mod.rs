@@ -14,6 +14,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 pub struct SvnServer;
 
@@ -101,8 +102,7 @@ impl SvnServer {
                     }
                     Err(e) => {
                         // ERROR: Critical failure
-                        error!("SVN accept error: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] SVN accept error: {}", e));
+                        console_error!(status_tx, "SVN accept error: {}", e);
                         break;
                     }
                 }
@@ -129,8 +129,7 @@ async fn handle_svn_connection(
     // Send greeting event to LLM
     let greeting_event = Event::new(&SVN_GREETING_EVENT, serde_json::json!({}));
 
-    debug!("SVN sending greeting to {}", peer_addr);
-    let _ = status_tx.send(format!("[DEBUG] SVN sending greeting to {}", peer_addr));
+    console_debug!(status_tx, "SVN sending greeting to {}", peer_addr);
 
     match call_llm(
         &llm_client,
@@ -145,16 +144,14 @@ async fn handle_svn_connection(
         Ok(execution_result) => {
             // Display messages from LLM
             for message in &execution_result.messages {
-                info!("{}", message);
-                let _ = status_tx.send(format!("[INFO] {}", message));
+                console_info!(status_tx, "{}", message);
             }
 
             // Send greeting responses
             for protocol_result in execution_result.protocol_results {
                 if let crate::llm::actions::protocol_trait::ActionResult::Output(output_data) = protocol_result {
                     if let Err(e) = writer.write_all(&output_data).await {
-                        error!("SVN write error: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] SVN write error: {}", e));
+                        console_error!(status_tx, "SVN write error: {}", e);
                         return;
                     }
 
@@ -226,8 +223,7 @@ async fn handle_svn_connection(
                 ));
 
                 // TRACE: Log full payload
-                trace!("SVN command: {}", command_line);
-                let _ = status_tx.send(format!("[TRACE] SVN command: {}", command_line));
+                console_trace!(status_tx, "SVN command: {}", command_line);
 
                 // Parse SVN protocol command
                 let parsed_command = parse_svn_command(&command_line);
@@ -263,8 +259,7 @@ async fn handle_svn_connection(
                     Ok(execution_result) => {
                         // Display messages from LLM
                         for message in &execution_result.messages {
-                            info!("{}", message);
-                            let _ = status_tx.send(format!("[INFO] {}", message));
+                            console_info!(status_tx, "{}", message);
                         }
 
                         // DEBUG: Log protocol results count
@@ -284,9 +279,7 @@ async fn handle_svn_connection(
                                 crate::llm::actions::protocol_trait::ActionResult::Output(output_data) => {
                                     if let Err(e) = writer.write_all(&output_data).await {
                                         // ERROR: Write failed
-                                        error!("SVN write error: {}", e);
-                                        let _ =
-                                            status_tx.send(format!("[ERROR] SVN write error: {}", e));
+                                        console_error!(status_tx, "SVN write error: {}", e);
                                         return;
                                     }
 
@@ -352,9 +345,7 @@ async fn handle_svn_connection(
             }
             Err(e) => {
                 // ERROR: Read failed
-                error!("SVN read error from {}: {}", peer_addr, e);
-                let _ =
-                    status_tx.send(format!("[ERROR] SVN read error from {}: {}", peer_addr, e));
+                console_error!(status_tx, "SVN read error from {}: {}", peer_addr, e);
                 break;
             }
         }

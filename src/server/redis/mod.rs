@@ -17,6 +17,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Redis server implementation
 pub struct RedisServer {
@@ -72,8 +73,7 @@ impl RedisServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, addr)) => {
-                        debug!("Redis connection from {}", addr);
-                        let _ = status_tx.send(format!("[DEBUG] Redis connection from {}", addr));
+                        console_debug!(status_tx, "Redis connection from {}", addr);
 
                         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(actual_addr);
@@ -119,8 +119,7 @@ impl RedisServer {
                         });
                     }
                     Err(e) => {
-                        error!("Redis accept error: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Redis accept error: {}", e));
+                        console_error!(status_tx, "Redis accept error: {}", e);
                     }
                 }
             }

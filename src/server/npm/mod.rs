@@ -28,6 +28,7 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::llm::action_helper::call_llm;
 use crate::state::app_state::AppState;
 use crate::protocol::EventType;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// NPM registry server that delegates to LLM
 pub struct NpmServer;
@@ -43,8 +44,7 @@ impl NpmServer {
     ) -> anyhow::Result<SocketAddr> {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("NPM registry server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] NPM registry server listening on {}", local_addr));
+        console_info!(status_tx, "NPM registry server listening on {}", local_addr);
 
         let protocol = Arc::new(NpmProtocol::new());
 
@@ -119,8 +119,7 @@ impl NpmServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept NPM connection: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to accept NPM connection: {}", e));
+                        console_error!(status_tx, "Failed to accept NPM connection: {}", e);
                         break;
                     }
                 }
@@ -212,8 +211,7 @@ async fn handle_npm_request(
         }),
     );
 
-    debug!("Calling LLM for NPM request: {} {}", method, path);
-    let _ = status_tx.send(format!("[DEBUG] Calling LLM for NPM request: {} {}", method, path));
+    console_debug!(status_tx, "Calling LLM for NPM request: {} {}", method, path);
 
     // Call LLM
     let llm_result = call_llm(
@@ -247,8 +245,7 @@ async fn handle_npm_request(
                 .unwrap())
         },
         Err(e) => {
-            error!("LLM call failed: {}", e);
-            let _ = status_tx.send(format!("[ERROR] LLM call failed: {}", e));
+            console_error!(status_tx, "LLM call failed: {}", e);
             let error_response = json!({
                 "error": format!("LLM error: {}", e)
             });

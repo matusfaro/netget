@@ -18,6 +18,7 @@ use actions::{
 use crate::protocol::Event;
 use crate::server::SipProtocol;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// SIP server that handles VoIP signaling
 pub struct SipServer;
@@ -85,8 +86,7 @@ impl SipServer {
                             } else {
                                 text.clone()
                             };
-                            trace!("SIP message: {}", preview);
-                            let _ = status_tx.send(format!("[TRACE] SIP message: {}", preview));
+                            console_trace!(status_tx, "SIP message: {}", preview);
                         }
 
                         let llm_clone = llm_client.clone();
@@ -176,8 +176,7 @@ impl SipServer {
                         });
                     }
                     Err(e) => {
-                        error!("SIP recv error: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] SIP recv error: {}", e));
+                        console_error!(status_tx, "SIP recv error: {}", e);
                     }
                 }
             }

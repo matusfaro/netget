@@ -25,6 +25,7 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::server::connection::ConnectionId;
 use crate::server::jsonrpc::actions::JsonRpcProtocol;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// JSON-RPC 2.0 standard error codes
 const PARSE_ERROR: i32 = -32700;
@@ -46,8 +47,7 @@ impl JsonRpcServer {
     ) -> anyhow::Result<SocketAddr> {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("JSON-RPC server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] JSON-RPC server listening on {}", local_addr));
+        console_info!(status_tx, "JSON-RPC server listening on {}", local_addr);
 
         let protocol = Arc::new(JsonRpcProtocol::new());
 
@@ -122,8 +122,7 @@ impl JsonRpcServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept JSON-RPC connection: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to accept JSON-RPC connection: {}", e));
+                        console_error!(status_tx, "Failed to accept JSON-RPC connection: {}", e);
                         break;
                     }
                 }
@@ -164,8 +163,7 @@ async fn handle_jsonrpc_request(
     let body_bytes = match req.collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
-            error!("Failed to read request body: {}", e);
-            let _ = status_tx.send(format!("[ERROR] Failed to read request body: {}", e));
+            console_error!(status_tx, "Failed to read request body: {}", e);
             return Ok(build_error_response(
                 INVALID_REQUEST,
                 "Failed to read request body",
@@ -179,8 +177,7 @@ async fn handle_jsonrpc_request(
     let request_value: Value = match serde_json::from_slice(&body_bytes) {
         Ok(json) => json,
         Err(e) => {
-            error!("Failed to parse JSON: {}", e);
-            let _ = status_tx.send(format!("[ERROR] Failed to parse JSON: {}", e));
+            console_error!(status_tx, "Failed to parse JSON: {}", e);
             return Ok(build_error_response(
                 PARSE_ERROR,
                 "Parse error",
@@ -346,8 +343,7 @@ async fn process_single_request(
     ).await {
         Ok(result) => result,
         Err(e) => {
-            error!("LLM call failed: {}", e);
-            let _ = status_tx.send(format!("[ERROR] LLM call failed: {}", e));
+            console_error!(status_tx, "LLM call failed: {}", e);
             if !is_notification {
                 return Some(json!({
                     "jsonrpc": "2.0",

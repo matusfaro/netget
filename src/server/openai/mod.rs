@@ -24,6 +24,7 @@ use crate::server::connection::ConnectionId;
 use crate::server::openai::actions::OpenAiProtocol;
 use crate::llm::ollama_client::OllamaClient;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// OpenAI-compatible API server that delegates to LLM/Ollama
 pub struct OpenAiServer;
@@ -40,8 +41,7 @@ impl OpenAiServer {
     ) -> anyhow::Result<SocketAddr> {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("OpenAI API server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] OpenAI API server listening on {}", local_addr));
+        console_info!(status_tx, "OpenAI API server listening on {}", local_addr);
 
         let protocol = Arc::new(OpenAiProtocol::new());
 
@@ -116,8 +116,7 @@ impl OpenAiServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept OpenAI API connection: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to accept OpenAI API connection: {}", e));
+                        console_error!(status_tx, "Failed to accept OpenAI API connection: {}", e);
                         break;
                     }
                 }
@@ -154,8 +153,7 @@ async fn handle_openai_request(
             handle_chat_completions(req, llm_client, app_state, status_tx).await
         }
         _ => {
-            debug!("OpenAI API: Unknown endpoint {} {}", method, path);
-            let _ = status_tx.send(format!("[DEBUG] OpenAI API: Unknown endpoint {} {}", method, path));
+            console_debug!(status_tx, "OpenAI API: Unknown endpoint {} {}", method, path);
             Ok(Response::builder()
                 .status(StatusCode::NOT_FOUND)
                 .header("Content-Type", "application/json")
@@ -210,8 +208,7 @@ async fn handle_models_list(
                 .unwrap())
         }
         Err(e) => {
-            error!("Failed to list Ollama models: {}", e);
-            let _ = status_tx.send(format!("[ERROR] Failed to list Ollama models: {}", e));
+            console_error!(status_tx, "Failed to list Ollama models: {}", e);
 
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -239,8 +236,7 @@ async fn handle_chat_completions(
     let body_bytes = match req.collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
-            error!("Failed to read request body: {}", e);
-            let _ = status_tx.send(format!("[ERROR] Failed to read request body: {}", e));
+            console_error!(status_tx, "Failed to read request body: {}", e);
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .header("Content-Type", "application/json")
@@ -258,8 +254,7 @@ async fn handle_chat_completions(
     let request_json: Value = match serde_json::from_slice(&body_bytes) {
         Ok(json) => json,
         Err(e) => {
-            error!("Failed to parse JSON: {}", e);
-            let _ = status_tx.send(format!("[ERROR] Failed to parse JSON: {}", e));
+            console_error!(status_tx, "Failed to parse JSON: {}", e);
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .header("Content-Type", "application/json")
@@ -273,8 +268,7 @@ async fn handle_chat_completions(
         }
     };
 
-    trace!("Chat completion request: {}", serde_json::to_string_pretty(&request_json).unwrap_or_default());
-    let _ = status_tx.send(format!("[TRACE] Chat completion request: {}", serde_json::to_string_pretty(&request_json).unwrap_or_default()));
+    console_trace!(status_tx, "Chat completion request: {}", serde_json::to_string_pretty(&request_json).unwrap_or_default());
 
     // Extract model and messages
     let model = match request_json.get("model").and_then(|v| v.as_str()) {
@@ -287,8 +281,7 @@ async fn handle_chat_completions(
         .cloned()
         .unwrap_or_default();
 
-    debug!("Chat completion: model={}, {} messages", model, messages.len());
-    let _ = status_tx.send(format!("[DEBUG] Chat completion: model={}, {} messages", model, messages.len()));
+    console_debug!(status_tx, "Chat completion: model={}, {} messages", model, messages.len());
 
     // Convert messages to Ollama format and generate response
     match generate_chat_response(&llm_client, &model, messages, &request_json, &status_tx).await {
@@ -330,8 +323,7 @@ async fn handle_chat_completions(
                 .unwrap())
         }
         Err(e) => {
-            error!("Failed to generate chat response: {}", e);
-            let _ = status_tx.send(format!("[ERROR] Failed to generate chat response: {}", e));
+            console_error!(status_tx, "Failed to generate chat response: {}", e);
 
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)

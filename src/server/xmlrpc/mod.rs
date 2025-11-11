@@ -31,6 +31,7 @@ use crate::llm::ActionResult;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use crate::state::server::{ConnectionState as ServerConnectionState, ConnectionStatus, ProtocolConnectionInfo, ServerId};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 pub use actions::XmlRpcProtocol;
 
@@ -225,8 +226,7 @@ async fn handle_xmlrpc_request(
     let method_call = match parse_method_call(&body_str) {
         Ok(call) => call,
         Err(e) => {
-            error!("XML-RPC parse error: {}", e);
-            let _ = status_tx.send(format!("[ERROR] XML-RPC parse error: {}", e));
+            console_error!(status_tx, "XML-RPC parse error: {}", e);
             let fault_xml = generate_fault(-32700, &format!("Parse error: {}", e));
             return Ok(Response::builder()
                 .status(200)
@@ -263,8 +263,7 @@ async fn handle_xmlrpc_request(
     {
         Ok(result) => result,
         Err(e) => {
-            error!("LLM error: {}", e);
-            let _ = status_tx.send(format!("[ERROR] LLM error: {}", e));
+            console_error!(status_tx, "LLM error: {}", e);
             let fault_xml = generate_fault(-32603, &format!("Internal error: {}", e));
             return Ok(Response::builder()
                 .status(200)

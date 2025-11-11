@@ -21,6 +21,7 @@ use crate::server::LdapProtocol;
 use crate::protocol::Event;
 #[cfg(feature = "ldap")]
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// LDAP server that handles directory operations with LLM
 pub struct LdapServer;
@@ -81,8 +82,7 @@ impl LdapServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept LDAP connection: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to accept LDAP connection: {}", e));
+                        console_error!(status_tx, "Failed to accept LDAP connection: {}", e);
                         break;
                     }
                 }

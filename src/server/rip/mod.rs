@@ -15,6 +15,7 @@ use actions::RIP_REQUEST_EVENT;
 use crate::server::RipProtocol;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// RIP server that forwards routing requests to LLM
 pub struct RipServer;
@@ -66,8 +67,7 @@ impl RipServer {
 
                         // Parse RIP packet to determine message type
                         if n < 4 {
-                            debug!("RIP received invalid packet (too short: {} bytes) from {}", n, peer_addr);
-                            let _ = status_tx.send(format!("[DEBUG] RIP received invalid packet (too short: {} bytes) from {}", n, peer_addr));
+                            console_debug!(status_tx, "RIP received invalid packet (too short: {} bytes) from {}", n, peer_addr);
                             continue;
                         }
 
@@ -87,8 +87,7 @@ impl RipServer {
 
                         // TRACE: Log full payload (hex)
                         let hex_str = hex::encode(&data);
-                        trace!("RIP data (hex): {}", hex_str);
-                        let _ = status_tx.send(format!("[TRACE] RIP data (hex): {}", hex_str));
+                        console_trace!(status_tx, "RIP data (hex): {}", hex_str);
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();

@@ -52,6 +52,7 @@ use actions::{
 };
 #[cfg(feature = "mcp")]
 use session::McpSession;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// MCP server shared state
 #[derive(Clone)]
@@ -112,8 +113,7 @@ impl McpServer {
         // Spawn server
         tokio::spawn(async move {
             if let Err(e) = axum::serve(listener, app).await {
-                error!("MCP server error: {}", e);
-                let _ = status_tx.send(format!("[ERROR] MCP server error: {}", e));
+                console_error!(status_tx, "MCP server error: {}", e);
             }
         });
 

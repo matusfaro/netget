@@ -39,6 +39,7 @@ use crate::state::app_state::AppState;
 use crate::state::server::{ConnectionStatus, ImapSessionState, ProtocolConnectionInfo, ProtocolState, ServerId};
 #[cfg(feature = "imap")]
 use serde_json::json;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// IMAP server that handles mail retrieval with LLM
 pub struct ImapServer;
@@ -169,8 +170,7 @@ impl ImapServer {
         let listener =
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("IMAPS server (TLS) listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] IMAPS server (TLS) listening on {}", local_addr));
+        console_info!(status_tx, "IMAPS server (TLS) listening on {}", local_addr);
 
         let protocol = Arc::new(ImapProtocol::new());
 

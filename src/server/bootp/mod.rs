@@ -20,6 +20,7 @@ use crate::state::app_state::AppState;
 use dhcproto::{v4, Decodable, Decoder};
 #[cfg(feature = "bootp")]
 use actions::BootpRequestContext;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// BOOTP server that forwards requests to LLM
 pub struct BootpServer;
@@ -50,13 +51,11 @@ impl BootpServer {
                         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
 
                         // DEBUG: Log summary
-                        debug!("BOOTP received {} bytes from {}", n, peer_addr);
-                        let _ = status_tx.send(format!("[DEBUG] BOOTP received {} bytes from {}", n, peer_addr));
+                        console_debug!(status_tx, "BOOTP received {} bytes from {}", n, peer_addr);
 
                         // TRACE: Log full payload (always hex for BOOTP)
                         let hex_str = hex::encode(&data);
-                        trace!("BOOTP data (hex): {}", hex_str);
-                        let _ = status_tx.send(format!("[TRACE] BOOTP data (hex): {}", hex_str));
+                        console_trace!(status_tx, "BOOTP data (hex): {}", hex_str);
 
                         #[cfg(feature = "bootp")]
                         let parsed_info = Self::parse_bootp_message(&data);

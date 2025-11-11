@@ -17,6 +17,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// MQTT broker
 pub struct MqttServer;
@@ -34,8 +35,7 @@ impl MqttServer {
         let listener = TcpListener::bind(listen_addr).await?;
         let local_addr = listener.local_addr()?;
 
-        info!("MQTT broker listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] MQTT broker listening on {}", local_addr));
+        console_info!(status_tx, "MQTT broker listening on {}", local_addr);
 
         // Shared state for connected clients
         let clients: Arc<Mutex<HashMap<String, Arc<Mutex<TcpStream>>>>> =
@@ -103,8 +103,7 @@ async fn handle_mqtt_connection(
         return Ok(());
     }
 
-    trace!("MQTT received {} bytes", n);
-    let _ = status_tx.send(format!("[TRACE] MQTT received {} bytes", n));
+    console_trace!(status_tx, "MQTT received {} bytes", n);
 
     // Parse CONNECT packet (very basic)
     let data = &buf[..n];
@@ -118,8 +117,7 @@ async fn handle_mqtt_connection(
     // Extract client ID from CONNECT payload (simplified parsing)
     let client_id = extract_client_id(data).unwrap_or_else(|| "unknown".to_string());
 
-    info!("MQTT client connected: {}", client_id);
-    let _ = status_tx.send(format!("[INFO] MQTT client connected: {}", client_id));
+    console_info!(status_tx, "MQTT client connected: {}", client_id);
 
     // Add connection to app state
     let now = std::time::Instant::now();
@@ -150,8 +148,7 @@ async fn handle_mqtt_connection(
     let connack = build_connack();
     socket.write_all(&connack).await?;
 
-    debug!("MQTT sent CONNACK to {}", client_id);
-    let _ = status_tx.send(format!("[DEBUG] MQTT sent CONNACK to {}", client_id));
+    console_debug!(status_tx, "MQTT sent CONNACK to {}", client_id);
 
     // Keep connection alive and handle subsequent packets
     loop {
@@ -159,8 +156,7 @@ async fn handle_mqtt_connection(
 
         if n == 0 {
             // Connection closed
-            info!("MQTT client disconnected: {}", client_id);
-            let _ = status_tx.send(format!("[INFO] MQTT client disconnected: {}", client_id));
+            console_info!(status_tx, "MQTT client disconnected: {}", client_id);
             break;
         }
 

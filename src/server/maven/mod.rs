@@ -24,6 +24,7 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Maven repository server that delegates artifact requests to LLM
 pub struct MavenServer;
@@ -39,8 +40,7 @@ impl MavenServer {
     ) -> anyhow::Result<SocketAddr> {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("Maven repository server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] Maven repository server listening on {}", local_addr));
+        console_info!(status_tx, "Maven repository server listening on {}", local_addr);
 
         let protocol = Arc::new(MavenProtocol::new());
 
@@ -116,8 +116,7 @@ impl MavenServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept Maven connection: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to accept Maven connection: {}", e));
+                        console_error!(status_tx, "Failed to accept Maven connection: {}", e);
                         break;
                     }
                 }
@@ -279,8 +278,7 @@ async fn handle_maven_request_with_llm(
     let _body_bytes = match req.into_body().collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
-            error!("Failed to read request body: {}", e);
-            let _ = status_tx.send(format!("[ERROR] Failed to read request body: {}", e));
+            console_error!(status_tx, "Failed to read request body: {}", e);
             Bytes::new()
         }
     };
@@ -319,8 +317,7 @@ async fn handle_maven_request_with_llm(
         })
     } else {
         // Invalid Maven path format
-        debug!("Invalid Maven artifact path: {}", uri);
-        let _ = status_tx.send(format!("[DEBUG] Invalid Maven artifact path: {}", uri));
+        console_debug!(status_tx, "Invalid Maven artifact path: {}", uri);
 
         return Ok(Response::builder()
             .status(404)

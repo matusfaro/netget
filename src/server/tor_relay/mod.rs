@@ -83,6 +83,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio_rustls::rustls::ServerConfig;
 use tokio_rustls::TlsAcceptor;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Tor Relay server - handles OR protocol connections
 pub struct TorRelayServer;
@@ -142,8 +143,7 @@ impl TorRelayServer {
                         let connection_id = crate::server::connection::ConnectionId::new(
                             app_state.get_next_unified_id().await
                         );
-                        debug!("Tor Relay connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!("[DEBUG] Tor Relay connection {} from {}", connection_id, remote_addr));
+                        console_debug!(status_tx, "Tor Relay connection {} from {}", connection_id, remote_addr);
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();

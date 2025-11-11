@@ -17,6 +17,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace, warn};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// VNC server that uses LLM to control display and authentication
 pub struct VncServer;
@@ -76,8 +77,7 @@ impl VncServer {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
 
-        info!("VNC server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] VNC server listening on {}", local_addr));
+        console_info!(status_tx, "VNC server listening on {}", local_addr);
 
         tokio::spawn(async move {
             loop {
@@ -158,8 +158,7 @@ impl VncServer {
         )
         .await?;
 
-        debug!("VNC authentication successful for {}", remote_addr);
-        let _ = status_tx.send(format!("[DEBUG] VNC authentication successful for {}", remote_addr));
+        console_debug!(status_tx, "VNC authentication successful for {}", remote_addr);
 
         // Update connection state
         app_state

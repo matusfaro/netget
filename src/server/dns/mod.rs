@@ -15,6 +15,7 @@ use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// DNS server that integrates with LLM for query handling
 pub struct DnsServer;
@@ -63,13 +64,11 @@ impl DnsServer {
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         // DEBUG: Log summary
-                        debug!("DNS received {} bytes from {}", n, peer_addr);
-                        let _ = status_tx.send(format!("[DEBUG] DNS received {} bytes from {}", n, peer_addr));
+                        console_debug!(status_tx, "DNS received {} bytes from {}", n, peer_addr);
 
                         // TRACE: Log full payload (hex for binary DNS)
                         let hex_str = hex::encode(&data);
-                        trace!("DNS data (hex): {}", hex_str);
-                        let _ = status_tx.send(format!("[TRACE] DNS data (hex): {}", hex_str));
+                        console_trace!(status_tx, "DNS data (hex): {}", hex_str);
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();

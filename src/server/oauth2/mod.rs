@@ -27,6 +27,7 @@ use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// OAuth2 authorization server
 pub struct OAuth2Server;
@@ -42,8 +43,7 @@ impl OAuth2Server {
     ) -> anyhow::Result<SocketAddr> {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("OAuth2 server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] OAuth2 server listening on {}", local_addr));
+        console_info!(status_tx, "OAuth2 server listening on {}", local_addr);
 
         let protocol = Arc::new(OAuth2Protocol::new());
 

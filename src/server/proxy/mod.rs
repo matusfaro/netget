@@ -33,6 +33,7 @@ use crate::state::ServerId;
 use rcgen::{Certificate, CertificateParams, KeyPair};
 use regex::Regex;
 use serde_json::json;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// HTTP/HTTPS Proxy server that intercepts and forwards requests via LLM
 pub struct ProxyServer;
@@ -181,8 +182,7 @@ impl ProxyServer {
                     Ok((stream, peer_addr)) => {
                         let _ = status_tx.send(format!("[INFO] >>> ACCEPTED proxy connection from {}", peer_addr));
                         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
-                        debug!("Proxy connection {} from {}", connection_id, peer_addr);
-                        let _ = status_tx.send(format!("[DEBUG] Proxy connection {} from {}", connection_id, peer_addr));
+                        console_debug!(status_tx, "Proxy connection {} from {}", connection_id, peer_addr);
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
@@ -272,8 +272,7 @@ impl ProxyServer {
             .context("Failed to read initial request")?;
 
         eprintln!(">>> PROXY: received {} bytes from connection {}", n, connection_id);
-        debug!("Proxy connection {} received {} bytes", connection_id, n);
-        let _ = status_tx.send(format!("[DEBUG] Proxy connection {} received {} bytes", connection_id, n));
+        console_debug!(status_tx, "Proxy connection {} received {} bytes", connection_id, n);
 
         if n == 0 {
             debug!("Client closed connection before sending data");
@@ -296,8 +295,7 @@ impl ProxyServer {
         let first_line = request_str.lines().next()
             .context("Empty request")?;
 
-        debug!("Request line: {}", first_line);
-        let _ = status_tx.send(format!("[DEBUG] Request line: {}", first_line));
+        console_debug!(status_tx, "Request line: {}", first_line);
 
         let parts: Vec<&str> = first_line.split_whitespace().collect();
         if parts.len() < 3 {
@@ -308,8 +306,7 @@ impl ProxyServer {
         let method = parts[0];
         let uri = parts[1];
 
-        debug!("Parsed: method={}, uri={}", method, uri);
-        let _ = status_tx.send(format!("[DEBUG] Parsed: method={}, uri={}", method, uri));
+        console_debug!(status_tx, "Parsed: method={}, uri={}", method, uri);
 
         // Check if this is an HTTPS CONNECT request
         if method == "CONNECT" {

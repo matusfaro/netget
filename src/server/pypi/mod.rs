@@ -27,6 +27,7 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// PyPI server that delegates package serving to LLM
 pub struct PypiServer;
@@ -42,8 +43,7 @@ impl PypiServer {
     ) -> anyhow::Result<SocketAddr> {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("PyPI server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] PyPI server listening on {}", local_addr));
+        console_info!(status_tx, "PyPI server listening on {}", local_addr);
 
         let protocol = Arc::new(PypiProtocol::new());
 
@@ -54,8 +54,7 @@ impl PypiServer {
                     Ok((stream, remote_addr)) => {
                         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        info!("Accepted PyPI connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!("[INFO] Accepted PyPI connection {} from {}", connection_id, remote_addr));
+                        console_info!(status_tx, "Accepted PyPI connection {} from {}", connection_id, remote_addr);
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
@@ -119,8 +118,7 @@ impl PypiServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept PyPI connection: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to accept PyPI connection: {}", e));
+                        console_error!(status_tx, "Failed to accept PyPI connection: {}", e);
                         break;
                     }
                 }
@@ -158,8 +156,7 @@ async fn handle_pypi_request_with_llm_actions(
     let body_bytes = match req.into_body().collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
-            error!("Failed to read request body: {}", e);
-            let _ = status_tx.send(format!("[ERROR] Failed to read request body: {}", e));
+            console_error!(status_tx, "Failed to read request body: {}", e);
             Bytes::new()
         }
     };

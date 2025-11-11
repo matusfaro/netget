@@ -14,6 +14,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 pub struct WhoisServer;
 
@@ -95,8 +96,7 @@ impl WhoisServer {
                     }
                     Err(e) => {
                         // ERROR: Critical failure
-                        error!("WHOIS accept error: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] WHOIS accept error: {}", e));
+                        console_error!(status_tx, "WHOIS accept error: {}", e);
                         break;
                     }
                 }
@@ -160,8 +160,7 @@ async fn handle_whois_connection(
                 ));
 
                 // TRACE: Log full payload
-                trace!("WHOIS query data: {}", query_str.trim());
-                let _ = status_tx.send(format!("[TRACE] WHOIS query data: {}", query_str.trim()));
+                console_trace!(status_tx, "WHOIS query data: {}", query_str.trim());
 
                 // Parse query (trim whitespace and newlines)
                 let query = query_str.trim().to_string();
@@ -195,8 +194,7 @@ async fn handle_whois_connection(
                     Ok(execution_result) => {
                         // Display messages from LLM
                         for message in &execution_result.messages {
-                            info!("{}", message);
-                            let _ = status_tx.send(format!("[INFO] {}", message));
+                            console_info!(status_tx, "{}", message);
                         }
 
                         // DEBUG: Log protocol results count
@@ -216,9 +214,7 @@ async fn handle_whois_connection(
                                 crate::llm::actions::protocol_trait::ActionResult::Output(output_data) => {
                                     if let Err(e) = writer.write_all(&output_data).await {
                                         // ERROR: Write failed
-                                        error!("WHOIS write error: {}", e);
-                                        let _ =
-                                            status_tx.send(format!("[ERROR] WHOIS write error: {}", e));
+                                        console_error!(status_tx, "WHOIS write error: {}", e);
                                         return;
                                     }
 
@@ -284,9 +280,7 @@ async fn handle_whois_connection(
             }
             Err(e) => {
                 // ERROR: Read failed
-                error!("WHOIS read error from {}: {}", peer_addr, e);
-                let _ =
-                    status_tx.send(format!("[ERROR] WHOIS read error from {}: {}", peer_addr, e));
+                console_error!(status_tx, "WHOIS read error from {}: {}", peer_addr, e);
                 break;
             }
         }

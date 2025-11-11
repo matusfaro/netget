@@ -17,6 +17,7 @@ use actions::{TURN_ALLOCATE_REQUEST_EVENT, TURN_REFRESH_REQUEST_EVENT, TURN_CREA
 use crate::server::TurnProtocol;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// TURN allocation information
 #[derive(Clone, Debug)]
@@ -100,13 +101,11 @@ impl TurnServer {
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         // DEBUG: Log summary
-                        debug!("TURN received {} bytes from {}", n, peer_addr);
-                        let _ = status_tx.send(format!("[DEBUG] TURN received {} bytes from {}", n, peer_addr));
+                        console_debug!(status_tx, "TURN received {} bytes from {}", n, peer_addr);
 
                         // TRACE: Log full payload
                         let hex_str = hex::encode(&data);
-                        trace!("TURN data (hex): {}", hex_str);
-                        let _ = status_tx.send(format!("[TRACE] TURN data (hex): {}", hex_str));
+                        console_trace!(status_tx, "TURN data (hex): {}", hex_str);
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -272,8 +271,7 @@ impl TurnServer {
 
                 allocations.retain(|id, alloc| {
                     if alloc.expires_at <= now {
-                        debug!("TURN expired allocation {} for {}", id, alloc.client_addr);
-                        let _ = status_tx.send(format!("[DEBUG] TURN expired allocation {} for {}", id, alloc.client_addr));
+                        console_debug!(status_tx, "TURN expired allocation {} for {}", id, alloc.client_addr);
                         false
                     } else {
                         true
@@ -282,8 +280,7 @@ impl TurnServer {
 
                 let removed = initial_count - allocations.len();
                 if removed > 0 {
-                    debug!("TURN cleanup removed {} expired allocations", removed);
-                    let _ = status_tx.send(format!("[DEBUG] TURN cleanup removed {} expired allocations", removed));
+                    console_debug!(status_tx, "TURN cleanup removed {} expired allocations", removed);
                 }
             }
         });

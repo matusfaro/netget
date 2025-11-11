@@ -17,6 +17,7 @@ use crate::llm::ActionResult;
 use actions::{Http3Protocol, HTTP3_CONNECTION_OPENED_EVENT, HTTP3_DATA_RECEIVED_EVENT, HTTP3_STREAM_OPENED_EVENT};
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Stream state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -252,8 +253,7 @@ impl Http3Server {
                         if let Err(e) = send.write_all(&output_data).await {
                             error!("Failed to send initial data on stream {}: {}", stream_id, e);
                         } else {
-                            debug!("HTTP3 sent {} bytes on stream {}", output_data.len(), stream_id);
-                            let _ = status_tx.send(format!("[DEBUG] HTTP3 sent {} bytes on stream {}", output_data.len(), stream_id));
+                            console_debug!(status_tx, "HTTP3 sent {} bytes on stream {}", output_data.len(), stream_id);
                         }
                     }
                 }
@@ -279,20 +279,16 @@ impl Http3Server {
                         } else {
                             data_str.to_string()
                         };
-                        debug!("HTTP3 received {} bytes on stream {}: {}", n, stream_id, preview);
-                        let _ = status_tx.send(format!("[DEBUG] HTTP3 received {} bytes on stream {}: {}", n, stream_id, preview));
+                        console_debug!(status_tx, "HTTP3 received {} bytes on stream {}: {}", n, stream_id, preview);
 
                         // TRACE: Log full text payload
-                        trace!("HTTP3 data (text): {:?}", data_str);
-                        let _ = status_tx.send(format!("[TRACE] HTTP3 data (text): {:?}", data_str));
+                        console_trace!(status_tx, "HTTP3 data (text): {:?}", data_str);
                     } else {
-                        debug!("HTTP3 received {} bytes on stream {} (binary data)", n, stream_id);
-                        let _ = status_tx.send(format!("[DEBUG] HTTP3 received {} bytes on stream {} (binary data)", n, stream_id));
+                        console_debug!(status_tx, "HTTP3 received {} bytes on stream {} (binary data)", n, stream_id);
 
                         // TRACE: Log full hex payload
                         let hex_str = hex::encode(&data);
-                        trace!("HTTP3 data (hex): {}", hex_str);
-                        let _ = status_tx.send(format!("[TRACE] HTTP3 data (hex): {}", hex_str));
+                        console_trace!(status_tx, "HTTP3 data (hex): {}", hex_str);
                     }
 
                     // Handle data in separate task
@@ -446,20 +442,16 @@ impl Http3Server {
                                         } else {
                                             data_str.to_string()
                                         };
-                                        debug!("HTTP3 sent {} bytes on stream {}: {}", output_data.len(), stream_id, preview);
-                                        let _ = status_tx.send(format!("[DEBUG] HTTP3 sent {} bytes on stream {}: {}", output_data.len(), stream_id, preview));
+                                        console_debug!(status_tx, "HTTP3 sent {} bytes on stream {}: {}", output_data.len(), stream_id, preview);
 
                                         // TRACE: Log full text payload
-                                        trace!("HTTP3 sent (text): {:?}", data_str);
-                                        let _ = status_tx.send(format!("[TRACE] HTTP3 sent (text): {:?}", data_str));
+                                        console_trace!(status_tx, "HTTP3 sent (text): {:?}", data_str);
                                     } else {
-                                        debug!("HTTP3 sent {} bytes on stream {} (binary data)", output_data.len(), stream_id);
-                                        let _ = status_tx.send(format!("[DEBUG] HTTP3 sent {} bytes on stream {} (binary data)", output_data.len(), stream_id));
+                                        console_debug!(status_tx, "HTTP3 sent {} bytes on stream {} (binary data)", output_data.len(), stream_id);
 
                                         // TRACE: Log full hex payload
                                         let hex_str = hex::encode(&output_data);
-                                        trace!("HTTP3 sent (hex): {}", hex_str);
-                                        let _ = status_tx.send(format!("[TRACE] HTTP3 sent (hex): {}", hex_str));
+                                        console_trace!(status_tx, "HTTP3 sent (hex): {}", hex_str);
                                     }
                                     let _ = status_tx.send(format!("→ Sent {} bytes on stream {}", output_data.len(), stream_id));
                                 }

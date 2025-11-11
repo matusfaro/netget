@@ -17,6 +17,7 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 use crate::client::openidconnect::actions::{
     OIDC_CLIENT_DISCOVERED_EVENT,
     OIDC_CLIENT_TOKEN_RECEIVED_EVENT,
@@ -92,8 +93,7 @@ impl OpenIdConnectClient {
                 &instruction,
                 protocol,
             ).await {
-                error!("Failed to discover OIDC configuration: {}", e);
-                let _ = status_tx.send(format!("[ERROR] Failed to discover OIDC configuration: {}", e));
+                console_error!(status_tx, "Failed to discover OIDC configuration: {}", e);
             }
         }
 

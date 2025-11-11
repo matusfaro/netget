@@ -20,6 +20,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use serde_json::{json, Value};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// JSON-RPC 2.0 request message
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -210,8 +211,7 @@ impl McpClient {
                     }
                 }
                 Err(e) => {
-                    error!("Failed to call LLM: {}", e);
-                    let _ = status_tx.send(format!("[ERROR] Failed to call LLM: {}", e));
+                    console_error!(status_tx, "Failed to call LLM: {}", e);
                 }
             }
 

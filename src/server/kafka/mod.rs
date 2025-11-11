@@ -25,6 +25,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, trace, warn};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Kafka broker server state
 pub struct KafkaServer {
@@ -112,8 +113,7 @@ impl KafkaServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, peer_addr)) => {
-                        debug!("Kafka client connected from {}", peer_addr);
-                        let _ = status_tx.send(format!("[DEBUG] Kafka client connected from {}", peer_addr));
+                        console_debug!(status_tx, "Kafka client connected from {}", peer_addr);
 
                         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         let llm_clone = llm_client.clone();
@@ -166,8 +166,7 @@ impl KafkaServer {
                         });
                     }
                     Err(e) => {
-                        error!("Kafka accept error: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Kafka accept error: {}", e));
+                        console_error!(status_tx, "Kafka accept error: {}", e);
                     }
                 }
             }
@@ -195,8 +194,7 @@ impl KafkaServer {
             // Read message size (4 bytes, big-endian)
             let n = stream.read(&mut buffer[..4]).await?;
             if n == 0 {
-                debug!("Kafka client {} disconnected", peer_addr);
-                let _ = status_tx.send(format!("[DEBUG] Kafka client {} disconnected", peer_addr));
+                console_debug!(status_tx, "Kafka client {} disconnected", peer_addr);
                 break;
             }
 
@@ -206,26 +204,22 @@ impl KafkaServer {
             buffer.resize(message_size, 0);
             stream.read_exact(&mut buffer[..message_size]).await?;
 
-            debug!("Kafka received {} bytes from {}", message_size, peer_addr);
-            let _ = status_tx.send(format!("[DEBUG] Kafka received {} bytes from {}", message_size, peer_addr));
+            console_debug!(status_tx, "Kafka received {} bytes from {}", message_size, peer_addr);
 
             // TRACE: Log hex dump of raw message
-            trace!("Kafka raw message (hex): {}", hex::encode(&buffer[..message_size]));
-            let _ = status_tx.send(format!("[TRACE] Kafka raw message (hex): {}", hex::encode(&buffer[..message_size])));
+            console_trace!(status_tx, "Kafka raw message (hex): {}", hex::encode(&buffer[..message_size]));
 
             // Parse request header
             let mut cursor = std::io::Cursor::new(&buffer[..message_size]);
             let header = match RequestHeader::decode(&mut cursor, 0) {
                 Ok(h) => h,
                 Err(e) => {
-                    error!("Failed to parse Kafka request header: {}", e);
-                    let _ = status_tx.send(format!("[ERROR] Failed to parse Kafka request header: {}", e));
+                    console_error!(status_tx, "Failed to parse Kafka request header: {}", e);
                     continue;
                 }
             };
 
-            debug!("Kafka request: API={:?}, correlation_id={}", header.request_api_key, header.correlation_id);
-            let _ = status_tx.send(format!("[DEBUG] Kafka request: API={:?}, correlation_id={}", header.request_api_key, header.correlation_id));
+            console_debug!(status_tx, "Kafka request: API={:?}, correlation_id={}", header.request_api_key, header.correlation_id);
 
             // Handle different API keys
             let response_bytes = match header.request_api_key.try_into() {
@@ -293,14 +287,12 @@ impl KafkaServer {
                     .await?
                 }
                 Ok(other_key) => {
-                    debug!("Unsupported Kafka API: {:?}", other_key);
-                    let _ = status_tx.send(format!("[DEBUG] Unsupported Kafka API: {:?}", other_key));
+                    console_debug!(status_tx, "Unsupported Kafka API: {:?}", other_key);
                     // Return error response
                     Self::create_error_response(&header, 35 /* UNSUPPORTED_VERSION */)
                 }
                 Err(_) => {
-                    debug!("Invalid Kafka API key: {}", header.request_api_key);
-                    let _ = status_tx.send(format!("[DEBUG] Invalid Kafka API key: {}", header.request_api_key));
+                    console_debug!(status_tx, "Invalid Kafka API key: {}", header.request_api_key);
                     Self::create_error_response(&header, 35)
                 }
             };
@@ -310,11 +302,9 @@ impl KafkaServer {
             stream.write_all(&response_size).await?;
             stream.write_all(&response_bytes).await?;
 
-            debug!("Kafka sent {} bytes to {}", response_bytes.len(), peer_addr);
-            let _ = status_tx.send(format!("[DEBUG] Kafka sent {} bytes to {}", response_bytes.len(), peer_addr));
+            console_debug!(status_tx, "Kafka sent {} bytes to {}", response_bytes.len(), peer_addr);
 
-            trace!("Kafka response (hex): {}", hex::encode(&response_bytes));
-            let _ = status_tx.send(format!("[TRACE] Kafka response (hex): {}", hex::encode(&response_bytes)));
+            console_trace!(status_tx, "Kafka response (hex): {}", hex::encode(&response_bytes));
         }
 
         Ok(())
@@ -374,8 +364,7 @@ impl KafkaServer {
             .filter_map(|t| t.name.as_ref().map(|n| n.to_string()))
             .collect();
 
-        debug!("Metadata request for topics: {:?}", requested_topics);
-        let _ = status_tx.send(format!("[DEBUG] Metadata request for topics: {:?}", requested_topics));
+        console_debug!(status_tx, "Metadata request for topics: {:?}", requested_topics);
 
         // Build broker info
         let broker = MetadataResponseBroker::default()

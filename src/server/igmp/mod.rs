@@ -17,6 +17,7 @@ use crate::llm::ollama_client::OllamaClient;
 use actions::{IGMP_QUERY_RECEIVED_EVENT, IGMP_REPORT_RECEIVED_EVENT, IGMP_LEAVE_RECEIVED_EVENT};
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// IGMP message types (RFC 2236)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -244,20 +245,17 @@ impl IgmpServer {
                         let igmp_msg = match IgmpMessage::parse(&data) {
                             Ok(msg) => msg,
                             Err(e) => {
-                                debug!("IGMP received non-IGMP packet ({} bytes): {}", data.len(), e);
-                                let _ = status_tx.send(format!("[DEBUG] IGMP received non-IGMP packet ({} bytes): {}", data.len(), e));
+                                console_debug!(status_tx, "IGMP received non-IGMP packet ({} bytes): {}", data.len(), e);
                                 continue;
                             }
                         };
 
                         // DEBUG: Log summary
-                        debug!("IGMP received from {}: {}", peer_addr, igmp_msg.description());
-                        let _ = status_tx.send(format!("[DEBUG] IGMP received from {}: {}", peer_addr, igmp_msg.description()));
+                        console_debug!(status_tx, "IGMP received from {}: {}", peer_addr, igmp_msg.description());
 
                         // TRACE: Log full payload
                         let hex_str = hex::encode(&data);
-                        trace!("IGMP data (hex): {}", hex_str);
-                        let _ = status_tx.send(format!("[TRACE] IGMP data (hex): {}", hex_str));
+                        console_trace!(status_tx, "IGMP data (hex): {}", hex_str);
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();

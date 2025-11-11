@@ -20,6 +20,7 @@ use crate::state::app_state::AppState;
 use dhcproto::{v4, Decodable, Decoder};
 #[cfg(feature = "dhcp")]
 use actions::DhcpRequestContext;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// DHCP server that forwards requests to LLM
 pub struct DhcpServer;
@@ -45,13 +46,11 @@ impl DhcpServer {
                         let data = buffer[..n].to_vec();
 
                         // DEBUG: Log summary
-                        debug!("DHCP received {} bytes from {}", n, peer_addr);
-                        let _ = status_tx.send(format!("[DEBUG] DHCP received {} bytes from {}", n, peer_addr));
+                        console_debug!(status_tx, "DHCP received {} bytes from {}", n, peer_addr);
 
                         // TRACE: Log full payload (always hex for DHCP)
                         let hex_str = hex::encode(&data);
-                        trace!("DHCP data (hex): {}", hex_str);
-                        let _ = status_tx.send(format!("[TRACE] DHCP data (hex): {}", hex_str));
+                        console_trace!(status_tx, "DHCP data (hex): {}", hex_str);
 
                         // Legacy method - no longer supported
                         error!("DHCP legacy spawn_with_llm is deprecated, use spawn_with_llm_actions");
@@ -95,13 +94,11 @@ impl DhcpServer {
                         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
 
                         // DEBUG: Log summary
-                        debug!("DHCP received {} bytes from {}", n, peer_addr);
-                        let _ = status_tx.send(format!("[DEBUG] DHCP received {} bytes from {}", n, peer_addr));
+                        console_debug!(status_tx, "DHCP received {} bytes from {}", n, peer_addr);
 
                         // TRACE: Log full payload (always hex for DHCP)
                         let hex_str = hex::encode(&data);
-                        trace!("DHCP data (hex): {}", hex_str);
-                        let _ = status_tx.send(format!("[TRACE] DHCP data (hex): {}", hex_str));
+                        console_trace!(status_tx, "DHCP data (hex): {}", hex_str);
 
                         #[cfg(feature = "dhcp")]
                         let parsed_info = Self::parse_dhcp_message(&data);

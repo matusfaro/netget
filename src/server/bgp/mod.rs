@@ -26,6 +26,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 #[cfg(feature = "bgp")]
 use crate::state::server::BgpSessionState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 // BGP Constants
 const BGP_VERSION: u8 = 4;
@@ -56,8 +57,7 @@ impl BgpServer {
     ) -> Result<SocketAddr> {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("BGP server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] BGP server listening on {}", local_addr));
+        console_info!(status_tx, "BGP server listening on {}", local_addr);
 
         // Extract AS number and router ID from startup params
         let (local_as, router_id) = if let Some(ref params) = startup_params {
@@ -65,8 +65,7 @@ impl BgpServer {
                 .unwrap_or(65000); // Default private ASN
             let router_id_str = params.get_optional_string("router_id")
                 .unwrap_or_else(|| "192.168.1.1".to_string());
-            info!("BGP configured with AS {} and router ID {}", as_num, router_id_str);
-            let _ = status_tx.send(format!("[INFO] BGP configured with AS {} and router ID {}", as_num, router_id_str));
+            console_info!(status_tx, "BGP configured with AS {} and router ID {}", as_num, router_id_str);
             (as_num, router_id_str)
         } else {
             // Defaults
@@ -121,8 +120,7 @@ impl BgpServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept BGP connection: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to accept BGP connection: {}", e));
+                        console_error!(status_tx, "Failed to accept BGP connection: {}", e);
                         break;
                     }
                 }

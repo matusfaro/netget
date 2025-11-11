@@ -28,6 +28,7 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::llm::call_llm_with_protocol;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Ollama-compatible API server with LLM control
 pub struct OllamaServer;
@@ -44,8 +45,7 @@ impl OllamaServer {
     ) -> anyhow::Result<SocketAddr> {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("Ollama API server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] Ollama API server listening on {}", local_addr));
+        console_info!(status_tx, "Ollama API server listening on {}", local_addr);
 
         let protocol = Arc::new(OllamaProtocol::new());
 
@@ -122,8 +122,7 @@ impl OllamaServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept Ollama API connection: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to accept Ollama API connection: {}", e));
+                        console_error!(status_tx, "Failed to accept Ollama API connection: {}", e);
                         break;
                     }
                 }
@@ -181,8 +180,7 @@ async fn handle_ollama_request(
             handle_delete(req, status_tx).await
         }
         _ => {
-            debug!("Ollama API: Unknown endpoint {} {}", method, path);
-            let _ = status_tx.send(format!("[DEBUG] Ollama API: Unknown endpoint {} {}", method, path));
+            console_debug!(status_tx, "Ollama API: Unknown endpoint {} {}", method, path);
             Ok(Response::builder()
                 .status(StatusCode::NOT_FOUND)
                 .header("Content-Type", "application/json")
@@ -272,8 +270,7 @@ async fn handle_tags_list_v2(
                 .unwrap())
         }
         Err(e) => {
-            error!("LLM error: {}", e);
-            let _ = status_tx.send(format!("[ERROR] LLM error: {}", e));
+            console_error!(status_tx, "LLM error: {}", e);
 
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)

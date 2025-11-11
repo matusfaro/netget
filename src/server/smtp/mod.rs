@@ -23,6 +23,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 #[cfg(feature = "smtp")]
 use tokio_rustls::TlsAcceptor;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// SMTP server that forwards mail to LLM
 pub struct SmtpServer;
@@ -60,8 +61,7 @@ impl SmtpServer {
                         let connection_id = crate::server::connection::ConnectionId::new(
                             app_state.get_next_unified_id().await
                         );
-                        debug!("SMTP connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!("[DEBUG] SMTP connection {} from {}", connection_id, remote_addr));
+                        console_debug!(status_tx, "SMTP connection {} from {}", connection_id, remote_addr);
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -272,8 +272,7 @@ impl SmtpSession {
             }
 
             let command = line.trim();
-            debug!("SMTP received: {}", command);
-            let _ = status_tx.send(format!("[DEBUG] SMTP received: {}", command));
+            console_debug!(status_tx, "SMTP received: {}", command);
 
             // Create SMTP command event
             let event = Event::new(&SMTP_COMMAND_EVENT, serde_json::json!({
@@ -296,8 +295,7 @@ impl SmtpSession {
                             write_half.flush().await?;
 
                             let response = String::from_utf8_lossy(&data);
-                            debug!("SMTP sent: {}", response.trim());
-                            let _ = status_tx.send(format!("[DEBUG] SMTP sent: {}", response.trim()));
+                            console_debug!(status_tx, "SMTP sent: {}", response.trim());
                         }
                         ActionResult::CloseConnection => {
                             return Ok(());
@@ -335,8 +333,7 @@ impl SmtpSession {
             }
 
             let command = line.trim();
-            debug!("SMTP received: {}", command);
-            let _ = status_tx.send(format!("[DEBUG] SMTP received: {}", command));
+            console_debug!(status_tx, "SMTP received: {}", command);
 
             // Create SMTP command event
             let event = Event::new(&SMTP_COMMAND_EVENT, serde_json::json!({
@@ -359,8 +356,7 @@ impl SmtpSession {
                             write_half.flush().await?;
 
                             let response = String::from_utf8_lossy(&data);
-                            debug!("SMTP sent: {}", response.trim());
-                            let _ = status_tx.send(format!("[DEBUG] SMTP sent: {}", response.trim()));
+                            console_debug!(status_tx, "SMTP sent: {}", response.trim());
                         }
                         ActionResult::CloseConnection => {
                             return Ok(());

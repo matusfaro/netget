@@ -19,6 +19,7 @@ use actions::SNMP_REQUEST_EVENT;
 use crate::server::SnmpProtocol;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Get LLM context and output format instructions for SNMP stack
 pub fn get_llm_protocol_prompt() -> (&'static str, &'static str) {
@@ -88,13 +89,11 @@ impl SnmpServer {
                         let data = buffer[..n].to_vec();
 
                         // DEBUG: Log summary
-                        debug!("SNMP received {} bytes from {}", n, peer_addr);
-                        let _ = status_tx.send(format!("[DEBUG] SNMP received {} bytes from {}", n, peer_addr));
+                        console_debug!(status_tx, "SNMP received {} bytes from {}", n, peer_addr);
 
                         // TRACE: Log full payload
                         let hex_str = hex::encode(&data);
-                        trace!("SNMP data (hex): {}", hex_str);
-                        let _ = status_tx.send(format!("[TRACE] SNMP data (hex): {}", hex_str));
+                        console_trace!(status_tx, "SNMP data (hex): {}", hex_str);
 
                         // Parse the SNMP message
                         let parsed = match Self::parse_snmp_message(&data) {
@@ -247,13 +246,11 @@ impl SnmpServer {
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         // DEBUG: Log summary
-                        debug!("SNMP received {} bytes from {}", n, peer_addr);
-                        let _ = status_tx.send(format!("[DEBUG] SNMP received {} bytes from {}", n, peer_addr));
+                        console_debug!(status_tx, "SNMP received {} bytes from {}", n, peer_addr);
 
                         // TRACE: Log full payload
                         let hex_str = hex::encode(&data);
-                        trace!("SNMP data (hex): {}", hex_str);
-                        let _ = status_tx.send(format!("[TRACE] SNMP data (hex): {}", hex_str));
+                        console_trace!(status_tx, "SNMP data (hex): {}", hex_str);
 
                         // Parse the SNMP message
                         let parsed = match Self::parse_snmp_message(&data) {

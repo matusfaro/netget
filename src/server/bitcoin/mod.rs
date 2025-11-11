@@ -22,6 +22,7 @@ use crate::protocol::Event;
 use crate::server::BitcoinProtocol;
 use crate::state::app_state::AppState;
 use actions::{BITCOIN_CONNECTION_OPENED_EVENT, BITCOIN_MESSAGE_RECEIVED_EVENT};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -60,8 +61,7 @@ impl BitcoinServer {
             "signet" => Magic::SIGNET,
             "regtest" => Magic::REGTEST,
             _ => {
-                info!("Unknown network '{}', defaulting to mainnet", network);
-                let _ = status_tx.send(format!("[INFO] Unknown network '{}', defaulting to mainnet", network));
+                console_info!(status_tx, "Unknown network '{}', defaulting to mainnet", network);
                 Magic::BITCOIN
             }
         };
@@ -69,8 +69,7 @@ impl BitcoinServer {
         // Create and bind TCP server
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("Bitcoin P2P server listening on {} (network: {:?})", local_addr, magic);
-        let _ = status_tx.send(format!("[INFO] Bitcoin P2P server listening on {} (network: {:?})", local_addr, magic));
+        console_info!(status_tx, "Bitcoin P2P server listening on {} (network: {:?})", local_addr, magic);
 
         let connections = Arc::new(Mutex::new(HashMap::new()));
         let protocol = Arc::new(BitcoinProtocol::new());
@@ -82,8 +81,7 @@ impl BitcoinServer {
                     Ok((stream, remote_addr)) => {
                         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        info!("Accepted Bitcoin P2P connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!("[INFO] Accepted Bitcoin P2P connection {} from {}", connection_id, remote_addr));
+                        console_info!(status_tx, "Accepted Bitcoin P2P connection {} from {}", connection_id, remote_addr);
 
                         // Split stream
                         let (read_half, write_half) = tokio::io::split(stream);
@@ -211,8 +209,7 @@ impl BitcoinServer {
                         });
                     }
                     Err(e) => {
-                        error!("Accept error on Bitcoin server: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Accept error on Bitcoin server: {}", e));
+                        console_error!(status_tx, "Accept error on Bitcoin server: {}", e);
                         break;
                     }
                 }
@@ -657,8 +654,7 @@ impl BitcoinServer {
 
         // TRACE: Log full hex payload
         let hex_str = hex::encode(data);
-        trace!("Bitcoin P2P sent (hex): {}", hex_str);
-        let _ = status_tx.send(format!("[TRACE] Bitcoin P2P sent (hex): {}", hex_str));
+        console_trace!(status_tx, "Bitcoin P2P sent (hex): {}", hex_str);
 
         let _ = status_tx.send(format!("→ Sent Bitcoin message to {}", connection_id));
 

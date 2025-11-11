@@ -19,6 +19,7 @@ use actions::{TCP_CONNECTION_OPENED_EVENT, TCP_DATA_RECEIVED_EVENT};
 use crate::server::TcpProtocol;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -257,20 +258,16 @@ impl TcpServer {
                                         } else {
                                             data_str.to_string()
                                         };
-                                        debug!("TCP sent {} bytes to {}: {}", output_data.len(), connection_id, preview);
-                                        let _ = status_tx.send(format!("[DEBUG] TCP sent {} bytes to {}: {}", output_data.len(), connection_id, preview));
+                                        console_debug!(status_tx, "TCP sent {} bytes to {}: {}", output_data.len(), connection_id, preview);
 
                                         // TRACE: Log full text payload
-                                        trace!("TCP sent (text): {:?}", data_str);
-                                        let _ = status_tx.send(format!("[TRACE] TCP sent (text): {:?}", data_str));
+                                        console_trace!(status_tx, "TCP sent (text): {:?}", data_str);
                                     } else {
-                                        debug!("TCP sent {} bytes to {} (binary data)", output_data.len(), connection_id);
-                                        let _ = status_tx.send(format!("[DEBUG] TCP sent {} bytes to {} (binary data)", output_data.len(), connection_id));
+                                        console_debug!(status_tx, "TCP sent {} bytes to {} (binary data)", output_data.len(), connection_id);
 
                                         // TRACE: Log full hex payload
                                         let hex_str = hex::encode(&output_data);
-                                        trace!("TCP sent (hex): {}", hex_str);
-                                        let _ = status_tx.send(format!("[TRACE] TCP sent (hex): {}", hex_str));
+                                        console_trace!(status_tx, "TCP sent (hex): {}", hex_str);
                                     }
                                     let _ = status_tx.send(format!("→ Sent banner to {connection_id}"));
                                 }
@@ -405,20 +402,16 @@ impl TcpServer {
                                         } else {
                                             data_str.to_string()
                                         };
-                                        debug!("TCP sent {} bytes to {}: {}", output_data.len(), connection_id, preview);
-                                        let _ = status_tx.send(format!("[DEBUG] TCP sent {} bytes to {}: {}", output_data.len(), connection_id, preview));
+                                        console_debug!(status_tx, "TCP sent {} bytes to {}: {}", output_data.len(), connection_id, preview);
 
                                         // TRACE: Log full text payload
-                                        trace!("TCP sent (text): {:?}", data_str);
-                                        let _ = status_tx.send(format!("[TRACE] TCP sent (text): {:?}", data_str));
+                                        console_trace!(status_tx, "TCP sent (text): {:?}", data_str);
                                     } else {
-                                        debug!("TCP sent {} bytes to {} (binary data)", output_data.len(), connection_id);
-                                        let _ = status_tx.send(format!("[DEBUG] TCP sent {} bytes to {} (binary data)", output_data.len(), connection_id));
+                                        console_debug!(status_tx, "TCP sent {} bytes to {} (binary data)", output_data.len(), connection_id);
 
                                         // TRACE: Log full hex payload
                                         let hex_str = hex::encode(&output_data);
-                                        trace!("TCP sent (hex): {}", hex_str);
-                                        let _ = status_tx.send(format!("[TRACE] TCP sent (hex): {}", hex_str));
+                                        console_trace!(status_tx, "TCP sent (hex): {}", hex_str);
                                     }
                                     let _ = status_tx.send(format!("→ Sent {} bytes to {}", output_data.len(), connection_id));
                                 }

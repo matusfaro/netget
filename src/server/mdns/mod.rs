@@ -19,6 +19,7 @@ use crate::server::MdnsProtocol;
 use crate::protocol::Event;
 #[cfg(feature = "mdns")]
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// mDNS server that advertises services based on LLM instructions
 pub struct MdnsServer;
@@ -59,8 +60,7 @@ impl MdnsServer {
         ).await {
             // Display messages from LLM
             for message in &execution_result.messages {
-                info!("{}", message);
-                let _ = status_tx.send(format!("[INFO] {}", message));
+                console_info!(status_tx, "{}", message);
             }
 
             // Process raw actions for manual mDNS service registration

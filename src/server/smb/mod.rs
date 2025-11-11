@@ -24,6 +24,7 @@ use crate::state::server::{ConnectionState as ServerConnectionState, ConnectionS
 use crate::state::ServerId;
 
 use actions::SMB_OPERATION_EVENT;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// SMB server that provides LLM-controlled file system
 pub struct SmbServer;
@@ -169,8 +170,7 @@ impl SmbServer {
         // Generate connection ID
         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
 
-        info!("SMB connection {} from {}", connection_id, peer_addr);
-        let _ = status_tx.send(format!("[INFO] SMB connection {} from {}", connection_id, peer_addr));
+        console_info!(status_tx, "SMB connection {} from {}", connection_id, peer_addr);
 
         // Get local address for tracking
         let local_addr = stream.local_addr().unwrap_or_else(|_| "0.0.0.0:0".parse().unwrap());
@@ -248,8 +248,7 @@ impl SmbServer {
                     }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                    info!("SMB client {} disconnected", peer_addr);
-                    let _ = status_tx.send(format!("[INFO] SMB client {} disconnected", peer_addr));
+                    console_info!(status_tx, "SMB client {} disconnected", peer_addr);
                     break;
                 }
                 Err(e) => {
@@ -264,8 +263,7 @@ impl SmbServer {
         app_state.update_connection_status(server_id, connection_id, ConnectionStatus::Closed).await;
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
-        info!("SMB connection {} closed", connection_id);
-        let _ = status_tx.send(format!("[INFO] SMB connection {} closed", connection_id));
+        console_info!(status_tx, "SMB connection {} closed", connection_id);
 
         Ok(())
     }
@@ -674,8 +672,7 @@ impl SmbServer {
                 }
             }
             _ => {
-                warn!("Unknown SMB2 command: 0x{:04x}", command);
-                let _ = status_tx.send(format!("[WARN] Unknown SMB2 command: 0x{:04x}", command));
+                console_warn!(status_tx, "Unknown SMB2 command: 0x{:04x}", command);
                 Ok(None)
             }
         }
@@ -720,8 +717,7 @@ impl SmbServer {
 
         // Display messages from LLM
         for message in &execution_result.messages {
-            info!("{}", message);
-            let _ = status_tx.send(format!("[INFO] {}", message));
+            console_info!(status_tx, "{}", message);
         }
 
         debug!(

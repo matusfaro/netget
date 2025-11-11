@@ -28,6 +28,7 @@ use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::server::openid::actions::OpenIdProtocol;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// OpenID Connect provider state
 pub struct OpenIdState {
@@ -327,8 +328,7 @@ impl OpenIdServer {
         // Start HTTP server
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("OpenID server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] OpenID server listening on {}", local_addr));
+        console_info!(status_tx, "OpenID server listening on {}", local_addr);
 
         // Spawn server loop
         tokio::spawn(async move {
@@ -408,8 +408,7 @@ impl OpenIdServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept OpenID connection: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to accept OpenID connection: {}", e));
+                        console_error!(status_tx, "Failed to accept OpenID connection: {}", e);
                         break;
                     }
                 }

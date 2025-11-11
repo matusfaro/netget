@@ -30,6 +30,7 @@ use ble_peripheral_rust::gatt::characteristic::Characteristic;
 use ble_peripheral_rust::gatt::properties::{CharacteristicProperty, AttributePermission};
 #[cfg(feature = "bluetooth-ble")]
 use uuid::Uuid;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -354,8 +355,7 @@ impl BluetoothBle {
             peripheral.start_advertising(name, &service_uuids).await
                 .context("Failed to start advertising")?;
 
-            info!("Started BLE advertising as '{}' with {} service(s)", name, service_uuids.len());
-            let _ = status_tx.send(format!("[INFO] Started BLE advertising as '{}' with {} service(s)", name, service_uuids.len()));
+            console_info!(status_tx, "Started BLE advertising as '{}' with {} service(s)", name, service_uuids.len());
         }
 
         Ok(())
@@ -560,8 +560,7 @@ impl BluetoothBle {
                         char_uuid_str,
                         value.len()
                     ));
-                    trace!("BLE write data (hex): {}", value_hex);
-                    let _ = status_tx.send(format!("[TRACE] BLE write data (hex): {}", value_hex));
+                    console_trace!(status_tx, "BLE write data (hex): {}", value_hex);
 
                     // Check current state
                     let current_state = {
@@ -635,11 +634,9 @@ impl BluetoothBle {
                 PeripheralEvent::CharacteristicSubscriptionUpdate { request, subscribed } => {
                     let char_uuid_str = request.characteristic.to_string();
                     if subscribed {
-                        info!("Client subscribed to notifications on {}", char_uuid_str);
-                        let _ = status_tx.send(format!("[INFO] Client subscribed to notifications on {}", char_uuid_str));
+                        console_info!(status_tx, "Client subscribed to notifications on {}", char_uuid_str);
                     } else {
-                        info!("Client unsubscribed from notifications on {}", char_uuid_str);
-                        let _ = status_tx.send(format!("[INFO] Client unsubscribed from notifications on {}", char_uuid_str));
+                        console_info!(status_tx, "Client unsubscribed from notifications on {}", char_uuid_str);
                     }
 
                     let llm_event = Event::new(

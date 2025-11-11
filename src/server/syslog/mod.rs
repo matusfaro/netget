@@ -15,6 +15,7 @@ use actions::SYSLOG_MESSAGE_EVENT;
 use crate::server::SyslogProtocol;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Syslog server that forwards messages to LLM
 pub struct SyslogServer;
@@ -30,8 +31,7 @@ impl SyslogServer {
     ) -> Result<SocketAddr> {
         let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
         let local_addr = socket.local_addr()?;
-        info!("Syslog server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] Syslog server listening on {}", local_addr));
+        console_info!(status_tx, "Syslog server listening on {}", local_addr);
 
         let protocol = Arc::new(SyslogProtocol::new());
 
@@ -64,20 +64,17 @@ impl SyslogServer {
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         // DEBUG: Log summary
-                        debug!("Syslog received {} bytes from {}", n, peer_addr);
-                        let _ = status_tx.send(format!("[DEBUG] Syslog received {} bytes from {}", n, peer_addr));
+                        console_debug!(status_tx, "Syslog received {} bytes from {}", n, peer_addr);
 
                         // TRACE: Log full payload
                         let message_str = String::from_utf8_lossy(&data);
-                        trace!("Syslog message: {}", message_str);
-                        let _ = status_tx.send(format!("[TRACE] Syslog message: {}", message_str));
+                        console_trace!(status_tx, "Syslog message: {}", message_str);
 
                         // Parse the syslog message
                         let parsed = match Self::parse_syslog_message(&data) {
                             Ok(p) => p,
                             Err(e) => {
-                                error!("Failed to parse syslog message: {}", e);
-                                let _ = status_tx.send(format!("[ERROR] Failed to parse syslog message: {}", e));
+                                console_error!(status_tx, "Failed to parse syslog message: {}", e);
                                 continue;
                             }
                         };
@@ -132,8 +129,7 @@ impl SyslogServer {
                         });
                     }
                     Err(e) => {
-                        error!("Syslog receive error: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Syslog receive error: {}", e));
+                        console_error!(status_tx, "Syslog receive error: {}", e);
                         break;
                     }
                 }

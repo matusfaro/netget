@@ -17,6 +17,7 @@ use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use actions::TorrentPeerProtocol;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// BitTorrent Peer Wire Protocol server
 pub struct TorrentPeerServer;
@@ -91,8 +92,7 @@ impl TorrentPeerServer {
                         });
                     }
                     Err(e) => {
-                        error!("BitTorrent Peer accept error: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] BitTorrent Peer accept error: {}", e));
+                        console_error!(status_tx, "BitTorrent Peer accept error: {}", e);
                     }
                 }
             }
@@ -128,21 +128,18 @@ impl TorrentPeerServer {
 
             let data = buffer[..n].to_vec();
 
-            debug!("BitTorrent Peer received {} bytes from {}", n, peer_addr);
-            let _ = status_tx.send(format!("[DEBUG] BitTorrent Peer received {} bytes from {}", n, peer_addr));
+            console_debug!(status_tx, "BitTorrent Peer received {} bytes from {}", n, peer_addr);
 
             // TRACE: Log full payload
             let hex_str = hex::encode(&data);
-            trace!("BitTorrent Peer data (hex): {}", hex_str);
-            let _ = status_tx.send(format!("[TRACE] BitTorrent Peer data (hex): {}", hex_str));
+            console_trace!(status_tx, "BitTorrent Peer data (hex): {}", hex_str);
 
             // Parse message
             if !handshake_complete {
                 // Parse handshake
                 match Self::parse_handshake(&data) {
                     Ok((info_hash, peer_id)) => {
-                        debug!("BitTorrent Peer handshake: info_hash={}, peer_id={}", info_hash, peer_id);
-                        let _ = status_tx.send(format!("[DEBUG] BitTorrent Peer handshake: info_hash={}, peer_id={}", info_hash, peer_id));
+                        console_debug!(status_tx, "BitTorrent Peer handshake: info_hash={}, peer_id={}", info_hash, peer_id);
 
                         handshake_complete = true;
 
@@ -182,8 +179,7 @@ impl TorrentPeerServer {
                         }
                     }
                     Err(e) => {
-                        error!("Failed to parse handshake: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to parse handshake: {}", e));
+                        console_error!(status_tx, "Failed to parse handshake: {}", e);
                         break;
                     }
                 }
@@ -191,8 +187,7 @@ impl TorrentPeerServer {
                 // Parse peer wire message
                 match Self::parse_message(&data) {
                     Ok((message_type, message_data)) => {
-                        debug!("BitTorrent Peer message type: {}", message_type);
-                        let _ = status_tx.send(format!("[DEBUG] BitTorrent Peer message type: {}", message_type));
+                        console_debug!(status_tx, "BitTorrent Peer message type: {}", message_type);
 
                         // Create event for LLM
                         let event_type = match message_type.as_str() {
@@ -203,8 +198,7 @@ impl TorrentPeerServer {
                         };
                         let event = Event::new(event_type, message_data);
 
-                        debug!("BitTorrent Peer calling LLM for {} message", message_type);
-                        let _ = status_tx.send(format!("[DEBUG] BitTorrent Peer calling LLM for {} message", message_type));
+                        console_debug!(status_tx, "BitTorrent Peer calling LLM for {} message", message_type);
 
                         // Call LLM
                         match call_llm(
@@ -230,8 +224,7 @@ impl TorrentPeerServer {
                         }
                     }
                     Err(e) => {
-                        error!("Failed to parse peer message: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to parse peer message: {}", e));
+                        console_error!(status_tx, "Failed to parse peer message: {}", e);
                     }
                 }
             }
@@ -250,12 +243,10 @@ impl TorrentPeerServer {
 
         // Display messages from LLM
         for message in &execution_result.messages {
-            info!("{}", message);
-            let _ = status_tx.send(format!("[INFO] {}", message));
+            console_info!(status_tx, "{}", message);
         }
 
-        debug!("BitTorrent Peer got {} protocol results", execution_result.protocol_results.len());
-        let _ = status_tx.send(format!("[DEBUG] BitTorrent Peer got {} protocol results", execution_result.protocol_results.len()));
+        console_debug!(status_tx, "BitTorrent Peer got {} protocol results", execution_result.protocol_results.len());
 
         // Send responses
         for protocol_result in execution_result.protocol_results {
@@ -263,13 +254,11 @@ impl TorrentPeerServer {
                 let mut write = write_half.lock().await;
                 write.write_all(output_data).await?;
 
-                debug!("BitTorrent Peer sent {} bytes to {}", output_data.len(), peer_addr);
-                let _ = status_tx.send(format!("[DEBUG] BitTorrent Peer sent {} bytes to {}", output_data.len(), peer_addr));
+                console_debug!(status_tx, "BitTorrent Peer sent {} bytes to {}", output_data.len(), peer_addr);
 
                 // TRACE: Log full response
                 let hex_str = hex::encode(output_data);
-                trace!("BitTorrent Peer sent (hex): {}", hex_str);
-                let _ = status_tx.send(format!("[TRACE] BitTorrent Peer sent (hex): {}", hex_str));
+                console_trace!(status_tx, "BitTorrent Peer sent (hex): {}", hex_str);
             }
         }
 

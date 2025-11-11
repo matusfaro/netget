@@ -23,6 +23,7 @@ use actions::{SOCKET_FILE_CONNECTION_OPENED_EVENT, SOCKET_FILE_DATA_RECEIVED_EVE
 use crate::server::SocketFileProtocol;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -271,20 +272,16 @@ impl SocketFileServer {
                                         } else {
                                             data_str.to_string()
                                         };
-                                        debug!("Socket file sent {} bytes to {}: {}", output_data.len(), connection_id, preview);
-                                        let _ = status_tx.send(format!("[DEBUG] Socket file sent {} bytes to {}: {}", output_data.len(), connection_id, preview));
+                                        console_debug!(status_tx, "Socket file sent {} bytes to {}: {}", output_data.len(), connection_id, preview);
 
                                         // TRACE: Log full text payload
-                                        trace!("Socket file sent (text): {:?}", data_str);
-                                        let _ = status_tx.send(format!("[TRACE] Socket file sent (text): {:?}", data_str));
+                                        console_trace!(status_tx, "Socket file sent (text): {:?}", data_str);
                                     } else {
-                                        debug!("Socket file sent {} bytes to {} (binary data)", output_data.len(), connection_id);
-                                        let _ = status_tx.send(format!("[DEBUG] Socket file sent {} bytes to {} (binary data)", output_data.len(), connection_id));
+                                        console_debug!(status_tx, "Socket file sent {} bytes to {} (binary data)", output_data.len(), connection_id);
 
                                         // TRACE: Log full hex payload
                                         let hex_str = hex::encode(&output_data);
-                                        trace!("Socket file sent (hex): {}", hex_str);
-                                        let _ = status_tx.send(format!("[TRACE] Socket file sent (hex): {}", hex_str));
+                                        console_trace!(status_tx, "Socket file sent (hex): {}", hex_str);
                                     }
                                     let _ = status_tx.send(format!("→ Sent banner to socket file connection {connection_id}"));
                                 }
@@ -418,20 +415,16 @@ impl SocketFileServer {
                                         } else {
                                             data_str.to_string()
                                         };
-                                        debug!("Socket file sent {} bytes to {}: {}", output_data.len(), connection_id, preview);
-                                        let _ = status_tx.send(format!("[DEBUG] Socket file sent {} bytes to {}: {}", output_data.len(), connection_id, preview));
+                                        console_debug!(status_tx, "Socket file sent {} bytes to {}: {}", output_data.len(), connection_id, preview);
 
                                         // TRACE: Log full text payload
-                                        trace!("Socket file sent (text): {:?}", data_str);
-                                        let _ = status_tx.send(format!("[TRACE] Socket file sent (text): {:?}", data_str));
+                                        console_trace!(status_tx, "Socket file sent (text): {:?}", data_str);
                                     } else {
-                                        debug!("Socket file sent {} bytes to {} (binary data)", output_data.len(), connection_id);
-                                        let _ = status_tx.send(format!("[DEBUG] Socket file sent {} bytes to {} (binary data)", output_data.len(), connection_id));
+                                        console_debug!(status_tx, "Socket file sent {} bytes to {} (binary data)", output_data.len(), connection_id);
 
                                         // TRACE: Log full hex payload
                                         let hex_str = hex::encode(&output_data);
-                                        trace!("Socket file sent (hex): {}", hex_str);
-                                        let _ = status_tx.send(format!("[TRACE] Socket file sent (hex): {}", hex_str));
+                                        console_trace!(status_tx, "Socket file sent (hex): {}", hex_str);
                                     }
                                     let _ = status_tx.send(format!("→ Sent {} bytes to socket file connection {}", output_data.len(), connection_id));
                                 }

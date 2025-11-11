@@ -24,6 +24,7 @@ use crate::server::S3Protocol;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// S3 server that delegates API operations to LLM
 pub struct S3Server;
@@ -39,8 +40,7 @@ impl S3Server {
     ) -> anyhow::Result<SocketAddr> {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("S3 server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] S3 server listening on {}", local_addr));
+        console_info!(status_tx, "S3 server listening on {}", local_addr);
 
         let protocol = Arc::new(S3Protocol::new());
 
@@ -115,8 +115,7 @@ impl S3Server {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept S3 connection: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to accept S3 connection: {}", e));
+                        console_error!(status_tx, "Failed to accept S3 connection: {}", e);
                         break;
                     }
                 }
@@ -159,8 +158,7 @@ async fn handle_s3_request_with_llm(
     let body_bytes = match req.into_body().collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
-            error!("Failed to read S3 request body: {}", e);
-            let _ = status_tx.send(format!("[ERROR] Failed to read S3 request body: {}", e));
+            console_error!(status_tx, "Failed to read S3 request body: {}", e);
             Bytes::new()
         }
     };

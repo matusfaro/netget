@@ -23,6 +23,7 @@ use crate::server::TorDirectoryProtocol;
 use crate::protocol::Event;
 #[cfg(feature = "tor")]
 use crate::state::app_state::AppState;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Tor Directory server that serves consensus and descriptors
 pub struct TorDirectoryServer;
@@ -68,8 +69,7 @@ impl TorDirectoryServer {
                         let connection_id = crate::server::connection::ConnectionId::new(
                             app_state.get_next_unified_id().await
                         );
-                        debug!("Tor Directory connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!("[DEBUG] Tor Directory connection {} from {}", connection_id, remote_addr));
+                        console_debug!(status_tx, "Tor Directory connection {} from {}", connection_id, remote_addr);
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
