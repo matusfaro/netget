@@ -135,7 +135,7 @@ impl InputState {
         self.cursor_col = 0;
     }
 
-    /// Delete word before cursor (Ctrl+W)
+    /// Delete word before cursor (Ctrl+W, Alt+Backspace)
     pub fn delete_word(&mut self) {
         let line = &mut self.lines[self.cursor_row];
         if self.cursor_col == 0 {
@@ -160,6 +160,89 @@ impl InputState {
         let byte_start = chars[..new_col].iter().collect::<String>().len();
         let byte_end = chars[..self.cursor_col].iter().collect::<String>().len();
         line.replace_range(byte_start..byte_end, "");
+
+        self.cursor_col = new_col;
+    }
+
+    /// Delete word after cursor (Alt+Delete, Ctrl+Delete)
+    pub fn delete_word_forward(&mut self) {
+        let line = &mut self.lines[self.cursor_row];
+        if self.cursor_col >= line.len() {
+            return;
+        }
+
+        // Find end of word
+        let chars: Vec<char> = line.chars().collect();
+        let mut end_col = self.cursor_col;
+
+        // Skip leading whitespace
+        while end_col < chars.len() && chars[end_col].is_whitespace() {
+            end_col += 1;
+        }
+
+        // Delete word characters
+        while end_col < chars.len() && !chars[end_col].is_whitespace() {
+            end_col += 1;
+        }
+
+        // Remove the range
+        let byte_start = chars[..self.cursor_col].iter().collect::<String>().len();
+        let byte_end = chars[..end_col].iter().collect::<String>().len();
+        line.replace_range(byte_start..byte_end, "");
+    }
+
+    /// Move cursor to start of current or previous word (Alt+Left, Ctrl+Left)
+    pub fn move_cursor_word_left(&mut self) {
+        let line = &self.lines[self.cursor_row];
+        if self.cursor_col == 0 {
+            // Move to end of previous line
+            if self.cursor_row > 0 {
+                self.cursor_row -= 1;
+                self.cursor_col = self.lines[self.cursor_row].len();
+            }
+            return;
+        }
+
+        let chars: Vec<char> = line.chars().collect();
+        let mut new_col = self.cursor_col;
+
+        // Skip trailing whitespace
+        while new_col > 0 && chars[new_col - 1].is_whitespace() {
+            new_col -= 1;
+        }
+
+        // Skip word characters
+        while new_col > 0 && !chars[new_col - 1].is_whitespace() {
+            new_col -= 1;
+        }
+
+        self.cursor_col = new_col;
+    }
+
+    /// Move cursor to end of current or next word (Alt+Right, Ctrl+Right)
+    pub fn move_cursor_word_right(&mut self) {
+        let line = &self.lines[self.cursor_row];
+        if self.cursor_col >= line.len() {
+            // Move to start of next line
+            if self.cursor_row < self.lines.len() - 1 {
+                self.cursor_row += 1;
+                self.cursor_col = 0;
+            }
+            return;
+        }
+
+        let chars: Vec<char> = line.chars().collect();
+        let mut new_col = self.cursor_col;
+
+        // Skip leading whitespace
+        while new_col < chars.len() && chars[new_col].is_whitespace() {
+            new_col += 1;
+        }
+
+        // Skip word characters
+        while new_col < chars.len() && !chars[new_col].is_whitespace() {
+            new_col += 1;
+        }
 
         self.cursor_col = new_col;
     }
