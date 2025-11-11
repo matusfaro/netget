@@ -16,6 +16,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::pypi::actions::{
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
     PYPI_PACKAGE_INFO_EVENT, PYPI_SEARCH_RESULTS_EVENT, PYPI_FILE_DOWNLOADED_EVENT,
 };
 
@@ -61,8 +62,8 @@ impl PypiClient {
 
         // Update status
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] PyPI client {} ready for {}", client_id, index_url));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] PyPI client {} ready for {}", client_id, index_url);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Spawn background task to monitor client lifecycle
         tokio::spawn(async move {
@@ -108,8 +109,7 @@ impl PypiClient {
             Ok(response) => {
                 if !response.status().is_success() {
                     let status = response.status();
-                    error!("PyPI client {} failed to get package info: {} {}", client_id, status.as_u16(), status);
-                    let _ = status_tx.send(format!("[ERROR] Package not found or error: {}", status));
+                    console_error!(status_tx, "[ERROR] Package not found or error: {}", status);
                     return Err(anyhow::anyhow!("Package not found: {}", status));
                 }
 
@@ -154,8 +154,7 @@ impl PypiClient {
                 Ok(())
             }
             Err(e) => {
-                error!("PyPI client {} request failed: {}", client_id, e);
-                let _ = status_tx.send(format!("[ERROR] PyPI request failed: {}", e));
+                console_error!(status_tx, "[ERROR] PyPI request failed: {}", e);
                 Err(e.into())
             }
         }
@@ -174,9 +173,8 @@ impl PypiClient {
         // We'll use the warehouse JSON API endpoint (unofficial but commonly used)
         let url = format!("https://pypi.org/search/?q={}", urlencoding::encode(&query));
 
-        info!("PyPI client {} searching for: {}", client_id, query);
 
-        let _ = status_tx.send(format!("[INFO] Searching PyPI for: {}", query));
+        console_info!(status_tx, "[INFO] Searching PyPI for: {}", query);
 
         // Since PyPI's search is HTML-based now, we'll return a simplified result
         // In production, you might want to use a proper search API or scrape the HTML
@@ -270,8 +268,7 @@ impl PypiClient {
         let download_url = file_info["url"].as_str().context("No download URL")?;
         let file_name = file_info["filename"].as_str().context("No filename")?;
 
-        info!("PyPI client {} downloading: {}", client_id, file_name);
-        let _ = status_tx.send(format!("[INFO] Downloading: {}", file_name));
+        console_info!(status_tx, "[INFO] Downloading: {}", file_name);
 
         // Download the file
         let response = http_client.get(download_url).send().await?;

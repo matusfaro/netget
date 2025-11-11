@@ -56,12 +56,11 @@ impl NntpClient {
         let local_addr = stream.local_addr()?;
         let remote_sock_addr = stream.peer_addr()?;
 
-        info!("NNTP client {} connected to {} (local: {})", client_id, remote_sock_addr, local_addr);
 
         // Update client state
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] NNTP client {} connected", client_id));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] NNTP client {} connected", client_id);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Split stream for reading and writing
         let (read_half, write_half) = tokio::io::split(stream);
@@ -84,9 +83,8 @@ impl NntpClient {
             // Read welcome message
             match reader.read_line(&mut line).await {
                 Ok(0) => {
-                    error!("NNTP server closed connection before sending welcome");
                     app_state.update_client_status(client_id, ClientStatus::Error("No welcome message".to_string())).await;
-                    let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    console_error!(status_tx, "__UPDATE_UI__");
                     return;
                 }
                 Ok(_) => {
@@ -142,9 +140,8 @@ impl NntpClient {
                     }
                 }
                 Err(e) => {
-                    error!("NNTP client {} read error: {}", client_id, e);
                     app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
-                    let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    console_error!(status_tx, "__UPDATE_UI__");
                     return;
                 }
             }
@@ -154,10 +151,9 @@ impl NntpClient {
                 line.clear();
                 match reader.read_line(&mut line).await {
                     Ok(0) => {
-                        info!("NNTP client {} disconnected", client_id);
                         app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                        let _ = status_tx.send(format!("[CLIENT] NNTP client {} disconnected", client_id));
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_info!(status_tx, "[CLIENT] NNTP client {} disconnected", client_id);
+                        console_info!(status_tx, "__UPDATE_UI__");
                         break;
                     }
                     Ok(_) => {
@@ -221,9 +217,8 @@ impl NntpClient {
 
                                 trace!("NNTP client {} sending article for POST", client_id);
                                 if let Err(e) = write_half_arc.lock().await.write_all(article_data.as_bytes()).await {
-                                    error!("NNTP client {} failed to send article: {}", client_id, e);
                                 } else {
-                                    let _ = status_tx.send(format!("[CLIENT] NNTP {} > [article sent]", client_id));
+                                    console_error!(status_tx, "[CLIENT] NNTP {} > [article sent]", client_id);
                                 }
                                 continue; // Skip LLM processing for 340
                             }
@@ -302,9 +297,8 @@ impl NntpClient {
                         }
                     }
                     Err(e) => {
-                        error!("NNTP client {} read error: {}", client_id, e);
                         app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_error!(status_tx, "__UPDATE_UI__");
                         break;
                     }
                 }
@@ -324,6 +318,7 @@ impl NntpClient {
         status_tx: &mpsc::UnboundedSender<String>,
     ) {
         use crate::llm::actions::client_trait::Client;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         for action in actions {
             match protocol.as_ref().execute_action(action) {
@@ -333,8 +328,7 @@ impl NntpClient {
                         if let Some(command) = data["command"].as_str() {
                             let command_line = format!("{}\r\n", command);
                             if let Ok(_) = write_half_arc.lock().await.write_all(command_line.as_bytes()).await {
-                                trace!("NNTP client {} sent: {}", client_id, command);
-                                let _ = status_tx.send(format!("[CLIENT] NNTP {} > {}", client_id, command));
+                                console_trace!(status_tx, "[CLIENT] NNTP {} > {}", client_id, command);
                                 client_data.lock().await.last_command = Some(command.to_string());
                             }
                         }
@@ -366,8 +360,7 @@ impl NntpClient {
                             // Send POST command
                             let post_command = "POST\r\n";
                             if let Ok(_) = write_half_arc.lock().await.write_all(post_command.as_bytes()).await {
-                                trace!("NNTP client {} sent: POST (waiting for 340)", client_id);
-                                let _ = status_tx.send(format!("[CLIENT] NNTP {} > POST", client_id));
+                                console_trace!(status_tx, "[CLIENT] NNTP {} > POST", client_id);
                                 client_data.lock().await.last_command = Some("POST".to_string());
                             } else {
                                 // Failed to send POST, clear pending article
@@ -380,8 +373,7 @@ impl NntpClient {
                     // Send QUIT command
                     let quit_command = "QUIT\r\n";
                     if let Ok(_) = write_half_arc.lock().await.write_all(quit_command.as_bytes()).await {
-                        info!("NNTP client {} disconnecting", client_id);
-                        let _ = status_tx.send(format!("[CLIENT] NNTP {} > QUIT", client_id));
+                        console_info!(status_tx, "[CLIENT] NNTP {} > QUIT", client_id);
                     }
                     break;
                 }

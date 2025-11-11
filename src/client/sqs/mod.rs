@@ -19,6 +19,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::sqs::actions::{SQS_CLIENT_CONNECTED_EVENT, SQS_MESSAGE_RECEIVED_EVENT, SQS_MESSAGE_SENT_EVENT};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// SQS client that connects to an AWS SQS queue
 pub struct SqsClient;
@@ -70,8 +71,8 @@ impl SqsClient {
 
         // Update client status to connected
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] SQS client {} connected to {}", client_id, queue_url));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] SQS client {} connected to {}", client_id, queue_url);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         info!("SQS client {} connected", client_id);
 
@@ -185,10 +186,9 @@ impl SqsClient {
                     }
                 }
                 Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
-                    info!("SQS client {} disconnecting", client_id);
                     app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                    let _ = status_tx.send(format!("[CLIENT] SQS client {} disconnected", client_id));
-                    let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    console_info!(status_tx, "[CLIENT] SQS client {} disconnected", client_id);
+                    console_info!(status_tx, "__UPDATE_UI__");
                     break;
                 }
                 _ => {}

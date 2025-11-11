@@ -60,8 +60,7 @@ impl SmtpServer {
                         let connection_id = crate::server::connection::ConnectionId::new(
                             app_state.get_next_unified_id().await
                         );
-                        debug!("SMTP connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!("[DEBUG] SMTP connection {} from {}", connection_id, remote_addr));
+                        console_debug!(status_tx, "[DEBUG] SMTP connection {} from {}", connection_id, remote_addr);
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -272,8 +271,7 @@ impl SmtpSession {
             }
 
             let command = line.trim();
-            debug!("SMTP received: {}", command);
-            let _ = status_tx.send(format!("[DEBUG] SMTP received: {}", command));
+            console_debug!(status_tx, "[DEBUG] SMTP received: {}", command);
 
             // Create SMTP command event
             let event = Event::new(&SMTP_COMMAND_EVENT, serde_json::json!({
@@ -296,8 +294,7 @@ impl SmtpSession {
                             write_half.flush().await?;
 
                             let response = String::from_utf8_lossy(&data);
-                            debug!("SMTP sent: {}", response.trim());
-                            let _ = status_tx.send(format!("[DEBUG] SMTP sent: {}", response.trim()));
+                            console_debug!(status_tx, "[DEBUG] SMTP sent: {}", response.trim());
                         }
                         ActionResult::CloseConnection => {
                             return Ok(());
@@ -322,6 +319,7 @@ impl SmtpSession {
         protocol: Arc<SmtpProtocol>,
     ) -> Result<()> {
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         let (read_half, mut write_half) = tokio::io::split(&mut stream);
         let mut reader = BufReader::new(read_half);
@@ -335,8 +333,7 @@ impl SmtpSession {
             }
 
             let command = line.trim();
-            debug!("SMTP received: {}", command);
-            let _ = status_tx.send(format!("[DEBUG] SMTP received: {}", command));
+            console_debug!(status_tx, "[DEBUG] SMTP received: {}", command);
 
             // Create SMTP command event
             let event = Event::new(&SMTP_COMMAND_EVENT, serde_json::json!({
@@ -359,8 +356,7 @@ impl SmtpSession {
                             write_half.flush().await?;
 
                             let response = String::from_utf8_lossy(&data);
-                            debug!("SMTP sent: {}", response.trim());
-                            let _ = status_tx.send(format!("[DEBUG] SMTP sent: {}", response.trim()));
+                            console_debug!(status_tx, "[DEBUG] SMTP sent: {}", response.trim());
                         }
                         ActionResult::CloseConnection => {
                             return Ok(());

@@ -18,6 +18,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::mysql::actions::{MYSQL_CLIENT_CONNECTED_EVENT, MYSQL_CLIENT_RESULT_RECEIVED_EVENT};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// MySQL client that connects to a MySQL server
 pub struct MysqlClient;
@@ -78,8 +79,8 @@ impl MysqlClient {
 
         // Update client state
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] MySQL client {} connected to {}", client_id, remote_addr));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] MySQL client {} connected to {}", client_id, remote_addr);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Wrap connection in Arc<Mutex> for shared access
         let conn_arc = Arc::new(Mutex::new(conn));
@@ -252,10 +253,9 @@ impl MysqlClient {
                                         for new_action in actions {
                                             match protocol.execute_action(new_action) {
                                                 Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
-                                                    info!("MySQL client {} disconnecting after query result", client_id);
                                                     app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                                                    let _ = status_tx.send(format!("[CLIENT] MySQL client {} disconnected", client_id));
-                                                    let _ = status_tx.send("__UPDATE_UI__".to_string());
+                                                    console_info!(status_tx, "[CLIENT] MySQL client {} disconnected", client_id);
+                                                    console_info!(status_tx, "__UPDATE_UI__");
                                                 }
                                                 _ => {
                                                     // Other actions would require full recursion
@@ -272,18 +272,16 @@ impl MysqlClient {
                             }
                         }
                         Err(e) => {
-                            error!("MySQL client {} query error: {}", client_id, e);
                             app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
-                            let _ = status_tx.send("__UPDATE_UI__".to_string());
+                            console_error!(status_tx, "__UPDATE_UI__");
                         }
                     }
                 }
             }
             crate::llm::actions::client_trait::ClientActionResult::Disconnect => {
-                info!("MySQL client {} disconnecting", client_id);
                 app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                let _ = status_tx.send(format!("[CLIENT] MySQL client {} disconnected", client_id));
-                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                console_info!(status_tx, "[CLIENT] MySQL client {} disconnected", client_id);
+                console_info!(status_tx, "__UPDATE_UI__");
             }
             crate::llm::actions::client_trait::ClientActionResult::WaitForMore => {
                 trace!("MySQL client {} waiting for more data", client_id);

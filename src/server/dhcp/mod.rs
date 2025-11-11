@@ -45,19 +45,14 @@ impl DhcpServer {
                         let data = buffer[..n].to_vec();
 
                         // DEBUG: Log summary
-                        debug!("DHCP received {} bytes from {}", n, peer_addr);
-                        let _ = status_tx.send(format!("[DEBUG] DHCP received {} bytes from {}", n, peer_addr));
+                        console_debug!(status_tx, "[DEBUG] DHCP received {} bytes from {}", n, peer_addr);
 
                         // TRACE: Log full payload (always hex for DHCP)
                         let hex_str = hex::encode(&data);
-                        trace!("DHCP data (hex): {}", hex_str);
-                        let _ = status_tx.send(format!("[TRACE] DHCP data (hex): {}", hex_str));
+                        console_trace!(status_tx, "[TRACE] DHCP data (hex): {}", hex_str);
 
                         // Legacy method - no longer supported
-                        error!("DHCP legacy spawn_with_llm is deprecated, use spawn_with_llm_actions");
-                        let _ = status_tx.send(
-                            "✗ DHCP legacy mode no longer supported, please restart with action-based mode".to_string()
-                        );
+                        console_error!(status_tx, "✗ DHCP legacy mode no longer supported, please restart with action-based mode");
                     }
                     Err(e) => {
                         error!("DHCP receive error: {}", e);
@@ -80,8 +75,7 @@ impl DhcpServer {
     ) -> Result<SocketAddr> {
         let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
         let local_addr = socket.local_addr()?;
-        info!("DHCP server (action-based) listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] DHCP server listening on {}", local_addr));
+        console_info!(status_tx, "[INFO] DHCP server listening on {}", local_addr);
 
         let protocol = Arc::new(DhcpProtocol::new());
 
@@ -95,13 +89,11 @@ impl DhcpServer {
                         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
 
                         // DEBUG: Log summary
-                        debug!("DHCP received {} bytes from {}", n, peer_addr);
-                        let _ = status_tx.send(format!("[DEBUG] DHCP received {} bytes from {}", n, peer_addr));
+                        console_debug!(status_tx, "[DEBUG] DHCP received {} bytes from {}", n, peer_addr);
 
                         // TRACE: Log full payload (always hex for DHCP)
                         let hex_str = hex::encode(&data);
-                        trace!("DHCP data (hex): {}", hex_str);
-                        let _ = status_tx.send(format!("[TRACE] DHCP data (hex): {}", hex_str));
+                        console_trace!(status_tx, "[TRACE] DHCP data (hex): {}", hex_str);
 
                         #[cfg(feature = "dhcp")]
                         let parsed_info = Self::parse_dhcp_message(&data);
@@ -135,7 +127,7 @@ impl DhcpServer {
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_info!(status_tx, "__UPDATE_UI__");
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -224,8 +216,7 @@ impl DhcpServer {
                         });
                     }
                     Err(e) => {
-                        error!("DHCP receive error: {}", e);
-                        let _ = status_tx.send(format!("✗ DHCP receive error: {}", e));
+                        console_error!(status_tx, "✗ DHCP receive error: {}", e);
                         break;
                     }
                 }
@@ -238,6 +229,7 @@ impl DhcpServer {
     #[cfg(feature = "dhcp")]
     fn parse_dhcp_message(data: &[u8]) -> Option<(String, Option<DhcpRequestContext>)> {
         use std::net::Ipv4Addr;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         match v4::Message::decode(&mut Decoder::new(data)) {
             Ok(msg) => {

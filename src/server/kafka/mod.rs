@@ -87,14 +87,7 @@ impl KafkaServer {
 
         let listener = TcpListener::bind(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!(
-            "Kafka broker listening on {} (cluster={}, broker_id={})",
-            local_addr, cluster_id, broker_id
-        );
-        let _ = status_tx.send(format!(
-            "[INFO] Kafka broker listening on {} (cluster={}, broker_id={})",
-            local_addr, cluster_id, broker_id
-        ));
+        console_info!(status_tx, "[INFO] Kafka broker listening on {} (cluster={}, broker_id={})");
 
         let server = Arc::new(KafkaServer {
             cluster_id,
@@ -112,8 +105,7 @@ impl KafkaServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, peer_addr)) => {
-                        debug!("Kafka client connected from {}", peer_addr);
-                        let _ = status_tx.send(format!("[DEBUG] Kafka client connected from {}", peer_addr));
+                        console_debug!(status_tx, "[DEBUG] Kafka client connected from {}", peer_addr);
 
                         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         let llm_clone = llm_client.clone();
@@ -166,8 +158,7 @@ impl KafkaServer {
                         });
                     }
                     Err(e) => {
-                        error!("Kafka accept error: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Kafka accept error: {}", e));
+                        console_error!(status_tx, "[ERROR] Kafka accept error: {}", e);
                     }
                 }
             }
@@ -195,8 +186,7 @@ impl KafkaServer {
             // Read message size (4 bytes, big-endian)
             let n = stream.read(&mut buffer[..4]).await?;
             if n == 0 {
-                debug!("Kafka client {} disconnected", peer_addr);
-                let _ = status_tx.send(format!("[DEBUG] Kafka client {} disconnected", peer_addr));
+                console_debug!(status_tx, "[DEBUG] Kafka client {} disconnected", peer_addr);
                 break;
             }
 
@@ -206,26 +196,22 @@ impl KafkaServer {
             buffer.resize(message_size, 0);
             stream.read_exact(&mut buffer[..message_size]).await?;
 
-            debug!("Kafka received {} bytes from {}", message_size, peer_addr);
-            let _ = status_tx.send(format!("[DEBUG] Kafka received {} bytes from {}", message_size, peer_addr));
+            console_debug!(status_tx, "[DEBUG] Kafka received {} bytes from {}", message_size, peer_addr);
 
             // TRACE: Log hex dump of raw message
-            trace!("Kafka raw message (hex): {}", hex::encode(&buffer[..message_size]));
-            let _ = status_tx.send(format!("[TRACE] Kafka raw message (hex): {}", hex::encode(&buffer[..message_size])));
+            console_trace!(status_tx, "[TRACE] Kafka raw message (hex): {}", hex::encode(&buffer[..message_size]));
 
             // Parse request header
             let mut cursor = std::io::Cursor::new(&buffer[..message_size]);
             let header = match RequestHeader::decode(&mut cursor, 0) {
                 Ok(h) => h,
                 Err(e) => {
-                    error!("Failed to parse Kafka request header: {}", e);
-                    let _ = status_tx.send(format!("[ERROR] Failed to parse Kafka request header: {}", e));
+                    console_error!(status_tx, "[ERROR] Failed to parse Kafka request header: {}", e);
                     continue;
                 }
             };
 
-            debug!("Kafka request: API={:?}, correlation_id={}", header.request_api_key, header.correlation_id);
-            let _ = status_tx.send(format!("[DEBUG] Kafka request: API={:?}, correlation_id={}", header.request_api_key, header.correlation_id));
+            console_debug!(status_tx, "[DEBUG] Kafka request: API={:?}, correlation_id={}", header.request_api_key, header.correlation_id);
 
             // Handle different API keys
             let response_bytes = match header.request_api_key.try_into() {
@@ -293,14 +279,12 @@ impl KafkaServer {
                     .await?
                 }
                 Ok(other_key) => {
-                    debug!("Unsupported Kafka API: {:?}", other_key);
-                    let _ = status_tx.send(format!("[DEBUG] Unsupported Kafka API: {:?}", other_key));
+                    console_debug!(status_tx, "[DEBUG] Unsupported Kafka API: {:?}", other_key);
                     // Return error response
                     Self::create_error_response(&header, 35 /* UNSUPPORTED_VERSION */)
                 }
                 Err(_) => {
-                    debug!("Invalid Kafka API key: {}", header.request_api_key);
-                    let _ = status_tx.send(format!("[DEBUG] Invalid Kafka API key: {}", header.request_api_key));
+                    console_debug!(status_tx, "[DEBUG] Invalid Kafka API key: {}", header.request_api_key);
                     Self::create_error_response(&header, 35)
                 }
             };
@@ -310,11 +294,9 @@ impl KafkaServer {
             stream.write_all(&response_size).await?;
             stream.write_all(&response_bytes).await?;
 
-            debug!("Kafka sent {} bytes to {}", response_bytes.len(), peer_addr);
-            let _ = status_tx.send(format!("[DEBUG] Kafka sent {} bytes to {}", response_bytes.len(), peer_addr));
+            console_debug!(status_tx, "[DEBUG] Kafka sent {} bytes to {}", response_bytes.len(), peer_addr);
 
-            trace!("Kafka response (hex): {}", hex::encode(&response_bytes));
-            let _ = status_tx.send(format!("[TRACE] Kafka response (hex): {}", hex::encode(&response_bytes)));
+            console_trace!(status_tx, "[TRACE] Kafka response (hex): {}", hex::encode(&response_bytes));
         }
 
         Ok(())
@@ -325,8 +307,7 @@ impl KafkaServer {
         header: &RequestHeader,
         status_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<Vec<u8>> {
-        debug!("Handling ApiVersions request");
-        let _ = status_tx.send("[DEBUG] Handling ApiVersions request".to_string());
+        console_debug!(status_tx, "[DEBUG] Handling ApiVersions request");
 
         // Build ApiVersions response with supported APIs
         let response = ApiVersionsResponse::default();
@@ -358,8 +339,7 @@ impl KafkaServer {
         use kafka_protocol::messages::BrokerId;
         use kafka_protocol::protocol::StrBytes;
 
-        debug!("Handling Metadata request");
-        let _ = status_tx.send("[DEBUG] Handling Metadata request".to_string());
+        console_debug!(status_tx, "[DEBUG] Handling Metadata request");
 
         // Parse metadata request
         let mut cursor = std::io::Cursor::new(message);
@@ -374,8 +354,7 @@ impl KafkaServer {
             .filter_map(|t| t.name.as_ref().map(|n| n.to_string()))
             .collect();
 
-        debug!("Metadata request for topics: {:?}", requested_topics);
-        let _ = status_tx.send(format!("[DEBUG] Metadata request for topics: {:?}", requested_topics));
+        console_debug!(status_tx, "[DEBUG] Metadata request for topics: {:?}", requested_topics);
 
         // Build broker info
         let broker = MetadataResponseBroker::default()
@@ -442,8 +421,7 @@ impl KafkaServer {
             }
         }
 
-        info!("Returning metadata for {} topic(s), {} broker(s)", response_topics.len(), 1);
-        let _ = status_tx.send(format!("[INFO] Returning metadata for {} topic(s)", response_topics.len()));
+        console_info!(status_tx, "[INFO] Returning metadata for {} topic(s)", response_topics.len());
 
         // Build response
         let response = MetadataResponse::default()
@@ -478,8 +456,7 @@ impl KafkaServer {
         use kafka_protocol::messages::produce_response::{TopicProduceResponse, PartitionProduceResponse};
         use kafka_protocol::protocol::StrBytes;
 
-        debug!("Handling Produce request");
-        let _ = status_tx.send("[DEBUG] Handling Produce request".to_string());
+        console_debug!(status_tx, "[DEBUG] Handling Produce request");
 
         // Parse produce request
         let mut cursor = std::io::Cursor::new(message);
@@ -500,8 +477,7 @@ impl KafkaServer {
 
                 // Auto-create topic if needed
                 let partitions = topics_lock.entry(topic_name.clone()).or_insert_with(|| {
-                    info!("Auto-creating topic '{}' with {} partition(s)", topic_name, server.default_partitions);
-                    let _ = status_tx.send(format!("[INFO] Auto-creating topic '{}'", topic_name));
+                    console_info!(status_tx, "[INFO] Auto-creating topic '{}'", topic_name);
                     vec![Vec::new(); server.default_partitions as usize]
                 });
 
@@ -540,8 +516,7 @@ impl KafkaServer {
                             }
                         }
                         Err(e) => {
-                            warn!("Failed to parse record batch: {:?}, storing placeholder", e);
-                            let _ = status_tx.send(format!("[WARN] Failed to parse records: {:?}", e));
+                            console_warn!(status_tx, "[WARN] Failed to parse records: {:?}", e);
 
                             // Store a placeholder record on parse failure
                             let offset = partition.len() as i64;
@@ -563,10 +538,7 @@ impl KafkaServer {
                     partition.len() as i64 - record_count as i64
                 };
 
-                info!("Produced {} record(s) to topic '{}' partition {} at offset {}",
-                      record_count, topic_name, partition_idx, base_offset);
-                let _ = status_tx.send(format!("[INFO] Produced {} record(s) to '{}' partition {}",
-                                                record_count, topic_name, partition_idx));
+                console_info!(status_tx, "[INFO] Produced {} record(s) to '{}' partition {}", record_count, topic_name, partition_idx);
 
                 partition_responses.push(
                     PartitionProduceResponse::default()
@@ -617,8 +589,7 @@ impl KafkaServer {
         use kafka_protocol::protocol::StrBytes;
         use bytes::Bytes;
 
-        debug!("Handling Fetch request");
-        let _ = status_tx.send("[DEBUG] Handling Fetch request".to_string());
+        console_debug!(status_tx, "[DEBUG] Handling Fetch request");
 
         // Parse fetch request
         let mut cursor = std::io::Cursor::new(message);
@@ -685,10 +656,7 @@ impl KafkaServer {
                                 Ok(_) => {
                                     debug!("Encoded {} record(s) into {} bytes", kafka_records.len(), records_buf.len());
 
-                                    info!("Fetched {} record(s) from topic '{}' partition {} starting at offset {}",
-                                          matching_records.len(), topic_name, partition_idx, fetch_offset);
-                                    let _ = status_tx.send(format!("[INFO] Fetched {} record(s) from '{}' partition {}",
-                                                                    matching_records.len(), topic_name, partition_idx));
+                                    console_info!(status_tx, "[INFO] Fetched {} record(s) from '{}' partition {}", matching_records.len(), topic_name, partition_idx);
 
                                     partition_responses.push(
                                         PartitionData::default()
@@ -699,8 +667,7 @@ impl KafkaServer {
                                     );
                                 }
                                 Err(e) => {
-                                    warn!("Failed to encode records: {:?}, returning empty batch", e);
-                                    let _ = status_tx.send(format!("[WARN] Failed to encode records: {:?}", e));
+                                    console_warn!(status_tx, "[WARN] Failed to encode records: {:?}", e);
 
                                     // Return empty records on encoding failure
                                     partition_responses.push(
@@ -779,9 +746,9 @@ impl KafkaServer {
     ) -> Result<Vec<u8>> {
         use kafka_protocol::messages::offset_commit_response::{OffsetCommitResponseTopic, OffsetCommitResponsePartition};
         use kafka_protocol::protocol::StrBytes;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
-        debug!("Handling OffsetCommit request");
-        let _ = status_tx.send("[DEBUG] Handling OffsetCommit request".to_string());
+        console_debug!(status_tx, "[DEBUG] Handling OffsetCommit request");
 
         // Parse offset commit request
         let mut cursor = std::io::Cursor::new(message);
@@ -811,10 +778,7 @@ impl KafkaServer {
                 // Store offset
                 topic_offsets.insert(partition_idx, committed_offset);
 
-                info!("Consumer group '{}' committed offset {} for topic '{}' partition {}",
-                      group_id, committed_offset, topic_name, partition_idx);
-                let _ = status_tx.send(format!("[INFO] Group '{}' committed offset {} for '{}' partition {}",
-                                                group_id, committed_offset, topic_name, partition_idx));
+                console_info!(status_tx, "[INFO] Group '{}' committed offset {} for '{}' partition {}", group_id, committed_offset, topic_name, partition_idx);
 
                 partition_responses.push(
                     OffsetCommitResponsePartition::default()

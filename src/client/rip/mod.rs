@@ -220,12 +220,11 @@ impl RipClient {
 
         let local_addr = socket.local_addr()?;
 
-        info!("RIP client {} bound to {} (target: {})", client_id, local_addr, remote_sock_addr);
 
         // Update client state
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] RIP client {} connected", client_id));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] RIP client {} connected", client_id);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         let socket_arc = Arc::new(socket);
 
@@ -362,6 +361,7 @@ impl RipClient {
                                                     // Execute actions
                                                     for action in actions {
                                                         use crate::llm::actions::client_trait::Client;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                                                         match protocol.as_ref().execute_action(action) {
                                                             Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) => {
                                                                 if name == "send_rip_request" {
@@ -413,9 +413,8 @@ impl RipClient {
                         }
                     }
                     Err(e) => {
-                        error!("RIP client {} recv error: {}", client_id, e);
                         app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_error!(status_tx, "__UPDATE_UI__");
                         break;
                     }
                 }

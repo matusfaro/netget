@@ -111,8 +111,7 @@ impl EtcdServer {
         let cluster_id = 0x6574636400000001u64; // "etcd" + 1
         let member_id = 0x6d656d6265720001u64; // "member" + 1 (shortened to fit u64)
 
-        info!("etcd server starting on {} (cluster: {})", listen_addr, cluster_name);
-        let _ = status_tx.send(format!("[INFO] etcd server starting on {} (cluster: {})", listen_addr, cluster_name));
+        console_info!(status_tx, "[INFO] etcd server starting on {} (cluster: {})", listen_addr, cluster_name);
 
         // Create in-memory store
         let store = Arc::new(Mutex::new(EtcdStore::new(cluster_id, member_id)));
@@ -122,16 +121,14 @@ impl EtcdServer {
         let listener = tokio::net::TcpListener::bind(listen_addr).await?;
         let local_addr = listener.local_addr()?;
 
-        info!("etcd server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] etcd server listening on {}", local_addr));
+        console_info!(status_tx, "[INFO] etcd server listening on {}", local_addr);
 
         // Spawn server task
         tokio::spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((stream, peer_addr)) => {
-                        debug!("etcd connection from {}", peer_addr);
-                        let _ = status_tx.send(format!("[DEBUG] etcd connection from {}", peer_addr));
+                        console_debug!(status_tx, "[DEBUG] etcd connection from {}", peer_addr);
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -156,8 +153,7 @@ impl EtcdServer {
                         });
                     }
                     Err(e) => {
-                        error!("etcd accept error: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] etcd accept error: {}", e));
+                        console_error!(status_tx, "[ERROR] etcd accept error: {}", e);
                     }
                 }
             }
@@ -179,6 +175,7 @@ impl EtcdServer {
     ) -> Result<()> {
         use hyper::service::service_fn;
         use hyper_util::rt::TokioIo;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         let io = TokioIo::new(stream);
 
@@ -226,8 +223,7 @@ impl EtcdServer {
         let path = req.uri().path().to_string();
         let method = req.method().as_str().to_string();
 
-        debug!("etcd gRPC {} {}", method, path);
-        let _ = status_tx.send(format!("[DEBUG] etcd gRPC {} {}", method, path));
+        console_debug!(status_tx, "[DEBUG] etcd gRPC {} {}", method, path);
 
         // Read request body
         let whole_body = req.collect().await?.to_bytes();
@@ -290,8 +286,7 @@ impl EtcdServer {
         let request = RangeRequest::decode(msg_bytes)?;
 
         let key_str = String::from_utf8_lossy(&request.key);
-        debug!("etcd Range request: key={}", key_str);
-        let _ = status_tx.send(format!("[DEBUG] etcd Range request: key={}", key_str));
+        console_debug!(status_tx, "[DEBUG] etcd Range request: key={}", key_str);
 
         trace!("etcd Range request: {:?}", request);
 
@@ -339,8 +334,7 @@ impl EtcdServer {
 
         let key_str = String::from_utf8_lossy(&request.key);
         let value_str = String::from_utf8_lossy(&request.value);
-        debug!("etcd Put request: key={}, value={}", key_str, value_str);
-        let _ = status_tx.send(format!("[DEBUG] etcd Put request: key={}, value={}", key_str, value_str));
+        console_debug!(status_tx, "[DEBUG] etcd Put request: key={}, value={}", key_str, value_str);
 
         let mut store_lock = store.lock().await;
         store_lock.increment_revision();
@@ -367,8 +361,7 @@ impl EtcdServer {
         let request = DeleteRangeRequest::decode(msg_bytes)?;
 
         let key_str = String::from_utf8_lossy(&request.key);
-        debug!("etcd DeleteRange request: key={}", key_str);
-        let _ = status_tx.send(format!("[DEBUG] etcd DeleteRange request: key={}", key_str));
+        console_debug!(status_tx, "[DEBUG] etcd DeleteRange request: key={}", key_str);
 
         let mut store_lock = store.lock().await;
         store_lock.increment_revision();
@@ -395,8 +388,7 @@ impl EtcdServer {
     ) -> Result<Vec<u8>> {
         let _request = TxnRequest::decode(msg_bytes)?;
 
-        debug!("etcd Txn request");
-        let _ = status_tx.send(format!("[DEBUG] etcd Txn request"));
+        console_debug!(status_tx, "[DEBUG] etcd Txn request");
 
         let mut store_lock = store.lock().await;
         store_lock.increment_revision();
@@ -423,8 +415,7 @@ impl EtcdServer {
     ) -> Result<Vec<u8>> {
         let request = CompactionRequest::decode(msg_bytes)?;
 
-        debug!("etcd Compact request: revision={}", request.revision);
-        let _ = status_tx.send(format!("[DEBUG] etcd Compact request: revision={}", request.revision));
+        console_debug!(status_tx, "[DEBUG] etcd Compact request: revision={}", request.revision);
 
         let store_lock = store.lock().await;
 

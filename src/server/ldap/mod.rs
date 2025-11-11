@@ -37,8 +37,7 @@ impl LdapServer {
     ) -> Result<SocketAddr> {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("LDAP server (action-based) listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] LDAP server listening on {}", local_addr));
+        console_info!(status_tx, "[INFO] LDAP server listening on {}", local_addr);
 
         let protocol = Arc::new(LdapProtocol::new());
 
@@ -49,8 +48,7 @@ impl LdapServer {
                         let connection_id = crate::server::connection::ConnectionId::new(
                             app_state.get_next_unified_id().await
                         );
-                        debug!("LDAP connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!("→ LDAP connection {} from {}", connection_id, remote_addr));
+                        console_debug!(status_tx, "→ LDAP connection {} from {}", connection_id, remote_addr);
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -81,8 +79,7 @@ impl LdapServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept LDAP connection: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to accept LDAP connection: {}", e));
+                        console_error!(status_tx, "[ERROR] Failed to accept LDAP connection: {}", e);
                         break;
                     }
                 }
@@ -110,6 +107,7 @@ struct LdapSession {
 impl LdapSession {
     async fn handle(&mut self) -> Result<()> {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         loop {
             // Read LDAP message (ASN.1 BER encoded)
@@ -120,21 +118,18 @@ impl LdapSession {
                 Ok(0) => break, // Connection closed
                 Ok(n) => n,
                 Err(e) => {
-                    error!("LDAP read error: {}", e);
-                    let _ = self.status_tx.send(format!("[ERROR] LDAP read error: {}", e));
+                    console_error!(self.status_tx, "[ERROR] LDAP read error: {}", e);
                     break;
                 }
             };
 
             buf.truncate(n);
-            trace!("LDAP received {} bytes: {:02x?}", n, buf);
-            let _ = self.status_tx.send(format!("[TRACE] LDAP received {} bytes", n));
+            console_trace!(self.status_tx, "[TRACE] LDAP received {} bytes", n);
 
             // Parse LDAP message
             match self.parse_ldap_message(&buf).await {
                 Ok(Some(response)) => {
-                    trace!("LDAP sending {} bytes: {:02x?}", response.len(), response);
-                    let _ = self.status_tx.send(format!("[TRACE] LDAP sending {} bytes", response.len()));
+                    console_trace!(self.status_tx, "[TRACE] LDAP sending {} bytes", response.len());
 
                     self.stream.write_all(&response).await?;
                     self.stream.flush().await?;
@@ -144,8 +139,7 @@ impl LdapSession {
                     break;
                 }
                 Err(e) => {
-                    error!("LDAP parse error: {}", e);
-                    let _ = self.status_tx.send(format!("[ERROR] LDAP parse error: {}", e));
+                    console_error!(self.status_tx, "[ERROR] LDAP parse error: {}", e);
                     break;
                 }
             }
@@ -189,8 +183,7 @@ impl LdapSession {
             0x63 => self.handle_search_request(msg_id, &data[op_start..]).await,
             0x42 => self.handle_unbind_request().await,
             _ => {
-                debug!("LDAP unsupported operation: 0x{:02x}", op_tag);
-                let _ = self.status_tx.send(format!("[DEBUG] LDAP unsupported operation: 0x{:02x}", op_tag));
+                console_debug!(self.status_tx, "[DEBUG] LDAP unsupported operation: 0x{:02x}", op_tag);
                 Ok(Some(encode_ldap_error(msg_id, 2))) // protocolError
             }
         }
@@ -227,8 +220,7 @@ impl LdapSession {
             String::new()
         };
 
-        debug!("LDAP Bind request: version={}, dn={}, password_len={}", version, dn, password.len());
-        let _ = self.status_tx.send(format!("[DEBUG] LDAP Bind request: dn={}", dn));
+        console_debug!(self.status_tx, "[DEBUG] LDAP Bind request: dn={}", dn);
 
         // Create Bind event for LLM
         let event = Event::new(&LDAP_BIND_EVENT, serde_json::json!({
@@ -254,8 +246,7 @@ impl LdapSession {
                         if success {
                             self.authenticated = true;
                             self.bind_dn = Some(dn.clone());
-                            info!("LDAP connection {} authenticated as {}", self.connection_id, dn);
-                            let _ = self.status_tx.send(format!("✓ LDAP connection {} authenticated as {}", self.connection_id, dn));
+                            console_info!(self.status_tx, "✓ LDAP connection {} authenticated as {}", self.connection_id, dn);
                         }
                     }
                     return Ok(Some(data));
@@ -282,8 +273,7 @@ impl LdapSession {
         let base_dn = String::from_utf8_lossy(&data[base_start..base_start + base_bytes]).to_string();
 
         // For simplicity, we'll just extract the base DN and let the LLM handle the rest
-        debug!("LDAP Search request: base_dn={}", base_dn);
-        let _ = self.status_tx.send(format!("[DEBUG] LDAP Search request: base_dn={}", base_dn));
+        console_debug!(self.status_tx, "[DEBUG] LDAP Search request: base_dn={}", base_dn);
 
         // Create Search event for LLM
         let event = Event::new(&LDAP_SEARCH_EVENT, serde_json::json!({
@@ -314,8 +304,7 @@ impl LdapSession {
     }
 
     async fn handle_unbind_request(&mut self) -> Result<Option<Vec<u8>>> {
-        debug!("LDAP Unbind request from {}", self.connection_id);
-        let _ = self.status_tx.send(format!("[DEBUG] LDAP Unbind request from {}", self.connection_id));
+        console_debug!(self.status_tx, "[DEBUG] LDAP Unbind request from {}", self.connection_id);
 
         // Create Unbind event for LLM (informational)
         let event = Event::new(&LDAP_UNBIND_EVENT, serde_json::json!({

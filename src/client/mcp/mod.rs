@@ -20,6 +20,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use serde_json::{json, Value};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// JSON-RPC 2.0 request message
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -157,8 +158,8 @@ impl McpClient {
 
         // Update status to connected
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] MCP client {} initialized with server {}", client_id, server_name));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] MCP client {} initialized with server {}", client_id, server_name);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         info!("MCP client {} initialization complete", client_id);
 
@@ -205,13 +206,11 @@ impl McpClient {
                         &status_tx,
                         protocol.clone(),
                     ).await {
-                        error!("Failed to execute LLM actions: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to execute actions: {}", e));
+                        console_error!(status_tx, "[ERROR] Failed to execute actions: {}", e);
                     }
                 }
                 Err(e) => {
-                    error!("Failed to call LLM: {}", e);
-                    let _ = status_tx.send(format!("[ERROR] Failed to call LLM: {}", e));
+                    console_error!(status_tx, "[ERROR] Failed to call LLM: {}", e);
                 }
             }
 
@@ -264,8 +263,7 @@ impl McpClient {
             id: request_id,
         };
 
-        debug!("Sending initialize request: {:?}", request);
-        let _ = status_tx.send("[CLIENT] Sending MCP initialize request".to_string());
+        console_debug!(status_tx, "[CLIENT] Sending MCP initialize request");
 
         let response = http_client
             .post(base_url)
@@ -305,8 +303,7 @@ impl McpClient {
             params: Some(json!({})),
         };
 
-        debug!("Sending initialized notification: {:?}", notification);
-        let _ = status_tx.send("[CLIENT] Sending MCP initialized notification".to_string());
+        console_debug!(status_tx, "[CLIENT] Sending MCP initialized notification");
 
         http_client
             .post(base_url)
@@ -337,9 +334,8 @@ impl McpClient {
 
             match action_result {
                 ClientActionResult::Disconnect => {
-                    info!("Disconnecting MCP client {}", client_id);
                     app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                    let _ = status_tx.send(format!("[CLIENT] MCP client {} disconnected", client_id));
+                    console_info!(status_tx, "[CLIENT] MCP client {} disconnected", client_id);
                     break;
                 }
                 ClientActionResult::Custom { name, data } => {
@@ -399,8 +395,7 @@ impl McpClient {
                             }
                         }
                         Err(e) => {
-                            error!("Failed to execute MCP action {}: {}", name, e);
-                            let _ = status_tx.send(format!("[ERROR] Failed to execute {}: {}", name, e));
+                            console_error!(status_tx, "[ERROR] Failed to execute {}: {}", name, e);
                         }
                     }
                 }
@@ -478,8 +473,7 @@ impl McpClient {
             id: request_id,
         };
 
-        debug!("Sending MCP request: {:?}", request);
-        let _ = status_tx.send(format!("[CLIENT] Sending MCP request: {}", method));
+        console_debug!(status_tx, "[CLIENT] Sending MCP request: {}", method);
 
         let response = http_client
             .post(&base_url)

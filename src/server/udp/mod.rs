@@ -46,6 +46,7 @@ impl UdpServer {
 
                         // Add connection to ServerInstance (UDP "connection" = recent peer)
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -61,7 +62,7 @@ impl UdpServer {
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_info!(status_tx, "__UPDATE_UI__");
 
                         // DEBUG: Log summary with data preview
                         if data.iter().all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace()) {
@@ -71,20 +72,16 @@ impl UdpServer {
                             } else {
                                 data_str.to_string()
                             };
-                            debug!("UDP received {} bytes from {}: {}", n, peer_addr, preview);
-                            let _ = status_tx.send(format!("[DEBUG] UDP received {} bytes from {}: {}", n, peer_addr, preview));
+                            console_debug!(status_tx, "[DEBUG] UDP received {} bytes from {}: {}", n, peer_addr, preview);
 
                             // TRACE: Log full text payload
-                            trace!("UDP data (text): {:?}", data_str);
-                            let _ = status_tx.send(format!("[TRACE] UDP data (text): {:?}", data_str));
+                            console_trace!(status_tx, "[TRACE] UDP data (text): {:?}", data_str);
                         } else {
-                            debug!("UDP received {} bytes from {} (binary data)", n, peer_addr);
-                            let _ = status_tx.send(format!("[DEBUG] UDP received {} bytes from {} (binary data)", n, peer_addr));
+                            console_debug!(status_tx, "[DEBUG] UDP received {} bytes from {} (binary data)", n, peer_addr);
 
                             // TRACE: Log full hex payload
                             let hex_str = hex::encode(&data);
-                            trace!("UDP data (hex): {}", hex_str);
-                            let _ = status_tx.send(format!("[TRACE] UDP data (hex): {}", hex_str));
+                            console_trace!(status_tx, "[TRACE] UDP data (hex): {}", hex_str);
                         }
 
                         let llm_clone = llm_client.clone();

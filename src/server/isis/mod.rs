@@ -88,8 +88,7 @@ impl IsisServer {
         server_id: crate::state::ServerId,
         startup_params: Option<crate::protocol::StartupParams>,
     ) -> Result<String> {
-        info!("IS-IS server starting on interface: {}", interface);
-        let _ = status_tx.send(format!("[INFO] IS-IS server starting on interface: {}", interface));
+        console_info!(status_tx, "[INFO] IS-IS server starting on interface: {}", interface);
 
         // Extract configuration from startup params
         let (system_id, area_id, level) = if let Some(ref params) = startup_params {
@@ -100,11 +99,7 @@ impl IsisServer {
             let lvl = params.get_optional_string("level")
                 .unwrap_or_else(|| "level-2".to_string());
 
-            info!("IS-IS configured: system_id={}, area={}, level={}", sys_id, area, lvl);
-            let _ = status_tx.send(format!(
-                "[INFO] IS-IS configured: system_id={}, area={}, level={}",
-                sys_id, area, lvl
-            ));
+            console_info!(status_tx, "[INFO] IS-IS configured: system_id={}, area={}, level={}");
             (sys_id, area, lvl)
         } else {
             // Defaults
@@ -121,8 +116,7 @@ impl IsisServer {
             let device = match Self::find_device(&interface_clone) {
                 Ok(d) => d,
                 Err(e) => {
-                    error!("Failed to find device: {}", e);
-                    let _ = status_tx.send(format!("[ERROR] Failed to find device: {}", e));
+                    console_error!(status_tx, "[ERROR] Failed to find device: {}", e);
                     return;
                 }
             };
@@ -143,8 +137,7 @@ impl IsisServer {
             {
                 Ok(c) => c,
                 Err(e) => {
-                    error!("Failed to open capture: {}", e);
-                    let _ = status_tx.send(format!("[ERROR] Failed to open capture: {}", e));
+                    console_error!(status_tx, "[ERROR] Failed to open capture: {}", e);
                     return;
                 }
             };
@@ -153,15 +146,10 @@ impl IsisServer {
             // This matches packets with IS-IS LLC headers
             let filter = "ether proto 0xfefe or (ether[14:2] = 0xfefe and ether[16:1] = 0x03)";
             if let Err(e) = cap.filter(filter, true) {
-                warn!("Failed to apply IS-IS filter: {}", e);
-                let _ = status_tx.send(format!("[WARN] Failed to apply IS-IS filter: {}", e));
+                console_warn!(status_tx, "[WARN] Failed to apply IS-IS filter: {}", e);
             }
 
-            info!("IS-IS listening on {}, MAC: {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-                  interface_clone,
-                  local_mac[0], local_mac[1], local_mac[2],
-                  local_mac[3], local_mac[4], local_mac[5]);
-            let _ = status_tx.send(format!("→ IS-IS ready on interface {}", interface_clone));
+            console_info!(status_tx, "→ IS-IS ready on interface {}", interface_clone);
 
             let runtime = tokio::runtime::Handle::current();
 
@@ -221,16 +209,11 @@ impl IsisServer {
                         );
 
                         // DEBUG: Log summary
-                        debug!("IS-IS received {} bytes from {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-                               data.len(),
-                               src_mac[0], src_mac[1], src_mac[2],
-                               src_mac[3], src_mac[4], src_mac[5]);
-                        let _ = status_tx.send(format!("[DEBUG] IS-IS received {} bytes", data.len()));
+                        console_debug!(status_tx, "[DEBUG] IS-IS received {} bytes", data.len());
 
                         // TRACE: Log full payload
                         let hex_str = hex::encode(&data);
-                        trace!("IS-IS frame (hex): {}", hex_str);
-                        let _ = status_tx.send(format!("[TRACE] IS-IS frame (hex): {}", hex_str));
+                        console_trace!(status_tx, "[TRACE] IS-IS frame (hex): {}", hex_str);
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -269,8 +252,7 @@ impl IsisServer {
                         continue;
                     }
                     Err(e) => {
-                        error!("IS-IS capture error: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] IS-IS capture error: {}", e));
+                        console_error!(status_tx, "[ERROR] IS-IS capture error: {}", e);
                         break;
                     }
                 }
@@ -332,14 +314,7 @@ impl IsisServer {
             _ => "Unknown",
         };
 
-        info!("IS-IS received {} ({}) from {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-              pdu_type_name, pdu_type,
-              src_mac[0], src_mac[1], src_mac[2],
-              src_mac[3], src_mac[4], src_mac[5]);
-        let _ = status_tx.send(format!("→ IS-IS {} from {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-                                        pdu_type_name,
-                                        src_mac[0], src_mac[1], src_mac[2],
-                                        src_mac[3], src_mac[4], src_mac[5]));
+        console_info!(status_tx, "→ IS-IS {} from {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", pdu_type_name, src_mac[0], src_mac[1], src_mac[2], src_mac[3], src_mac[4], src_mac[5]);
 
         // Add connection to ServerInstance
         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
@@ -366,7 +341,7 @@ impl IsisServer {
             protocol_info: ProtocolConnectionInfo::empty(),
         };
         app_state.add_connection_to_server(server_id, conn_state).await;
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Handle based on PDU type (for now, only Hello)
         match pdu_type {
@@ -389,8 +364,7 @@ impl IsisServer {
                 ).await?;
             }
             ISIS_LSP_L1 | ISIS_LSP_L2 => {
-                info!("IS-IS LSP received (not yet handled)");
-                let _ = status_tx.send("[INFO] IS-IS LSP received".to_string());
+                console_info!(status_tx, "[INFO] IS-IS LSP received");
             }
             ISIS_CSNP_L1 | ISIS_CSNP_L2 => {
                 info!("IS-IS CSNP received (not yet handled)");
@@ -492,8 +466,7 @@ impl IsisServer {
 
         let event = Event::new(&ISIS_HELLO_EVENT, event_data);
 
-        debug!("IS-IS calling LLM for Hello");
-        let _ = status_tx.send("[DEBUG] IS-IS calling LLM for Hello".to_string());
+        console_debug!(status_tx, "[DEBUG] IS-IS calling LLM for Hello");
 
         // Call LLM to decide response
         match call_llm(
@@ -507,8 +480,7 @@ impl IsisServer {
             Ok(execution_result) => {
                 // Display messages from LLM
                 for message in &execution_result.messages {
-                    info!("{}", message);
-                    let _ = status_tx.send(format!("[INFO] {}", message));
+                    console_info!(status_tx, "[INFO] {}", message);
                 }
 
                 // Process protocol results - send frames via pcap
@@ -520,19 +492,16 @@ impl IsisServer {
                         // Send frame via pcap
                         let mut cap_guard = cap.lock().unwrap();
                         if let Err(e) = cap_guard.sendpacket(frame.as_ref()) {
-                            error!("Failed to send IS-IS frame: {}", e);
-                            let _ = status_tx.send(format!("[ERROR] Failed to send IS-IS frame: {}", e));
+                            console_error!(status_tx, "[ERROR] Failed to send IS-IS frame: {}", e);
                         } else {
-                            debug!("IS-IS sent {} bytes", frame.len());
-                            let _ = status_tx.send(format!("[DEBUG] IS-IS sent {} bytes", frame.len()));
+                            console_debug!(status_tx, "[DEBUG] IS-IS sent {} bytes", frame.len());
                             trace!("IS-IS sent (hex): {}", hex::encode(&frame));
                         }
                     }
                 }
             }
             Err(e) => {
-                error!("IS-IS LLM call failed: {}", e);
-                let _ = status_tx.send(format!("✗ IS-IS LLM error: {}", e));
+                console_error!(status_tx, "✗ IS-IS LLM error: {}", e);
             }
         }
 
@@ -597,6 +566,7 @@ impl IsisServer {
         #[cfg(target_os = "linux")]
         {
             use std::fs;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
             let path = format!("/sys/class/net/{}/address", interface);
             if let Ok(contents) = fs::read_to_string(&path) {
                 let parts: Vec<&str> = contents.trim().split(':').collect();

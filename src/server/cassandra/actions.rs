@@ -105,6 +105,7 @@ impl Server for CassandraProtocol {
         > {
             Box::pin(async move {
                 use crate::server::cassandra::CassandraServer;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                 let send_first = ctx.startup_params
                     .as_ref()
                     .and_then(|p| p.get_optional_bool("send_first"))
@@ -143,8 +144,7 @@ impl Server for CassandraProtocol {
 
 impl CassandraProtocol {
     fn execute_cassandra_ready(&self) -> Result<ActionResult> {
-        debug!("Cassandra READY response");
-        let _ = self.status_tx.send(format!("[DEBUG] Cassandra → READY"));
+        console_debug!(self.status_tx, "[DEBUG] Cassandra → READY");
 
         Ok(ActionResult::Custom {
             name: "cassandra_ready".to_string(),
@@ -158,8 +158,7 @@ impl CassandraProtocol {
             .and_then(|v| v.as_object())
             .map(|o| o.clone());
 
-        debug!("Cassandra SUPPORTED response with options");
-        let _ = self.status_tx.send(format!("[DEBUG] Cassandra → SUPPORTED"));
+        console_debug!(self.status_tx, "[DEBUG] Cassandra → SUPPORTED");
 
         Ok(ActionResult::Custom {
             name: "cassandra_supported".to_string(),
@@ -186,11 +185,7 @@ impl CassandraProtocol {
             rows.len()
         );
 
-        let _ = self.status_tx.send(format!(
-            "[DEBUG] Cassandra → Result set: {} columns, {} rows",
-            columns.len(),
-            rows.len()
-        ));
+        console_debug!(self.status_tx, "[DEBUG] Cassandra → Result set: {} columns, {} rows");
 
         Ok(ActionResult::Custom {
             name: "cassandra_result_rows".to_string(),
@@ -207,15 +202,8 @@ impl CassandraProtocol {
             .and_then(|v| v.as_array())
             .context("Missing 'columns' array")?;
 
-        debug!(
-            "Cassandra prepared statement: {} result columns",
-            columns.len()
-        );
 
-        let _ = self.status_tx.send(format!(
-            "[DEBUG] Cassandra → Prepared statement ({} columns)",
-            columns.len()
-        ));
+        console_debug!(self.status_tx, "[DEBUG] Cassandra → Prepared statement ({} columns)");
 
         Ok(ActionResult::Custom {
             name: "cassandra_prepared".to_string(),
@@ -226,11 +214,8 @@ impl CassandraProtocol {
     }
 
     fn execute_cassandra_auth_success(&self) -> Result<ActionResult> {
-        debug!("Cassandra authentication successful");
 
-        let _ = self.status_tx.send(format!(
-            "[DEBUG] Cassandra → AUTH_SUCCESS"
-        ));
+        console_debug!(self.status_tx, "[DEBUG] Cassandra → AUTH_SUCCESS");
 
         Ok(ActionResult::Custom {
             name: "cassandra_auth_success".to_string(),
@@ -249,12 +234,8 @@ impl CassandraProtocol {
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown error");
 
-        debug!("Cassandra error response: 0x{:04X} - {}", error_code, message);
 
-        let _ = self.status_tx.send(format!(
-            "[DEBUG] Cassandra ✗ Error 0x{:04X}: {}",
-            error_code, message
-        ));
+        console_debug!(self.status_tx, "[DEBUG] Cassandra ✗ Error 0x{:04X}: {}");
 
         Ok(ActionResult::Custom {
             name: "cassandra_error".to_string(),

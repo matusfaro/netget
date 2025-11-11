@@ -53,11 +53,10 @@ impl TorDirectoryServer {
 
         info!("Tor Directory server (action-based) listening on {}", local_addr);
         info!("Authority v3 identity fingerprint: {}", v3_ident);
-        info!("Authority fingerprint: {}", fingerprint);
 
-        let _ = status_tx.send(format!("[INFO] Tor Directory server listening on {}", local_addr));
-        let _ = status_tx.send(format!("[INFO] Authority v3 identity fingerprint: {}", v3_ident));
-        let _ = status_tx.send(format!("[INFO] Authority fingerprint: {}", fingerprint));
+        console_info!(status_tx, "[INFO] Tor Directory server listening on {}", local_addr);
+        console_info!(status_tx, "[INFO] Authority v3 identity fingerprint: {}", v3_ident);
+        console_info!(status_tx, "[INFO] Authority fingerprint: {}", fingerprint);
 
         let protocol = Arc::new(TorDirectoryProtocol::new());
 
@@ -68,8 +67,7 @@ impl TorDirectoryServer {
                         let connection_id = crate::server::connection::ConnectionId::new(
                             app_state.get_next_unified_id().await
                         );
-                        debug!("Tor Directory connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!("[DEBUG] Tor Directory connection {} from {}", connection_id, remote_addr));
+                        console_debug!(status_tx, "[DEBUG] Tor Directory connection {} from {}", connection_id, remote_addr);
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -123,6 +121,7 @@ struct TorDirectorySession {
 impl TorDirectorySession {
     async fn handle(&mut self) -> Result<()> {
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         let (read_half, mut write_half) = tokio::io::split(&mut self.stream);
         let mut reader = BufReader::new(read_half);
@@ -137,8 +136,7 @@ impl TorDirectorySession {
         // Parse HTTP request: "GET /tor/status-vote/current/consensus HTTP/1.1"
         let parts: Vec<&str> = request_line.split_whitespace().collect();
         if parts.len() < 2 {
-            debug!("Tor Directory malformed request: {}", request_line.trim());
-            let _ = self.status_tx.send(format!("[DEBUG] Tor Directory malformed request from {}", self.remote_addr));
+            console_debug!(self.status_tx, "[DEBUG] Tor Directory malformed request from {}", self.remote_addr);
 
             // Send 400 Bad Request
             let error_response = b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n";
@@ -150,8 +148,7 @@ impl TorDirectorySession {
         let method = parts[0];
         let path = parts[1];
 
-        debug!("Tor Directory {} {}", method, path);
-        let _ = self.status_tx.send(format!("[DEBUG] Tor Directory {} {} from {}", method, path, self.remote_addr));
+        console_debug!(self.status_tx, "[DEBUG] Tor Directory {} {} from {}", method, path, self.remote_addr);
 
         // Read remaining headers (but we don't need to parse them for now)
         let mut line = String::new();
@@ -185,8 +182,7 @@ impl TorDirectorySession {
                         write_half.write_all(&data).await?;
                         write_half.flush().await?;
 
-                        debug!("Tor Directory sent {} bytes", data.len());
-                        let _ = self.status_tx.send(format!("[DEBUG] Tor Directory sent {} bytes", data.len()));
+                        console_debug!(self.status_tx, "[DEBUG] Tor Directory sent {} bytes", data.len());
                     }
                     ActionResult::CloseConnection => {
                         debug!("Tor Directory closing connection");

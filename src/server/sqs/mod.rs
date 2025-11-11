@@ -40,8 +40,7 @@ impl SqsServer {
     ) -> anyhow::Result<SocketAddr> {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("SQS server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] SQS server listening on {}", local_addr));
+        console_info!(status_tx, "[INFO] SQS server listening on {}", local_addr);
 
         let protocol = Arc::new(SqsProtocol::new());
 
@@ -52,11 +51,11 @@ impl SqsServer {
                     Ok((stream, remote_addr)) => {
                         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        info!("SQS connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!("[INFO] SQS connection from {}", remote_addr));
+                        console_info!(status_tx, "[INFO] SQS connection from {}", remote_addr);
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -72,7 +71,7 @@ impl SqsServer {
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_info!(status_tx, "__UPDATE_UI__");
 
                         let llm_client_clone = llm_client.clone();
                         let app_state_clone = app_state.clone();
@@ -116,8 +115,7 @@ impl SqsServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept SQS connection: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to accept SQS connection: {}", e));
+                        console_error!(status_tx, "[ERROR] Failed to accept SQS connection: {}", e);
                         break;
                     }
                 }
@@ -155,8 +153,7 @@ async fn handle_sqs_request_with_llm(
     let body_bytes = match req.into_body().collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
-            error!("Failed to read SQS request body: {}", e);
-            let _ = status_tx.send(format!("[ERROR] Failed to read SQS request body: {}", e));
+            console_error!(status_tx, "[ERROR] Failed to read SQS request body: {}", e);
             Bytes::new()
         }
     };
@@ -170,10 +167,7 @@ async fn handle_sqs_request_with_llm(
         operation,
         body_bytes.len()
     );
-    let _ = status_tx.send(format!(
-        "[DEBUG] SQS {} operation={} ({} bytes)",
-        method, operation, body_bytes.len()
-    ));
+    console_debug!(status_tx, "[DEBUG] SQS {} operation={} ({} bytes)");
 
     // Try to extract queue URL from JSON body
     let queue_url = if !body_str.is_empty() {
@@ -184,8 +178,7 @@ async fn handle_sqs_request_with_llm(
         None
     };
 
-    trace!("SQS request body: {}", body_str);
-    let _ = status_tx.send(format!("[TRACE] SQS request: {}", body_str));
+    console_trace!(status_tx, "[TRACE] SQS request: {}", body_str);
 
     // Create SQS request event
     let event = crate::protocol::Event::new(
@@ -222,10 +215,8 @@ async fn handle_sqs_request_with_llm(
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("{}");
 
-                            debug!("SQS response: status={}", status);
-                            let _ = status_tx.send(format!("[DEBUG] SQS → {} response", status));
-                            trace!("SQS response body: {}", body);
-                            let _ = status_tx.send(format!("[TRACE] SQS response: {}", body));
+                            console_debug!(status_tx, "[DEBUG] SQS → {} response", status);
+                            console_trace!(status_tx, "[TRACE] SQS response: {}", body);
 
                             // Generate a simple request ID using timestamp
                             let request_id = format!("{:x}", std::time::SystemTime::now()
@@ -248,8 +239,7 @@ async fn handle_sqs_request_with_llm(
             }
 
             // No SQS response action found, return empty success
-            debug!("SQS response: 200 (default)");
-            let _ = status_tx.send("[DEBUG] SQS → 200 response (default)".to_string());
+            console_debug!(status_tx, "[DEBUG] SQS → 200 response (default)");
 
             let request_id = format!("{:x}", std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -264,8 +254,7 @@ async fn handle_sqs_request_with_llm(
                 .unwrap())
         }
         Err(e) => {
-            error!("LLM execution failed for SQS request: {}", e);
-            let _ = status_tx.send(format!("[ERROR] LLM execution failed: {}", e));
+            console_error!(status_tx, "[ERROR] LLM execution failed: {}", e);
 
             let request_id = format!("{:x}", std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

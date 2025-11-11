@@ -568,7 +568,7 @@ async fn execute_single_task(
     use crate::llm::prompt::PromptBuilder;
     use crate::state::task::{TaskExecutionResult, TaskScope};
 
-    let _ = status_tx.send(format!("[TASK] Executing task '{}'", task.name));
+    console_info!(status_tx, "[TASK] Executing task '{}'", task.name);
 
     // Get protocol actions if server, connection, or client-scoped
     let protocol_actions = match &task.scope {
@@ -605,7 +605,7 @@ async fn execute_single_task(
         Ok(m) => m,
         Err(e) => {
             let error_msg = format!("Model selection failed: {}", e);
-            let _ = status_tx.send(format!("[ERROR] Failed to ensure model is selected for task execution: {}", e));
+            console_error!(status_tx, "[ERROR] Failed to ensure model is selected for task execution: {}", e);
             // Update task status to failed
             state.update_task_status(task.id, crate::state::task::TaskStatus::Failed(error_msg.clone())).await;
             let result = TaskExecutionResult {
@@ -662,7 +662,7 @@ async fn execute_single_task(
         Err(e) => {
             // Execution failed
             let error = format!("LLM call failed: {}", e);
-            let _ = status_tx.send(format!("[ERROR] Task '{}' failed: {}", task.name, error));
+            console_error!(status_tx, "[ERROR] Task '{}' failed: {}", task.name, error);
 
             let result = TaskExecutionResult {
                 success: false,
@@ -697,10 +697,7 @@ async fn execute_single_task(
     {
         Ok(_exec_result) => {
             // Success
-            let _ = status_tx.send(format!(
-                "[TASK] Task '{}' completed successfully",
-                task.name
-            ));
+            console_info!(status_tx, "[TASK] Task '{}' completed successfully");
 
             let result = TaskExecutionResult {
                 success: true,
@@ -713,7 +710,7 @@ async fn execute_single_task(
         Err(e) => {
             // Execution failed
             let error = format!("Action execution failed: {}", e);
-            let _ = status_tx.send(format!("[ERROR] Task '{}' failed: {}", task.name, error));
+            console_error!(status_tx, "[ERROR] Task '{}' failed: {}", task.name, error);
 
             let result = TaskExecutionResult {
                 success: false,
@@ -744,10 +741,7 @@ async fn handle_task_success(
             // One-shot task completed
             state.update_task_status(task.id, TaskStatus::Completed).await;
             state.remove_task(task.id).await;
-            let _ = status_tx.send(format!(
-                "[TASK] One-shot task '{}' completed and removed",
-                task.name
-            ));
+            console_info!(status_tx, "[TASK] One-shot task '{}' completed and removed");
         }
         TaskType::Recurring {
             interval_secs,
@@ -759,10 +753,7 @@ async fn handle_task_success(
                 if *executions_count >= *max {
                     state.update_task_status(task.id, TaskStatus::Completed).await;
                     state.remove_task(task.id).await;
-                    let _ = status_tx.send(format!(
-                        "[TASK] Recurring task '{}' reached max executions ({}) and removed",
-                        task.name, max
-                    ));
+                    console_info!(status_tx, "[TASK] Recurring task '{}' reached max executions ({}) and removed");
                     return;
                 }
             }
@@ -802,10 +793,7 @@ async fn handle_task_failure(
             )
             .await;
         state.remove_task(task.id).await;
-        let _ = status_tx.send(format!(
-            "[ERROR] Task '{}' failed {} times, removing from schedule",
-            task.name, MAX_FAILURES
-        ));
+        console_error!(status_tx, "[ERROR] Task '{}' failed {} times, removing from schedule");
     } else {
         // Retry with exponential backoff
         let backoff_secs = BACKOFF_BASE_SECS * 2u64.pow((failure_count - 1) as u32);
@@ -814,10 +802,7 @@ async fn handle_task_failure(
         state.update_task_next_execution(task.id, next).await;
         state.update_task_status(task.id, TaskStatus::Scheduled).await;
 
-        let _ = status_tx.send(format!(
-            "[WARN] Task '{}' failed (attempt {}/{}), retrying in {} seconds",
-            task.name, failure_count, MAX_FAILURES, backoff_secs
-        ));
+        console_warn!(status_tx, "[WARN] Task '{}' failed (attempt {}/{}), retrying in {} seconds");
     }
 }
 
@@ -2045,6 +2030,7 @@ async fn handle_load(
         // Try to parse as common action
         if let Ok(common_action) = crate::llm::actions::common::CommonAction::from_json(action) {
             use crate::llm::actions::common::CommonAction;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
             match common_action {
                 CommonAction::OpenServer { port, base_stack, send_first, initial_memory, instruction, startup_params, event_handlers, scheduled_tasks } => {

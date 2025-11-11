@@ -17,6 +17,7 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// IPP client that connects to remote IPP print servers
 pub struct IppClient;
@@ -58,8 +59,8 @@ impl IppClient {
 
         // Update status
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] IPP client {} ready for {}", client_id, uri_str));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] IPP client {} ready for {}", client_id, uri_str);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Spawn background task to monitor for client disconnection
         tokio::spawn(async move {
@@ -128,8 +129,7 @@ impl IppClient {
                 Ok(())
             }
             Err(e) => {
-                error!("IPP client {} Get-Printer-Attributes failed: {}", client_id, e);
-                let _ = status_tx.send(format!("[ERROR] IPP Get-Printer-Attributes failed: {}", e));
+                console_error!(status_tx, "[ERROR] IPP Get-Printer-Attributes failed: {}", e);
                 Err(e.into())
             }
         }
@@ -198,8 +198,7 @@ impl IppClient {
                 Ok(())
             }
             Err(e) => {
-                error!("IPP client {} Print-Job failed: {}", client_id, e);
-                let _ = status_tx.send(format!("[ERROR] IPP Print-Job failed: {}", e));
+                console_error!(status_tx, "[ERROR] IPP Print-Job failed: {}", e);
                 Err(e.into())
             }
         }
@@ -257,8 +256,7 @@ impl IppClient {
                 Ok(())
             }
             Err(e) => {
-                error!("IPP client {} Get-Job-Attributes failed: {}", client_id, e);
-                let _ = status_tx.send(format!("[ERROR] IPP Get-Job-Attributes failed: {}", e));
+                console_error!(status_tx, "[ERROR] IPP Get-Job-Attributes failed: {}", e);
                 Err(e.into())
             }
         }

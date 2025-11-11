@@ -24,6 +24,7 @@ use hickory_client::client::{AsyncClient, ClientHandle};
 use hickory_client::udp::UdpClientStream;
 use hickory_client::rr::{DNSClass, Name, RecordType};
 use hickory_proto::op::ResponseCode;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// DNS client that connects to a DNS server
 pub struct DnsClient;
@@ -56,12 +57,11 @@ impl DnsClient {
         // Get local address (best effort)
         let local_addr: SocketAddr = "0.0.0.0:0".parse()?;
 
-        info!("DNS client {} connected to {}", client_id, dns_server);
 
         // Update client state
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] DNS client {} connected to {}", client_id, dns_server));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] DNS client {} connected to {}", client_id, dns_server);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Send initial connected event to LLM
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -372,9 +372,8 @@ impl DnsClient {
                 }
             }
             crate::llm::actions::client_trait::ClientActionResult::Disconnect => {
-                info!("DNS client {} disconnecting", client_id);
                 app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                console_info!(status_tx, "__UPDATE_UI__");
             }
             crate::llm::actions::client_trait::ClientActionResult::WaitForMore => {
                 debug!("DNS client {} waiting for more", client_id);

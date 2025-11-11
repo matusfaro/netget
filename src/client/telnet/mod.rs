@@ -63,12 +63,11 @@ impl TelnetClient {
         let local_addr = stream.local_addr()?;
         let remote_sock_addr = stream.peer_addr()?;
 
-        info!("Telnet client {} connected to {} (local: {})", client_id, remote_sock_addr, local_addr);
 
         // Update client state
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] Telnet client {} connected", client_id));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] Telnet client {} connected", client_id);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Split stream
         let (mut read_half, write_half) = tokio::io::split(stream);
@@ -92,10 +91,9 @@ impl TelnetClient {
             loop {
                 match read_half.read(&mut buffer).await {
                     Ok(0) => {
-                        info!("Telnet client {} disconnected", client_id);
                         app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                        let _ = status_tx.send(format!("[CLIENT] Telnet client {} disconnected", client_id));
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_info!(status_tx, "[CLIENT] Telnet client {} disconnected", client_id);
+                        console_info!(status_tx, "__UPDATE_UI__");
                         break;
                     }
                     Ok(n) => {
@@ -162,6 +160,7 @@ impl TelnetClient {
                                             // Execute actions
                                             for action in actions {
                                                 use crate::llm::actions::client_trait::Client;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                                                 match protocol.as_ref().execute_action(action) {
                                                     Ok(crate::llm::actions::client_trait::ClientActionResult::SendData(bytes)) => {
                                                         if let Ok(_) = write_half_arc.lock().await.write_all(&bytes).await {
@@ -201,9 +200,8 @@ impl TelnetClient {
                         }
                     }
                     Err(e) => {
-                        error!("Telnet client {} read error: {}", client_id, e);
                         app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_error!(status_tx, "__UPDATE_UI__");
                         break;
                     }
                 }
@@ -293,12 +291,8 @@ impl TelnetClient {
                 };
 
                 let option_name = Self::get_option_name(*option);
-                debug!("Telnet client {} received {} {}", client_id, cmd_name, option_name);
 
-                let _ = status_tx.send(format!(
-                    "[CLIENT] Telnet {} negotiation: {} {}",
-                    client_id, cmd_name, option_name
-                ));
+                console_debug!(status_tx, "[CLIENT] Telnet {} negotiation: {} {}");
 
                 // Basic negotiation strategy: refuse all options
                 match *command {

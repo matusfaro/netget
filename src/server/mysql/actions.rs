@@ -107,6 +107,7 @@ impl Server for MysqlProtocol {
         > {
             Box::pin(async move {
                 use crate::server::mysql::MysqlServer;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                 let send_first = ctx.startup_params
                     .as_ref()
                     .and_then(|p| p.get_optional_bool("send_first"))
@@ -159,11 +160,7 @@ impl MysqlProtocol {
             rows.len()
         );
 
-        let _ = self.status_tx.send(format!(
-            "[DEBUG] MySQL → Result set: {} columns, {} rows",
-            columns.len(),
-            rows.len()
-        ));
+        console_debug!(self.status_tx, "[DEBUG] MySQL → Result set: {} columns, {} rows");
 
         // Return a custom action result with the query response data
         Ok(ActionResult::Custom {
@@ -212,15 +209,8 @@ impl MysqlProtocol {
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
 
-        debug!(
-            "MySQL OK response: affected_rows={}, last_insert_id={}",
-            affected_rows, last_insert_id
-        );
 
-        let _ = self.status_tx.send(format!(
-            "[DEBUG] MySQL → OK: {} rows affected",
-            affected_rows
-        ));
+        console_debug!(self.status_tx, "[DEBUG] MySQL → OK: {} rows affected");
 
         Ok(ActionResult::Custom {
             name: "mysql_ok".to_string(),

@@ -50,11 +50,7 @@ impl XmlRpcServer {
         let listener =
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("XML-RPC server (action-based) listening on {}", local_addr);
-        let _ = status_tx.send(format!(
-            "[INFO] XML-RPC server listening on {}",
-            local_addr
-        ));
+        console_info!(status_tx, "[INFO] XML-RPC server listening on {}");
 
         let protocol = Arc::new(XmlRpcProtocol::new());
 
@@ -63,14 +59,7 @@ impl XmlRpcServer {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
                         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
-                        debug!(
-                            "XML-RPC connection {} from {}",
-                            connection_id, remote_addr
-                        );
-                        let _ = status_tx.send(format!(
-                            "→ XML-RPC connection {} from {}",
-                            connection_id, remote_addr
-                        ));
+                        console_debug!(status_tx, "→ XML-RPC connection {} from {}");
 
                         // Track connection in server state
                         let local_addr_conn = stream.local_addr().unwrap_or(listen_addr);
@@ -93,7 +82,7 @@ impl XmlRpcServer {
                         app_state
                             .add_connection_to_server(server_id, conn_state)
                             .await;
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_info!(status_tx, "__UPDATE_UI__");
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -145,11 +134,7 @@ impl XmlRpcServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept XML-RPC connection: {}", e);
-                        let _ = status_tx.send(format!(
-                            "[ERROR] Failed to accept XML-RPC connection: {}",
-                            e
-                        ));
+                        console_error!(status_tx, "[ERROR] Failed to accept XML-RPC connection: {}");
                         break;
                     }
                 }
@@ -189,31 +174,15 @@ async fn handle_xmlrpc_request(
         parts.uri,
         body_bytes.len()
     );
-    let _ = status_tx.send(format!(
-        "[DEBUG] XML-RPC request: {} {} ({} bytes)",
-        parts.method,
-        parts.uri,
-        body_bytes.len()
-    ));
+    console_debug!(status_tx, "[DEBUG] XML-RPC request: {} {} ({} bytes)");
 
     // Trace full request
-    trace!("XML-RPC request body:\n{}", body_str);
-    let _ = status_tx.send(format!(
-        "[TRACE] XML-RPC request body:\r\n{}",
-        body_str
-    ));
+    console_trace!(status_tx, "[TRACE] XML-RPC request body:\r\n{}");
 
     // Check if it's POST (XML-RPC requires POST)
     if parts.method != hyper::Method::POST {
         let fault_xml = generate_fault(-32600, "Invalid request: XML-RPC requires POST method");
-        debug!(
-            "XML-RPC error: invalid method {} (expected POST)",
-            parts.method
-        );
-        let _ = status_tx.send(format!(
-            "[DEBUG] XML-RPC error: invalid method {} (expected POST)",
-            parts.method
-        ));
+        console_debug!(status_tx, "[DEBUG] XML-RPC error: invalid method {} (expected POST)");
         return Ok(Response::builder()
             .status(200)
             .header("Content-Type", "text/xml")
@@ -225,8 +194,7 @@ async fn handle_xmlrpc_request(
     let method_call = match parse_method_call(&body_str) {
         Ok(call) => call,
         Err(e) => {
-            error!("XML-RPC parse error: {}", e);
-            let _ = status_tx.send(format!("[ERROR] XML-RPC parse error: {}", e));
+            console_error!(status_tx, "[ERROR] XML-RPC parse error: {}", e);
             let fault_xml = generate_fault(-32700, &format!("Parse error: {}", e));
             return Ok(Response::builder()
                 .status(200)
@@ -236,16 +204,7 @@ async fn handle_xmlrpc_request(
         }
     };
 
-    debug!(
-        "XML-RPC method call: {} with {} parameters",
-        method_call.method_name,
-        method_call.params.len()
-    );
-    let _ = status_tx.send(format!(
-        "[DEBUG] XML-RPC method: {} ({} params)",
-        method_call.method_name,
-        method_call.params.len()
-    ));
+    console_debug!(status_tx, "[DEBUG] XML-RPC method: {} ({} params)");
 
     // Create event for LLM
     let event = actions::create_method_call_event(&method_call);
@@ -263,8 +222,7 @@ async fn handle_xmlrpc_request(
     {
         Ok(result) => result,
         Err(e) => {
-            error!("LLM error: {}", e);
-            let _ = status_tx.send(format!("[ERROR] LLM error: {}", e));
+            console_error!(status_tx, "[ERROR] LLM error: {}", e);
             let fault_xml = generate_fault(-32603, &format!("Internal error: {}", e));
             return Ok(Response::builder()
                 .status(200)
@@ -290,24 +248,13 @@ async fn handle_xmlrpc_request(
 
     // If no XML response was generated, return a fault
     if response_xml.is_empty() {
-        error!("LLM did not generate XML-RPC response");
-        let _ = status_tx.send("[ERROR] LLM did not generate XML-RPC response".to_string());
+        console_error!(status_tx, "[ERROR] LLM did not generate XML-RPC response");
         response_xml = generate_fault(-32603, "Internal error: no response generated");
     }
 
-    trace!("XML-RPC response:\n{}", response_xml);
-    let _ = status_tx.send(format!("[TRACE] XML-RPC response:\r\n{}", response_xml));
+    console_trace!(status_tx, "[TRACE] XML-RPC response:\r\n{}", response_xml);
 
-    debug!(
-        "→ XML-RPC {} → response ({} bytes)",
-        method_call.method_name,
-        response_xml.len()
-    );
-    let _ = status_tx.send(format!(
-        "→ XML-RPC {} → {} bytes",
-        method_call.method_name,
-        response_xml.len()
-    ));
+    console_debug!(status_tx, "→ XML-RPC {} → {} bytes");
 
     Ok(Response::builder()
         .status(200)
@@ -600,6 +547,7 @@ fn write_value(writer: &mut Writer<Cursor<Vec<u8>>>, value: &XmlRpcValue) {
         }
         XmlRpcValue::Base64(bytes) => {
             use base64::Engine;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
             let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
             writer
                 .write_event(XmlEvent::Start(BytesStart::new("base64")))

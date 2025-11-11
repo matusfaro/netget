@@ -200,7 +200,7 @@ impl EventHandler {
     ) -> Result<()> {
         use crate::llm::{ConversationHandler, PromptBuilder};
 
-        let _ = status_tx.send(format!("[INFO] Interpreting: {input}"));
+        console_info!(status_tx, "[INFO] Interpreting: {input}");
 
         // Get protocol async actions if available
         let protocol_async_actions = if let Some(ref proto) = protocol {
@@ -220,7 +220,7 @@ impl EventHandler {
 
         // If model was auto-selected (wasn't set before), notify via status_tx
         if current_model.is_none() {
-            let _ = status_tx.send(format!("⚠  Auto-selected model: {} (no model was configured)", model));
+            console_info!(status_tx, "⚠  Auto-selected model: {} (no model was configured)", model);
         }
 
         // Create LLM client with status channel for trace logs
@@ -327,7 +327,7 @@ impl EventHandler {
                                 }
                                 Err(e) => {
                                     // Non-retryable error or max retries exceeded
-                                    let _ = status_tx.send(format!("[ERROR] Error executing action: {e}"));
+                                    console_error!(status_tx, "[ERROR] Error executing action: {e}");
                                 }
                             }
                         }
@@ -336,18 +336,14 @@ impl EventHandler {
                     // Update conversation state if server state changed
                     if state_changed && !should_retry {
                         conversation.update_current_state(&self.state, None).await;
-                        let _ = status_tx.send("[DEBUG] Updated conversation state after server changes".to_string());
+                        console_debug!(status_tx, "[DEBUG] Updated conversation state after server changes");
                     }
 
                     // If we should retry, add error to conversation and retry
                     if should_retry {
                         if let Some(error) = retry_error {
                             execution_attempts += 1;
-                            let _ = status_tx.send(format!(
-                                "[INFO] Execution error (attempt {}/{}), retrying with LLM feedback...",
-                                execution_attempts,
-                                MAX_EXECUTION_RETRIES + 1
-                            ));
+                            console_info!(status_tx, "[INFO] Execution error (attempt {}/{}), retrying with LLM feedback...");
 
                             // Add error correction to conversation
                             let correction = error.build_correction_message();
@@ -371,7 +367,7 @@ impl EventHandler {
                             }
                         }
                         Err(e) => {
-                            let _ = status_tx.send(format!("[ERROR] Failed to execute actions: {e}"));
+                            console_error!(status_tx, "[ERROR] Failed to execute actions: {e}");
                         }
                     }
 
@@ -379,7 +375,7 @@ impl EventHandler {
                     break;
                 }
                 Err(e) => {
-                    let _ = status_tx.send(format!("[ERROR] LLM error: {e}"));
+                    console_error!(status_tx, "[ERROR] LLM error: {e}");
                     // End conversation tracking since generate_with_tools_and_retry didn't complete
                     conversation.end_tracking().await;
                     break; // LLM errors don't retry at this level
@@ -440,20 +436,15 @@ impl EventHandler {
                     match Self::parse_event_handlers(handlers_json) {
                         Ok(config) => {
                             self.state.set_event_handler_config(server_id, Some(config)).await;
-                            let _ = status_tx.send("[INFO] Event handler configuration applied to server".to_string());
+                            console_info!(status_tx, "[INFO] Event handler configuration applied to server");
                         }
                         Err(e) => {
-                            let _ = status_tx.send(format!("[WARN] Failed to parse event handlers: {}", e));
+                            console_warn!(status_tx, "[WARN] Failed to parse event handlers: {}", e);
                         }
                     }
                 }
 
-                let _ = status_tx.send(format!(
-                    "[SERVER] Opening server #{} on port {} with protocol {}",
-                    server_id.as_u32(),
-                    port,
-                    protocol_name
-                ));
+                console_info!(status_tx, "[SERVER] Opening server #{} on port {} with protocol {}");
 
                 // Spawn the server directly (no more message passing!)
                 // Propagate port conflict errors for retry, but continue for other errors
@@ -469,11 +460,7 @@ impl EventHandler {
                         // Fatal error - log, update status to Error, and remove server immediately
                         let error_msg = e.to_string();
                         self.state.update_server_status(server_id, ServerStatus::Error(error_msg.clone())).await;
-                        let _ = status_tx.send(format!(
-                            "[ERROR] Failed to start server #{}: {}",
-                            server_id.as_u32(),
-                            error_msg
-                        ));
+                        console_error!(status_tx, "[ERROR] Failed to start server #{}: {}");
                         // Remove the failed server immediately
                         self.state.remove_server(server_id).await;
                     }
@@ -518,13 +505,7 @@ impl EventHandler {
                         // TODO: Add script configuration support for scheduled tasks
                         // For now, tasks use LLM by default. Script support will be added in a future iteration.
 
-                        let _ = status_tx.send(format!(
-                            "[TASK] Created {} task '{}' (ID: {}) for server #{}",
-                            if task_def.recurring { "recurring" } else { "one-shot" },
-                            task_def.task_id,
-                            task_id,
-                            server_id.as_u32()
-                        ));
+                        console_info!(status_tx, "[TASK] Created {} task '{}' (ID: {}) for server #{}");
                     }
                 }
             }
@@ -543,10 +524,7 @@ impl EventHandler {
 
                 // Clean up tasks associated with this server
                 self.state.cleanup_server_tasks(sid).await;
-                let _ = status_tx.send(format!(
-                    "[TASK] Cleaned up tasks for server #{}",
-                    sid.as_u32()
-                ));
+                console_info!(status_tx, "[TASK] Cleaned up tasks for server #{}");
 
                 // Check if all servers are stopped/error
                 let all_stopped =
@@ -558,7 +536,7 @@ impl EventHandler {
                     self.state.set_mode(Mode::Idle).await;
                 }
 
-                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                console_info!(status_tx, "__UPDATE_UI__");
             }
             CommonAction::CloseAllServers => {
                 use crate::state::server::ServerStatus;
@@ -576,16 +554,13 @@ impl EventHandler {
 
                     // Clean up tasks associated with this server
                     self.state.cleanup_server_tasks(server_id).await;
-                    let _ = status_tx.send(format!(
-                        "[TASK] Cleaned up tasks for server #{}",
-                        server_id.as_u32()
-                    ));
+                    console_info!(status_tx, "[TASK] Cleaned up tasks for server #{}");
                 }
 
                 // Set mode to Idle
                 self.state.set_mode(Mode::Idle).await;
 
-                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                console_info!(status_tx, "__UPDATE_UI__");
             }
             CommonAction::UpdateInstruction { instruction } => {
                 // Update instruction for first server (TODO: support targeting specific server ID)
@@ -593,11 +568,7 @@ impl EventHandler {
                     self.state
                         .set_instruction(server_id, instruction.clone())
                         .await;
-                    let _ = status_tx.send(format!(
-                        "[INFO] Server #{} instruction: {}",
-                        server_id.as_u32(),
-                        instruction
-                    ));
+                    console_info!(status_tx, "[INFO] Server #{} instruction: {}");
                 } else {
                     let _ =
                         status_tx.send("[WARN] No server to update instruction for".to_string());
@@ -605,10 +576,10 @@ impl EventHandler {
             }
             CommonAction::ChangeModel { model } => {
                 self.state.set_ollama_model(Some(model.clone())).await;
-                let _ = status_tx.send(format!("Changed model to: {model}"));
+                console_info!(status_tx, "Changed model to: {model}");
 
                 // Signal main loop to update UI
-                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                console_info!(status_tx, "__UPDATE_UI__");
             }
             CommonAction::ShowMessage { message } => {
                 let _ = status_tx.send(message);
@@ -659,32 +630,21 @@ impl EventHandler {
                                     if server.connections.contains_key(&cid) {
                                         TaskScope::Connection(server_id_obj, cid)
                                     } else {
-                                        let _ = status_tx.send(format!(
-                                            "[ERROR] Connection {} not found on server #{}",
-                                            conn_id_str, sid
-                                        ));
+                                        console_error!(status_tx, "[ERROR] Connection {} not found on server #{}");
                                         return Ok(());
                                     }
                                 } else {
-                                    let _ = status_tx.send(format!(
-                                        "[ERROR] Server #{} not found for connection-scoped task",
-                                        sid
-                                    ));
+                                    console_error!(status_tx, "[ERROR] Server #{} not found for connection-scoped task");
                                     return Ok(());
                                 }
                             }
                             None => {
-                                let _ = status_tx.send(format!(
-                                    "[ERROR] Invalid connection_id format: {}. Expected 'conn-123' or '123'",
-                                    conn_id_str
-                                ));
+                                console_error!(status_tx, "[ERROR] Invalid connection_id format: {}. Expected 'conn-123' or '123'");
                                 return Ok(());
                             }
                         }
                     } else {
-                        let _ = status_tx.send(
-                            "[ERROR] connection_id requires server_id to be specified".to_string(),
-                        );
+                        console_error!(status_tx, "[ERROR] connection_id requires server_id to be specified");
                         return Ok(());
                     }
                 } else if let Some(sid) = server_id {
@@ -693,10 +653,7 @@ impl EventHandler {
                     let client_id_obj = crate::state::ClientId::new(cid);
                     // Validate client exists
                     if self.state.get_client(client_id_obj).await.is_none() {
-                        let _ = status_tx.send(format!(
-                            "[ERROR] Client #{} not found for client-scoped task",
-                            cid
-                        ));
+                        console_error!(status_tx, "[ERROR] Client #{} not found for client-scoped task");
                         return Ok(());
                     }
                     TaskScope::Client(client_id_obj)
@@ -748,33 +705,27 @@ impl EventHandler {
                     } else {
                         String::new()
                     };
-                    let _ = status_tx.send(format!(
-                        "[TASK] Scheduled recurring task '{}' (ID: {}) to execute every {}s{}",
-                        task_id, task_id_num, interval, max_info
-                    ));
+                    console_info!(status_tx, "[TASK] Scheduled recurring task '{}' (ID: {}) to execute every {}s{}");
                 } else {
-                    let _ = status_tx.send(format!(
-                        "[TASK] Scheduled one-shot task '{}' (ID: {}) to execute in {}s",
-                        task_id, task_id_num, delay
-                    ));
+                    console_info!(status_tx, "[TASK] Scheduled one-shot task '{}' (ID: {}) to execute in {}s");
                 }
             }
             CommonAction::CancelTask { task_id } => {
                 if let Some(task) = self.state.get_task(&task_id).await {
                     self.state.remove_task(task.id).await;
-                    let _ = status_tx.send(format!("[TASK] Cancelled task '{}'", task_id));
+                    console_info!(status_tx, "[TASK] Cancelled task '{}'", task_id);
                 } else {
-                    let _ = status_tx.send(format!("[WARN] Task '{}' not found", task_id));
+                    console_warn!(status_tx, "[WARN] Task '{}' not found", task_id);
                 }
             }
             CommonAction::ListTasks => {
                 let tasks = self.state.get_all_tasks().await;
                 if tasks.is_empty() {
-                    let _ = status_tx.send("[TASK] No scheduled tasks".to_string());
+                    console_info!(status_tx, "[TASK] No scheduled tasks");
                 } else {
-                    let _ = status_tx.send(format!("[TASK] {} scheduled task(s):", tasks.len()));
+                    console_info!(status_tx, "[TASK] {} scheduled task(s):", tasks.len());
                     for task in tasks {
-                        let _ = status_tx.send(format!("  {}", task.format_for_prompt()));
+                        console_info!(status_tx, "  {}", task.format_for_prompt());
                     }
                 }
             }
@@ -811,20 +762,15 @@ impl EventHandler {
                     match Self::parse_event_handlers(handlers_json) {
                         Ok(config) => {
                             self.state.set_client_event_handler_config(client_id, Some(config)).await;
-                            let _ = status_tx.send("[INFO] Event handler configuration applied to client".to_string());
+                            console_info!(status_tx, "[INFO] Event handler configuration applied to client");
                         }
                         Err(e) => {
-                            let _ = status_tx.send(format!("[WARN] Failed to parse event handlers: {}", e));
+                            console_warn!(status_tx, "[WARN] Failed to parse event handlers: {}", e);
                         }
                     }
                 }
 
-                let _ = status_tx.send(format!(
-                    "[CLIENT] Opening {} client #{} to {}...",
-                    protocol,
-                    client_id.as_u32(),
-                    remote_addr
-                ));
+                console_info!(status_tx, "[CLIENT] Opening {} client #{} to {}...");
 
                 // Start the client connection
                 let llm_client = self.llm.clone();
@@ -839,11 +785,7 @@ impl EventHandler {
                 {
                     Ok(_) => {
                         // Client started successfully
-                        let _ = status_tx.send(format!(
-                            "[CLIENT] {} client #{} connected",
-                            protocol,
-                            client_id.as_u32()
-                        ));
+                        console_info!(status_tx, "[CLIENT] {} client #{} connected");
 
                         // Create scheduled tasks if provided
                         if let Some(task_defs) = scheduled_tasks {
@@ -878,17 +820,7 @@ impl EventHandler {
 
                                 let task_id_num = self.state.add_task(task).await;
 
-                                let _ = status_tx.send(format!(
-                                    "[TASK] Created {} task '{}' (ID: {}) for client #{}",
-                                    if task_def.recurring {
-                                        "recurring"
-                                    } else {
-                                        "one-shot"
-                                    },
-                                    task_def.task_id,
-                                    task_id_num,
-                                    client_id.as_u32()
-                                ));
+                                console_info!(status_tx, "[TASK] Created {} task '{}' (ID: {}) for client #{}");
                             }
                         }
                     }
@@ -897,17 +829,12 @@ impl EventHandler {
                         self.state
                             .update_client_status(client_id, ClientStatus::Error(e.to_string()))
                             .await;
-                        let _ = status_tx.send(format!(
-                            "[ERROR] Failed to connect {} client #{}: {}",
-                            protocol,
-                            client_id.as_u32(),
-                            e
-                        ));
+                        console_error!(status_tx, "[ERROR] Failed to connect {} client #{}: {}");
                         return Err(e);
                     }
                 }
 
-                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                console_info!(status_tx, "__UPDATE_UI__");
             }
             CommonAction::CloseClient { client_id } => {
                 use crate::state::client::ClientStatus;
@@ -918,16 +845,13 @@ impl EventHandler {
                 self.state
                     .update_client_status(cid, ClientStatus::Disconnected)
                     .await;
-                let _ = status_tx.send(format!("[CLIENT] Closed client #{}", cid.as_u32()));
+                console_info!(status_tx, "[CLIENT] Closed client #{}", cid.as_u32());
 
                 // Clean up tasks associated with this client
                 self.state.cleanup_client_tasks(cid).await;
-                let _ = status_tx.send(format!(
-                    "[TASK] Cleaned up tasks for client #{}",
-                    cid.as_u32()
-                ));
+                console_info!(status_tx, "[TASK] Cleaned up tasks for client #{}");
 
-                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                console_info!(status_tx, "__UPDATE_UI__");
             }
             CommonAction::CloseAllClients => {
                 use crate::state::client::ClientStatus;
@@ -939,17 +863,14 @@ impl EventHandler {
                     self.state
                         .update_client_status(client_id, ClientStatus::Disconnected)
                         .await;
-                    let _ = status_tx.send(format!("[CLIENT] Closed client #{}", client_id.as_u32()));
+                    console_info!(status_tx, "[CLIENT] Closed client #{}", client_id.as_u32());
 
                     // Clean up tasks associated with this client
                     self.state.cleanup_client_tasks(client_id).await;
-                    let _ = status_tx.send(format!(
-                        "[TASK] Cleaned up tasks for client #{}",
-                        client_id.as_u32()
-                    ));
+                    console_info!(status_tx, "[TASK] Cleaned up tasks for client #{}");
                 }
 
-                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                console_info!(status_tx, "__UPDATE_UI__");
             }
             CommonAction::CloseConnectionById { connection_id } => {
                 use crate::server::connection::ConnectionId;
@@ -961,24 +882,17 @@ impl EventHandler {
                 for server in all_servers {
                     if server.connections.contains_key(&conn_id) {
                         self.state.close_connection_on_server(server.id, conn_id).await;
-                        let _ = status_tx.send(format!(
-                            "[CONNECTION] Closed connection #{} on server #{}",
-                            connection_id,
-                            server.id.as_u32()
-                        ));
+                        console_info!(status_tx, "[CONNECTION] Closed connection #{} on server #{}");
                         found = true;
                         break;
                     }
                 }
 
                 if !found {
-                    let _ = status_tx.send(format!(
-                        "[ERROR] Connection #{} not found",
-                        connection_id
-                    ));
+                    console_error!(status_tx, "[ERROR] Connection #{} not found");
                 }
 
-                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                console_info!(status_tx, "__UPDATE_UI__");
             }
             CommonAction::ReconnectClient { client_id } => {
                 let cid = crate::state::ClientId::new(client_id);
@@ -987,7 +901,7 @@ impl EventHandler {
                 let llm_client = self.llm.clone();
                 let status_tx_clone = status_tx.clone();
 
-                let _ = status_tx.send(format!("[CLIENT] Reconnecting client #{}...", cid.as_u32()));
+                console_info!(status_tx, "[CLIENT] Reconnecting client #{}...", cid.as_u32());
 
                 match crate::cli::client_startup::start_client_by_id(
                     &self.state,
@@ -998,19 +912,15 @@ impl EventHandler {
                 .await
                 {
                     Ok(_) => {
-                        let _ = status_tx.send(format!("[CLIENT] Client #{} reconnected", cid.as_u32()));
+                        console_info!(status_tx, "[CLIENT] Client #{} reconnected", cid.as_u32());
                     }
                     Err(e) => {
-                        let _ = status_tx.send(format!(
-                            "[ERROR] Failed to reconnect client #{}: {}",
-                            cid.as_u32(),
-                            e
-                        ));
+                        console_error!(status_tx, "[ERROR] Failed to reconnect client #{}: {}");
                         return Err(e);
                     }
                 }
 
-                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                console_info!(status_tx, "__UPDATE_UI__");
             }
             CommonAction::UpdateClientInstruction {
                 client_id,
@@ -1023,12 +933,9 @@ impl EventHandler {
                     .set_instruction_for_client(cid, instruction.clone())
                     .await;
 
-                let _ = status_tx.send(format!(
-                    "[CLIENT] Updated instruction for client #{}",
-                    cid.as_u32()
-                ));
-                let _ = status_tx.send(format!("[CLIENT] New instruction: {}", instruction));
-                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                console_info!(status_tx, "[CLIENT] Updated instruction for client #{}");
+                console_info!(status_tx, "[CLIENT] New instruction: {}", instruction);
+                console_info!(status_tx, "__UPDATE_UI__");
             }
         }
 
@@ -1500,6 +1407,7 @@ impl EventHandler {
                     CommonAction::OpenClient { protocol, remote_addr, instruction, startup_params, initial_memory, event_handlers, scheduled_tasks } => {
                         // Execute open_client action via client startup
                         use crate::cli::client_startup;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
                         match client_startup::start_client_from_action(
                             &self.state,

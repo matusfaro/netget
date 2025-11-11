@@ -32,7 +32,7 @@ pub async fn start_server_by_id(
     let server = match state.get_server(server_id).await {
         Some(s) => s,
         None => {
-            let _ = status_tx.send(format!("[ERROR] Server #{} not found", server_id.as_u32()));
+            console_error!(status_tx, "[ERROR] Server #{} not found", server_id.as_u32());
             return Ok(());
         }
     };
@@ -98,8 +98,8 @@ pub async fn start_server_by_id(
         state
             .update_server_status(server_id, ServerStatus::Error(full_error.clone()))
             .await;
-        let _ = status_tx.send(format!("[ERROR] {}", full_error));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_error!(status_tx, "[ERROR] {}", full_error);
+        console_info!(status_tx, "__UPDATE_UI__");
         return Err(ActionExecutionError::PrivilegeDenied {
             requirement: metadata.privilege_requirement.description(),
             message: full_error,
@@ -134,23 +134,14 @@ pub async fn start_server_by_id(
             state
                 .update_server_status(server_id, ServerStatus::Running)
                 .await;
-            let _ = status_tx.send(format!(
-                "[SERVER] {} server #{} listening on {}",
-                protocol_name,
-                server_id.as_u32(),
-                actual_addr
-            ));
-            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            console_info!(status_tx, "[SERVER] {} server #{} listening on {}");
+            console_info!(status_tx, "__UPDATE_UI__");
         }
         Err(e) => {
             // Check if error is due to port already in use
             if is_addr_in_use_error(&e) {
                 // Return retryable error with context for LLM
-                let _ = status_tx.send(format!(
-                    "[INFO] Port {} is already in use for {} server, will retry with LLM suggestion",
-                    server.port,
-                    protocol_name
-                ));
+                console_info!(status_tx, "[INFO] Port {} is already in use for {} server, will retry with LLM suggestion");
                 return Err(ActionExecutionError::PortConflict {
                     port: server.port,
                     protocol: protocol_name.clone(),
@@ -162,13 +153,8 @@ pub async fn start_server_by_id(
             state
                 .update_server_status(server_id, ServerStatus::Error(e.to_string()))
                 .await;
-            let _ = status_tx.send(format!(
-                "[ERROR] Failed to start {} server #{}: {}",
-                protocol_name,
-                server_id.as_u32(),
-                e
-            ));
-            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            console_error!(status_tx, "[ERROR] Failed to start {} server #{}: {}");
+            console_info!(status_tx, "__UPDATE_UI__");
             return Err(ActionExecutionError::Fatal(e));
         }
     }
@@ -267,6 +253,7 @@ pub async fn start_server_from_action(
         for task_def in tasks {
             use crate::state::task::{ScheduledTask, TaskScope, TaskType, TaskStatus, TaskId};
             use std::time::{Duration, Instant};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
             // Determine task type
             let task_type = if task_def.recurring {

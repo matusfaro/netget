@@ -49,8 +49,7 @@ impl UsbSerialServer {
     ) -> Result<SocketAddr> {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("USB Serial server listening on {}", local_addr);
-        let _ = status_tx.send(format!("USB Serial server listening on {}", local_addr));
+        console_info!(status_tx, "USB Serial server listening on {}", local_addr);
 
         let _connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>> = Arc::new(Mutex::new(HashMap::new()));
         let _protocol = Arc::new(crate::server::usb::serial::actions::UsbSerialProtocol::new());
@@ -63,6 +62,7 @@ impl UsbSerialServer {
                         info!("USB/IP connection {} from {} (USB serial)", connection_id, remote_addr);
 
                         use crate::state::server::{ConnectionState as ServerConnectionState, ConnectionStatus, ProtocolConnectionInfo};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -81,7 +81,7 @@ impl UsbSerialServer {
                             })),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_info!(status_tx, "__UPDATE_UI__");
 
                         // Placeholder connection handler
                         tokio::spawn(async move {

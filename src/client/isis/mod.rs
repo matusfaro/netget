@@ -21,6 +21,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::isis::actions::ISIS_PDU_RECEIVED_EVENT;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// IS-IS PDU types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,12 +144,11 @@ impl IsisClient {
         status_tx: mpsc::UnboundedSender<String>,
         client_id: ClientId,
     ) -> Result<SocketAddr> {
-        info!("ISIS client {} starting capture on interface: {}", client_id, interface_name);
 
         // Update client state
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] ISIS client {} capturing on {}", client_id, interface_name));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] ISIS client {} capturing on {}", client_id, interface_name);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         let protocol = Arc::new(crate::client::isis::actions::IsisClientProtocol::new());
 
@@ -159,10 +159,9 @@ impl IsisClient {
             let device = match Self::find_device(&interface_clone) {
                 Ok(d) => d,
                 Err(e) => {
-                    error!("ISIS client {} failed to find device: {}", client_id, e);
                     let runtime = tokio::runtime::Handle::current();
                     let _ = runtime.block_on(app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())));
-                    let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    console_error!(status_tx, "__UPDATE_UI__");
                     return;
                 }
             };
@@ -174,10 +173,9 @@ impl IsisClient {
             {
                 Ok(c) => c,
                 Err(e) => {
-                    error!("ISIS client {} failed to open capture: {}", client_id, e);
                     let runtime = tokio::runtime::Handle::current();
                     let _ = runtime.block_on(app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())));
-                    let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    console_error!(status_tx, "__UPDATE_UI__");
                     return;
                 }
             };
@@ -267,10 +265,9 @@ impl IsisClient {
                         continue;
                     }
                     Err(e) => {
-                        error!("ISIS client {} capture error: {}", client_id, e);
                         let runtime = tokio::runtime::Handle::current();
                         let _ = runtime.block_on(app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())));
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_error!(status_tx, "__UPDATE_UI__");
                         break;
                     }
                 }

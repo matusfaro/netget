@@ -68,8 +68,8 @@ impl DataLinkClient {
 
         // Update client state
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] DataLink client {} connected to interface {}", client_id, interface));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] DataLink client {} connected to interface {}", client_id, interface);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Initialize client data for capture handling
         let client_data = Arc::new(Mutex::new(ClientData {
@@ -184,6 +184,7 @@ impl DataLinkClient {
                                                     // Execute actions
                                                     for action in actions {
                                                         use crate::llm::actions::client_trait::Client;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                                                         match protocol.as_ref().execute_action(action) {
                                                             Ok(crate::llm::actions::client_trait::ClientActionResult::SendData(frame_bytes)) => {
                                                                 // Send frame injection command

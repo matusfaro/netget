@@ -107,6 +107,7 @@ impl Server for RedisProtocol {
         > {
             Box::pin(async move {
                 use crate::server::redis::RedisServer;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                 let send_first = ctx.startup_params
                     .as_ref()
                     .and_then(|p| p.get_optional_bool("send_first"))
@@ -178,11 +179,7 @@ impl RedisProtocol {
             None
         };
 
-        debug!("Redis bulk string response: {:?}", result);
-        let _ = self.status_tx.send(format!(
-            "[DEBUG] Redis → Bulk string: {} bytes",
-            result.as_ref().map(|v| v.len()).unwrap_or(0)
-        ));
+        console_debug!(self.status_tx, "[DEBUG] Redis → Bulk string: {} bytes");
 
         Ok(ActionResult::Custom {
             name: "redis_bulk_string".to_string(),
@@ -252,8 +249,7 @@ impl RedisProtocol {
     }
 
     fn execute_redis_null(&self, _action: serde_json::Value) -> Result<ActionResult> {
-        debug!("Redis null response");
-        let _ = self.status_tx.send("[DEBUG] Redis → Null".to_string());
+        console_debug!(self.status_tx, "[DEBUG] Redis → Null");
 
         Ok(ActionResult::Custom {
             name: "redis_null".to_string(),

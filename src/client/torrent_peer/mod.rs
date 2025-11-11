@@ -55,13 +55,11 @@ impl TorrentPeerClient {
         let local_addr = stream.local_addr()?;
         let remote_sock_addr = stream.peer_addr()?;
 
-        info!("BitTorrent Peer client {} connected to {} (local: {})",
-              client_id, remote_sock_addr, local_addr);
 
         // Update client state
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] BitTorrent Peer client {} connected", client_id));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] BitTorrent Peer client {} connected", client_id);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Split stream
         let (mut read_half, write_half) = tokio::io::split(stream);
@@ -288,6 +286,7 @@ impl TorrentPeerClient {
         protocol: &dyn crate::llm::actions::client_trait::Client,
     ) -> Result<()> {
         use crate::llm::actions::client_trait::ClientActionResult;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         match protocol.execute_action(action)? {
             ClientActionResult::Custom { name, data } if name == "peer_handshake" => {

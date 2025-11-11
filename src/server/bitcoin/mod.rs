@@ -60,8 +60,7 @@ impl BitcoinServer {
             "signet" => Magic::SIGNET,
             "regtest" => Magic::REGTEST,
             _ => {
-                info!("Unknown network '{}', defaulting to mainnet", network);
-                let _ = status_tx.send(format!("[INFO] Unknown network '{}', defaulting to mainnet", network));
+                console_info!(status_tx, "[INFO] Unknown network '{}', defaulting to mainnet", network);
                 Magic::BITCOIN
             }
         };
@@ -69,8 +68,7 @@ impl BitcoinServer {
         // Create and bind TCP server
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("Bitcoin P2P server listening on {} (network: {:?})", local_addr, magic);
-        let _ = status_tx.send(format!("[INFO] Bitcoin P2P server listening on {} (network: {:?})", local_addr, magic));
+        console_info!(status_tx, "[INFO] Bitcoin P2P server listening on {} (network: {:?})", local_addr, magic);
 
         let connections = Arc::new(Mutex::new(HashMap::new()));
         let protocol = Arc::new(BitcoinProtocol::new());
@@ -82,8 +80,7 @@ impl BitcoinServer {
                     Ok((stream, remote_addr)) => {
                         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        info!("Accepted Bitcoin P2P connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!("[INFO] Accepted Bitcoin P2P connection {} from {}", connection_id, remote_addr));
+                        console_info!(status_tx, "[INFO] Accepted Bitcoin P2P connection {} from {}", connection_id, remote_addr);
 
                         // Split stream
                         let (read_half, write_half) = tokio::io::split(stream);
@@ -91,6 +88,7 @@ impl BitcoinServer {
 
                         // Add connection to ServerInstance
                         use crate::state::server::{
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                             ConnectionState as ServerConnectionState, ConnectionStatus,
                             ProtocolConnectionInfo,
                         };
@@ -109,7 +107,7 @@ impl BitcoinServer {
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_info!(status_tx, "__UPDATE_UI__");
 
                         // Handle connection opened event
                         let llm_client_clone = llm_client.clone();
@@ -211,8 +209,7 @@ impl BitcoinServer {
                         });
                     }
                     Err(e) => {
-                        error!("Accept error on Bitcoin server: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Accept error on Bitcoin server: {}", e));
+                        console_error!(status_tx, "[ERROR] Accept error on Bitcoin server: {}", e);
                         break;
                     }
                 }
@@ -287,19 +284,14 @@ impl BitcoinServer {
                         }
                         ActionResult::CloseConnection => {
                             connections.lock().await.remove(&connection_id);
-                            info!("Closed Bitcoin connection {} after connection opened", connection_id);
-                            let _ = status_tx.send(format!(
-                                "✗ Closed Bitcoin connection {} after connection opened",
-                                connection_id
-                            ));
+                            console_info!(status_tx, "✗ Closed Bitcoin connection {} after connection opened");
                         }
                         _ => {}
                     }
                 }
             }
             Err(e) => {
-                error!("LLM error on Bitcoin connection opened: {}", e);
-                let _ = status_tx.send(format!("✗ LLM error: {}", e));
+                console_error!(status_tx, "✗ LLM error: {}", e);
             }
         }
     }
@@ -335,8 +327,7 @@ impl BitcoinServer {
                 .and_modify(|conn| {
                     conn.queued_data.extend_from_slice(&data);
                 });
-            debug!("Queued {} bytes for Bitcoin connection {}", data.len(), connection_id);
-            let _ = status_tx.send(format!("⏸ Queued {} bytes for {}", data.len(), connection_id));
+            console_debug!(status_tx, "⏸ Queued {} bytes for {}", data.len(), connection_id);
             return;
         }
 
@@ -429,11 +420,7 @@ impl BitcoinServer {
                                         )
                                         .await
                                         {
-                                            error!("Failed to send Bitcoin response: {}", e);
-                                            let _ = status_tx.send(format!(
-                                                "✗ Failed to send Bitcoin response: {}",
-                                                e
-                                            ));
+                                            console_error!(status_tx, "✗ Failed to send Bitcoin response: {}");
                                         }
                                     }
                                     ActionResult::CloseConnection => {
@@ -462,11 +449,7 @@ impl BitcoinServer {
                             };
 
                             if has_queued {
-                                debug!("Processing queued data for Bitcoin connection {}", connection_id);
-                                let _ = status_tx.send(format!(
-                                    "▶ Processing queued data for {}",
-                                    connection_id
-                                ));
+                                console_debug!(status_tx, "▶ Processing queued data for {}");
                                 // Loop continues to process queued data
                             } else {
                                 // Go to Idle state
@@ -479,8 +462,7 @@ impl BitcoinServer {
                             }
                         }
                         Err(e) => {
-                            error!("LLM error for Bitcoin data: {}", e);
-                            let _ = status_tx.send(format!("✗ LLM error: {}", e));
+                            console_error!(status_tx, "✗ LLM error: {}", e);
                             connections
                                 .lock()
                                 .await
@@ -507,11 +489,7 @@ impl BitcoinServer {
                 }
                 Err(e) => {
                     // Parse error
-                    error!("Failed to parse Bitcoin message on {}: {}", connection_id, e);
-                    let _ = status_tx.send(format!(
-                        "✗ Failed to parse Bitcoin message on {}: {}",
-                        connection_id, e
-                    ));
+                    console_error!(status_tx, "✗ Failed to parse Bitcoin message on {}: {}");
                     connections
                         .lock()
                         .await
@@ -648,19 +626,13 @@ impl BitcoinServer {
             .context("Failed to write Bitcoin message")?;
 
         // DEBUG: Log binary data summary
-        debug!("Bitcoin P2P sent {} bytes to {}", data.len(), connection_id);
-        let _ = status_tx.send(format!(
-            "[DEBUG] Bitcoin P2P sent {} bytes to {}",
-            data.len(),
-            connection_id
-        ));
+        console_debug!(status_tx, "[DEBUG] Bitcoin P2P sent {} bytes to {}");
 
         // TRACE: Log full hex payload
         let hex_str = hex::encode(data);
-        trace!("Bitcoin P2P sent (hex): {}", hex_str);
-        let _ = status_tx.send(format!("[TRACE] Bitcoin P2P sent (hex): {}", hex_str));
+        console_trace!(status_tx, "[TRACE] Bitcoin P2P sent (hex): {}", hex_str);
 
-        let _ = status_tx.send(format!("→ Sent Bitcoin message to {}", connection_id));
+        console_trace!(status_tx, "→ Sent Bitcoin message to {}", connection_id);
 
         Ok(())
     }

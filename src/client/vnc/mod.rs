@@ -73,12 +73,11 @@ impl VncClient {
         // Perform VNC handshake
         let (fb_width, fb_height, server_name) = Self::perform_handshake(&mut stream, password.as_deref()).await?;
 
-        info!("VNC client {} connected: {}x{} ({})", client_id, fb_width, fb_height, server_name);
 
         // Update client state
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] VNC client {} connected", client_id));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] VNC client {} connected", client_id);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Fire connected event
         let protocol = Arc::new(VncClientProtocol::new());
@@ -187,10 +186,9 @@ impl VncClient {
                         }
                     }
                     Err(e) => {
-                        info!("VNC client {} disconnected: {}", client_id, e);
                         app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                        let _ = status_tx.send(format!("[CLIENT] VNC client {} disconnected", client_id));
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_info!(status_tx, "[CLIENT] VNC client {} disconnected", client_id);
+                        console_info!(status_tx, "__UPDATE_UI__");
                         break;
                     }
                 }
@@ -572,6 +570,7 @@ impl VncClient {
         W: AsyncWriteExt + Unpin,
     {
         use crate::llm::actions::client_trait::Client;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         match protocol.as_ref().execute_action(action)? {
             ClientActionResult::Custom { name, data } => {

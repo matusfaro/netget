@@ -16,6 +16,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::http2::actions::HTTP2_CLIENT_RESPONSE_RECEIVED_EVENT;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// HTTP/2 client that makes requests to remote HTTP/2 servers
 pub struct Http2Client;
@@ -55,8 +56,8 @@ impl Http2Client {
 
         // Update status
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] HTTP/2 client {} ready for {}", client_id, remote_addr));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] HTTP/2 client {} ready for {}", client_id, remote_addr);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // For HTTP/2 client, we'll spawn a background task that processes LLM-requested actions
         // The actual requests are made on-demand via actions, not in a read loop
@@ -195,8 +196,7 @@ impl Http2Client {
                 Ok(())
             }
             Err(e) => {
-                error!("HTTP/2 client {} request failed: {}", client_id, e);
-                let _ = status_tx.send(format!("[ERROR] HTTP/2 request failed: {}", e));
+                console_error!(status_tx, "[ERROR] HTTP/2 request failed: {}", e);
                 Err(e.into())
             }
         }

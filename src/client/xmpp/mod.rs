@@ -59,8 +59,7 @@ impl XmppClientConnection {
         // Parse JID and password from remote_addr or get from startup params
         let (jid, password, _server_addr) = Self::parse_connection_info(&remote_addr, &app_state, client_id).await?;
 
-        info!("XMPP client {} connecting as {}", client_id, jid);
-        let _ = status_tx.send(format!("[CLIENT] XMPP client {} connecting...", client_id));
+        console_info!(status_tx, "[CLIENT] XMPP client {} connecting...", client_id);
 
         // Create XMPP client
         let mut xmpp_client = XmppClient::new(jid.clone(), password);
@@ -75,8 +74,8 @@ impl XmppClientConnection {
 
         // Update status
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] XMPP client {} connected as {}", client_id, jid));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] XMPP client {} connected as {}", client_id, jid);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Initialize client data
         let client_data = Arc::new(Mutex::new(ClientData {
@@ -137,8 +136,7 @@ impl XmppClientConnection {
                     // Handle outgoing stanzas
                     Some(stanza) = stanza_rx.recv() => {
                         if let Err(e) = xmpp_client.send_stanza(stanza).await {
-                            error!("Failed to send XMPP stanza: {}", e);
-                            let _ = status_tx.send(format!("[ERROR] Failed to send XMPP stanza: {}", e));
+                            console_error!(status_tx, "[ERROR] Failed to send XMPP stanza: {}", e);
                         }
                     }
                     // Handle incoming events
@@ -203,10 +201,9 @@ impl XmppClientConnection {
                 }
             }
 
-            info!("XMPP client {} disconnected", client_id);
             app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-            let _ = status_tx.send(format!("[CLIENT] XMPP client {} disconnected", client_id));
-            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            console_info!(status_tx, "[CLIENT] XMPP client {} disconnected", client_id);
+            console_info!(status_tx, "__UPDATE_UI__");
         });
 
         // Return dummy local address (XMPP handles this internally)
@@ -392,8 +389,7 @@ impl XmppClientConnection {
 
                                 use tokio_xmpp::Stanza;
                                 if let Err(e) = stanza_tx.send(Stanza::Message(message)) {
-                                    error!("Failed to send XMPP message: {}", e);
-                                    let _ = status_tx.send(format!("[ERROR] Failed to send XMPP message: {}", e));
+                                    console_error!(status_tx, "[ERROR] Failed to send XMPP message: {}", e);
                                 } else {
                                     trace!("XMPP client {} sent message to {}", client_id, to);
                                 }
@@ -421,9 +417,9 @@ impl XmppClientConnection {
                         }
 
                         use tokio_xmpp::Stanza;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         if let Err(e) = stanza_tx.send(Stanza::Presence(presence)) {
-                            error!("Failed to send XMPP presence: {}", e);
-                            let _ = status_tx.send(format!("[ERROR] Failed to send XMPP presence: {}", e));
+                            console_error!(status_tx, "[ERROR] Failed to send XMPP presence: {}", e);
                         } else {
                             trace!("XMPP client {} sent presence", client_id);
                         }

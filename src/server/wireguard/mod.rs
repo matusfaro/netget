@@ -23,6 +23,7 @@ use tokio::sync::{mpsc, RwLock};
 use tracing::{error, info, trace};
 
 use defguard_wireguard_rs::{
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
     InterfaceConfiguration, WGApi, WireguardInterfaceApi,
     host::Peer as WGPeer,
     key::Key,
@@ -60,11 +61,7 @@ impl WireguardServer {
         server_id: crate::state::ServerId,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<SocketAddr> {
-        info!("Starting WireGuard VPN server on {}", bind_addr);
-        let _ = status_tx.send(format!(
-            "[INFO] Starting WireGuard VPN server on {} (full VPN tunnel support)",
-            bind_addr
-        ));
+        console_info!(status_tx, "[INFO] Starting WireGuard VPN server on {} (full VPN tunnel support)");
 
         // Generate server keypair
         let private_key = Key::generate();
@@ -73,8 +70,7 @@ impl WireguardServer {
         let private_key_str = private_key.to_string();
         let public_key_str = public_key.to_string();
 
-        info!("WireGuard server public key: {}", public_key_str);
-        let _ = status_tx.send(format!("[INFO] Server public key: {}", public_key_str));
+        console_info!(status_tx, "[INFO] Server public key: {}", public_key_str);
 
         // Determine interface name based on OS
         let interface_name: String = if cfg!(target_os = "linux") || cfg!(target_os = "freebsd") {
@@ -87,8 +83,7 @@ impl WireguardServer {
             return Err(anyhow::anyhow!("Unsupported operating system for WireGuard"));
         };
 
-        info!("Creating WireGuard interface: {}", interface_name);
-        let _ = status_tx.send(format!("[INFO] Creating interface: {}", interface_name));
+        console_info!(status_tx, "[INFO] Creating interface: {}", interface_name);
 
         // Create WGApi instance
         #[cfg(not(target_os = "macos"))]
@@ -103,8 +98,7 @@ impl WireguardServer {
         wgapi.create_interface()
             .context("Failed to create WireGuard interface")?;
 
-        info!("WireGuard interface created successfully");
-        let _ = status_tx.send("[INFO] Interface created successfully".to_string());
+        console_info!(status_tx, "[INFO] Interface created successfully");
 
         // Configure interface
         let listen_port = bind_addr.port();
@@ -125,9 +119,8 @@ impl WireguardServer {
         wgapi.configure_interface(&interface_config, &[])
             .context("Failed to configure WireGuard interface")?;
 
-        info!("WireGuard interface configured on port {}", listen_port);
-        let _ = status_tx.send(format!("[INFO] Interface listening on UDP port {}", listen_port));
-        let _ = status_tx.send(format!("[INFO] VPN subnet: 10.20.30.0/24"));
+        console_info!(status_tx, "[INFO] Interface listening on UDP port {}", listen_port);
+        console_info!(status_tx, "[INFO] VPN subnet: 10.20.30.0/24");
 
         let actual_addr = SocketAddr::new(bind_addr.ip(), listen_port);
 
@@ -155,9 +148,8 @@ impl WireguardServer {
             ).await;
         });
 
-        info!("WireGuard VPN server ready on {}", actual_addr);
-        let _ = status_tx.send(format!("→ WireGuard VPN server ready on {}", actual_addr));
-        let _ = status_tx.send(format!("[INFO] Clients can connect using server public key: {}", public_key_str));
+        console_info!(status_tx, "→ WireGuard VPN server ready on {}", actual_addr);
+        console_info!(status_tx, "[INFO] Clients can connect using server public key: {}", public_key_str);
 
         Ok(actual_addr)
     }
@@ -180,8 +172,7 @@ impl WireguardServer {
                 match wgapi.read_interface_data() {
                     Ok(data) => data,
                     Err(e) => {
-                        error!("Failed to read WireGuard interface data: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to read interface: {}", e));
+                        console_error!(status_tx, "[ERROR] Failed to read interface: {}", e);
                         continue;
                     }
                 }
@@ -200,8 +191,7 @@ impl WireguardServer {
                     let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                     peers.insert(peer_key.clone(), connection_id);
 
-                    info!("New WireGuard peer connected: {}", peer_key);
-                    let _ = status_tx.send(format!("[INFO] New peer: {}", &peer_key[..16]));
+                    console_info!(status_tx, "[INFO] New peer: {}", &peer_key[..16]);
 
                     // Determine endpoint
                     let remote_addr = peer.endpoint;
@@ -223,7 +213,7 @@ impl WireguardServer {
                     };
 
                     app_state.add_connection_to_server(server_id, conn_state).await;
-                    let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    console_info!(status_tx, "__UPDATE_UI__");
                 } else {
                     // Update existing peer stats
                     let connection_id = peers.get(&peer_key).unwrap();
@@ -251,11 +241,10 @@ impl WireguardServer {
 
             for peer_key in disconnected_peers {
                 if let Some(connection_id) = peers.remove(&peer_key) {
-                    info!("WireGuard peer disconnected: {}", peer_key);
-                    let _ = status_tx.send(format!("[INFO] Peer disconnected: {}", &peer_key[..16]));
+                    console_info!(status_tx, "[INFO] Peer disconnected: {}", &peer_key[..16]);
 
                     app_state.close_connection_on_server(server_id, connection_id).await;
-                    let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    console_info!(status_tx, "__UPDATE_UI__");
                 }
             }
         }
@@ -269,8 +258,7 @@ impl WireguardServer {
         endpoint: Option<SocketAddr>,
         status_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<()> {
-        info!("Adding WireGuard peer: {}", peer_public_key);
-        let _ = status_tx.send(format!("[INFO] Adding peer: {}", &peer_public_key[..16]));
+        console_info!(status_tx, "[INFO] Adding peer: {}", &peer_public_key[..16]);
 
         // Check peer limit
         let peer_count = {
@@ -310,8 +298,7 @@ impl WireguardServer {
         wgapi.configure_peer(&peer)
             .context("Failed to configure peer")?;
 
-        info!("WireGuard peer added successfully: {}", peer_public_key);
-        let _ = status_tx.send(format!("→ Peer authorized: {}", &peer_public_key[..16]));
+        console_info!(status_tx, "→ Peer authorized: {}", &peer_public_key[..16]);
 
         Ok(())
     }
@@ -322,8 +309,7 @@ impl WireguardServer {
         peer_public_key: String,
         status_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<()> {
-        info!("Removing WireGuard peer: {}", peer_public_key);
-        let _ = status_tx.send(format!("[INFO] Removing peer: {}", &peer_public_key[..16]));
+        console_info!(status_tx, "[INFO] Removing peer: {}", &peer_public_key[..16]);
 
         // Parse peer public key
         let peer_key: Key = peer_public_key.parse()
@@ -340,8 +326,7 @@ impl WireguardServer {
             peers.remove(&peer_public_key);
         }
 
-        info!("WireGuard peer removed: {}", peer_public_key);
-        let _ = status_tx.send(format!("→ Peer removed: {}", &peer_public_key[..16]));
+        console_info!(status_tx, "→ Peer removed: {}", &peer_public_key[..16]);
 
         Ok(())
     }

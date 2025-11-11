@@ -23,6 +23,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::kafka::actions::{
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
     KAFKA_CLIENT_CONNECTED_EVENT, KAFKA_CLIENT_MESSAGE_DELIVERED_EVENT,
     KAFKA_CLIENT_MESSAGE_RECEIVED_EVENT,
 };
@@ -119,12 +120,11 @@ impl KafkaClient {
             .create()
             .context("Failed to create Kafka producer")?;
 
-        info!("Kafka producer {} connected to {}", client_id, brokers);
 
         // Update client status
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] Kafka producer {} connected to {}", client_id, brokers));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] Kafka producer {} connected to {}", client_id, brokers);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Store producer in protocol data
         app_state
@@ -229,12 +229,11 @@ impl KafkaClient {
             info!("Kafka consumer {} subscribed to topics: {:?}", client_id, topics);
         }
 
-        info!("Kafka consumer {} connected to {} (group: {})", client_id, brokers, group_id);
 
         // Update client status
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] Kafka consumer {} connected to {}", client_id, brokers));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] Kafka consumer {} connected to {}", client_id, brokers);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Store consumer info in protocol data
         app_state
@@ -377,9 +376,8 @@ impl KafkaClient {
                         }
                     }
                     Err(e) => {
-                        error!("Kafka consumer {} receive error: {}", client_id, e);
                         app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_error!(status_tx, "__UPDATE_UI__");
                         break;
                     }
                 }

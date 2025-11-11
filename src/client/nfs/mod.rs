@@ -24,6 +24,7 @@ use nfs3_client::{Nfs3ConnectionBuilder, tokio::TokioConnector};
 use nfs3_types::nfs3::*;
 
 use crate::client::nfs::actions::{NFS_CLIENT_CONNECTED_EVENT, NFS_CLIENT_OPERATION_RESULT_EVENT};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// NFS client that connects to a remote NFS server
 pub struct NfsClient;
@@ -42,8 +43,7 @@ impl NfsClient {
         // Format: server:port:/export/path or server:/export/path (default port 2049)
         let (server_addr, export_path) = Self::parse_nfs_address(&remote_addr)?;
 
-        info!("NFS client {} attempting to connect to {} for export {}", client_id, server_addr, export_path);
-        let _ = status_tx.send(format!("[CLIENT] NFS client {} connecting to {}", client_id, server_addr));
+        console_info!(status_tx, "[CLIENT] NFS client {} connecting to {}", client_id, server_addr);
 
         // Extract just the server part (remove port if present)
         let server = server_addr.split(':').next().unwrap_or(&server_addr);
@@ -54,8 +54,7 @@ impl NfsClient {
             .await
             .context("Failed to mount NFS export")?;
 
-        info!("NFS client {} successfully mounted {}", client_id, export_path);
-        let _ = status_tx.send(format!("[CLIENT] NFS client {} mounted export {}", client_id, export_path));
+        console_info!(status_tx, "[CLIENT] NFS client {} mounted export {}", client_id, export_path);
 
         // Get root file handle
         let root_fh = connection.root_nfs_fh3();
@@ -63,7 +62,7 @@ impl NfsClient {
 
         // Update client status to connected
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Create file handle cache
         let fh_cache = Arc::new(Mutex::new(HashMap::new()));
@@ -159,8 +158,7 @@ impl NfsClient {
             )
             .await
             {
-                error!("NFS operation error: {}", e);
-                let _ = status_tx.send(format!("[ERROR] NFS operation failed: {}", e));
+                console_error!(status_tx, "[ERROR] NFS operation failed: {}", e);
             }
         }
 
@@ -679,7 +677,7 @@ impl NfsClient {
         status_tx: mpsc::UnboundedSender<String>,
         _client_id: ClientId,
     ) -> Result<SocketAddr> {
-        let _ = status_tx.send("[ERROR] NFS feature not enabled at compile time".to_string());
+        console_error!(status_tx, "[ERROR] NFS feature not enabled at compile time");
         Err(anyhow::anyhow!("NFS feature not enabled"))
     }
 }

@@ -15,6 +15,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::etcd::actions::{ETCD_CLIENT_CONNECTED_EVENT, ETCD_CLIENT_RESPONSE_RECEIVED_EVENT};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// etcd client that connects to remote etcd servers
 pub struct EtcdClient;
@@ -54,8 +55,8 @@ impl EtcdClient {
 
         // Update status
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] etcd client {} connected to {}", client_id, remote_addr));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] etcd client {} connected to {}", client_id, remote_addr);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Send connected event to LLM
         let connected_event = Event::new(

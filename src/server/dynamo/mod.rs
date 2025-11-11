@@ -40,8 +40,7 @@ impl DynamoServer {
     ) -> anyhow::Result<SocketAddr> {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("DynamoDB server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] DynamoDB server listening on {}", local_addr));
+        console_info!(status_tx, "[INFO] DynamoDB server listening on {}", local_addr);
 
         let protocol = Arc::new(DynamoProtocol::new());
 
@@ -52,11 +51,11 @@ impl DynamoServer {
                     Ok((stream, remote_addr)) => {
                         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        info!("DynamoDB connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!("[INFO] DynamoDB connection from {}", remote_addr));
+                        console_info!(status_tx, "[INFO] DynamoDB connection from {}", remote_addr);
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -72,7 +71,7 @@ impl DynamoServer {
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_info!(status_tx, "__UPDATE_UI__");
 
                         let llm_client_clone = llm_client.clone();
                         let app_state_clone = app_state.clone();
@@ -116,8 +115,7 @@ impl DynamoServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept DynamoDB connection: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to accept DynamoDB connection: {}", e));
+                        console_error!(status_tx, "[ERROR] Failed to accept DynamoDB connection: {}", e);
                         break;
                     }
                 }
@@ -155,8 +153,7 @@ async fn handle_dynamo_request_with_llm(
     let body_bytes = match req.into_body().collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
-            error!("Failed to read DynamoDB request body: {}", e);
-            let _ = status_tx.send(format!("[ERROR] Failed to read DynamoDB request body: {}", e));
+            console_error!(status_tx, "[ERROR] Failed to read DynamoDB request body: {}", e);
             Bytes::new()
         }
     };
@@ -170,10 +167,7 @@ async fn handle_dynamo_request_with_llm(
         operation,
         body_bytes.len()
     );
-    let _ = status_tx.send(format!(
-        "[DEBUG] DynamoDB {} operation={} ({} bytes)",
-        method, operation, body_bytes.len()
-    ));
+    console_debug!(status_tx, "[DEBUG] DynamoDB {} operation={} ({} bytes)");
 
     // Try to extract table name from JSON body
     let table_name = if !body_str.is_empty() {
@@ -184,8 +178,7 @@ async fn handle_dynamo_request_with_llm(
         None
     };
 
-    trace!("DynamoDB request body: {}", body_str);
-    let _ = status_tx.send(format!("[TRACE] DynamoDB request: {}", body_str));
+    console_trace!(status_tx, "[TRACE] DynamoDB request: {}", body_str);
 
     // Create DynamoDB request event
     let event = crate::protocol::Event::new(
@@ -222,10 +215,8 @@ async fn handle_dynamo_request_with_llm(
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("{}");
 
-                            debug!("DynamoDB response: status={}", status);
-                            let _ = status_tx.send(format!("[DEBUG] DynamoDB → {} response", status));
-                            trace!("DynamoDB response body: {}", body);
-                            let _ = status_tx.send(format!("[TRACE] DynamoDB response: {}", body));
+                            console_debug!(status_tx, "[DEBUG] DynamoDB → {} response", status);
+                            console_trace!(status_tx, "[TRACE] DynamoDB response: {}", body);
 
                             // Generate a simple request ID using timestamp
                             let request_id = format!("{:x}", std::time::SystemTime::now()
@@ -263,8 +254,7 @@ async fn handle_dynamo_request_with_llm(
                 .unwrap())
         }
         Err(e) => {
-            error!("LLM error for DynamoDB request: {}", e);
-            let _ = status_tx.send(format!("[ERROR] LLM error for DynamoDB request: {}", e));
+            console_error!(status_tx, "[ERROR] LLM error for DynamoDB request: {}", e);
 
             // Return DynamoDB error format
             let error_response = serde_json::json!({

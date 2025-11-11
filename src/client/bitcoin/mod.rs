@@ -17,6 +17,7 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Bitcoin RPC client that connects to Bitcoin Core node
 pub struct BitcoinClient;
@@ -58,8 +59,8 @@ impl BitcoinClient {
 
         // Update status
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        let _ = status_tx.send(format!("[CLIENT] Bitcoin RPC client {} ready for {}", client_id, remote_addr));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        console_info!(status_tx, "[CLIENT] Bitcoin RPC client {} ready for {}", client_id, remote_addr);
+        console_info!(status_tx, "__UPDATE_UI__");
 
         // Call LLM to decide initial action
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -240,8 +241,7 @@ impl BitcoinClient {
                 Ok(())
             }
             Err(e) => {
-                error!("Bitcoin RPC client {} request failed: {}", client_id, e);
-                let _ = status_tx.send(format!("[ERROR] Bitcoin RPC request failed: {}", e));
+                console_error!(status_tx, "[ERROR] Bitcoin RPC request failed: {}", e);
                 Err(e.into())
             }
         }

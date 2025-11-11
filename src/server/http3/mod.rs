@@ -79,8 +79,7 @@ impl Http3Server {
         let local_addr = endpoint.local_addr()
             .context("Failed to get local address")?;
 
-        info!("HTTP3 server (action-based) listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] HTTP3 server listening on {}", local_addr));
+        console_info!(status_tx, "[INFO] HTTP3 server listening on {}", local_addr);
 
         let protocol = Arc::new(Http3Protocol::new());
 
@@ -102,6 +101,7 @@ impl Http3Server {
 
                             // Add connection to ServerInstance
                             use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                             let now = std::time::Instant::now();
                             let conn_state = ServerConnectionState {
                                 id: connection_id,
@@ -252,15 +252,13 @@ impl Http3Server {
                         if let Err(e) = send.write_all(&output_data).await {
                             error!("Failed to send initial data on stream {}: {}", stream_id, e);
                         } else {
-                            debug!("HTTP3 sent {} bytes on stream {}", output_data.len(), stream_id);
-                            let _ = status_tx.send(format!("[DEBUG] HTTP3 sent {} bytes on stream {}", output_data.len(), stream_id));
+                            console_debug!(status_tx, "[DEBUG] HTTP3 sent {} bytes on stream {}", output_data.len(), stream_id);
                         }
                     }
                 }
             }
             Err(e) => {
-                error!("LLM error on stream opened: {}", e);
-                let _ = status_tx.send(format!("✗ LLM error: {e}"));
+                console_error!(status_tx, "✗ LLM error: {e}");
             }
         }
 
@@ -279,20 +277,16 @@ impl Http3Server {
                         } else {
                             data_str.to_string()
                         };
-                        debug!("HTTP3 received {} bytes on stream {}: {}", n, stream_id, preview);
-                        let _ = status_tx.send(format!("[DEBUG] HTTP3 received {} bytes on stream {}: {}", n, stream_id, preview));
+                        console_debug!(status_tx, "[DEBUG] HTTP3 received {} bytes on stream {}: {}", n, stream_id, preview);
 
                         // TRACE: Log full text payload
-                        trace!("HTTP3 data (text): {:?}", data_str);
-                        let _ = status_tx.send(format!("[TRACE] HTTP3 data (text): {:?}", data_str));
+                        console_trace!(status_tx, "[TRACE] HTTP3 data (text): {:?}", data_str);
                     } else {
-                        debug!("HTTP3 received {} bytes on stream {} (binary data)", n, stream_id);
-                        let _ = status_tx.send(format!("[DEBUG] HTTP3 received {} bytes on stream {} (binary data)", n, stream_id));
+                        console_debug!(status_tx, "[DEBUG] HTTP3 received {} bytes on stream {} (binary data)", n, stream_id);
 
                         // TRACE: Log full hex payload
                         let hex_str = hex::encode(&data);
-                        trace!("HTTP3 data (hex): {}", hex_str);
-                        let _ = status_tx.send(format!("[TRACE] HTTP3 data (hex): {}", hex_str));
+                        console_trace!(status_tx, "[TRACE] HTTP3 data (hex): {}", hex_str);
                     }
 
                     // Handle data in separate task
@@ -316,14 +310,12 @@ impl Http3Server {
                 }
                 Ok(None) => {
                     // Stream finished
-                    info!("HTTP3 stream {} finished", stream_id);
-                    let _ = status_tx.send(format!("✗ HTTP3 stream {} closed", stream_id));
+                    console_info!(status_tx, "✗ HTTP3 stream {} closed", stream_id);
                     streams.lock().await.remove(&stream_id);
                     break;
                 }
                 Err(e) => {
-                    error!("Read error on stream {}: {}", stream_id, e);
-                    let _ = status_tx.send(format!("✗ Read error on stream {}: {}", stream_id, e));
+                    console_error!(status_tx, "✗ Read error on stream {}: {}", stream_id, e);
                     streams.lock().await.remove(&stream_id);
                     break;
                 }
@@ -360,7 +352,7 @@ impl Http3Server {
                 .and_modify(|s| {
                     s.queued_data.extend_from_slice(&data);
                 });
-            let _ = status_tx.send(format!("⏸ Queued {} bytes for stream {}", data.len(), stream_id));
+            console_info!(status_tx, "⏸ Queued {} bytes for stream {}", data.len(), stream_id);
             return;
         }
 
@@ -446,22 +438,18 @@ impl Http3Server {
                                         } else {
                                             data_str.to_string()
                                         };
-                                        debug!("HTTP3 sent {} bytes on stream {}: {}", output_data.len(), stream_id, preview);
-                                        let _ = status_tx.send(format!("[DEBUG] HTTP3 sent {} bytes on stream {}: {}", output_data.len(), stream_id, preview));
+                                        console_debug!(status_tx, "[DEBUG] HTTP3 sent {} bytes on stream {}: {}", output_data.len(), stream_id, preview);
 
                                         // TRACE: Log full text payload
-                                        trace!("HTTP3 sent (text): {:?}", data_str);
-                                        let _ = status_tx.send(format!("[TRACE] HTTP3 sent (text): {:?}", data_str));
+                                        console_trace!(status_tx, "[TRACE] HTTP3 sent (text): {:?}", data_str);
                                     } else {
-                                        debug!("HTTP3 sent {} bytes on stream {} (binary data)", output_data.len(), stream_id);
-                                        let _ = status_tx.send(format!("[DEBUG] HTTP3 sent {} bytes on stream {} (binary data)", output_data.len(), stream_id));
+                                        console_debug!(status_tx, "[DEBUG] HTTP3 sent {} bytes on stream {} (binary data)", output_data.len(), stream_id);
 
                                         // TRACE: Log full hex payload
                                         let hex_str = hex::encode(&output_data);
-                                        trace!("HTTP3 sent (hex): {}", hex_str);
-                                        let _ = status_tx.send(format!("[TRACE] HTTP3 sent (hex): {}", hex_str));
+                                        console_trace!(status_tx, "[TRACE] HTTP3 sent (hex): {}", hex_str);
                                     }
-                                    let _ = status_tx.send(format!("→ Sent {} bytes on stream {}", output_data.len(), stream_id));
+                                    console_trace!(status_tx, "→ Sent {} bytes on stream {}", output_data.len(), stream_id);
                                 }
                             }
                             ActionResult::CloseConnection => {
@@ -479,14 +467,14 @@ impl Http3Server {
                         streams.lock().await
                             .entry(stream_id)
                             .and_modify(|s| s.state = StreamState::Accumulating);
-                        let _ = status_tx.send(format!("⏳ Waiting for more data on stream {}", stream_id));
+                        console_info!(status_tx, "⏳ Waiting for more data on stream {}", stream_id);
                         return;
                     }
 
                     // Handle close_stream
                     if should_close {
                         streams.lock().await.remove(&stream_id);
-                        let _ = status_tx.send(format!("✗ Closed stream {}", stream_id));
+                        console_error!(status_tx, "✗ Closed stream {}", stream_id);
                         return;
                     }
 
@@ -499,7 +487,7 @@ impl Http3Server {
                     };
 
                     if has_queued {
-                        let _ = status_tx.send(format!("▶ Processing queued data for stream {}", stream_id));
+                        console_info!(status_tx, "▶ Processing queued data for stream {}", stream_id);
                         // Loop continues to process queued data
                     } else {
                         // Go to Idle state
@@ -510,8 +498,7 @@ impl Http3Server {
                     }
                 }
                 Err(e) => {
-                    error!("LLM error for HTTP3 data: {}", e);
-                    let _ = status_tx.send(format!("✗ LLM error: {e}"));
+                    console_error!(status_tx, "✗ LLM error: {e}");
                     streams.lock().await
                         .entry(stream_id)
                         .and_modify(|s| s.state = StreamState::Idle);

@@ -32,8 +32,7 @@ impl TorrentDhtServer {
     ) -> Result<SocketAddr> {
         let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
         let local_addr = socket.local_addr()?;
-        info!("BitTorrent DHT server (action-based) listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] BitTorrent DHT server listening on {}", local_addr));
+        console_info!(status_tx, "[INFO] BitTorrent DHT server listening on {}", local_addr);
 
         let protocol = Arc::new(TorrentDhtProtocol::new());
 
@@ -63,15 +62,13 @@ impl TorrentDhtServer {
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        console_info!(status_tx, "__UPDATE_UI__");
 
-                        debug!("BitTorrent DHT received {} bytes from {}", n, peer_addr);
-                        let _ = status_tx.send(format!("[DEBUG] BitTorrent DHT received {} bytes from {}", n, peer_addr));
+                        console_debug!(status_tx, "[DEBUG] BitTorrent DHT received {} bytes from {}", n, peer_addr);
 
                         // TRACE: Log full payload
                         let hex_str = hex::encode(&data);
-                        trace!("BitTorrent DHT data (hex): {}", hex_str);
-                        let _ = status_tx.send(format!("[TRACE] BitTorrent DHT data (hex): {}", hex_str));
+                        console_trace!(status_tx, "[TRACE] BitTorrent DHT data (hex): {}", hex_str);
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -220,6 +217,7 @@ impl TorrentDhtServer {
 
     fn bencode_to_json(value: &serde_bencode::value::Value) -> serde_json::Value {
         use serde_bencode::value::Value;
+use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         match value {
             Value::Int(i) => serde_json::json!(i),
