@@ -44,7 +44,8 @@ impl OllamaServer {
     ) -> anyhow::Result<SocketAddr> {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        console_info!(status_tx, "[INFO] Ollama API server listening on {}", local_addr);
+        info!("Ollama API server listening on {}", local_addr);
+        let _ = status_tx.send(format!("[INFO] Ollama API server listening on {}", local_addr));
 
         let protocol = Arc::new(OllamaProtocol::new());
 
@@ -57,11 +58,11 @@ impl OllamaServer {
                             app_state.get_next_unified_id().await
                         );
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        console_info!(status_tx, "[INFO] Ollama API connection from {}", remote_addr);
+                        info!("Ollama API connection {} from {}", connection_id, remote_addr);
+                        let _ = status_tx.send(format!("[INFO] Ollama API connection from {}", remote_addr));
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -77,7 +78,7 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        console_info!(status_tx, "__UPDATE_UI__");
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let llm_client_clone = llm_client.clone();
                         let app_state_clone = app_state.clone();
@@ -121,7 +122,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "[ERROR] Failed to accept Ollama API connection: {}", e);
+                        error!("Failed to accept Ollama API connection: {}", e);
+                        let _ = status_tx.send(format!("[ERROR] Failed to accept Ollama API connection: {}", e));
                         break;
                     }
                 }
@@ -146,7 +148,8 @@ async fn handle_ollama_request(
     let uri = req.uri().clone();
     let path = uri.path();
 
-    console_debug!(status_tx, "[DEBUG] Ollama API {} {}", method, path);
+    debug!("Ollama API request: {} {}", method, path);
+    let _ = status_tx.send(format!("[DEBUG] Ollama API {} {}", method, path));
 
     // Route the request
     match (method.clone(), path) {
@@ -178,7 +181,8 @@ async fn handle_ollama_request(
             handle_delete(req, status_tx).await
         }
         _ => {
-            console_debug!(status_tx, "[DEBUG] Ollama API: Unknown endpoint {} {}", method, path);
+            debug!("Ollama API: Unknown endpoint {} {}", method, path);
+            let _ = status_tx.send(format!("[DEBUG] Ollama API: Unknown endpoint {} {}", method, path));
             Ok(Response::builder()
                 .status(StatusCode::NOT_FOUND)
                 .header("Content-Type", "application/json")
@@ -199,7 +203,8 @@ async fn handle_tags_list_v2(
     protocol: Arc<OllamaProtocol>,
     server_id: crate::state::ServerId,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    console_debug!(status_tx, "[DEBUG] Ollama API: Listing models (LLM controlled)");
+    debug!("Ollama API: Listing models (LLM controlled)");
+    let _ = status_tx.send("[DEBUG] Ollama API: Listing models (LLM controlled)".to_string());
 
     // Create event for models request
     let event = Event::new(
@@ -267,7 +272,8 @@ async fn handle_tags_list_v2(
                 .unwrap())
         }
         Err(e) => {
-            console_error!(status_tx, "[ERROR] LLM error: {}", e);
+            error!("LLM error: {}", e);
+            let _ = status_tx.send(format!("[ERROR] LLM error: {}", e));
 
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -606,7 +612,7 @@ async fn handle_embeddings(
         }
     };
 
-    console_debug!(status_tx, "[DEBUG] Embeddings request received");
+    let _ = status_tx.send("[DEBUG] Embeddings request received".to_string());
 
     // Return mock embeddings (768 dimensions)
     let embedding: Vec<f32> = (0..768).map(|i| (i as f32) / 768.0).collect();
@@ -647,7 +653,7 @@ async fn handle_show(
     };
 
     let model = request_json.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
-    console_debug!(status_tx, "[DEBUG] Show model: {}", model);
+    let _ = status_tx.send(format!("[DEBUG] Show model: {}", model));
 
     let response = json!({
         "modelfile": format!("FROM {}", model),
@@ -691,7 +697,7 @@ async fn handle_pull(
     };
 
     let model = request_json.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
-    console_debug!(status_tx, "[DEBUG] Pull model: {}", model);
+    let _ = status_tx.send(format!("[DEBUG] Pull model: {}", model));
 
     let response = json!({
         "status": "success",
@@ -731,7 +737,7 @@ async fn handle_create(
     };
 
     let model = request_json.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
-    console_debug!(status_tx, "[DEBUG] Create model: {}", model);
+    let _ = status_tx.send(format!("[DEBUG] Create model: {}", model));
 
     let response = json!({
         "status": "success"
@@ -770,7 +776,7 @@ async fn handle_copy(
 
     let source = request_json.get("source").and_then(|v| v.as_str()).unwrap_or("unknown");
     let destination = request_json.get("destination").and_then(|v| v.as_str()).unwrap_or("unknown");
-    console_debug!(status_tx, "[DEBUG] Copy model: {} -> {}", source, destination);
+    let _ = status_tx.send(format!("[DEBUG] Copy model: {} -> {}", source, destination));
 
     Ok(Response::builder()
         .status(StatusCode::OK)
@@ -804,7 +810,7 @@ async fn handle_delete(
     };
 
     let model = request_json.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
-    console_debug!(status_tx, "[DEBUG] Delete model: {}", model);
+    let _ = status_tx.send(format!("[DEBUG] Delete model: {}", model));
 
     Ok(Response::builder()
         .status(StatusCode::OK)

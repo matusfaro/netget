@@ -96,7 +96,11 @@ impl WireguardClient {
         let private_key_b64 = private_key.to_string();
         let public_key_b64 = public_key.to_string();
 
-        console_info!(status_tx, "[CLIENT] WireGuard client {} public key: {}");
+        info!("WireGuard client public key: {}", public_key_b64);
+        let _ = status_tx.send(format!(
+            "[CLIENT] WireGuard client {} public key: {}",
+            client_id, public_key_b64
+        ));
 
         // Platform-specific interface naming
         #[cfg(target_os = "macos")]
@@ -111,11 +115,14 @@ impl WireguardClient {
         let wgapi = WGApi::new(ifname)
             .context("Failed to create WireGuard interface (requires elevated privileges)")?;
 
-        console_info!(status_tx, "[CLIENT] Created interface: {}");
+        info!("Created WireGuard interface: {}", interface_name);
+        let _ = status_tx.send(format!(
+            "[CLIENT] Created interface: {}",
+            interface_name
+        ));
 
         // Parse client address (e.g., "10.20.30.2/32")
         use defguard_wireguard_rs::net::IpAddrMask;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
         let client_addr_mask: IpAddrMask = params.client_address.parse().context("Invalid client address")?;
 
         // Parse server endpoint
@@ -161,14 +168,21 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
             .configure_interface(&config)
             .context("Failed to configure WireGuard interface")?;
 
-        console_info!(status_tx, "[CLIENT] Interface configured: {} → {}");
+        info!("WireGuard interface configured");
+        let _ = status_tx.send(format!(
+            "[CLIENT] Interface configured: {} → {}",
+            interface_name, params.server_endpoint
+        ));
 
         // Update client state
         app_state
             .update_client_status(client_id, ClientStatus::Connected)
             .await;
-        console_info!(status_tx, "[CLIENT] WireGuard client {} connected");
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send(format!(
+            "[CLIENT] WireGuard client {} connected",
+            client_id
+        ));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Wrap wgapi in Arc<RwLock>
         let wgapi_arc = Arc::new(RwLock::new(wgapi));
@@ -297,10 +311,11 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                         WireguardCommand::Disconnect => {
                             info!("WireGuard client {} received disconnect command", client_id);
                             if let Err(e) = client.disconnect().await {
+                                error!("Failed to disconnect WireGuard client {}: {}", client_id, e);
                             }
                             app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                            console_error!(status_tx, "[CLIENT] WireGuard client {} disconnected", client_id);
-                            console_error!(status_tx, "__UPDATE_UI__");
+                            let _ = status_tx.send(format!("[CLIENT] WireGuard client {} disconnected", client_id));
+                            let _ = status_tx.send("__UPDATE_UI__".to_string());
                             should_exit = true;
                         }
                     }
@@ -337,11 +352,25 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                                 < Duration::from_secs(180); // 3 minutes
 
                         if is_connected && !was_connected {
-                            console_info!(status_tx, "[CLIENT] WireGuard client {} handshake successful");
+                            info!(
+                                "WireGuard client {} handshake successful",
+                                client_id
+                            );
+                            let _ = status_tx.send(format!(
+                                "[CLIENT] WireGuard client {} handshake successful",
+                                client_id
+                            ));
 
                             was_connected = true;
                         } else if !is_connected && was_connected {
-                            console_warn!(status_tx, "[CLIENT] WireGuard client {} lost connection");
+                            warn!(
+                                "WireGuard client {} lost connection to server",
+                                client_id
+                            );
+                            let _ = status_tx.send(format!(
+                                "[CLIENT] WireGuard client {} lost connection",
+                                client_id
+                            ));
 
                             // Trigger disconnected event
                             let event = Event::new(

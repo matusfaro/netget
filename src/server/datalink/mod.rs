@@ -17,7 +17,6 @@ use crate::llm::ollama_client::OllamaClient;
 use actions::{DataLinkProtocol, DATALINK_PACKET_CAPTURED_EVENT};
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Get LLM context and output format instructions for DataLink stack
 pub fn get_llm_protocol_prompt() -> (&'static str, &'static str) {
@@ -107,11 +106,13 @@ impl DataLinkServer {
                         let data = Bytes::copy_from_slice(packet.data);
 
                         // DEBUG: Log summary
-                        console_debug!(status_tx, "[DEBUG] Datalink received {} bytes", data.len());
+                        debug!("Datalink received {} bytes", data.len());
+                        let _ = status_tx.send(format!("[DEBUG] Datalink received {} bytes", data.len()));
 
                         // TRACE: Log full payload (always hex for datalink)
                         let hex_str = hex::encode(&data);
-                        console_trace!(status_tx, "[TRACE] Datalink data (hex): {}", hex_str);
+                        trace!("Datalink data (hex): {}", hex_str);
+                        let _ = status_tx.send(format!("[TRACE] Datalink data (hex): {}", hex_str));
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();

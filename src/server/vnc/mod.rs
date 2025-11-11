@@ -17,7 +17,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace, warn};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// VNC server that uses LLM to control display and authentication
 pub struct VncServer;
@@ -77,7 +76,8 @@ impl VncServer {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
 
-        console_info!(status_tx, "[INFO] VNC server listening on {}", local_addr);
+        info!("VNC server listening on {}", local_addr);
+        let _ = status_tx.send(format!("[INFO] VNC server listening on {}", local_addr));
 
         tokio::spawn(async move {
             loop {
@@ -146,7 +146,7 @@ impl VncServer {
             protocol_info: ProtocolConnectionInfo::empty(),
         };
         app_state.add_connection_to_server(server_id, conn_state).await;
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Perform RFB handshake (authentication always succeeds for now)
         let mut read_half = read_half;
@@ -158,7 +158,8 @@ impl VncServer {
         )
         .await?;
 
-        console_debug!(status_tx, "[DEBUG] VNC authentication successful for {}", remote_addr);
+        debug!("VNC authentication successful for {}", remote_addr);
+        let _ = status_tx.send(format!("[DEBUG] VNC authentication successful for {}", remote_addr));
 
         // Update connection state
         app_state
@@ -225,7 +226,8 @@ impl VncServer {
             let mut writer = write_half.lock().await;
             writer.write_u32(0).await?; // 0 = OK
             writer.flush().await?;
-            console_trace!(status_tx, "[DEBUG] VNC client authenticated");
+            trace!("Sent SecurityResult: OK");
+            let _ = status_tx.send("[DEBUG] VNC client authenticated".to_string());
             Ok(())
         } else {
             // Unsupported security type
@@ -277,7 +279,8 @@ impl VncServer {
         writer.write_all(name).await?;
         writer.flush().await?;
 
-        console_debug!(status_tx, "[DEBUG] VNC initialized: {}x{} framebuffer", framebuffer_width, framebuffer_height);
+        debug!("Sent ServerInit: {}x{}, {}", framebuffer_width, framebuffer_height, String::from_utf8_lossy(name));
+        let _ = status_tx.send(format!("[DEBUG] VNC initialized: {}x{} framebuffer", framebuffer_width, framebuffer_height));
 
         Ok(())
     }
@@ -339,7 +342,8 @@ impl VncServer {
                     let _ = read_half.read_u16().await?; // Padding
                     let key = read_half.read_u32().await?;
 
-                    console_debug!(status_tx, "[DEBUG] VNC KeyEvent: down={}, key={}", down, key);
+                    debug!("KeyEvent: down={}, key={}", down, key);
+                    let _ = status_tx.send(format!("[DEBUG] VNC KeyEvent: down={}, key={}", down, key));
                 }
                 5 => {
                     // PointerEvent
@@ -366,7 +370,7 @@ impl VncServer {
 
         // Remove connection from state
         app_state.remove_connection_from_server(server_id, connection_id).await;
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         Ok(())
     }
@@ -426,7 +430,8 @@ impl VncServer {
         canvas.add_commands(commands);
         let image_buffer = canvas.render();
 
-        console_debug!(status_tx, "[DEBUG] Rendered VNC framebuffer: {}x{}", width, height);
+        debug!("Rendered framebuffer: {}x{}", width, height);
+        let _ = status_tx.send(format!("[DEBUG] Rendered VNC framebuffer: {}x{}", width, height));
 
         // Send framebuffer update
         let mut writer = write_half.lock().await;

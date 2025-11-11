@@ -80,7 +80,8 @@ impl Socks5Server {
         server_id: ServerId,
         startup_params: Option<crate::protocol::StartupParams>,
     ) -> Result<SocketAddr> {
-        console_info!(status_tx, "[INFO] SOCKS5 starting on {}", listen_addr);
+        info!("SOCKS5 proxy server (action-based) starting on {}", listen_addr);
+        let _ = status_tx.send(format!("[INFO] SOCKS5 starting on {}", listen_addr));
 
         // Get or initialize SOCKS5 filter configuration
         let mut config = app_state.get_socks5_filter_config(server_id).await
@@ -91,7 +92,8 @@ impl Socks5Server {
 
         // Apply startup parameters if provided
         if let Some(ref params) = startup_params {
-            console_info!(status_tx, "[INFO] Applying SOCKS5 startup parameters");
+            info!("Applying startup parameters: {:?}", params);
+            let _ = status_tx.send("[INFO] Applying SOCKS5 startup parameters".to_string());
 
             // Parse auth methods
             if let Some(methods) = params.get_optional_array("auth_methods") {
@@ -101,12 +103,17 @@ impl Socks5Server {
                         match method_str {
                             "none" => config.auth_methods.push(AUTH_METHOD_NO_AUTH),
                             "username_password" => config.auth_methods.push(AUTH_METHOD_USERNAME_PASSWORD),
+                            _ => warn!("Unknown auth method: {}", method_str),
+                        }
+                    }
+                }
+                let _ = status_tx.send(format!("[INFO] Auth methods: {:?}", config.auth_methods));
             }
 
             // Parse default action
             if let Some(action_str) = params.get_optional_string("default_action") {
                 config.default_action = action_str;
-                console_info!(status_tx, "[INFO] Default action: {}", config.default_action);
+                let _ = status_tx.send(format!("[INFO] Default action: {}", config.default_action));
             }
 
             // Parse filter configuration
@@ -141,10 +148,11 @@ impl Socks5Server {
                     "ask_llm" => FilterMode::AskLlm,
                     "selective" => FilterMode::Selective,
                     _ => {
+                        warn!("Unknown filter mode: {}, using default", mode_str);
                         config.filter_mode
                     }
                 };
-                console_warn!(status_tx, "[INFO] Filter mode: {:?}", config.filter_mode);
+                let _ = status_tx.send(format!("[INFO] Filter mode: {:?}", config.filter_mode));
             }
         }
 
@@ -153,7 +161,8 @@ impl Socks5Server {
 
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        console_info!(status_tx, "→ SOCKS5 proxy ready on {}", local_addr);
+        info!("SOCKS5 proxy server listening on {}", local_addr);
+        let _ = status_tx.send(format!("→ SOCKS5 proxy ready on {}", local_addr));
 
         let protocol = Arc::new(Socks5Protocol::new());
 
@@ -235,18 +244,21 @@ impl Socks5Server {
             protocol_info: ProtocolConnectionInfo::empty()
         };
         app_state.add_connection_to_server(server_id, conn_state).await;
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Phase 1: Handshake - negotiate auth method
-        console_debug!(status_tx, "[DEBUG] SOCKS5 {} phase 1: handshake", connection_id);
+        debug!("SOCKS5 {} phase 1: handshake", connection_id);
+        let _ = status_tx.send(format!("[DEBUG] SOCKS5 {} phase 1: handshake", connection_id));
 
         let selected_method = Self::negotiate_auth(&mut client_stream, &config, connection_id, &status_tx).await?;
 
-        console_debug!(status_tx, "[DEBUG] SOCKS5 {} selected auth method: 0x{:02x}", connection_id, selected_method);
+        debug!("SOCKS5 {} selected auth method: 0x{:02x}", connection_id, selected_method);
+        let _ = status_tx.send(format!("[DEBUG] SOCKS5 {} selected auth method: 0x{:02x}", connection_id, selected_method));
 
         // Phase 2: Authentication (if required)
         let username = if selected_method == AUTH_METHOD_USERNAME_PASSWORD {
-            console_debug!(status_tx, "[DEBUG] SOCKS5 {} phase 2: authentication", connection_id);
+            debug!("SOCKS5 {} phase 2: authentication", connection_id);
+            let _ = status_tx.send(format!("[DEBUG] SOCKS5 {} phase 2: authentication", connection_id));
 
             let auth_result = Self::authenticate_username_password(
                 &mut client_stream,
@@ -264,11 +276,13 @@ impl Socks5Server {
         };
 
         // Phase 3: Process CONNECT request
-        console_debug!(status_tx, "[DEBUG] SOCKS5 {} phase 3: CONNECT request", connection_id);
+        debug!("SOCKS5 {} phase 3: CONNECT request", connection_id);
+        let _ = status_tx.send(format!("[DEBUG] SOCKS5 {} phase 3: CONNECT request", connection_id));
 
         let target_addr = Self::parse_connect_request(&mut client_stream, connection_id, &status_tx).await?;
 
-        console_info!(status_tx, "[INFO] SOCKS5 {} CONNECT to {}", connection_id, target_addr);
+        info!("SOCKS5 {} CONNECT to {}", connection_id, target_addr);
+        let _ = status_tx.send(format!("[INFO] SOCKS5 {} CONNECT to {}", connection_id, target_addr));
 
         // Update connection with target address
         app_state.update_socks5_target(server_id, connection_id, Some(target_addr.to_string()), username.clone()).await;
@@ -276,7 +290,8 @@ impl Socks5Server {
         // Check if target matches filter
         let matches_filter = Self::check_filter_match(&target_addr, &config);
 
-        console_debug!(status_tx, "[DEBUG] SOCKS5 {} filter match: {}", connection_id, matches_filter);
+        debug!("SOCKS5 {} filter match: {}", connection_id, matches_filter);
+        let _ = status_tx.send(format!("[DEBUG] SOCKS5 {} filter match: {}", connection_id, matches_filter));
 
         // Decide whether to ask LLM or use default action
         let (should_allow, mitm_enabled) = match (&config.filter_mode, matches_filter) {
@@ -303,7 +318,8 @@ impl Socks5Server {
         };
 
         if !should_allow {
-            console_warn!(status_tx, "✗ SOCKS5 {} connection denied", connection_id);
+            warn!("SOCKS5 {} connection denied by policy", connection_id);
+            let _ = status_tx.send(format!("✗ SOCKS5 {} connection denied", connection_id));
 
             // Send SOCKS5 reply: connection not allowed
             Self::send_connect_reply(&mut client_stream, REPLY_CONNECTION_NOT_ALLOWED, &target_addr).await?;
@@ -313,13 +329,15 @@ impl Socks5Server {
         // Connect to target
         let mut target_stream = Self::connect_to_target(&target_addr, connection_id, &status_tx).await?;
 
-        console_info!(status_tx, "→ SOCKS5 {} connected to {}", connection_id, target_addr);
+        info!("SOCKS5 {} connected to target {}", connection_id, target_addr);
+        let _ = status_tx.send(format!("→ SOCKS5 {} connected to {}", connection_id, target_addr));
 
         // Send SOCKS5 reply: success
         Self::send_connect_reply(&mut client_stream, REPLY_SUCCESS, &target_addr).await?;
 
         // Phase 4: Relay data bidirectionally
-        console_debug!(status_tx, "[DEBUG] SOCKS5 {} phase 4: relay (MITM: {})", connection_id, mitm_enabled);
+        debug!("SOCKS5 {} phase 4: relay data (MITM: {})", connection_id, mitm_enabled);
+        let _ = status_tx.send(format!("[DEBUG] SOCKS5 {} phase 4: relay (MITM: {})", connection_id, mitm_enabled));
 
         if mitm_enabled {
             // MITM mode: inspect and modify data
@@ -339,10 +357,14 @@ impl Socks5Server {
             // Passthrough mode: direct relay
             match tokio::io::copy_bidirectional(&mut client_stream, &mut target_stream).await {
                 Ok((client_to_target_bytes, target_to_client_bytes)) => {
-                    console_info!(status_tx, "[INFO] SOCKS5 {} relay complete: {}↑ {}↓", connection_id, client_to_target_bytes, target_to_client_bytes);
+                    info!("SOCKS5 {} relay complete: {} bytes to target, {} bytes from target",
+                          connection_id, client_to_target_bytes, target_to_client_bytes);
+                    let _ = status_tx.send(format!("[INFO] SOCKS5 {} relay complete: {}↑ {}↓",
+                                                   connection_id, client_to_target_bytes, target_to_client_bytes));
                 }
                 Err(e) => {
-                    console_warn!(status_tx, "[WARN] SOCKS5 {} relay error: {}", connection_id, e);
+                    warn!("SOCKS5 {} relay error: {}", connection_id, e);
+                    let _ = status_tx.send(format!("[WARN] SOCKS5 {} relay error: {}", connection_id, e));
                 }
             }
         }
@@ -364,9 +386,9 @@ impl Socks5Server {
         server_id: ServerId,
     ) -> Result<()> {
         use actions::{SOCKS5_DATA_TO_TARGET_EVENT, SOCKS5_DATA_FROM_TARGET_EVENT};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
-        console_info!(status_tx, "[INFO] SOCKS5 {} MITM relay active", connection_id);
+        info!("SOCKS5 {} starting MITM relay", connection_id);
+        let _ = status_tx.send(format!("[INFO] SOCKS5 {} MITM relay active", connection_id));
 
         let mut client_buf = vec![0u8; 8192];
         let mut target_buf = vec![0u8; 8192];
@@ -379,12 +401,14 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                 result = client_stream.read(&mut client_buf) => {
                     match result {
                         Ok(0) => {
-                            console_debug!(status_tx, "[DEBUG] SOCKS5 {} client closed", connection_id);
+                            debug!("SOCKS5 {} client closed connection", connection_id);
+                            let _ = status_tx.send(format!("[DEBUG] SOCKS5 {} client closed", connection_id));
                             break;
                         }
                         Ok(n) => {
                             let data = &client_buf[..n];
-                            console_trace!(status_tx, "[TRACE] SOCKS5 {} client→target {} bytes", connection_id, n);
+                            trace!("SOCKS5 {} client→target {} bytes: {:?}", connection_id, n, data);
+                            let _ = status_tx.send(format!("[TRACE] SOCKS5 {} client→target {} bytes", connection_id, n));
 
                             // Ask LLM what to do with this data
                             let data_str = String::from_utf8_lossy(data).to_string();
@@ -415,12 +439,16 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                                     ActionResult::Output(modified_data) => {
                                         // Use modified data
                                         data_to_send = Some(modified_data.clone());
-                                        console_debug!(status_tx, "[DEBUG] SOCKS5 {} data modified: {} → {} bytes", connection_id, n, modified_data.len());
+                                        debug!("SOCKS5 {} LLM modified data ({} → {} bytes)",
+                                               connection_id, n, modified_data.len());
+                                        let _ = status_tx.send(format!("[DEBUG] SOCKS5 {} data modified: {} → {} bytes",
+                                                                       connection_id, n, modified_data.len()));
                                     }
                                     ActionResult::CloseConnection => {
                                         should_close = true;
                                         data_to_send = None;
-                                        console_warn!(status_tx, "[WARN] SOCKS5 {} LLM close request", connection_id);
+                                        warn!("SOCKS5 {} LLM requested close", connection_id);
+                                        let _ = status_tx.send(format!("[WARN] SOCKS5 {} LLM close request", connection_id));
                                     }
                                     _ => {}
                                 }
@@ -438,7 +466,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                             }
                         }
                         Err(e) => {
-                            console_error!(status_tx, "[ERROR] SOCKS5 {} client read error: {}", connection_id, e);
+                            error!("SOCKS5 {} client read error: {}", connection_id, e);
+                            let _ = status_tx.send(format!("[ERROR] SOCKS5 {} client read error: {}", connection_id, e));
                             break;
                         }
                     }
@@ -448,12 +477,14 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                 result = target_stream.read(&mut target_buf) => {
                     match result {
                         Ok(0) => {
-                            console_debug!(status_tx, "[DEBUG] SOCKS5 {} target closed", connection_id);
+                            debug!("SOCKS5 {} target closed connection", connection_id);
+                            let _ = status_tx.send(format!("[DEBUG] SOCKS5 {} target closed", connection_id));
                             break;
                         }
                         Ok(n) => {
                             let data = &target_buf[..n];
-                            console_trace!(status_tx, "[TRACE] SOCKS5 {} target→client {} bytes", connection_id, n);
+                            trace!("SOCKS5 {} target→client {} bytes: {:?}", connection_id, n, data);
+                            let _ = status_tx.send(format!("[TRACE] SOCKS5 {} target→client {} bytes", connection_id, n));
 
                             // Ask LLM what to do with this data
                             let data_str = String::from_utf8_lossy(data).to_string();
@@ -484,12 +515,16 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                                     ActionResult::Output(modified_data) => {
                                         // Use modified data
                                         data_to_send = Some(modified_data.clone());
-                                        console_debug!(status_tx, "[DEBUG] SOCKS5 {} data modified: {} → {} bytes", connection_id, n, modified_data.len());
+                                        debug!("SOCKS5 {} LLM modified data ({} → {} bytes)",
+                                               connection_id, n, modified_data.len());
+                                        let _ = status_tx.send(format!("[DEBUG] SOCKS5 {} data modified: {} → {} bytes",
+                                                                       connection_id, n, modified_data.len()));
                                     }
                                     ActionResult::CloseConnection => {
                                         should_close = true;
                                         data_to_send = None;
-                                        console_warn!(status_tx, "[WARN] SOCKS5 {} LLM close request", connection_id);
+                                        warn!("SOCKS5 {} LLM requested close", connection_id);
+                                        let _ = status_tx.send(format!("[WARN] SOCKS5 {} LLM close request", connection_id));
                                     }
                                     _ => {}
                                 }
@@ -507,7 +542,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                             }
                         }
                         Err(e) => {
-                            console_error!(status_tx, "[ERROR] SOCKS5 {} target read error: {}", connection_id, e);
+                            error!("SOCKS5 {} target read error: {}", connection_id, e);
+                            let _ = status_tx.send(format!("[ERROR] SOCKS5 {} target read error: {}", connection_id, e));
                             break;
                         }
                     }
@@ -515,7 +551,10 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
             }
         }
 
-        console_info!(status_tx, "[INFO] SOCKS5 {} MITM relay complete: {}↑ {}↓", connection_id, client_to_target_total, target_to_client_total);
+        info!("SOCKS5 {} MITM relay complete: {}↑ {}↓",
+              connection_id, client_to_target_total, target_to_client_total);
+        let _ = status_tx.send(format!("[INFO] SOCKS5 {} MITM relay complete: {}↑ {}↓",
+                                       connection_id, client_to_target_total, target_to_client_total));
 
         Ok(())
     }
@@ -534,7 +573,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
         let version = buf[0];
         let nmethods = buf[1];
 
-        console_trace!(status_tx, "[TRACE] SOCKS5 {} handshake: version={}, nmethods={}", connection_id, version, nmethods);
+        trace!("SOCKS5 {} handshake: version={}, nmethods={}", connection_id, version, nmethods);
+        let _ = status_tx.send(format!("[TRACE] SOCKS5 {} handshake: version={}, nmethods={}", connection_id, version, nmethods));
 
         if version != SOCKS5_VERSION {
             bail!("Unsupported SOCKS version: {}", version);
@@ -548,7 +588,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
         let mut methods = vec![0u8; nmethods as usize];
         stream.read_exact(&mut methods).await?;
 
-        console_trace!(status_tx, "[TRACE] SOCKS5 {} client methods: {:?}", connection_id, methods);
+        trace!("SOCKS5 {} client methods: {:?}", connection_id, methods);
+        let _ = status_tx.send(format!("[TRACE] SOCKS5 {} client methods: {:?}", connection_id, methods));
 
         // Select method based on config
         let selected_method = config.auth_methods.iter()
@@ -601,7 +642,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
         stream.read_exact(&mut password_bytes).await?;
         let password = String::from_utf8_lossy(&password_bytes).to_string();
 
-        console_debug!(status_tx, "[DEBUG] SOCKS5 {} auth request: username={}", connection_id, username);
+        debug!("SOCKS5 {} auth request: username={}", connection_id, username);
+        let _ = status_tx.send(format!("[DEBUG] SOCKS5 {} auth request: username={}", connection_id, username));
 
         // Ask LLM to validate credentials
         let event = Event::new(&SOCKS5_AUTH_REQUEST_EVENT, serde_json::json!({
@@ -633,7 +675,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
             bail!("Authentication failed for user: {}", username);
         }
 
-        console_info!(status_tx, "→ SOCKS5 {} authenticated as {}", connection_id, username);
+        info!("SOCKS5 {} authenticated as {}", connection_id, username);
+        let _ = status_tx.send(format!("→ SOCKS5 {} authenticated as {}", connection_id, username));
 
         Ok(username)
     }
@@ -653,7 +696,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
         let _rsv = buf[2];
         let atyp = buf[3];
 
-        console_trace!(status_tx, "[TRACE] SOCKS5 {} request: version={}, cmd=0x{:02x}, atyp=0x{:02x}", connection_id, version, cmd, atyp);
+        trace!("SOCKS5 {} request: version={}, cmd={}, atyp={}", connection_id, version, cmd, atyp);
+        let _ = status_tx.send(format!("[TRACE] SOCKS5 {} request: version={}, cmd=0x{:02x}, atyp=0x{:02x}", connection_id, version, cmd, atyp));
 
         if version != SOCKS5_VERSION {
             bail!("Unsupported SOCKS version: {}", version);
@@ -744,7 +788,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
     ) -> Result<TcpStream> {
         let target_str = target_addr.to_string();
 
-        console_debug!(status_tx, "[DEBUG] SOCKS5 {} connecting to {}", connection_id, target_str);
+        debug!("SOCKS5 {} connecting to target: {}", connection_id, target_str);
+        let _ = status_tx.send(format!("[DEBUG] SOCKS5 {} connecting to {}", connection_id, target_str));
 
         let stream = TcpStream::connect(&target_str).await
             .context(format!("Failed to connect to {}", target_str))?;
@@ -802,7 +847,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
         protocol: &Arc<Socks5Protocol>,
         server_id: ServerId,
     ) -> Result<(bool, bool)> {
-        console_debug!(status_tx, "[DEBUG] SOCKS5 {} asking LLM for decision", connection_id);
+        debug!("SOCKS5 {} asking LLM for decision", connection_id);
+        let _ = status_tx.send(format!("[DEBUG] SOCKS5 {} asking LLM for decision", connection_id));
 
         let event = Event::new(&SOCKS5_CONNECT_REQUEST_EVENT, serde_json::json!({
             "target": target_addr.to_string(),
@@ -839,7 +885,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
             false
         };
 
-        console_debug!(status_tx, "[DEBUG] SOCKS5 {} decision: allowed={}, mitm={}", connection_id, allowed, mitm_enabled);
+        debug!("SOCKS5 {} decision: allowed={}, mitm={}", connection_id, allowed, mitm_enabled);
+        let _ = status_tx.send(format!("[DEBUG] SOCKS5 {} decision: allowed={}, mitm={}", connection_id, allowed, mitm_enabled));
 
         Ok((allowed, mitm_enabled))
     }

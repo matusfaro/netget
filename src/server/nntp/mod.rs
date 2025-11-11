@@ -52,7 +52,6 @@ impl NntpServer {
 
                             // Add connection to ServerInstance
                             use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                             let now = std::time::Instant::now();
                             let conn_state = ServerConnectionState {
                                 id: connection_id,
@@ -207,7 +206,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "[ERROR] Failed to accept NNTP connection: {}", e);
+                        error!("Failed to accept NNTP connection: {}", e);
+                        let _ = status_tx.send(format!("[ERROR] Failed to accept NNTP connection: {}", e));
                     }
                 }
             }

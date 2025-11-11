@@ -44,7 +44,8 @@ impl SamlIdpServer {
         let local_addr = listener.local_addr()?;
 
         // Dual logging: tracing macro + status_tx
-        console_info!(status_tx, "SAML IDP server listening on {}", local_addr);
+        info!("SAML IDP server listening on {}", local_addr);
+        let _ = status_tx.send(format!("SAML IDP server listening on {}", local_addr));
 
         let protocol = Arc::new(SamlIdpProtocol::new());
 
@@ -57,7 +58,8 @@ impl SamlIdpServer {
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
 
                         // Dual logging
-                        console_info!(status_tx, "SAML IDP connection {} from {}", connection_id, remote_addr);
+                        info!("Accepted SAML IDP connection {} from {}", connection_id, remote_addr);
+                        let _ = status_tx.send(format!("SAML IDP connection {} from {}", connection_id, remote_addr));
 
                         let status_tx_for_task = status_tx.clone();
 
@@ -78,7 +80,7 @@ impl SamlIdpServer {
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        console_info!(status_tx, "__UPDATE_UI__");
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let llm_client_clone = llm_client.clone();
                         let app_state_clone = app_state.clone();
@@ -119,12 +121,14 @@ impl SamlIdpServer {
                             }
 
                             // Remove connection when done
+                            debug!("SAML IDP connection {} closed", connection_id);
                             app_state_clone.remove_connection_from_server(server_id, connection_id).await;
-                            console_debug!(status_tx, "__UPDATE_UI__");
+                            let _ = status_tx.send("__UPDATE_UI__".to_string());
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "Failed to accept SAML IDP connection: {}", e);
+                        error!("Failed to accept SAML IDP connection: {}", e);
+                        let _ = status_tx.send(format!("Failed to accept SAML IDP connection: {}", e));
                     }
                 }
             }
@@ -150,7 +154,8 @@ async fn handle_saml_idp_request(
     let query = req.uri().query().map(|q| q.to_string());
 
     // Dual logging: DEBUG level for request summaries
-    console_debug!(status_tx, "SAML IDP {} {}", method, path);
+    debug!("SAML IDP {} {} from {}", method, path, remote_addr);
+    let _ = status_tx.send(format!("SAML IDP {} {}", method, path));
 
     // Extract headers
     let headers: Vec<(String, String)> = req
@@ -232,7 +237,6 @@ async fn handle_saml_idp_request(
             } else {
                 // Parse HTTP response from protocol results
                 use crate::llm::actions::protocol_trait::ActionResult;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
                 let mut status_code = 200u16;
                 let mut response_headers = std::collections::HashMap::new();

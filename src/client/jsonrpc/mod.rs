@@ -17,7 +17,6 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::jsonrpc::actions::JSONRPC_CLIENT_RESPONSE_RECEIVED_EVENT;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// JSON-RPC 2.0 client that makes RPC calls to remote servers
 pub struct JsonRpcClient;
@@ -60,8 +59,8 @@ impl JsonRpcClient {
 
         // Update status
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        console_info!(status_tx, "[CLIENT] JSON-RPC client {} ready for {}", client_id, remote_addr);
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send(format!("[CLIENT] JSON-RPC client {} ready for {}", client_id, remote_addr));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Call LLM with initial connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {

@@ -61,11 +61,12 @@ impl LdapClient {
             .parse()
             .context(format!("Failed to parse socket address from {}", remote_addr))?;
 
+        info!("LDAP client {} connected to {}", client_id, socket_addr);
 
         // Update client state
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        console_info!(status_tx, "[CLIENT] LDAP client {} connected", client_id);
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send(format!("[CLIENT] LDAP client {} connected", client_id));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Wrap ldap connection in Arc<Mutex> for sharing across tasks
         let ldap = Arc::new(tokio::sync::Mutex::new(ldap));
@@ -248,7 +249,6 @@ impl LdapClient {
                         let mut json_entries = Vec::new();
                         for entry in entries {
                             use ldap3::SearchEntry;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                             let search_entry = SearchEntry::construct(entry);
                             let mut attrs_map = serde_json::Map::new();
                             for (attr_name, attr_values) in search_entry.attrs {
@@ -472,9 +472,10 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                 }
             }
             ClientActionResult::Disconnect => {
+                info!("LDAP client {} disconnecting", client_id);
                 app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                console_info!(status_tx, "[CLIENT] LDAP client {} disconnected", client_id);
-                console_info!(status_tx, "__UPDATE_UI__");
+                let _ = status_tx.send(format!("[CLIENT] LDAP client {} disconnected", client_id));
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                 // Close the LDAP connection
                 let ldap_clone = Arc::clone(ldap);

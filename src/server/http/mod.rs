@@ -77,7 +77,7 @@ impl HttpServer {
                             })),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        console_info!(status_tx, "__UPDATE_UI__");
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let llm_client_clone = llm_client.clone();
                         let app_state_clone = app_state.clone();
@@ -200,7 +200,8 @@ async fn handle_http_request_with_llm_actions(
         if let Some(upgrade_header) = req.headers().get(hyper::header::UPGRADE) {
             if let Ok(upgrade_value) = upgrade_header.to_str() {
                 if upgrade_value.contains("h2c") {
-                    console_info!(status_tx, "[INFO] HTTP/2 upgrade (h2c) requested");
+                    info!("HTTP/2 upgrade (h2c) request detected from connection {}", connection_id);
+                    let _ = status_tx.send(format!("[INFO] HTTP/2 upgrade (h2c) requested"));
 
                     // Check for HTTP2-Settings header (required for h2c upgrade)
                     if req.headers().get("HTTP2-Settings").is_none() {
@@ -270,7 +271,8 @@ async fn handle_http_request_with_llm_actions(
         if let Some(upgrade_header) = req.headers().get(hyper::header::UPGRADE) {
             if let Ok(upgrade_value) = upgrade_header.to_str() {
                 if upgrade_value.contains("h2c") {
-                    console_info!(status_tx, "[INFO] HTTP/2 upgrade not supported (http2 feature disabled)");
+                    info!("HTTP/2 upgrade requested but http2 feature not enabled");
+                    let _ = status_tx.send("[INFO] HTTP/2 upgrade not supported (http2 feature disabled)".to_string());
 
                     let response = Response::builder()
                         .status(501) // Not Implemented
@@ -356,7 +358,6 @@ where
 {
     use h2::server;
     use crate::server::Http2Protocol;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
     info!("Starting h2c connection for {}", connection_id);
 

@@ -25,7 +25,6 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::{Event, StartupParams};
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 // BGP Constants
 const BGP_VERSION: u8 = 4;
@@ -111,8 +110,8 @@ impl BgpClient {
         app_state
             .update_client_status(client_id, ClientStatus::Connected)
             .await;
-        console_info!(status_tx, "[CLIENT] BGP client {} connected", client_id);
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send(format!("[CLIENT] BGP client {} connected", client_id));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Split stream
         let (read_half, write_half) = tokio::io::split(stream);
@@ -133,7 +132,14 @@ impl BgpClient {
             write_half_arc.lock().await.write_all(&open_msg).await?;
             write_half_arc.lock().await.flush().await?;
 
-            console_info!(status_tx, "[CLIENT] BGP OPEN sent: AS={}, hold_time={}s");
+            info!(
+                "BGP client {} sent OPEN: AS={}, hold_time={}s",
+                client_id, local_as, hold_time
+            );
+            let _ = status_tx.send(format!(
+                "[CLIENT] BGP OPEN sent: AS={}, hold_time={}s",
+                local_as, hold_time
+            ));
 
             // Transition to OpenSent
             client_data.lock().await.bgp_state = BgpState::OpenSent;
@@ -216,11 +222,12 @@ impl BgpClient {
             match read_half.read_exact(&mut header_buf).await {
                 Ok(_) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    info!("BGP client {} disconnected", client_id);
                     app_state
                         .update_client_status(client_id, ClientStatus::Disconnected)
                         .await;
-                    console_info!(status_tx, "[CLIENT] BGP client {} disconnected", client_id);
-                    console_info!(status_tx, "__UPDATE_UI__");
+                    let _ = status_tx.send(format!("[CLIENT] BGP client {} disconnected", client_id));
+                    let _ = status_tx.send("__UPDATE_UI__".to_string());
                     break;
                 }
                 Err(e) => {
@@ -337,7 +344,14 @@ impl BgpClient {
         let hold_time = u16::from_be_bytes([body[3], body[4]]);
         let peer_router_id = format!("{}.{}.{}.{}", body[5], body[6], body[7], body[8]);
 
-        console_info!(status_tx, "[CLIENT] BGP OPEN received: AS={}, hold_time={}s, router_id={}");
+        info!(
+            "BGP client {} received OPEN: AS={}, hold_time={}s, router_id={}",
+            client_id, peer_as, hold_time, peer_router_id
+        );
+        let _ = status_tx.send(format!(
+            "[CLIENT] BGP OPEN received: AS={}, hold_time={}s, router_id={}",
+            peer_as, hold_time, peer_router_id
+        ));
 
         // Validate version
         if version != BGP_VERSION {
@@ -358,7 +372,8 @@ impl BgpClient {
         write_half.lock().await.write_all(&keepalive_msg).await?;
         write_half.lock().await.flush().await?;
 
-        console_info!(status_tx, "[CLIENT] BGP KEEPALIVE sent");
+        info!("BGP client {} sent KEEPALIVE", client_id);
+        let _ = status_tx.send(format!("[CLIENT] BGP KEEPALIVE sent"));
 
         // Transition to Established (will be confirmed when peer sends KEEPALIVE)
         client_data.lock().await.bgp_state = BgpState::Established;
@@ -418,13 +433,15 @@ impl BgpClient {
         status_tx: &mpsc::UnboundedSender<String>,
         client_data: &Arc<Mutex<ClientData>>,
     ) -> Result<()> {
-        console_debug!(status_tx, "[CLIENT] BGP KEEPALIVE received");
+        debug!("BGP client {} received KEEPALIVE", client_id);
+        let _ = status_tx.send(format!("[CLIENT] BGP KEEPALIVE received"));
 
         // Update state if in OpenConfirm
         let mut data = client_data.lock().await;
         if data.bgp_state == BgpState::OpenConfirm {
             data.bgp_state = BgpState::Established;
-            console_info!(status_tx, "[CLIENT] BGP session established");
+            info!("BGP client {} session established", client_id);
+            let _ = status_tx.send(format!("[CLIENT] BGP session established"));
         }
 
         Ok(())
@@ -439,7 +456,11 @@ impl BgpClient {
         status_tx: &mpsc::UnboundedSender<String>,
         client_data: &Arc<Mutex<ClientData>>,
     ) -> Result<()> {
-        console_trace!(status_tx, "[CLIENT] BGP UPDATE received: {} bytes");
+        trace!("BGP client {} received UPDATE: {} bytes", client_id, body.len());
+        let _ = status_tx.send(format!(
+            "[CLIENT] BGP UPDATE received: {} bytes",
+            body.len()
+        ));
 
         // Call LLM with UPDATE event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -501,7 +522,14 @@ impl BgpClient {
         let error_subcode = body[1];
         let error_data = if body.len() > 2 { &body[2..] } else { &[] };
 
-        console_error!(status_tx, "[CLIENT] BGP NOTIFICATION: code={}, subcode={}");
+        error!(
+            "BGP client {} received NOTIFICATION: code={}, subcode={}",
+            client_id, error_code, error_subcode
+        );
+        let _ = status_tx.send(format!(
+            "[CLIENT] BGP NOTIFICATION: code={}, subcode={}",
+            error_code, error_subcode
+        ));
 
         // Call LLM with NOTIFICATION event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {

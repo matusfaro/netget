@@ -71,8 +71,8 @@ impl OpenAiClient {
 
         // Update status
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        console_info!(status_tx, "[CLIENT] OpenAI client {} ready (endpoint: {})", client_id, remote_addr);
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send(format!("[CLIENT] OpenAI client {} ready (endpoint: {})", client_id, remote_addr));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // For OpenAI client, we'll spawn a background task that monitors for client removal
         // The actual API requests are made on-demand via actions
@@ -298,7 +298,8 @@ impl OpenAiClient {
                 Ok(())
             }
             Err(e) => {
-                console_error!(status_tx, "[ERROR] OpenAI request failed: {}", e);
+                error!("OpenAI client {} request failed: {}", client_id, e);
+                let _ = status_tx.send(format!("[ERROR] OpenAI request failed: {}", e));
 
                 // Send error event to LLM
                 if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -356,7 +357,6 @@ impl OpenAiClient {
 
         // Build OpenAI client
         use async_openai::{Client as OpenAiApiClient, types::*};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         let mut config = async_openai::config::OpenAIConfig::new()
             .with_api_key(&api_key);
@@ -449,7 +449,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                 Ok(())
             }
             Err(e) => {
-                console_error!(status_tx, "[ERROR] OpenAI embedding request failed: {}", e);
+                error!("OpenAI client {} embedding request failed: {}", client_id, e);
+                let _ = status_tx.send(format!("[ERROR] OpenAI embedding request failed: {}", e));
                 Err(e.into())
             }
         }

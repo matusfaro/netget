@@ -42,7 +42,8 @@ impl OAuth2Server {
     ) -> anyhow::Result<SocketAddr> {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        console_info!(status_tx, "[INFO] OAuth2 server listening on {}", local_addr);
+        info!("OAuth2 server listening on {}", local_addr);
+        let _ = status_tx.send(format!("[INFO] OAuth2 server listening on {}", local_addr));
 
         let protocol = Arc::new(OAuth2Protocol::new());
 
@@ -58,7 +59,6 @@ impl OAuth2Server {
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
                         use serde_json::json;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -76,7 +76,7 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                             })),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        console_info!(status_tx, "__UPDATE_UI__");
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let llm_client_clone = llm_client.clone();
                         let app_state_clone = app_state.clone();
@@ -145,7 +145,8 @@ async fn handle_oauth2_request(
     let uri = req.uri().clone();
     let path = uri.path();
 
-    console_debug!(status_tx, "[DEBUG] OAuth2 {} {}", method, path);
+    debug!("OAuth2 request: {} {}", method, path);
+    let _ = status_tx.send(format!("[DEBUG] OAuth2 {} {}", method, path));
 
     // Track request in connection info
     app_state.update_connection_stats(server_id, connection_id, None, None, Some(1), None).await;
@@ -181,7 +182,7 @@ async fn handle_oauth2_request(
     let body_size = response.as_ref().ok().map(|resp| resp.body().size_hint().exact().unwrap_or(0)).unwrap_or(0);
     app_state.update_connection_stats(server_id, connection_id, None, Some(body_size), None, Some(1)).await;
 
-    console_info!(status_tx, "__UPDATE_UI__");
+    let _ = status_tx.send("__UPDATE_UI__".to_string());
     response
 }
 
@@ -213,7 +214,9 @@ async fn handle_authorize_request(
         }
     };
 
-    console_debug!(status_tx, "[DEBUG] OAuth2 authorize: response_type={:?}, client_id={:?}", params.get("response_type"), params.get("client_id"));
+    debug!("OAuth2 authorize request: {:?}", params);
+    let _ = status_tx.send(format!("[DEBUG] OAuth2 authorize: response_type={:?}, client_id={:?}",
+        params.get("response_type"), params.get("client_id")));
 
     // Create LLM event
     let event = Event::new(&OAUTH2_AUTHORIZE_EVENT, json!({
@@ -289,7 +292,9 @@ async fn handle_token_request(
     let body_str = String::from_utf8_lossy(&body_bytes);
     let params = parse_query_params(&body_str);
 
-    console_debug!(status_tx, "[DEBUG] OAuth2 token: grant_type={:?}, client_id={:?}", params.get("grant_type"), params.get("client_id"));
+    debug!("OAuth2 token request: {:?}", params);
+    let _ = status_tx.send(format!("[DEBUG] OAuth2 token: grant_type={:?}, client_id={:?}",
+        params.get("grant_type"), params.get("client_id")));
 
     // Create LLM event
     let event = Event::new(&OAUTH2_TOKEN_EVENT, json!({

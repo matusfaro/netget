@@ -116,9 +116,10 @@ impl WebRtcClient {
             let llm_client = llm_on_open.clone();
 
             Box::pin(async move {
+                info!("WebRTC client {} data channel opened", client_id);
                 app_state.update_client_status(client_id, ClientStatus::Connected).await;
-                console_info!(status_tx, "[CLIENT] WebRTC client {} connected", client_id);
-                console_info!(status_tx, "__UPDATE_UI__");
+                let _ = status_tx.send(format!("[CLIENT] WebRTC client {} connected", client_id));
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                 // Call LLM with connected event
                 if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -212,7 +213,6 @@ impl WebRtcClient {
                                     // Execute actions
                                     for action in actions {
                                         use crate::llm::actions::client_trait::Client;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                                         match protocol.as_ref().execute_action(action) {
                                             Ok(crate::llm::actions::client_trait::ClientActionResult::SendData(bytes)) => {
                                                 match dc.send_text(String::from_utf8_lossy(&bytes).to_string()).await {
@@ -267,10 +267,11 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
         peer_connection.on_peer_connection_state_change(Box::new(move |state: RTCPeerConnectionState| {
             let status_tx = status_tx_state.clone();
             Box::pin(async move {
+                info!("WebRTC client {} connection state: {:?}", client_id, state);
                 match state {
                     RTCPeerConnectionState::Failed | RTCPeerConnectionState::Closed => {
-                        console_info!(status_tx, "[CLIENT] WebRTC client {} disconnected", client_id);
-                        console_info!(status_tx, "__UPDATE_UI__");
+                        let _ = status_tx.send(format!("[CLIENT] WebRTC client {} disconnected", client_id));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
                     }
                     _ => {}
                 }
@@ -295,9 +296,10 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
             client.set_protocol_field("sdp_offer".to_string(), serde_json::json!(offer_json));
         }).await;
 
-        console_info!(status_tx, "[CLIENT] WebRTC client {} waiting for SDP answer", client_id);
-        console_info!(status_tx, "SDP Offer (send to peer):\n{}", offer_json);
-        console_info!(status_tx, "__UPDATE_UI__");
+        info!("WebRTC client {} generated SDP offer", client_id);
+        let _ = status_tx.send(format!("[CLIENT] WebRTC client {} waiting for SDP answer", client_id));
+        let _ = status_tx.send(format!("SDP Offer (send to peer):\n{}", offer_json));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Store peer connection and data channel for later use
         let pc_ptr = Arc::into_raw(peer_connection) as usize;

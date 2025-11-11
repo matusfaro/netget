@@ -23,7 +23,6 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event as ProtocolEvent;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// MQTT client that connects to an MQTT broker
 pub struct MqttClient;
@@ -134,9 +133,10 @@ async fn handle_mqtt_events(
                     Event::Incoming(Packet::ConnAck(_)) => {
                         if !connected {
                             connected = true;
+                            info!("MQTT client {} connected to broker", client_id);
                             app_state.update_client_status(client_id, ClientStatus::Connected).await;
-                            console_info!(status_tx, "[CLIENT] MQTT client {} connected", client_id);
-                            console_info!(status_tx, "__UPDATE_UI__");
+                            let _ = status_tx.send(format!("[CLIENT] MQTT client {} connected", client_id));
+                            let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                             // Call LLM with connected event
                             if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -196,9 +196,10 @@ async fn handle_mqtt_events(
                         // Could optionally notify LLM of successful subscription
                     }
                     Event::Incoming(Packet::Disconnect) => {
+                        info!("MQTT client {} disconnected by broker", client_id);
                         app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                        console_info!(status_tx, "[CLIENT] MQTT client {} disconnected", client_id);
-                        console_info!(status_tx, "__UPDATE_UI__");
+                        let _ = status_tx.send(format!("[CLIENT] MQTT client {} disconnected", client_id));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
                         break;
                     }
                     Event::Outgoing(_) => {
@@ -210,9 +211,10 @@ async fn handle_mqtt_events(
                 }
             }
             Err(e) => {
+                error!("MQTT client {} connection error: {}", client_id, e);
                 app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
-                console_error!(status_tx, "[CLIENT] MQTT client {} error: {}", client_id, e);
-                console_error!(status_tx, "__UPDATE_UI__");
+                let _ = status_tx.send(format!("[CLIENT] MQTT client {} error: {}", client_id, e));
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
                 break;
             }
         }

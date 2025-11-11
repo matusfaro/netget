@@ -79,11 +79,12 @@ impl BootpClient {
 
         let local_addr = socket.local_addr()?;
 
+        info!("BOOTP client {} bound to {} (server: {})", client_id, local_addr, server_addr);
 
         // Update client state
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        console_info!(status_tx, "[CLIENT] BOOTP client {} connected", client_id);
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send(format!("[CLIENT] BOOTP client {} connected", client_id));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         let socket_arc = Arc::new(socket);
 
@@ -290,7 +291,8 @@ impl BootpClient {
                 };
 
                 socket.send_to(&bootp_request, target).await?;
-                console_trace!(status_tx, "[CLIENT] BOOTP request sent to {}", target);
+                trace!("BOOTP client {} sent request to {}", client_id, target);
+                let _ = status_tx.send(format!("[CLIENT] BOOTP request sent to {}", target));
             }
             ClientActionResult::Disconnect => {
                 info!("BOOTP client {} disconnecting", client_id);
@@ -354,7 +356,6 @@ impl BootpClient {
         {
             use dhcproto::Decodable;
             use dhcproto::decoder::Decoder;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
             let mut decoder = Decoder::new(data);
             let msg = v4::Message::decode(&mut decoder)

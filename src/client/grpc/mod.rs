@@ -119,8 +119,13 @@ impl GrpcClient {
         app_state
             .update_client_status(client_id, ClientStatus::Connected)
             .await;
-        console_info!(status_tx, "[CLIENT] gRPC client {} ready for {} (services: {})");
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send(format!(
+            "[CLIENT] gRPC client {} ready for {} (services: {})",
+            client_id,
+            remote_addr,
+            services.join(", ")
+        ));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Call LLM with connected event
         let protocol = Arc::new(GrpcClientProtocol::new());
@@ -302,10 +307,11 @@ async fn execute_grpc_action(
             .await?;
         }
         ClientActionResult::Disconnect => {
+            info!("gRPC client {} disconnecting", client_id);
             app_state
                 .update_client_status(client_id, ClientStatus::Disconnected)
                 .await;
-            console_info!(status_tx, "[CLIENT] gRPC client {} disconnected", client_id);
+            let _ = status_tx.send(format!("[CLIENT] gRPC client {} disconnected", client_id));
         }
         ClientActionResult::WaitForMore => {
             debug!("gRPC client {} waiting", client_id);
@@ -675,7 +681,6 @@ fn dynamic_message_to_json(msg: &DynamicMessage) -> Result<serde_json::Value> {
 /// Convert protobuf value to JSON
 fn proto_value_to_json(value: &ProtoValue) -> Result<serde_json::Value> {
     use base64::{Engine as _, engine::general_purpose};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
     Ok(match value {
         ProtoValue::Bool(b) => serde_json::Value::Bool(*b),

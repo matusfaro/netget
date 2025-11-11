@@ -74,11 +74,12 @@ impl CassandraClient {
         let socket_addr: SocketAddr = remote_addr.parse()
             .context(format!("Invalid address format: {}", remote_addr))?;
 
+        info!("Cassandra client {} connected to {}", client_id, socket_addr);
 
         // Update client state
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        console_info!(status_tx, "[CLIENT] Cassandra client {} connected", client_id);
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send(format!("[CLIENT] Cassandra client {} connected", client_id));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Call LLM with connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -209,7 +210,6 @@ impl CassandraClient {
                                 // Convert result to JSON using scylla 1.3 API
                                 // First convert to RowsResult, then deserialize rows
                                 use scylla::value::Row;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
                                 let rows_data: Vec<serde_json::Value>;
                                 let row_count: usize;
@@ -304,15 +304,17 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                                 }
                             }
                             Err(e) => {
-                                console_error!(status_tx, "[CLIENT] Cassandra query error: {}", e);
+                                error!("Cassandra client {} query error: {}", client_id, e);
+                                let _ = status_tx.send(format!("[CLIENT] Cassandra query error: {}", e));
                             }
                         }
                     }
                 }
                 Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
+                    info!("Cassandra client {} disconnecting", client_id);
                     app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                    console_info!(status_tx, "[CLIENT] Cassandra client {} disconnected", client_id);
-                    console_info!(status_tx, "__UPDATE_UI__");
+                    let _ = status_tx.send(format!("[CLIENT] Cassandra client {} disconnected", client_id));
+                    let _ = status_tx.send("__UPDATE_UI__".to_string());
                     break;
                 }
                 Ok(crate::llm::actions::client_trait::ClientActionResult::WaitForMore) => {

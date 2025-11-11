@@ -22,7 +22,6 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Git client that performs Git operations
 pub struct GitClient;
@@ -47,8 +46,8 @@ impl GitClient {
         app_state
             .update_client_status(client_id, ClientStatus::Connected)
             .await;
-        console_info!(status_tx, "[CLIENT] Git client {} initialized", client_id);
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send(format!("[CLIENT] Git client {} initialized", client_id));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Create a dummy socket address since Git doesn't use network sockets
         // We use a placeholder address to satisfy the return type
@@ -117,15 +116,20 @@ impl GitClient {
                         )
                         .await
                         {
-                            console_error!(status_tx, "[CLIENT] Git client {} error: {}");
+                            error!("Git client {} action error: {}", client_id, e);
+                            let _ = status_tx.send(format!(
+                                "[CLIENT] Git client {} error: {}",
+                                client_id, e
+                            ));
                         }
                     }
                 }
                 Err(e) => {
+                    error!("LLM error for Git client {}: {}", client_id, e);
                     app_state
                         .update_client_status(client_id, ClientStatus::Error(e.to_string()))
                         .await;
-                    console_error!(status_tx, "__UPDATE_UI__");
+                    let _ = status_tx.send("__UPDATE_UI__".to_string());
                 }
             }
 
@@ -161,16 +165,28 @@ impl GitClient {
                             .and_then(|v| v.as_str())
                             .context("Missing path")?;
 
-                        console_info!(status_tx, "[CLIENT] Git client {} cloning {} to {}");
+                        info!("Git client {} cloning {} to {}", client_id, url, path);
+                        let _ = status_tx.send(format!(
+                            "[CLIENT] Git client {} cloning {} to {}",
+                            client_id, url, path
+                        ));
 
                         match Self::git_clone(url, path, username.as_deref(), password.as_deref())
                         {
                             Ok(_repo) => {
                                 *repo_path = Some(PathBuf::from(path));
-                                console_info!(status_tx, "[CLIENT] Git client {} clone successful");
+                                info!("Git client {} clone successful", client_id);
+                                let _ = status_tx.send(format!(
+                                    "[CLIENT] Git client {} clone successful",
+                                    client_id
+                                ));
                             }
                             Err(e) => {
-                                console_error!(status_tx, "[CLIENT] Git client {} clone failed: {}");
+                                error!("Git client {} clone failed: {}", client_id, e);
+                                let _ = status_tx.send(format!(
+                                    "[CLIENT] Git client {} clone failed: {}",
+                                    client_id, e
+                                ));
                             }
                         }
                     }
@@ -422,10 +438,11 @@ impl GitClient {
                 }
             }
             crate::llm::actions::client_trait::ClientActionResult::Disconnect => {
+                info!("Git client {} disconnecting", client_id);
                 app_state
                     .update_client_status(client_id, ClientStatus::Disconnected)
                     .await;
-                console_info!(status_tx, "__UPDATE_UI__");
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
             }
             _ => {}
         }

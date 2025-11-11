@@ -57,7 +57,8 @@ impl MysqlServer {
         let listener = TcpListener::bind(listen_addr).await?;
         let actual_addr = listener.local_addr()?;
 
-        console_info!(status_tx, "[INFO] MySQL server listening on {}", actual_addr);
+        info!("MySQL server starting on {}", actual_addr);
+        let _ = status_tx.send(format!("[INFO] MySQL server listening on {}", actual_addr));
 
         let server = Arc::new(MysqlServer::new(
             llm_client,
@@ -73,7 +74,8 @@ impl MysqlServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, addr)) => {
-                        console_debug!(status_tx, "[DEBUG] MySQL connection from {}", addr);
+                        debug!("MySQL connection from {}", addr);
+                        let _ = status_tx.send(format!("[DEBUG] MySQL connection from {}", addr));
 
                         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(actual_addr);
@@ -90,7 +92,6 @@ impl MysqlServer {
                         // Track the connection
                         if let Some(server_id) = server.server_id {
                             use crate::state::server::{
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                                 ConnectionState as ServerConnectionState, ConnectionStatus,
                                 ProtocolConnectionInfo,
                             };
@@ -123,7 +124,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "[ERROR] MySQL accept error: {}", e);
+                        error!("MySQL accept error: {}", e);
+                        let _ = status_tx.send(format!("[ERROR] MySQL accept error: {}", e));
                     }
                 }
             }
@@ -339,7 +341,10 @@ impl MysqlHandler {
                                         .unwrap_or("Unknown error");
 
                                     // Send error - opensrv uses completed for errors too
-                                    console_error!(self.status_tx, "[ERROR] MySQL error {}: {}");
+                                    let _ = self.status_tx.send(format!(
+                                        "[ERROR] MySQL error {}: {}",
+                                        error_code, message
+                                    ));
                                     return results
                                         .completed(OkResponse {
                                             header: 0,

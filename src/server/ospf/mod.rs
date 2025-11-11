@@ -37,7 +37,6 @@ use crate::server::socket_helpers::create_ospf_raw_socket;
 use crate::state::app_state::AppState;
 #[cfg(feature = "ospf")]
 use crate::state::server::OspfNeighborState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 // OSPF Constants
 const OSPF_VERSION: u8 = 2;
@@ -108,7 +107,8 @@ impl OspfServer {
         let raw_socket = create_ospf_raw_socket(interface_ip, true, false)?;
         let socket_fd = raw_socket.as_raw_fd();
 
-        console_info!(status_tx, "[INFO] OSPF server on {} (requires root)", interface_ip);
+        info!("OSPF server on interface {} (IP protocol 89)", interface_ip);
+        let _ = status_tx.send(format!("[INFO] OSPF server on {} (requires root)", interface_ip));
 
         // Extract configuration
         let (router_id, area_id) = if let Some(ref params) = startup_params {
@@ -119,7 +119,8 @@ impl OspfServer {
                 .get_optional_string("area_id")
                 .unwrap_or_else(|| "0.0.0.0".to_string());
 
-            console_info!(status_tx, "[INFO] OSPF: router_id={}, area={}", router_id, area_id);
+            info!("OSPF: router_id={}, area={}", router_id, area_id);
+            let _ = status_tx.send(format!("[INFO] OSPF: router_id={}, area={}", router_id, area_id));
 
             (router_id, area_id)
         } else {

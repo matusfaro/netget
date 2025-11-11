@@ -20,7 +20,6 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::igmp::actions::{IGMP_CLIENT_CONNECTED_EVENT, IGMP_CLIENT_DATA_RECEIVED_EVENT};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -65,11 +64,12 @@ impl IgmpClient {
 
         let local_addr = socket.local_addr()?;
 
+        info!("IGMP client {} bound to {}", client_id, local_addr);
 
         // Update client state
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        console_info!(status_tx, "[CLIENT] IGMP client {} ready", client_id);
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send(format!("[CLIENT] IGMP client {} ready", client_id));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Trigger initial connected event
         let client_instance = app_state.get_client(client_id).await;

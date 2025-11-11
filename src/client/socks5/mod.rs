@@ -105,8 +105,11 @@ impl Socks5Client {
         app_state
             .update_client_status(client_id, ClientStatus::Connected)
             .await;
-        console_info!(status_tx, "[CLIENT] SOCKS5 client {} connected to {} through proxy");
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send(format!(
+            "[CLIENT] SOCKS5 client {} connected to {} through proxy",
+            client_id, target_addr
+        ));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Split stream (tcp_stream was already extracted above)
         let (mut read_half, write_half) = tokio::io::split(tcp_stream);
@@ -186,11 +189,15 @@ impl Socks5Client {
             loop {
                 match read_half.read(&mut buffer).await {
                     Ok(0) => {
+                        info!("SOCKS5 client {} disconnected", client_id);
                         app_state
                             .update_client_status(client_id, ClientStatus::Disconnected)
                             .await;
-                        console_info!(status_tx, "[CLIENT] SOCKS5 client {} disconnected");
-                        console_info!(status_tx, "__UPDATE_UI__");
+                        let _ = status_tx.send(format!(
+                            "[CLIENT] SOCKS5 client {} disconnected",
+                            client_id
+                        ));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
                         break;
                     }
                     Ok(n) => {
@@ -250,7 +257,6 @@ impl Socks5Client {
                                             // Execute actions
                                             for action in actions {
                                                 use crate::llm::actions::client_trait::Client;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                                                 match protocol.as_ref().execute_action(action) {
                                                     Ok(crate::llm::actions::client_trait::ClientActionResult::SendData(bytes)) => {
                                                         if let Ok(_) = write_half_arc.lock().await.write_all(&bytes).await {
@@ -293,10 +299,11 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                         }
                     }
                     Err(e) => {
+                        error!("SOCKS5 client {} read error: {}", client_id, e);
                         app_state
                             .update_client_status(client_id, ClientStatus::Error(e.to_string()))
                             .await;
-                        console_error!(status_tx, "__UPDATE_UI__");
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
                         break;
                     }
                 }

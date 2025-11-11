@@ -40,7 +40,8 @@ impl OpenAiServer {
     ) -> anyhow::Result<SocketAddr> {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        console_info!(status_tx, "[INFO] OpenAI API server listening on {}", local_addr);
+        info!("OpenAI API server listening on {}", local_addr);
+        let _ = status_tx.send(format!("[INFO] OpenAI API server listening on {}", local_addr));
 
         let protocol = Arc::new(OpenAiProtocol::new());
 
@@ -51,11 +52,11 @@ impl OpenAiServer {
                     Ok((stream, remote_addr)) => {
                         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        console_info!(status_tx, "[INFO] OpenAI API connection from {}", remote_addr);
+                        info!("OpenAI API connection {} from {}", connection_id, remote_addr);
+                        let _ = status_tx.send(format!("[INFO] OpenAI API connection from {}", remote_addr));
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -71,7 +72,7 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        console_info!(status_tx, "__UPDATE_UI__");
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let llm_client_clone = llm_client.clone();
                         let app_state_clone = app_state.clone();
@@ -115,7 +116,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "[ERROR] Failed to accept OpenAI API connection: {}", e);
+                        error!("Failed to accept OpenAI API connection: {}", e);
+                        let _ = status_tx.send(format!("[ERROR] Failed to accept OpenAI API connection: {}", e));
                         break;
                     }
                 }
@@ -140,7 +142,8 @@ async fn handle_openai_request(
     let uri = req.uri().clone();
     let path = uri.path();
 
-    console_debug!(status_tx, "[DEBUG] OpenAI API {} {}", method, path);
+    debug!("OpenAI API request: {} {}", method, path);
+    let _ = status_tx.send(format!("[DEBUG] OpenAI API {} {}", method, path));
 
     // Route the request
     match (method.clone(), path) {
@@ -151,7 +154,8 @@ async fn handle_openai_request(
             handle_chat_completions(req, llm_client, app_state, status_tx).await
         }
         _ => {
-            console_debug!(status_tx, "[DEBUG] OpenAI API: Unknown endpoint {} {}", method, path);
+            debug!("OpenAI API: Unknown endpoint {} {}", method, path);
+            let _ = status_tx.send(format!("[DEBUG] OpenAI API: Unknown endpoint {} {}", method, path));
             Ok(Response::builder()
                 .status(StatusCode::NOT_FOUND)
                 .header("Content-Type", "application/json")
@@ -172,12 +176,14 @@ async fn handle_models_list(
     llm_client: OllamaClient,
     status_tx: mpsc::UnboundedSender<String>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    console_debug!(status_tx, "[DEBUG] OpenAI API: Listing models from Ollama");
+    debug!("OpenAI API: Listing models from Ollama");
+    let _ = status_tx.send("[DEBUG] OpenAI API: Listing models from Ollama".to_string());
 
     // Get models from Ollama
     match llm_client.list_models().await {
         Ok(models) => {
-            console_trace!(status_tx, "[TRACE] Found {} models from Ollama", models.len());
+            trace!("Ollama models: {:?}", models);
+            let _ = status_tx.send(format!("[TRACE] Found {} models from Ollama", models.len()));
 
             // Convert to OpenAI format
             let openai_models: Vec<Value> = models
@@ -204,7 +210,8 @@ async fn handle_models_list(
                 .unwrap())
         }
         Err(e) => {
-            console_error!(status_tx, "[ERROR] Failed to list Ollama models: {}", e);
+            error!("Failed to list Ollama models: {}", e);
+            let _ = status_tx.send(format!("[ERROR] Failed to list Ollama models: {}", e));
 
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -232,7 +239,8 @@ async fn handle_chat_completions(
     let body_bytes = match req.collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
-            console_error!(status_tx, "[ERROR] Failed to read request body: {}", e);
+            error!("Failed to read request body: {}", e);
+            let _ = status_tx.send(format!("[ERROR] Failed to read request body: {}", e));
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .header("Content-Type", "application/json")
@@ -250,7 +258,8 @@ async fn handle_chat_completions(
     let request_json: Value = match serde_json::from_slice(&body_bytes) {
         Ok(json) => json,
         Err(e) => {
-            console_error!(status_tx, "[ERROR] Failed to parse JSON: {}", e);
+            error!("Failed to parse JSON: {}", e);
+            let _ = status_tx.send(format!("[ERROR] Failed to parse JSON: {}", e));
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .header("Content-Type", "application/json")
@@ -264,7 +273,8 @@ async fn handle_chat_completions(
         }
     };
 
-    console_trace!(status_tx, "[TRACE] Chat completion request: {}", serde_json::to_string_pretty(&request_json).unwrap_or_default());
+    trace!("Chat completion request: {}", serde_json::to_string_pretty(&request_json).unwrap_or_default());
+    let _ = status_tx.send(format!("[TRACE] Chat completion request: {}", serde_json::to_string_pretty(&request_json).unwrap_or_default()));
 
     // Extract model and messages
     let model = match request_json.get("model").and_then(|v| v.as_str()) {
@@ -277,7 +287,8 @@ async fn handle_chat_completions(
         .cloned()
         .unwrap_or_default();
 
-    console_debug!(status_tx, "[DEBUG] Chat completion: model={}, {} messages", model, messages.len());
+    debug!("Chat completion: model={}, {} messages", model, messages.len());
+    let _ = status_tx.send(format!("[DEBUG] Chat completion: model={}, {} messages", model, messages.len()));
 
     // Convert messages to Ollama format and generate response
     match generate_chat_response(&llm_client, &model, messages, &request_json, &status_tx).await {
@@ -309,7 +320,8 @@ async fn handle_chat_completions(
                 }
             });
 
-            console_trace!(status_tx, "[TRACE] Chat completion response generated");
+            trace!("Chat completion response: {}", serde_json::to_string_pretty(&response).unwrap_or_default());
+            let _ = status_tx.send("[TRACE] Chat completion response generated".to_string());
 
             Ok(Response::builder()
                 .status(StatusCode::OK)
@@ -318,7 +330,8 @@ async fn handle_chat_completions(
                 .unwrap())
         }
         Err(e) => {
-            console_error!(status_tx, "[ERROR] Failed to generate chat response: {}", e);
+            error!("Failed to generate chat response: {}", e);
+            let _ = status_tx.send(format!("[ERROR] Failed to generate chat response: {}", e));
 
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -348,7 +361,9 @@ async fn generate_chat_response(
     let max_tokens = request_json.get("max_tokens").and_then(|v| v.as_u64());
     let top_p = request_json.get("top_p").and_then(|v| v.as_f64());
 
-    console_debug!(status_tx, "[DEBUG] Generating response with model={}", model);
+    debug!("Generating response with model={}, temp={:?}, max_tokens={:?}, top_p={:?}",
+           model, temperature, max_tokens, top_p);
+    let _ = status_tx.send(format!("[DEBUG] Generating response with model={}", model));
 
     // Build prompt from messages
     let mut prompt = String::new();

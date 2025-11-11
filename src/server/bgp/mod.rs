@@ -26,7 +26,6 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 #[cfg(feature = "bgp")]
 use crate::state::server::BgpSessionState;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 // BGP Constants
 const BGP_VERSION: u8 = 4;
@@ -57,7 +56,8 @@ impl BgpServer {
     ) -> Result<SocketAddr> {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        console_info!(status_tx, "[INFO] BGP server listening on {}", local_addr);
+        info!("BGP server listening on {}", local_addr);
+        let _ = status_tx.send(format!("[INFO] BGP server listening on {}", local_addr));
 
         // Extract AS number and router ID from startup params
         let (local_as, router_id) = if let Some(ref params) = startup_params {
@@ -65,7 +65,8 @@ impl BgpServer {
                 .unwrap_or(65000); // Default private ASN
             let router_id_str = params.get_optional_string("router_id")
                 .unwrap_or_else(|| "192.168.1.1".to_string());
-            console_info!(status_tx, "[INFO] BGP configured with AS {} and router ID {}", as_num, router_id_str);
+            info!("BGP configured with AS {} and router ID {}", as_num, router_id_str);
+            let _ = status_tx.send(format!("[INFO] BGP configured with AS {} and router ID {}", as_num, router_id_str));
             (as_num, router_id_str)
         } else {
             // Defaults
@@ -81,7 +82,8 @@ impl BgpServer {
                         let connection_id = crate::server::connection::ConnectionId::new(
                             app_state.get_next_unified_id().await
                         );
-                        console_info!(status_tx, "→ BGP connection {} from {}", connection_id, remote_addr);
+                        info!("BGP connection {} from {}", connection_id, remote_addr);
+                        let _ = status_tx.send(format!("→ BGP connection {} from {}", connection_id, remote_addr));
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -119,7 +121,8 @@ impl BgpServer {
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "[ERROR] Failed to accept BGP connection: {}", e);
+                        error!("Failed to accept BGP connection: {}", e);
+                        let _ = status_tx.send(format!("[ERROR] Failed to accept BGP connection: {}", e));
                         break;
                     }
                 }
@@ -154,7 +157,8 @@ impl BgpSession {
     async fn handle(&mut self) -> Result<()> {
         // Start with Connect state (TCP connection already established)
         self.session_state = BgpSessionState::Connect;
-        console_debug!(self.status_tx, "[DEBUG] BGP session {} in Connect state", self.connection_id);
+        debug!("BGP session {} in Connect state", self.connection_id);
+        let _ = self.status_tx.send(format!("[DEBUG] BGP session {} in Connect state", self.connection_id));
 
         // Main message processing loop
         loop {
@@ -165,18 +169,21 @@ impl BgpSession {
             match self.stream.read_exact(&mut header_buf).await {
                 Ok(_) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                    console_debug!(self.status_tx, "[DEBUG] BGP connection {} closed by peer", self.connection_id);
+                    debug!("BGP connection {} closed by peer", self.connection_id);
+                    let _ = self.status_tx.send(format!("[DEBUG] BGP connection {} closed by peer", self.connection_id));
                     break;
                 }
                 Err(e) => {
-                    console_error!(self.status_tx, "[ERROR] BGP read error: {}", e);
+                    error!("BGP read error: {}", e);
+                    let _ = self.status_tx.send(format!("[ERROR] BGP read error: {}", e));
                     break;
                 }
             };
 
             // Validate marker
             if &header_buf[0..16] != &BGP_MARKER {
-                console_error!(self.status_tx, "[ERROR] BGP invalid marker");
+                error!("BGP invalid marker");
+                let _ = self.status_tx.send(format!("[ERROR] BGP invalid marker"));
                 self.send_notification(1, 1, &[]).await?; // Message Header Error - Connection Not Synchronized
                 break;
             }
@@ -184,7 +191,8 @@ impl BgpSession {
             // Parse message length
             let msg_len = u16::from_be_bytes([header_buf[16], header_buf[17]]) as usize;
             if msg_len < BGP_HEADER_LEN || msg_len > 4096 {
-                console_error!(self.status_tx, "[ERROR] BGP invalid message length: {}", msg_len);
+                error!("BGP invalid message length: {}", msg_len);
+                let _ = self.status_tx.send(format!("[ERROR] BGP invalid message length: {}", msg_len));
                 self.send_notification(1, 2, &[]).await?; // Message Header Error - Bad Message Length
                 break;
             }
@@ -199,37 +207,43 @@ impl BgpSession {
                 self.stream.read_exact(&mut body_buf).await?;
             }
 
-            console_trace!(self.status_tx, "[TRACE] BGP received message type={} length={}", msg_type, msg_len);
+            trace!("BGP received message type={} length={}", msg_type, msg_len);
+            let _ = self.status_tx.send(format!("[TRACE] BGP received message type={} length={}", msg_type, msg_len));
 
             // Handle message based on type
             match msg_type {
                 BGP_MSG_OPEN => {
                     if let Err(e) = self.handle_open_message(&body_buf).await {
-                        console_error!(self.status_tx, "[ERROR] BGP OPEN handling error: {}", e);
+                        error!("BGP OPEN handling error: {}", e);
+                        let _ = self.status_tx.send(format!("[ERROR] BGP OPEN handling error: {}", e));
                         break;
                     }
                 }
                 BGP_MSG_KEEPALIVE => {
                     if let Err(e) = self.handle_keepalive_message().await {
-                        console_error!(self.status_tx, "[ERROR] BGP KEEPALIVE handling error: {}", e);
+                        error!("BGP KEEPALIVE handling error: {}", e);
+                        let _ = self.status_tx.send(format!("[ERROR] BGP KEEPALIVE handling error: {}", e));
                         break;
                     }
                 }
                 BGP_MSG_UPDATE => {
                     if let Err(e) = self.handle_update_message(&body_buf).await {
-                        console_error!(self.status_tx, "[ERROR] BGP UPDATE handling error: {}", e);
+                        error!("BGP UPDATE handling error: {}", e);
+                        let _ = self.status_tx.send(format!("[ERROR] BGP UPDATE handling error: {}", e));
                         break;
                     }
                 }
                 BGP_MSG_NOTIFICATION => {
                     if let Err(e) = self.handle_notification_message(&body_buf).await {
-                        console_error!(self.status_tx, "[ERROR] BGP NOTIFICATION handling error: {}", e);
+                        error!("BGP NOTIFICATION handling error: {}", e);
+                        let _ = self.status_tx.send(format!("[ERROR] BGP NOTIFICATION handling error: {}", e));
                     }
                     // NOTIFICATION closes the connection
                     break;
                 }
                 _ => {
-                    console_warn!(self.status_tx, "[WARN] BGP unsupported message type: {}", msg_type);
+                    warn!("BGP unsupported message type: {}", msg_type);
+                    let _ = self.status_tx.send(format!("[WARN] BGP unsupported message type: {}", msg_type));
                     self.send_notification(1, 3, &[msg_type]).await?; // Message Header Error - Bad Message Type
                     break;
                 }
@@ -252,7 +266,12 @@ impl BgpSession {
         let bgp_identifier = format!("{}.{}.{}.{}", body[5], body[6], body[7], body[8]);
         let _opt_param_len = body[9] as usize;
 
-        console_info!(self.status_tx, "[INFO] BGP OPEN: AS={}, hold_time={}s, router_id={}");
+        info!("BGP OPEN received: version={}, AS={}, hold_time={}, router_id={}",
+              version, peer_as, hold_time, bgp_identifier);
+        let _ = self.status_tx.send(format!(
+            "[INFO] BGP OPEN: AS={}, hold_time={}s, router_id={}",
+            peer_as, hold_time, bgp_identifier
+        ));
 
         // Validate version
         if version != BGP_VERSION {
@@ -276,7 +295,8 @@ impl BgpSession {
 
         // Transition to OpenSent (we'll send OPEN in response)
         self.session_state = BgpSessionState::OpenSent;
-        console_debug!(self.status_tx, "[DEBUG] BGP session transitioned to OpenSent");
+        debug!("BGP session {} transitioned to OpenSent", self.connection_id);
+        let _ = self.status_tx.send(format!("[DEBUG] BGP session transitioned to OpenSent"));
 
         // Ask LLM how to respond
         let event = Event {
@@ -304,7 +324,8 @@ impl BgpSession {
                 self.send_open_message().await?;
             }
             Err(e) => {
-                console_error!(self.status_tx, "[ERROR] LLM call failed: {}", e);
+                error!("LLM call failed for BGP OPEN: {}", e);
+                let _ = self.status_tx.send(format!("[ERROR] LLM call failed: {}", e));
                 // Send default OPEN response
                 self.send_open_message().await?;
             }
@@ -315,14 +336,20 @@ impl BgpSession {
 
     /// Handle BGP KEEPALIVE message
     async fn handle_keepalive_message(&mut self) -> Result<()> {
-        console_debug!(self.status_tx, "[DEBUG] BGP KEEPALIVE received");
+        debug!("BGP KEEPALIVE received from {}", self.remote_addr);
+        let _ = self.status_tx.send(format!("[DEBUG] BGP KEEPALIVE received"));
 
         // Update FSM state
         match self.session_state {
             BgpSessionState::OpenConfirm => {
                 // Transition to Established
                 self.session_state = BgpSessionState::Established;
-                console_info!(self.status_tx, "✓ BGP session {} established with AS{}");
+                info!("BGP session {} established with AS{}", self.connection_id, self.peer_as.unwrap_or(0));
+                let _ = self.status_tx.send(format!(
+                    "✓ BGP session {} established with AS{}",
+                    self.connection_id,
+                    self.peer_as.unwrap_or(0)
+                ));
             }
             BgpSessionState::Established => {
                 // Just a keepalive to maintain the session
@@ -345,7 +372,8 @@ impl BgpSession {
             return Err(anyhow!("UPDATE received in non-Established state"));
         }
 
-        console_trace!(self.status_tx, "[TRACE] BGP UPDATE received: {} bytes", body.len());
+        trace!("BGP UPDATE received: {} bytes", body.len());
+        let _ = self.status_tx.send(format!("[TRACE] BGP UPDATE received: {} bytes", body.len()));
 
         // Parse UPDATE message (simplified)
         // Full parsing would require extensive path attribute handling
@@ -372,7 +400,8 @@ impl BgpSession {
                 // Actions are executed automatically by the action system
             }
             Err(e) => {
-                console_error!(self.status_tx, "[ERROR] LLM call failed: {}", e);
+                error!("LLM call failed for BGP UPDATE: {}", e);
+                let _ = self.status_tx.send(format!("[ERROR] LLM call failed: {}", e));
             }
         }
 
@@ -389,7 +418,11 @@ impl BgpSession {
         let error_subcode = body[1];
         let data = if body.len() > 2 { &body[2..] } else { &[] };
 
-        console_error!(self.status_tx, "[ERROR] BGP NOTIFICATION: code={}, subcode={}");
+        error!("BGP NOTIFICATION received: code={}, subcode={}", error_code, error_subcode);
+        let _ = self.status_tx.send(format!(
+            "[ERROR] BGP NOTIFICATION: code={}, subcode={}",
+            error_code, error_subcode
+        ));
 
         // Log to LLM
         let event = Event {
@@ -451,11 +484,13 @@ impl BgpSession {
         self.stream.write_all(&msg).await?;
         self.stream.flush().await?;
 
-        console_info!(self.status_tx, "[INFO] BGP OPEN sent: AS={}, hold_time={}s", self.local_as, self.hold_time);
+        info!("BGP OPEN sent: AS={}, hold_time={}", self.local_as, self.hold_time);
+        let _ = self.status_tx.send(format!("[INFO] BGP OPEN sent: AS={}, hold_time={}s", self.local_as, self.hold_time));
 
         // Transition to OpenConfirm
         self.session_state = BgpSessionState::OpenConfirm;
-        console_debug!(self.status_tx, "[DEBUG] BGP session transitioned to OpenConfirm");
+        debug!("BGP session {} transitioned to OpenConfirm", self.connection_id);
+        let _ = self.status_tx.send(format!("[DEBUG] BGP session transitioned to OpenConfirm"));
 
         Ok(())
     }
@@ -473,7 +508,8 @@ impl BgpSession {
         self.stream.write_all(&msg).await?;
         self.stream.flush().await?;
 
-        console_trace!(self.status_tx, "[TRACE] BGP KEEPALIVE sent");
+        trace!("BGP KEEPALIVE sent");
+        let _ = self.status_tx.send(format!("[TRACE] BGP KEEPALIVE sent"));
 
         Ok(())
     }
@@ -500,7 +536,8 @@ impl BgpSession {
         self.stream.write_all(&msg).await?;
         self.stream.flush().await?;
 
-        console_error!(self.status_tx, "[ERROR] BGP NOTIFICATION sent: code={}, subcode={}", error_code, error_subcode);
+        error!("BGP NOTIFICATION sent: code={}, subcode={}", error_code, error_subcode);
+        let _ = self.status_tx.send(format!("[ERROR] BGP NOTIFICATION sent: code={}, subcode={}", error_code, error_subcode));
 
         Ok(())
     }

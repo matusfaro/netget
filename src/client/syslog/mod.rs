@@ -23,7 +23,6 @@ use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 
 use crate::client::syslog::actions::SYSLOG_CLIENT_CONNECTED_EVENT;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Syslog facilities (RFC 5424)
 fn facility_to_number(facility: &str) -> Result<u8> {
@@ -174,8 +173,8 @@ impl SyslogClient {
 
         // Update client state
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        console_info!(status_tx, "[CLIENT] Syslog client {} connected via {}", client_id, protocol.to_uppercase());
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send(format!("[CLIENT] Syslog client {} connected via {}", client_id, protocol.to_uppercase()));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Call LLM with connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -267,7 +266,12 @@ impl SyslogClient {
                     }
                 }
 
-                console_info!(status_tx, "[CLIENT] Syslog {} sent: [{}:{}] {}");
+                info!("Syslog client {} sent message: facility={}, severity={}, msg={}",
+                    client_id, facility, severity, message);
+                let _ = status_tx.send(format!(
+                    "[CLIENT] Syslog {} sent: [{}:{}] {}",
+                    client_id, facility, severity, message
+                ));
 
                 Ok(())
             }

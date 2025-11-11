@@ -121,14 +121,16 @@ impl TorRelayServer {
             .local_addr()
             .context("Failed to get local address")?;
 
-        console_info!(status_tx, "[INFO] Tor Relay (OR protocol) server listening on {}", actual_addr);
+        info!("Tor Relay server listening on {}", actual_addr);
+        let _ = status_tx.send(format!("[INFO] Tor Relay (OR protocol) server listening on {}", actual_addr));
 
         // Create circuit manager (shared across all connections)
         let circuit_manager = Arc::new(CircuitManager::new());
 
         // Log relay identity
         let fingerprint = circuit_manager.identity_fingerprint();
-        console_info!(status_tx, "[INFO] Relay fingerprint: {}", hex::encode(fingerprint));
+        info!("Relay identity fingerprint: {}", hex::encode(fingerprint));
+        let _ = status_tx.send(format!("[INFO] Relay fingerprint: {}", hex::encode(fingerprint)));
 
         let protocol = Arc::new(TorRelayProtocol::new());
 
@@ -140,7 +142,8 @@ impl TorRelayServer {
                         let connection_id = crate::server::connection::ConnectionId::new(
                             app_state.get_next_unified_id().await
                         );
-                        console_debug!(status_tx, "[DEBUG] Tor Relay connection {} from {}", connection_id, remote_addr);
+                        debug!("Tor Relay connection {} from {}", connection_id, remote_addr);
+                        let _ = status_tx.send(format!("[DEBUG] Tor Relay connection {} from {}", connection_id, remote_addr));
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -195,7 +198,6 @@ impl TorRelayServer {
 /// Generate self-signed TLS certificate for OR protocol
 fn generate_tls_certificate() -> Result<(CertificateDer<'static>, PrivateKeyDer<'static>)> {
     use rcgen::{CertificateParams, KeyPair};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
     let mut params = CertificateParams::new(vec!["tor-relay.local".to_string()])?;
     params.distinguished_name = rcgen::DistinguishedName::new();
@@ -229,11 +231,13 @@ async fn handle_tor_relay_connection(
     // Perform TLS handshake
     let tls_stream = match acceptor.accept(stream).await {
         Ok(s) => {
-            console_debug!(status_tx, "→ TLS handshake completed for {}", remote_addr);
+            debug!("TLS handshake completed for {}", remote_addr);
+            let _ = status_tx.send(format!("→ TLS handshake completed for {}", remote_addr));
             s
         }
         Err(e) => {
-            console_warn!(status_tx, "✗ TLS handshake failed for {}: {}", remote_addr, e);
+            warn!("TLS handshake failed for {}: {}", remote_addr, e);
+            let _ = status_tx.send(format!("✗ TLS handshake failed for {}: {}", remote_addr, e));
             return Err(e.into());
         }
     };
@@ -322,7 +326,11 @@ impl TorRelaySession {
                         }
                         Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                             // Connection closed
-                            console_debug!(self.status_tx, "→ Tor Relay connection closed by {}");
+                            debug!("Tor Relay connection closed by {}", self.remote_addr);
+                            let _ = self.status_tx.send(format!(
+                                "→ Tor Relay connection closed by {}",
+                                self.remote_addr
+                            ));
                             return Ok(());
                         }
                         Err(e) => {
@@ -397,11 +405,14 @@ impl TorRelaySession {
         // Perform ntor handshake via circuit manager
         let (y, auth) = self.circuit_manager.handle_create2(circuit_id, client_x).await?;
 
-        console_info!(self.status_tx, "[INFO] Circuit {} created", circuit_id.as_u32());
+        info!("Circuit {} created successfully", circuit_id.as_u32());
+        let _ = self.status_tx.send(format!("[INFO] Circuit {} created", circuit_id.as_u32()));
 
         // Log relay statistics
         let stats = self.circuit_manager.get_relay_stats().await;
-        console_info!(self.status_tx, "[DEBUG] Relay stats: {} circuits, {} streams, sent={} received={}", stats.total_circuits, stats.total_streams, stats.total_bytes_sent, stats.total_bytes_received);
+        let _ = self.status_tx.send(format!("[DEBUG] Relay stats: {} circuits, {} streams, sent={} received={}",
+            stats.total_circuits, stats.total_streams,
+            stats.total_bytes_sent, stats.total_bytes_received));
 
         // Send event to LLM
         let event = Event::new(
@@ -568,7 +579,8 @@ impl TorRelaySession {
         // Parse target address
         let target = parse_begin_target(data)?;
 
-        console_info!(self.status_tx, "[INFO] BEGIN stream {} → {}", stream_id.as_u16(), target);
+        info!("BEGIN stream {} on circuit {} to {}", stream_id.as_u16(), circuit_id.as_u32(), target);
+        let _ = self.status_tx.send(format!("[INFO] BEGIN stream {} → {}", stream_id.as_u16(), target));
 
         // Create stream in circuit manager
         self.circuit_manager.create_stream(circuit_id, stream_id, target.clone()).await?;
@@ -576,7 +588,8 @@ impl TorRelaySession {
         // Attempt to connect to target
         match connect_to_target(&target).await {
             Ok(tcp_stream) => {
-                console_info!(self.status_tx, "→ Connected to {} for stream {}", target, stream_id.as_u16());
+                info!("Connected to {} for stream {}", target, stream_id.as_u16());
+                let _ = self.status_tx.send(format!("→ Connected to {} for stream {}", target, stream_id.as_u16()));
 
                 // Store TCP connection in stream
                 self.circuit_manager.set_stream_active(circuit_id, stream_id, tcp_stream).await?;
@@ -602,7 +615,8 @@ impl TorRelaySession {
                 Ok(Some(encrypted))
             }
             Err(e) => {
-                console_error!(self.status_tx, "✗ Failed to connect to {}: {}", target, e);
+                error!("Failed to connect to {}: {}", target, e);
+                let _ = self.status_tx.send(format!("✗ Failed to connect to {}: {}", target, e));
 
                 // Close stream
                 let _ = self.circuit_manager.close_stream(circuit_id, stream_id).await;
@@ -691,7 +705,8 @@ impl TorRelaySession {
     async fn handle_end_cell(&mut self, circuit_id: CircuitId, stream_id: StreamId, data: &[u8]) -> Result<Option<Vec<u8>>> {
         let reason = if data.is_empty() { end_reason::DONE } else { data[0] };
 
-        console_debug!(self.status_tx, "[DEBUG] END stream {} (reason: {})", stream_id.as_u16(), reason);
+        debug!("END stream {} (reason: {})", stream_id.as_u16(), reason);
+        let _ = self.status_tx.send(format!("[DEBUG] END stream {} (reason: {})", stream_id.as_u16(), reason));
 
         // Close stream
         let _ = self.circuit_manager.close_stream(circuit_id, stream_id).await;
@@ -789,7 +804,7 @@ impl TorRelaySession {
 
             // Close stream
             let _ = circuit_mgr.close_stream(circuit_id, stream_id).await;
-            console_debug!(status_tx, "[DEBUG] Stream {} closed", stream_id.as_u16());
+            let _ = status_tx.send(format!("[DEBUG] Stream {} closed", stream_id.as_u16()));
         });
 
         Ok(())

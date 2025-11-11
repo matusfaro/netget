@@ -60,11 +60,12 @@ impl TurnClient {
 
         let local_addr = socket.local_addr()?;
 
+        info!("TURN client {} bound to {} (server: {})", client_id, local_addr, remote_sock_addr);
 
         // Update client state
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        console_info!(status_tx, "[CLIENT] TURN client {} connected to {}", client_id, remote_sock_addr);
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send(format!("[CLIENT] TURN client {} connected to {}", client_id, remote_sock_addr));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Send initial connected event to LLM
         let protocol = Arc::new(crate::client::turn::actions::TurnClientProtocol::new());
@@ -297,7 +298,6 @@ impl TurnClient {
         client_id: ClientId,
     ) -> Result<()> {
         use crate::llm::actions::client_trait::ClientActionResult;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         match action_result {
             ClientActionResult::Custom { name, data } => {
@@ -310,7 +310,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                         let message = Self::build_allocate_request(lifetime as u32)?;
                         socket.send_to(&message, remote_addr).await?;
 
-                        console_debug!(status_tx, "[DEBUG] TURN Allocate request sent ({}s lifetime)", lifetime);
+                        debug!("TURN client {} sent Allocate request (lifetime: {}s)", client_id, lifetime);
+                        let _ = status_tx.send(format!("[DEBUG] TURN Allocate request sent ({}s lifetime)", lifetime));
                     }
                     "create_permission" => {
                         let peer_address = data.get("peer_address")
@@ -323,7 +324,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                         let message = Self::build_create_permission_request(peer_addr)?;
                         socket.send_to(&message, remote_addr).await?;
 
-                        console_debug!(status_tx, "[DEBUG] TURN CreatePermission sent for {}", peer_addr);
+                        debug!("TURN client {} sent CreatePermission for {}", client_id, peer_addr);
+                        let _ = status_tx.send(format!("[DEBUG] TURN CreatePermission sent for {}", peer_addr));
                     }
                     "send_indication" => {
                         let peer_address = data.get("peer_address")
@@ -341,7 +343,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                         let message = Self::build_send_indication(peer_addr, &send_data)?;
                         socket.send_to(&message, remote_addr).await?;
 
-                        console_trace!(status_tx, "[DEBUG] TURN sent {} bytes to {}", send_data.len(), peer_addr);
+                        trace!("TURN client {} sent {} bytes via SendIndication to {}", client_id, send_data.len(), peer_addr);
+                        let _ = status_tx.send(format!("[DEBUG] TURN sent {} bytes to {}", send_data.len(), peer_addr));
                     }
                     "refresh" => {
                         let lifetime = data.get("lifetime_seconds")
@@ -351,7 +354,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                         let message = Self::build_refresh_request(lifetime as u32)?;
                         socket.send_to(&message, remote_addr).await?;
 
-                        console_debug!(status_tx, "[DEBUG] TURN Refresh sent ({}s lifetime)", lifetime);
+                        debug!("TURN client {} sent Refresh request (lifetime: {}s)", client_id, lifetime);
+                        let _ = status_tx.send(format!("[DEBUG] TURN Refresh sent ({}s lifetime)", lifetime));
                     }
                     _ => {
                         debug!("TURN client {} unknown custom action: {}", client_id, name);
@@ -363,7 +367,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                 let message = Self::build_refresh_request(0)?;
                 socket.send_to(&message, remote_addr).await?;
 
-                console_info!(status_tx, "[INFO] TURN client {} disconnecting", client_id);
+                info!("TURN client {} disconnecting (sent Refresh with lifetime=0)", client_id);
+                let _ = status_tx.send(format!("[INFO] TURN client {} disconnecting", client_id));
             }
             _ => {}
         }

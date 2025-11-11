@@ -60,11 +60,12 @@ impl DhcpClient {
 
         let local_addr = socket.local_addr()?;
 
-        console_info!(status_tx, "[CLIENT] DHCP client {} connected, targeting server {}", client_id, server_addr);
+        info!("DHCP client {} bound to {}, targeting server {}", client_id, local_addr, server_addr);
+        let _ = status_tx.send(format!("[CLIENT] DHCP client {} connected, targeting server {}", client_id, server_addr));
 
         // Update client status
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Initialize client data
         let client_data = Arc::new(Mutex::new(ClientData {
@@ -493,7 +494,6 @@ impl DhcpClient {
     #[cfg(feature = "dhcp")]
     fn parse_dhcp_response(data: &[u8]) -> Option<(String, serde_json::Value)> {
         use std::net::Ipv4Addr;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         match v4::Message::decode(&mut Decoder::new(data)) {
             Ok(msg) => {

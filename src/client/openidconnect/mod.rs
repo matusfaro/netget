@@ -57,8 +57,8 @@ impl OpenIdConnectClient {
 
         // Update status
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        console_info!(status_tx, "[CLIENT] OpenID Connect client {} ready for {}", client_id, remote_addr);
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send(format!("[CLIENT] OpenID Connect client {} ready for {}", client_id, remote_addr));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Spawn background task to handle LLM-requested actions
         let app_state_clone = app_state.clone();
@@ -92,7 +92,8 @@ impl OpenIdConnectClient {
                 &instruction,
                 protocol,
             ).await {
-                console_error!(status_tx, "[ERROR] Failed to discover OIDC configuration: {}", e);
+                error!("Failed to discover OIDC configuration: {}", e);
+                let _ = status_tx.send(format!("[ERROR] Failed to discover OIDC configuration: {}", e));
             }
         }
 
@@ -123,7 +124,7 @@ impl OpenIdConnectClient {
         .await
         .context("Failed to discover OIDC provider metadata")?;
 
-        console_info!(status_tx, "[CLIENT] Discovered OIDC provider: {}", issuer_url.as_str());
+        let _ = status_tx.send(format!("[CLIENT] Discovered OIDC provider: {}", issuer_url.as_str()));
 
         // Store provider metadata
         app_state.with_client_mut(client_id, |client| {
@@ -179,7 +180,8 @@ impl OpenIdConnectClient {
                         status_tx,
                         protocol.clone(),
                     ).await {
-                        console_error!(status_tx, "[ERROR] OIDC action failed: {}", e);
+                        error!("Failed to execute OIDC action: {}", e);
+                        let _ = status_tx.send(format!("[ERROR] OIDC action failed: {}", e));
                     }
                 }
             }
@@ -293,7 +295,7 @@ impl OpenIdConnectClient {
         status_tx: &mpsc::UnboundedSender<String>,
         protocol: Arc<OpenIdConnectClientProtocol>,
     ) -> Result<()> {
-        console_info!(status_tx, "[CLIENT] Starting device code flow for client {}", client_id);
+        let _ = status_tx.send(format!("[CLIENT] Starting device code flow for client {}", client_id));
 
         // Get provider metadata and client config
         let (provider_url, oidc_client_id, oidc_client_secret) = app_state.with_client_mut(client_id, |client| {
@@ -322,7 +324,7 @@ impl OpenIdConnectClient {
 
         // Construct device authorization endpoint URL (typically /device/code or /device/authorize)
         let device_auth_url = format!("{}/device/code", issuer_url.as_str().trim_end_matches('/'));
-        console_info!(status_tx, "[CLIENT] Device authorization endpoint: {}", device_auth_url);
+        let _ = status_tx.send(format!("[CLIENT] Device authorization endpoint: {}", device_auth_url));
 
         // Build request body
         let mut params = vec![
@@ -380,17 +382,17 @@ impl OpenIdConnectClient {
             .unwrap_or(300);
 
         // Display device code and verification URL to user
-        console_info!(status_tx, "========================================");
-        console_info!(status_tx, "[CLIENT] Device Code Flow - User Action Required");
-        console_info!(status_tx, "========================================");
-        console_info!(status_tx, "[CLIENT] 1. Open this URL in your browser:");
-        console_info!(status_tx, "[CLIENT]    {}", verification_uri);
+        let _ = status_tx.send("========================================".to_string());
+        let _ = status_tx.send("[CLIENT] Device Code Flow - User Action Required".to_string());
+        let _ = status_tx.send("========================================".to_string());
+        let _ = status_tx.send("[CLIENT] 1. Open this URL in your browser:".to_string());
+        let _ = status_tx.send(format!("[CLIENT]    {}", verification_uri));
         if let Some(complete_uri) = verification_uri_complete {
-            console_info!(status_tx, "[CLIENT]    Or use this direct link: {}", complete_uri);
+            let _ = status_tx.send(format!("[CLIENT]    Or use this direct link: {}", complete_uri));
         }
-        console_info!(status_tx, "[CLIENT] 2. Enter this code: {}", user_code);
-        console_info!(status_tx, "========================================");
-        console_info!(status_tx, "[CLIENT] Waiting for authorization...");
+        let _ = status_tx.send(format!("[CLIENT] 2. Enter this code: {}", user_code));
+        let _ = status_tx.send("========================================".to_string());
+        let _ = status_tx.send("[CLIENT] Waiting for authorization...".to_string());
 
         // Get token endpoint
         let token_endpoint = provider_metadata.token_endpoint()
@@ -543,7 +545,7 @@ impl OpenIdConnectClient {
             .and_then(|v| v.as_str())
             .unwrap_or("Bearer");
 
-        console_info!(status_tx, "[CLIENT] Received tokens (expires_in: {:?}s)", expires_in);
+        let _ = status_tx.send(format!("[CLIENT] Received tokens (expires_in: {:?}s)", expires_in));
 
         // Store tokens
         app_state.with_client_mut(client_id, |client| {
@@ -621,7 +623,7 @@ impl OpenIdConnectClient {
         use tokio::net::TcpListener;
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-        console_info!(status_tx, "[CLIENT] Starting authorization code flow for client {}", client_id);
+        let _ = status_tx.send(format!("[CLIENT] Starting authorization code flow for client {}", client_id));
 
         // Get provider metadata and client config
         let (provider_url, oidc_client_id, oidc_client_secret) = app_state.with_client_mut(client_id, |client| {
@@ -677,21 +679,21 @@ impl OpenIdConnectClient {
         );
 
         // Display authorization URL
-        console_info!(status_tx, "========================================");
-        console_info!(status_tx, "[CLIENT] Authorization Code Flow - User Action Required");
-        console_info!(status_tx, "========================================");
-        console_info!(status_tx, "[CLIENT] 1. Open this URL in your browser:");
-        console_info!(status_tx, "[CLIENT]    {}", auth_url);
-        console_info!(status_tx, "[CLIENT] 2. After authorization, the browser will redirect to localhost:{}", callback_port);
-        console_info!(status_tx, "========================================");
-        console_info!(status_tx, "[CLIENT] Starting local callback server on port {}...", callback_port);
+        let _ = status_tx.send("========================================".to_string());
+        let _ = status_tx.send("[CLIENT] Authorization Code Flow - User Action Required".to_string());
+        let _ = status_tx.send("========================================".to_string());
+        let _ = status_tx.send("[CLIENT] 1. Open this URL in your browser:".to_string());
+        let _ = status_tx.send(format!("[CLIENT]    {}", auth_url));
+        let _ = status_tx.send(format!("[CLIENT] 2. After authorization, the browser will redirect to localhost:{}", callback_port));
+        let _ = status_tx.send("========================================".to_string());
+        let _ = status_tx.send(format!("[CLIENT] Starting local callback server on port {}...", callback_port));
 
         // Start local HTTP server
         let listener = TcpListener::bind(format!("127.0.0.1:{}", callback_port)).await
             .context(format!("Failed to bind to port {}. Port may be in use.", callback_port))?;
 
-        console_info!(status_tx, "[CLIENT] Callback server listening on http://127.0.0.1:{}/callback", callback_port);
-        console_info!(status_tx, "[CLIENT] Waiting for authorization...");
+        let _ = status_tx.send(format!("[CLIENT] Callback server listening on http://127.0.0.1:{}/callback", callback_port));
+        let _ = status_tx.send("[CLIENT] Waiting for authorization...".to_string());
 
         // Get token endpoint
         let token_endpoint = provider_metadata.token_endpoint()
@@ -852,7 +854,7 @@ impl OpenIdConnectClient {
             .and_then(|v| v.as_str())
             .unwrap_or("openid");
 
-        console_info!(status_tx, "[CLIENT] Exchanging password for tokens (user: {})", username);
+        let _ = status_tx.send(format!("[CLIENT] Exchanging password for tokens (user: {})", username));
 
         // Get client config and provider metadata
         let (oidc_client_id, oidc_client_secret, provider_url) = app_state.with_client_mut(client_id, |client| {
@@ -932,7 +934,7 @@ impl OpenIdConnectClient {
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
-        console_info!(status_tx, "[CLIENT] Exchanging client credentials for access token");
+        let _ = status_tx.send("[CLIENT] Exchanging client credentials for access token".to_string());
 
         // Get client config and provider metadata
         let (oidc_client_id, oidc_client_secret, provider_url) = app_state.with_client_mut(client_id, |client| {
@@ -998,7 +1000,7 @@ impl OpenIdConnectClient {
         status_tx: &mpsc::UnboundedSender<String>,
         protocol: Arc<OpenIdConnectClientProtocol>,
     ) -> Result<()> {
-        console_info!(status_tx, "[CLIENT] Refreshing access token");
+        let _ = status_tx.send("[CLIENT] Refreshing access token".to_string());
 
         // Get refresh token and client config
         let (refresh_token_str, oidc_client_id, oidc_client_secret, provider_url) = app_state.with_client_mut(client_id, |client| {
@@ -1066,7 +1068,7 @@ impl OpenIdConnectClient {
         status_tx: &mpsc::UnboundedSender<String>,
         protocol: Arc<OpenIdConnectClientProtocol>,
     ) -> Result<()> {
-        console_info!(status_tx, "[CLIENT] Fetching UserInfo");
+        let _ = status_tx.send("[CLIENT] Fetching UserInfo".to_string());
 
         // Get access token and provider metadata
         let (access_token_str, oidc_client_id, oidc_client_secret, provider_url) = app_state.with_client_mut(client_id, |client| {
@@ -1107,7 +1109,6 @@ impl OpenIdConnectClient {
         };
 
         use openidconnect::AccessToken;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
         let userinfo: CoreUserInfoClaims = client
             .user_info(AccessToken::new(access_token_str), None)
             .context("UserInfo endpoint not available")?
@@ -1115,7 +1116,7 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
             .await
             .context("Failed to fetch UserInfo")?;
 
-        console_info!(status_tx, "[CLIENT] Received UserInfo for subject: {:?}", userinfo.subject());
+        let _ = status_tx.send(format!("[CLIENT] Received UserInfo for subject: {:?}", userinfo.subject()));
 
         // Call LLM with userinfo event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -1168,7 +1169,7 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
         let expires_in = token_response.expires_in().map(|d| d.as_secs());
         let token_type = token_response.token_type().as_ref();
 
-        console_info!(status_tx, "[CLIENT] Received tokens (expires_in: {:?}s)", expires_in);
+        let _ = status_tx.send(format!("[CLIENT] Received tokens (expires_in: {:?}s)", expires_in));
 
         // Store tokens
         app_state.with_client_mut(client_id, |client| {

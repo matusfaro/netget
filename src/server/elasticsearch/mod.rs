@@ -39,7 +39,8 @@ impl ElasticsearchServer {
     ) -> anyhow::Result<SocketAddr> {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        console_info!(status_tx, "[INFO] Elasticsearch server listening on {}", local_addr);
+        info!("Elasticsearch server listening on {}", local_addr);
+        let _ = status_tx.send(format!("[INFO] Elasticsearch server listening on {}", local_addr));
 
         let protocol = Arc::new(ElasticsearchProtocol::new());
 
@@ -50,11 +51,11 @@ impl ElasticsearchServer {
                     Ok((stream, remote_addr)) => {
                         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        console_info!(status_tx, "[INFO] Elasticsearch connection from {}", remote_addr);
+                        info!("Elasticsearch connection {} from {}", connection_id, remote_addr);
+                        let _ = status_tx.send(format!("[INFO] Elasticsearch connection from {}", remote_addr));
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -70,7 +71,7 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        console_info!(status_tx, "__UPDATE_UI__");
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let llm_client_clone = llm_client.clone();
                         let app_state_clone = app_state.clone();
@@ -114,7 +115,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "[ERROR] Failed to accept Elasticsearch connection: {}", e);
+                        error!("Failed to accept Elasticsearch connection: {}", e);
+                        let _ = status_tx.send(format!("[ERROR] Failed to accept Elasticsearch connection: {}", e));
                         break;
                     }
                 }
@@ -144,7 +146,8 @@ async fn handle_elasticsearch_request_with_llm(
     let body_bytes = match req.into_body().collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
-            console_error!(status_tx, "[ERROR] Failed to read Elasticsearch request body: {}", e);
+            error!("Failed to read Elasticsearch request body: {}", e);
+            let _ = status_tx.send(format!("[ERROR] Failed to read Elasticsearch request body: {}", e));
             Bytes::new()
         }
     };
@@ -157,12 +160,16 @@ async fn handle_elasticsearch_request_with_llm(
         uri,
         body_bytes.len()
     );
-    console_debug!(status_tx, "[DEBUG] Elasticsearch {} {} ({} bytes)");
+    let _ = status_tx.send(format!(
+        "[DEBUG] Elasticsearch {} {} ({} bytes)",
+        method, path, body_bytes.len()
+    ));
 
     // Detect operation type from path and method
     let (operation, index, doc_id) = detect_elasticsearch_operation(&method, &path);
 
-    console_trace!(status_tx, "[TRACE] Elasticsearch request: {}", body_str);
+    trace!("Elasticsearch request body: {}", body_str);
+    let _ = status_tx.send(format!("[TRACE] Elasticsearch request: {}", body_str));
 
     // Create Elasticsearch request event
     let event = crate::protocol::Event::new(
@@ -202,8 +209,10 @@ async fn handle_elasticsearch_request_with_llm(
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("{}");
 
-                            console_debug!(status_tx, "[DEBUG] Elasticsearch → {} response", status);
-                            console_trace!(status_tx, "[TRACE] Elasticsearch response: {}", body);
+                            debug!("Elasticsearch response: status={}", status);
+                            let _ = status_tx.send(format!("[DEBUG] Elasticsearch → {} response", status));
+                            trace!("Elasticsearch response body: {}", body);
+                            let _ = status_tx.send(format!("[TRACE] Elasticsearch response: {}", body));
 
                             return Ok(Response::builder()
                                 .status(status)
@@ -233,7 +242,8 @@ async fn handle_elasticsearch_request_with_llm(
                 .unwrap())
         }
         Err(e) => {
-            console_error!(status_tx, "[ERROR] LLM error for Elasticsearch request: {}", e);
+            error!("LLM error for Elasticsearch request: {}", e);
+            let _ = status_tx.send(format!("[ERROR] LLM error for Elasticsearch request: {}", e));
 
             let error_response = serde_json::json!({
                 "error": {

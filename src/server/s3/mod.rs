@@ -39,7 +39,8 @@ impl S3Server {
     ) -> anyhow::Result<SocketAddr> {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        console_info!(status_tx, "[INFO] S3 server listening on {}", local_addr);
+        info!("S3 server listening on {}", local_addr);
+        let _ = status_tx.send(format!("[INFO] S3 server listening on {}", local_addr));
 
         let protocol = Arc::new(S3Protocol::new());
 
@@ -50,11 +51,11 @@ impl S3Server {
                     Ok((stream, remote_addr)) => {
                         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        console_info!(status_tx, "[INFO] S3 connection from {}", remote_addr);
+                        info!("S3 connection {} from {}", connection_id, remote_addr);
+                        let _ = status_tx.send(format!("[INFO] S3 connection from {}", remote_addr));
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -70,7 +71,7 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        console_info!(status_tx, "__UPDATE_UI__");
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let llm_client_clone = llm_client.clone();
                         let app_state_clone = app_state.clone();
@@ -114,7 +115,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "[ERROR] Failed to accept S3 connection: {}", e);
+                        error!("Failed to accept S3 connection: {}", e);
+                        let _ = status_tx.send(format!("[ERROR] Failed to accept S3 connection: {}", e));
                         break;
                     }
                 }
@@ -144,19 +146,28 @@ async fn handle_s3_request_with_llm(
     // Path format: / (list buckets), /bucket (bucket ops), /bucket/key (object ops)
     let (bucket, key, operation) = parse_s3_path(&method, &path);
 
-    console_debug!(status_tx, "[DEBUG] S3 {} {} operation={}");
+    debug!(
+        "S3 request: {} {} bucket={:?} key={:?} operation={}",
+        method, path, bucket, key, operation
+    );
+    let _ = status_tx.send(format!(
+        "[DEBUG] S3 {} {} operation={}",
+        method, path, operation
+    ));
 
     // Read request body (for PUT operations)
     let body_bytes = match req.into_body().collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
-            console_error!(status_tx, "[ERROR] Failed to read S3 request body: {}", e);
+            error!("Failed to read S3 request body: {}", e);
+            let _ = status_tx.send(format!("[ERROR] Failed to read S3 request body: {}", e));
             Bytes::new()
         }
     };
 
     if !body_bytes.is_empty() {
-        console_trace!(status_tx, "[TRACE] S3 request body: {} bytes", body_bytes.len());
+        trace!("S3 request body ({} bytes)", body_bytes.len());
+        let _ = status_tx.send(format!("[TRACE] S3 request body: {} bytes", body_bytes.len()));
     }
 
     // Create S3 request event
@@ -202,7 +213,8 @@ async fn handle_s3_request_with_llm(
                 .unwrap())
         }
         Err(e) => {
-            console_error!(status_tx, "[ERROR] LLM error: {}", e);
+            error!("LLM error handling S3 request: {}", e);
+            let _ = status_tx.send(format!("[ERROR] LLM error: {}", e));
 
             // Return 500 error
             Ok(Response::builder()
@@ -285,7 +297,8 @@ async fn process_s3_action_result(
                         .and_then(|v| v.as_str())
                         .unwrap_or("\"default-etag\"");
 
-                    console_debug!(status_tx, "[DEBUG] → S3 object {} bytes", content.len());
+                    debug!("Sending S3 object ({} bytes, {})", content.len(), content_type);
+                    let _ = status_tx.send(format!("[DEBUG] → S3 object {} bytes", content.len()));
 
                     Ok(Response::builder()
                         .status(StatusCode::OK)
@@ -307,7 +320,8 @@ async fn process_s3_action_result(
 
                     let xml = build_list_objects_xml(&objects, is_truncated);
 
-                    console_debug!(status_tx, "[DEBUG] → S3 object list: {} objects", objects.len());
+                    debug!("Sending S3 object list ({} objects)", objects.len());
+                    let _ = status_tx.send(format!("[DEBUG] → S3 object list: {} objects", objects.len()));
 
                     Ok(Response::builder()
                         .status(StatusCode::OK)
@@ -324,7 +338,8 @@ async fn process_s3_action_result(
 
                     let xml = build_list_buckets_xml(&buckets);
 
-                    console_debug!(status_tx, "[DEBUG] → S3 bucket list: {} buckets", buckets.len());
+                    debug!("Sending S3 bucket list ({} buckets)", buckets.len());
+                    let _ = status_tx.send(format!("[DEBUG] → S3 bucket list: {} buckets", buckets.len()));
 
                     Ok(Response::builder()
                         .status(StatusCode::OK)
@@ -355,7 +370,8 @@ async fn process_s3_action_result(
                         error_code, message
                     );
 
-                    console_debug!(status_tx, "[DEBUG] → S3 error: {} {}", status_code, error_code);
+                    debug!("Sending S3 error: {} ({})", error_code, status_code);
+                    let _ = status_tx.send(format!("[DEBUG] → S3 error: {} {}", status_code, error_code));
 
                     Ok(Response::builder()
                         .status(StatusCode::from_u16(status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR))

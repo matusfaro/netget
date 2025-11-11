@@ -27,7 +27,6 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -68,11 +67,12 @@ impl ArpClient {
         status_tx: mpsc::UnboundedSender<String>,
         client_id: ClientId,
     ) -> Result<SocketAddr> {
-        console_info!(status_tx, "[CLIENT] ARP client {} starting on interface: {}", client_id, interface);
+        info!("ARP client {} starting on interface: {}", client_id, interface);
+        let _ = status_tx.send(format!("[CLIENT] ARP client {} starting on interface: {}", client_id, interface));
 
         // Update client state
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Initialize client data
         let client_data = Arc::new(Mutex::new(ClientData {

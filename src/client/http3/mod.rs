@@ -58,8 +58,11 @@ impl Http3Client {
         // Update status to connected
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
 
-        console_info!(status_tx, "[CLIENT] HTTP/3 client {} ready for {} (QUIC transport)");
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send(format!(
+            "[CLIENT] HTTP/3 client {} ready for {} (QUIC transport)",
+            client_id, remote_addr
+        ));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         info!("HTTP/3 client {} initialized successfully", client_id);
 
@@ -213,7 +216,6 @@ impl Http3Client {
         let mut body_bytes = Vec::new();
         while let Some(mut chunk) = stream.recv_data().await? {
             use bytes::Buf;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
             body_bytes.extend_from_slice(chunk.chunk());
             chunk.advance(chunk.remaining());
         }

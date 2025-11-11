@@ -30,7 +30,8 @@ impl SyslogServer {
     ) -> Result<SocketAddr> {
         let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
         let local_addr = socket.local_addr()?;
-        console_info!(status_tx, "[INFO] Syslog server listening on {}", local_addr);
+        info!("Syslog server listening on {}", local_addr);
+        let _ = status_tx.send(format!("[INFO] Syslog server listening on {}", local_addr));
 
         let protocol = Arc::new(SyslogProtocol::new());
 
@@ -60,20 +61,23 @@ impl SyslogServer {
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        console_info!(status_tx, "__UPDATE_UI__");
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         // DEBUG: Log summary
-                        console_debug!(status_tx, "[DEBUG] Syslog received {} bytes from {}", n, peer_addr);
+                        debug!("Syslog received {} bytes from {}", n, peer_addr);
+                        let _ = status_tx.send(format!("[DEBUG] Syslog received {} bytes from {}", n, peer_addr));
 
                         // TRACE: Log full payload
                         let message_str = String::from_utf8_lossy(&data);
-                        console_trace!(status_tx, "[TRACE] Syslog message: {}", message_str);
+                        trace!("Syslog message: {}", message_str);
+                        let _ = status_tx.send(format!("[TRACE] Syslog message: {}", message_str));
 
                         // Parse the syslog message
                         let parsed = match Self::parse_syslog_message(&data) {
                             Ok(p) => p,
                             Err(e) => {
-                                console_error!(status_tx, "[ERROR] Failed to parse syslog message: {}", e);
+                                error!("Failed to parse syslog message: {}", e);
+                                let _ = status_tx.send(format!("[ERROR] Failed to parse syslog message: {}", e));
                                 continue;
                             }
                         };
@@ -128,7 +132,8 @@ impl SyslogServer {
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "[ERROR] Syslog receive error: {}", e);
+                        error!("Syslog receive error: {}", e);
+                        let _ = status_tx.send(format!("[ERROR] Syslog receive error: {}", e));
                         break;
                     }
                 }
@@ -141,7 +146,6 @@ impl SyslogServer {
     /// Parse syslog message and extract relevant information
     pub fn parse_syslog_message(data: &[u8]) -> Result<ParsedSyslogInfo> {
         use syslog_loose::{parse_message, ProcId, Variant};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         // Convert bytes to string
         let message_str = String::from_utf8_lossy(data);

@@ -30,7 +30,6 @@ use ble_peripheral_rust::gatt::characteristic::Characteristic;
 use ble_peripheral_rust::gatt::properties::{CharacteristicProperty, AttributePermission};
 #[cfg(feature = "bluetooth-ble")]
 use uuid::Uuid;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -83,13 +82,15 @@ impl BluetoothBle {
         let mut peripheral = Peripheral::new(event_tx).await
             .context("Failed to create BLE peripheral")?;
 
-        console_info!(status_tx, "[INFO] Bluetooth server created for device '{}'", device_name);
+        info!("Bluetooth server created, waiting for adapter to power on");
+        let _ = status_tx.send(format!("[INFO] Bluetooth server created for device '{}'", device_name));
 
         // Wait for Bluetooth adapter to be powered on
         let mut retries = 0;
         while !peripheral.is_powered().await.unwrap_or(false) {
             if retries == 0 {
-                console_warn!(status_tx, "[WARN] Bluetooth adapter not powered on, waiting...");
+                warn!("Bluetooth adapter is not powered on, waiting...");
+                let _ = status_tx.send("[WARN] Bluetooth adapter not powered on, waiting...".to_string());
             }
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
             retries += 1;
@@ -98,7 +99,8 @@ impl BluetoothBle {
             }
         }
 
-        console_info!(status_tx, "[INFO] Bluetooth adapter powered on");
+        info!("Bluetooth adapter powered on");
+        let _ = status_tx.send("[INFO] Bluetooth adapter powered on".to_string());
 
         // Create server data
         let server_data = Arc::new(Mutex::new(ServerData {
@@ -313,7 +315,12 @@ impl BluetoothBle {
             peripheral.add_service(&service).await
                 .context("Failed to add service to peripheral")?;
 
-            console_info!(status_tx, "[INFO] Added BLE service {} with {} characteristics");
+            info!("Added BLE service {} with {} characteristics", uuid_str, chars_json.len());
+            let _ = status_tx.send(format!(
+                "[INFO] Added BLE service {} with {} characteristics",
+                uuid_str,
+                chars_json.len()
+            ));
         }
 
         Ok(())
@@ -347,7 +354,8 @@ impl BluetoothBle {
             peripheral.start_advertising(name, &service_uuids).await
                 .context("Failed to start advertising")?;
 
-            console_info!(status_tx, "[INFO] Started BLE advertising as '{}' with {} service(s)", name, service_uuids.len());
+            info!("Started BLE advertising as '{}' with {} service(s)", name, service_uuids.len());
+            let _ = status_tx.send(format!("[INFO] Started BLE advertising as '{}' with {} service(s)", name, service_uuids.len()));
         }
 
         Ok(())
@@ -364,7 +372,8 @@ impl BluetoothBle {
             peripheral.stop_advertising().await
                 .context("Failed to stop advertising")?;
 
-            console_info!(status_tx, "[INFO] Stopped BLE advertising");
+            info!("Stopped BLE advertising");
+            let _ = status_tx.send("[INFO] Stopped BLE advertising".to_string());
         }
 
         Ok(())
@@ -401,7 +410,12 @@ impl BluetoothBle {
             peripheral.update_characteristic(char_uuid, value.clone()).await
                 .context("Failed to send notification")?;
 
-            console_debug!(status_tx, "[DEBUG] Sent BLE notification on {} ({} bytes)");
+            debug!("Sent notification on {} with {} bytes", char_uuid_str, value.len());
+            let _ = status_tx.send(format!(
+                "[DEBUG] Sent BLE notification on {} ({} bytes)",
+                char_uuid_str,
+                value.len()
+            ));
         }
 
         Ok(())
@@ -421,7 +435,8 @@ impl BluetoothBle {
         while let Some(event) = event_rx.recv().await {
             match event {
                 PeripheralEvent::StateUpdate { is_powered, .. } => {
-                    console_info!(status_tx, "[INFO] Bluetooth state: powered = {}", is_powered);
+                    info!("Bluetooth state update: powered = {}", is_powered);
+                    let _ = status_tx.send(format!("[INFO] Bluetooth state: powered = {}", is_powered));
 
                     // Create event for LLM
                     let llm_event = Event::new(
@@ -445,7 +460,12 @@ impl BluetoothBle {
                 PeripheralEvent::ReadRequest { request, offset, responder } => {
                     let char_uuid_str = request.characteristic.to_string();
 
-                    console_debug!(status_tx, "[DEBUG] BLE read request on {} (offset: {})");
+                    debug!("BLE read request on characteristic {} at offset {}", char_uuid_str, offset);
+                    let _ = status_tx.send(format!(
+                        "[DEBUG] BLE read request on {} (offset: {})",
+                        char_uuid_str,
+                        offset
+                    ));
 
                     // Check current state
                     let current_state = {
@@ -533,8 +553,15 @@ impl BluetoothBle {
                     let char_uuid_str = request.characteristic.to_string();
                     let value_hex = hex::encode(&value);
 
-                    console_debug!(status_tx, "[DEBUG] BLE write request on {} ({} bytes)");
-                    console_trace!(status_tx, "[TRACE] BLE write data (hex): {}", value_hex);
+                    debug!("BLE write request on characteristic {} with {} bytes at offset {}",
+                        char_uuid_str, value.len(), offset);
+                    let _ = status_tx.send(format!(
+                        "[DEBUG] BLE write request on {} ({} bytes)",
+                        char_uuid_str,
+                        value.len()
+                    ));
+                    trace!("BLE write data (hex): {}", value_hex);
+                    let _ = status_tx.send(format!("[TRACE] BLE write data (hex): {}", value_hex));
 
                     // Check current state
                     let current_state = {
@@ -608,9 +635,11 @@ impl BluetoothBle {
                 PeripheralEvent::CharacteristicSubscriptionUpdate { request, subscribed } => {
                     let char_uuid_str = request.characteristic.to_string();
                     if subscribed {
-                        console_info!(status_tx, "[INFO] Client subscribed to notifications on {}", char_uuid_str);
+                        info!("Client subscribed to notifications on {}", char_uuid_str);
+                        let _ = status_tx.send(format!("[INFO] Client subscribed to notifications on {}", char_uuid_str));
                     } else {
-                        console_info!(status_tx, "[INFO] Client unsubscribed from notifications on {}", char_uuid_str);
+                        info!("Client unsubscribed from notifications on {}", char_uuid_str);
+                        let _ = status_tx.send(format!("[INFO] Client unsubscribed from notifications on {}", char_uuid_str));
                     }
 
                     let llm_event = Event::new(

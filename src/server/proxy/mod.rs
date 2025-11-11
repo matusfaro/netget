@@ -47,8 +47,9 @@ impl ProxyServer {
         server_id: ServerId,
         startup_params: Option<crate::protocol::StartupParams>,
     ) -> Result<SocketAddr> {
-        console_info!(status_tx, "[INFO] @@@ spawn_with_llm_actions CALLED @@@");
-        console_info!(status_tx, "[INFO] @@@ Proxy starting on {} @@@", listen_addr);
+        let _ = status_tx.send("[INFO] @@@ spawn_with_llm_actions CALLED @@@".to_string());
+        info!("Proxy server (action-based) starting on {}", listen_addr);
+        let _ = status_tx.send(format!("[INFO] @@@ Proxy starting on {} @@@", listen_addr));
 
         // Get or initialize proxy filter configuration
         let mut config = app_state.get_proxy_filter_config(server_id).await
@@ -59,7 +60,7 @@ impl ProxyServer {
 
         // Apply startup parameters if provided
         if let Some(ref params) = startup_params {
-            console_info!(status_tx, "[INFO] Applying proxy startup parameters");
+            let _ = status_tx.send(format!("[INFO] Applying proxy startup parameters"));
 
             // Parse certificate_mode
             if let Some(cert_mode_str) = params.get_optional_string("certificate_mode") {
@@ -77,30 +78,31 @@ impl ProxyServer {
                         }
                     },
                     _ => {
+                        warn!("Invalid certificate_mode: {}, using default", cert_mode_str);
                         config.certificate_mode
                     }
                 };
-                console_warn!(status_tx, "[INFO] Certificate mode: {:?}", config.certificate_mode);
+                let _ = status_tx.send(format!("[INFO] Certificate mode: {:?}", config.certificate_mode));
             }
 
             // Parse filter modes
             if let Some(mode_str) = params.get_optional_string("request_filter_mode") {
                 if let Ok(mode) = serde_json::from_value(json!(mode_str)) {
-                    console_info!(status_tx, "[INFO] Request filter mode: {mode:?}");
+                    let _ = status_tx.send(format!("[INFO] Request filter mode: {mode:?}"));
                     config.request_filter_mode = mode;
                 }
             }
 
             if let Some(mode_str) = params.get_optional_string("response_filter_mode") {
                 if let Ok(mode) = serde_json::from_value(json!(mode_str)) {
-                    console_info!(status_tx, "[INFO] Response filter mode: {mode:?}");
+                    let _ = status_tx.send(format!("[INFO] Response filter mode: {mode:?}"));
                     config.response_filter_mode = mode;
                 }
             }
 
             if let Some(mode_str) = params.get_optional_string("https_connection_filter_mode") {
                 if let Ok(mode) = serde_json::from_value(json!(mode_str)) {
-                    console_info!(status_tx, "[INFO] HTTPS connection filter mode: {:?}", mode);
+                    let _ = status_tx.send(format!("[INFO] HTTPS connection filter mode: {:?}", mode));
                     config.https_connection_filter_mode = mode;
                 }
             }
@@ -109,11 +111,13 @@ impl ProxyServer {
         // Generate or load certificate based on configuration
         let ca_cert: Option<Arc<Certificate>> = match &config.certificate_mode {
             CertificateMode::Generate => {
-                console_info!(status_tx, "[INFO] Generating MITM CA certificate...");
+                info!("Generating self-signed CA certificate for MITM");
+                let _ = status_tx.send("[INFO] Generating MITM CA certificate...".to_string());
                 Some(Arc::new(Self::generate_ca_certificate()?))
             },
             CertificateMode::LoadFromFile { cert_path, key_path } => {
-                console_info!(status_tx, "[INFO] Loading CA cert from {:?}", cert_path);
+                info!("Loading CA certificate from {:?} and {:?}", cert_path, key_path);
+                let _ = status_tx.send(format!("[INFO] Loading CA cert from {:?}", cert_path));
 
                 // Read certificate and key files
                 let _cert_pem = std::fs::read_to_string(cert_path)
@@ -140,7 +144,8 @@ impl ProxyServer {
                 Some(Arc::new(cert))
             },
             CertificateMode::None => {
-                console_info!(status_tx, "[INFO] Proxy: pass-through mode (no MITM)");
+                info!("Proxy running in pass-through mode (no MITM, origin certificates)");
+                let _ = status_tx.send("[INFO] Proxy: pass-through mode (no MITM)".to_string());
                 None
             }
         };
@@ -157,25 +162,27 @@ impl ProxyServer {
         let actual_addr = listener.local_addr()
             .context("Failed to get local address")?;
 
-        console_info!(status_tx, "→ Proxy server listening on {}", actual_addr);
+        info!("Proxy server listening on {}", actual_addr);
+        let _ = status_tx.send(format!("→ Proxy server listening on {}", actual_addr));
 
         if ca_cert.is_some() {
-            console_info!(status_tx, "[INFO] MITM mode enabled - full request/response inspection");
+            let _ = status_tx.send("[INFO] MITM mode enabled - full request/response inspection".to_string());
         } else {
-            console_info!(status_tx, "[INFO] Pass-through mode - HTTPS allow/block only");
+            let _ = status_tx.send("[INFO] Pass-through mode - HTTPS allow/block only".to_string());
         }
 
         // Spawn proxy handler task
-        console_info!(status_tx, "[INFO] >>> Spawning proxy accept loop...");
+        let _ = status_tx.send("[INFO] >>> Spawning proxy accept loop...".to_string());
         tokio::spawn(async move {
-            console_info!(status_tx, "[INFO] >>> Proxy accept loop STARTED");
+            let _ = status_tx.send("[INFO] >>> Proxy accept loop STARTED".to_string());
             loop {
-                console_debug!(status_tx, "[DEBUG] >>> Waiting for proxy connection...");
+                let _ = status_tx.send("[DEBUG] >>> Waiting for proxy connection...".to_string());
                 match listener.accept().await {
                     Ok((stream, peer_addr)) => {
-                        console_info!(status_tx, "[INFO] >>> ACCEPTED proxy connection from {}", peer_addr);
+                        let _ = status_tx.send(format!("[INFO] >>> ACCEPTED proxy connection from {}", peer_addr));
                         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
-                        console_debug!(status_tx, "[DEBUG] Proxy connection {} from {}", connection_id, peer_addr);
+                        debug!("Proxy connection {} from {}", connection_id, peer_addr);
+                        let _ = status_tx.send(format!("[DEBUG] Proxy connection {} from {}", connection_id, peer_addr));
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
@@ -194,7 +201,7 @@ impl ProxyServer {
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        console_info!(status_tx, "__UPDATE_UI__");
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let llm_clone = llm_client.clone();
                         let app_clone = app_state.clone();
@@ -254,7 +261,8 @@ impl ProxyServer {
         use tokio::io::AsyncReadExt;
 
         eprintln!(">>> PROXY: handle_proxy_connection called from {}", peer_addr);
-        console_info!(status_tx, "[INFO] Proxy: handling connection from {}", peer_addr);
+        info!("Proxy: handling connection {} from {}", connection_id, peer_addr);
+        let _ = status_tx.send(format!("[INFO] Proxy: handling connection from {}", peer_addr));
 
         // Read the initial HTTP request
         let mut buffer = vec![0u8; 8192];
@@ -264,7 +272,8 @@ impl ProxyServer {
             .context("Failed to read initial request")?;
 
         eprintln!(">>> PROXY: received {} bytes from connection {}", n, connection_id);
-        console_debug!(status_tx, "[DEBUG] Proxy connection {} received {} bytes", connection_id, n);
+        debug!("Proxy connection {} received {} bytes", connection_id, n);
+        let _ = status_tx.send(format!("[DEBUG] Proxy connection {} received {} bytes", connection_id, n));
 
         if n == 0 {
             debug!("Client closed connection before sending data");
@@ -281,13 +290,14 @@ impl ProxyServer {
                 request_str.to_string()
             }
         );
-        console_debug!(status_tx, "[DEBUG] Proxy {} parsing request", connection_id);
+        let _ = status_tx.send(format!("[DEBUG] Proxy {} parsing request", connection_id));
 
         // Parse the request line
         let first_line = request_str.lines().next()
             .context("Empty request")?;
 
-        console_debug!(status_tx, "[DEBUG] Request line: {}", first_line);
+        debug!("Request line: {}", first_line);
+        let _ = status_tx.send(format!("[DEBUG] Request line: {}", first_line));
 
         let parts: Vec<&str> = first_line.split_whitespace().collect();
         if parts.len() < 3 {
@@ -298,7 +308,8 @@ impl ProxyServer {
         let method = parts[0];
         let uri = parts[1];
 
-        console_debug!(status_tx, "[DEBUG] Parsed: method={}, uri={}", method, uri);
+        debug!("Parsed: method={}, uri={}", method, uri);
+        let _ = status_tx.send(format!("[DEBUG] Parsed: method={}, uri={}", method, uri));
 
         // Check if this is an HTTPS CONNECT request
         if method == "CONNECT" {
@@ -366,7 +377,10 @@ impl ProxyServer {
         // TRACE: Log full connection details (metadata only, no content in pass-through)
         trace!("HTTPS CONNECT from {} to {}:{}", peer_addr, dest_host, dest_port);
         trace!("  SNI: {} (from CONNECT)", dest_host);
-        console_trace!(status_tx, "[TRACE] HTTPS CONNECT {} -> {}:{} ({})", peer_addr, dest_host, dest_port, if ca_cert.is_some() { "MITM" } else { "pass-through" });
+        trace!("  Certificate mode: {:?}", if ca_cert.is_some() { "MITM" } else { "Pass-through" });
+        let _ = status_tx.send(format!("[TRACE] HTTPS CONNECT {} -> {}:{} ({})",
+            peer_addr, dest_host, dest_port,
+            if ca_cert.is_some() { "MITM" } else { "pass-through" }));
 
         if ca_cert.is_some() {
             // MITM mode - full decryption and inspection
@@ -381,8 +395,8 @@ impl ProxyServer {
             // 2. TLS connect to actual destination
             // 3. Proxy decrypted data through LLM filtering
 
-            console_warn!(status_tx, "[WARN] Full MITM TLS interception not yet implemented");
-            console_info!(status_tx, "[INFO] Falling back to pass-through for this connection");
+            let _ = status_tx.send("[WARN] Full MITM TLS interception not yet implemented".to_string());
+            let _ = status_tx.send("[INFO] Falling back to pass-through for this connection".to_string());
 
             // For now, fall through to pass-through mode
         }
@@ -415,7 +429,8 @@ impl ProxyServer {
                 &protocol,
                 &status_tx,
             ).await.unwrap_or_else(|e| {
-                console_error!(status_tx, "✗ LLM error: {}", e);
+                error!("LLM consultation failed: {}", e);
+                let _ = status_tx.send(format!("✗ LLM error: {}", e));
                 // Default to blocking on error for safety
                 HttpsConnectionAction::Block {
                     reason: Some(format!("LLM consultation failed: {}", e))
@@ -424,7 +439,8 @@ impl ProxyServer {
 
             match action {
                 HttpsConnectionAction::Allow => {
-                    console_info!(status_tx, "→ Allowed HTTPS to {}:{}", dest_host, dest_port);
+                    info!("LLM allowed HTTPS connection to {}:{}", dest_host, dest_port);
+                    let _ = status_tx.send(format!("→ Allowed HTTPS to {}:{}", dest_host, dest_port));
 
                     // Establish connection to destination
                     let dest_addr = format!("{}:{}", dest_host, dest_port);
@@ -450,7 +466,10 @@ impl ProxyServer {
                     let duration = start_time.elapsed();
 
                     // DEBUG: Access log (pass-through - no HTTP status)
-                    console_debug!(status_tx, "[DEBUG] [ACCESS] {} CONNECT {}:{} -> TUNNEL {} bytes", peer_addr, dest_host, dest_port, total_bytes);
+                    debug!("[ACCESS] {} CONNECT {}:{} -> TUNNEL {} bytes ({} up, {} down) in {:?}",
+                        peer_addr, dest_host, dest_port, total_bytes, up_bytes, down_bytes, duration);
+                    let _ = status_tx.send(format!("[DEBUG] [ACCESS] {} CONNECT {}:{} -> TUNNEL {} bytes",
+                        peer_addr, dest_host, dest_port, total_bytes));
 
                     trace!("HTTPS tunnel closed: {} bytes transferred", total_bytes);
 
@@ -461,7 +480,10 @@ impl ProxyServer {
                     let reason_str = reason.clone().unwrap_or_default();
 
                     // DEBUG: Access log
-                    console_debug!(status_tx, "[DEBUG] [ACCESS] {} CONNECT {}:{} -> 403 BLOCKED", peer_addr, dest_host, dest_port);
+                    debug!("[ACCESS] {} CONNECT {}:{} -> 403 {} in {:?}",
+                        peer_addr, dest_host, dest_port, reason_str.len(), duration);
+                    let _ = status_tx.send(format!("[DEBUG] [ACCESS] {} CONNECT {}:{} -> 403 BLOCKED",
+                        peer_addr, dest_host, dest_port));
 
                     // Send 403 Forbidden to client
                     let response = format!(
@@ -505,7 +527,10 @@ impl ProxyServer {
             let duration = start_time.elapsed();
 
             // DEBUG: Access log
-            console_debug!(status_tx, "[DEBUG] [ACCESS] {} CONNECT {}:{} -> TUNNEL {} bytes", peer_addr, dest_host, dest_port, total_bytes);
+            debug!("[ACCESS] {} CONNECT {}:{} -> TUNNEL {} bytes ({} up, {} down) in {:?}",
+                peer_addr, dest_host, dest_port, total_bytes, up_bytes, down_bytes, duration);
+            let _ = status_tx.send(format!("[DEBUG] [ACCESS] {} CONNECT {}:{} -> TUNNEL {} bytes",
+                peer_addr, dest_host, dest_port, total_bytes));
 
             Ok(())
         }
@@ -586,13 +611,16 @@ impl ProxyServer {
             if let Ok(body_str) = std::str::from_utf8(body) {
                 trace!("  Body: {}", body_str);
             } else {
+                trace!("  Body: {} bytes (binary)", body.len());
             }
         }
-        console_trace!(status_tx, "[TRACE] Proxy request: {} {} from {} ({} bytes body)", method, uri, peer_addr, body.len());
+        let _ = status_tx.send(format!("[TRACE] Proxy request: {} {} from {} ({} bytes body)",
+            method, uri, peer_addr, body.len()));
 
         // Check if we should intercept this request
         if config.should_intercept_request(host, path, method, &headers, body) {
-            console_info!(status_tx, "[DEBUG] Request matched filters, consulting LLM");
+            info!("Request matches filters, consulting LLM");
+            let _ = status_tx.send("[DEBUG] Request matched filters, consulting LLM".to_string());
 
             // Build request info for LLM
             let request_info = FullRequestInfo {
@@ -614,7 +642,8 @@ impl ProxyServer {
                 &protocol,
                 &status_tx,
             ).await.unwrap_or_else(|e| {
-                console_error!(status_tx, "✗ LLM error: {}", e);
+                error!("LLM consultation failed: {}", e);
+                let _ = status_tx.send(format!("✗ LLM error: {}", e));
                 // Default to passing through on error
                 RequestAction::Pass
             });
@@ -639,7 +668,10 @@ impl ProxyServer {
                     let body_len = body.len();
 
                     // DEBUG: Access log
-                    console_debug!(status_tx, "[DEBUG] [ACCESS] {} {} {} -> {} {} bytes", peer_addr, method, uri, status, body_len);
+                    debug!("[ACCESS] {} {} {} -> {} {} bytes in {:?}",
+                        peer_addr, method, uri, status, body_len, duration);
+                    let _ = status_tx.send(format!("[DEBUG] [ACCESS] {} {} {} -> {} {} bytes",
+                        peer_addr, method, uri, status, body_len));
 
                     // TRACE: Full response details
                     trace!("Blocking response: status={}, body_len={}", status, body_len);
@@ -657,14 +689,16 @@ impl ProxyServer {
                     Ok(())
                 },
                 ref modify_action @ RequestAction::Modify { .. } => {
-                    console_info!(status_tx, "[DEBUG] Applying request modifications");
+                    info!("LLM requested modifications, applying...");
+                    let _ = status_tx.send("[DEBUG] Applying request modifications".to_string());
 
                     // Apply modifications
                     let modified_request = Self::apply_request_modifications(
                         request_data,
                         modify_action,
                     ).unwrap_or_else(|e| {
-                        console_error!(status_tx, "✗ Modification error: {}", e);
+                        error!("Failed to apply modifications: {}", e);
+                        let _ = status_tx.send(format!("✗ Modification error: {}", e));
                         request_data.to_vec()
                     });
 
@@ -709,7 +743,6 @@ impl ProxyServer {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         use tokio::io::{AsyncWriteExt, AsyncReadExt};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         // Parse host:port
         let (dest_host, dest_port) = if let Some(colon_pos) = host.find(':') {
@@ -797,7 +830,10 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
         let duration = start_time.elapsed();
 
         // DEBUG: Access log
-        console_debug!(status_tx, "[DEBUG] [ACCESS] {} {} {} -> {} {} bytes", peer_addr, method, uri, status, response_buffer.len());
+        debug!("[ACCESS] {} {} {} -> {} {} bytes in {:?}",
+            peer_addr, method, uri, status, response_buffer.len(), duration);
+        let _ = status_tx.send(format!("[DEBUG] [ACCESS] {} {} {} -> {} {} bytes",
+            peer_addr, method, uri, status, response_buffer.len()));
 
         // TRACE: Full response details
         if response_buffer.len() > 0 {
@@ -831,7 +867,7 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
         protocol: &Arc<ProxyProtocol>,
         status_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<RequestAction> {
-        console_debug!(status_tx, "[DEBUG] Consulting LLM about HTTP request...");
+        let _ = status_tx.send("[DEBUG] Consulting LLM about HTTP request...".to_string());
 
         // Format request info for event description
         let _body_preview = if request_info.body.len() > 500 {
@@ -885,7 +921,7 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
         protocol: &Arc<ProxyProtocol>,
         status_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<HttpsConnectionAction> {
-        console_debug!(status_tx, "[DEBUG] Consulting LLM about HTTPS connection...");
+        let _ = status_tx.send("[DEBUG] Consulting LLM about HTTPS connection...".to_string());
 
         // Create HTTPS CONNECT event
         let event = Event::new(

@@ -22,7 +22,7 @@ pub async fn start_client_by_id(
     let client = match state.get_client(client_id).await {
         Some(c) => c,
         None => {
-            console_error!(status_tx, "[ERROR] Client #{} not found", client_id.as_u32());
+            let _ = status_tx.send(format!("[ERROR] Client #{} not found", client_id.as_u32()));
             return Ok(());
         }
     };
@@ -73,16 +73,28 @@ pub async fn start_client_by_id(
             state
                 .update_client_status(client_id, ClientStatus::Connected)
                 .await;
-            console_info!(status_tx, "[CLIENT] {} client #{} connected to {} (local: {})");
-            console_info!(status_tx, "__UPDATE_UI__");
+            let _ = status_tx.send(format!(
+                "[CLIENT] {} client #{} connected to {} (local: {})",
+                protocol_name,
+                client_id.as_u32(),
+                remote_addr,
+                local_addr
+            ));
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
         }
         Err(e) => {
             // For connection errors, set client status to error
             state
                 .update_client_status(client_id, ClientStatus::Error(e.to_string()))
                 .await;
-            console_error!(status_tx, "[ERROR] Failed to connect {} client #{} to {}: {}");
-            console_info!(status_tx, "__UPDATE_UI__");
+            let _ = status_tx.send(format!(
+                "[ERROR] Failed to connect {} client #{} to {}: {}",
+                protocol_name,
+                client_id.as_u32(),
+                remote_addr,
+                e
+            ));
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
             return Err(ActionExecutionError::Fatal(e));
         }
     }
@@ -163,7 +175,6 @@ pub async fn start_client_from_action(
         for task_def in tasks {
             use crate::state::task::{ScheduledTask, TaskScope, TaskType, TaskStatus, TaskId};
             use std::time::{Duration, Instant};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
             // Determine task type
             let task_type = if task_def.recurring {

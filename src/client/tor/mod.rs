@@ -46,7 +46,8 @@ impl TorClient {
         status_tx: mpsc::UnboundedSender<String>,
         client_id: ClientId,
     ) -> Result<SocketAddr> {
-        console_info!(status_tx, "[CLIENT] Tor client {} initializing...", client_id);
+        info!("Tor client {} initializing...", client_id);
+        let _ = status_tx.send(format!("[CLIENT] Tor client {} initializing...", client_id));
 
         // Create and bootstrap Tor client
         let config = TorClientConfig::default();
@@ -54,7 +55,8 @@ impl TorClient {
             .await
             .context("Failed to bootstrap Tor client")?;
 
-        console_info!(status_tx, "[CLIENT] Tor client {} bootstrapped", client_id);
+        info!("Tor client {} bootstrapped successfully", client_id);
+        let _ = status_tx.send(format!("[CLIENT] Tor client {} bootstrapped", client_id));
 
         // Parse target address (can be hostname:port or .onion:port)
         let target = remote_addr.clone();
@@ -68,11 +70,12 @@ impl TorClient {
         // Get a dummy local address since Tor connections don't have real local addresses
         let local_addr = SocketAddr::from(([127, 0, 0, 1], 0));
 
+        info!("Tor client {} connected to {} through Tor network", client_id, remote_addr);
 
         // Update client state
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        console_info!(status_tx, "[CLIENT] Tor client {} connected to {}", client_id, remote_addr);
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send(format!("[CLIENT] Tor client {} connected to {}", client_id, remote_addr));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Call LLM with connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -121,9 +124,10 @@ impl TorClient {
             loop {
                 match read_half.read(&mut buffer).await {
                     Ok(0) => {
+                        info!("Tor client {} disconnected", client_id);
                         app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                        console_info!(status_tx, "[CLIENT] Tor client {} disconnected", client_id);
-                        console_info!(status_tx, "__UPDATE_UI__");
+                        let _ = status_tx.send(format!("[CLIENT] Tor client {} disconnected", client_id));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
                         break;
                     }
                     Ok(n) => {
@@ -169,7 +173,6 @@ impl TorClient {
                                             // Execute actions
                                             for action in actions {
                                                 use crate::llm::actions::client_trait::Client;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                                                 match protocol.as_ref().execute_action(action) {
                                                     Ok(crate::llm::actions::client_trait::ClientActionResult::SendData(bytes)) => {
                                                         if let Ok(_) = write_half_arc.lock().await.write_all(&bytes).await {
@@ -209,8 +212,9 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                         }
                     }
                     Err(e) => {
+                        error!("Tor client {} read error: {}", client_id, e);
                         app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
-                        console_error!(status_tx, "__UPDATE_UI__");
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
                         break;
                     }
                 }

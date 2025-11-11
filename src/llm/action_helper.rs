@@ -22,7 +22,6 @@ use crate::state::app_state::AppState;
 use crate::state::ServerId;
 use anyhow::{Context as AnyhowContext, Result};
 use tracing::{debug, warn};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Call LLM with action-based framework
 ///
@@ -442,7 +441,7 @@ pub async fn call_llm_for_client(
 
     // If model was auto-selected (wasn't set before), notify via status_tx
     if current_model.is_none() {
-        console_info!(status_tx, "⚠  Auto-selected model: {} (no model was configured)", model);
+        let _ = status_tx.send(format!("⚠  Auto-selected model: {} (no model was configured)", model));
     }
 
     // Create conversation with correct parameter order

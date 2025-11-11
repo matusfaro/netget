@@ -19,7 +19,6 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// PostgreSQL client that connects to a PostgreSQL server
 pub struct PostgresqlClient;
@@ -82,8 +81,11 @@ impl PostgresqlClient {
         app_state
             .update_client_status(client_id, ClientStatus::Connected)
             .await;
-        console_info!(status_tx, "[CLIENT] PostgreSQL client {} connected");
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send(format!(
+            "[CLIENT] PostgreSQL client {} connected",
+            client_id
+        ));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Spawn connection task
         let status_tx_clone = status_tx.clone();

@@ -70,7 +70,8 @@ impl GrpcServer {
             .unwrap_or(true);
 
         debug!("Compiling protobuf schema for gRPC server");
-        console_trace!(status_tx, "[DEBUG] Compiling protobuf schema");
+        trace!("Proto schema:\n{}", proto_schema);
+        let _ = status_tx.send(format!("[DEBUG] Compiling protobuf schema"));
 
         // Compile proto schema to FileDescriptorSet
         let file_descriptor_set = Self::compile_proto_schema(&proto_schema)
@@ -90,7 +91,9 @@ impl GrpcServer {
 
         info!("gRPC server starting with {} service(s)", services.len());
         for service in &services {
-            console_info!(status_tx, "[INFO] gRPC service: {} ({} methods)", service.full_name(), service.methods().count());
+            info!("  Service: {} ({} methods)", service.full_name(), service.methods().count());
+            let _ = status_tx.send(format!("[INFO] gRPC service: {} ({} methods)",
+                service.full_name(), service.methods().count()));
         }
 
         // Create gRPC server with dynamic handler
@@ -99,7 +102,8 @@ impl GrpcServer {
 
         // Build reflection service if enabled
         let _reflection_service = if enable_reflection {
-            console_info!(status_tx, "[INFO] gRPC reflection enabled");
+            info!("gRPC reflection enabled");
+            let _ = status_tx.send("[INFO] gRPC reflection enabled".to_string());
 
             let mut fd_bytes_refl = Vec::new();
             file_descriptor_set.encode(&mut fd_bytes_refl)?;
@@ -127,7 +131,8 @@ impl GrpcServer {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let actual_addr = listener.local_addr()?;
 
-        console_info!(status_tx, "[INFO] gRPC server listening on {}", actual_addr);
+        info!("gRPC server listening on {}", actual_addr);
+        let _ = status_tx.send(format!("[INFO] gRPC server listening on {}", actual_addr));
 
         // Spawn server loop
         let service = Arc::new(dynamic_service);
@@ -138,7 +143,8 @@ impl GrpcServer {
                         let connection_id = crate::server::connection::ConnectionId::new(
                             service.app_state.get_next_unified_id().await
                         );
-                        console_debug!(status_tx, "[DEBUG] gRPC connection from {}", remote_addr);
+                        debug!("gRPC connection {} from {}", connection_id, remote_addr);
+                        let _ = status_tx.send(format!("[DEBUG] gRPC connection from {}", remote_addr));
 
                         // Add connection to server state
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
@@ -157,7 +163,7 @@ impl GrpcServer {
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        console_info!(status_tx, "__UPDATE_UI__");
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let service_clone = service.clone();
                         let app_state_clone = app_state.clone();
@@ -191,7 +197,8 @@ impl GrpcServer {
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "[ERROR] Failed to accept gRPC connection: {}", e);
+                        error!("Failed to accept gRPC connection: {}", e);
+                        let _ = status_tx.send(format!("[ERROR] Failed to accept gRPC connection: {}", e));
                         break;
                     }
                 }
@@ -344,7 +351,8 @@ impl DynamicGrpcService {
             }
         };
 
-        console_debug!(self.status_tx, "[DEBUG] gRPC request: {}/{}", service_name, method_name);
+        debug!("gRPC request: {}/{}", service_name, method_name);
+        let _ = self.status_tx.send(format!("[DEBUG] gRPC request: {}/{}", service_name, method_name));
 
         // Validate content-type
         if let Some(content_type) = req.headers().get("content-type") {
@@ -377,7 +385,8 @@ impl DynamicGrpcService {
         let response_payload = match self.handle_unary(&service_name, &method_name, request_payload, connection_id).await {
             Ok(payload) => payload,
             Err(e) => {
-                console_debug!(self.status_tx, "[ERROR] gRPC handler error: {}", e);
+                debug!("gRPC handler error: {}", e);
+                let _ = self.status_tx.send(format!("[ERROR] gRPC handler error: {}", e));
                 return Ok(Self::grpc_error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()));
             }
         };
@@ -393,7 +402,8 @@ impl DynamicGrpcService {
             .body(Full::new(Bytes::from(response_frame)))
             .unwrap();
 
-        console_debug!(self.status_tx, "[DEBUG] gRPC response: {} bytes", response_payload.len());
+        debug!("gRPC response: {} bytes", response_payload.len());
+        let _ = self.status_tx.send(format!("[DEBUG] gRPC response: {} bytes", response_payload.len()));
 
         Ok(response)
     }
@@ -484,7 +494,8 @@ impl DynamicGrpcService {
         let input_desc = method_desc.input();
         let output_desc = method_desc.output();
 
-        console_debug!(self.status_tx, "[DEBUG] gRPC call: {}/{}", service_name, method_name);
+        debug!("gRPC unary call: {}/{}", service_name, method_name);
+        let _ = self.status_tx.send(format!("[DEBUG] gRPC call: {}/{}", service_name, method_name));
 
         // Decode request using dynamic message
         let request_msg = DynamicMessage::decode(input_desc.clone(), request_bytes.as_slice())
@@ -493,7 +504,8 @@ impl DynamicGrpcService {
         // Convert DynamicMessage to JSON using prost-reflect's JSON serialization
         let request_json = Self::dynamic_message_to_json(&request_msg)?;
 
-        console_trace!(self.status_tx, "[TRACE] Request: {}", serde_json::to_string(&request_json)?);
+        trace!("gRPC request JSON: {}", serde_json::to_string_pretty(&request_json)?);
+        let _ = self.status_tx.send(format!("[TRACE] Request: {}", serde_json::to_string(&request_json)?));
 
         // Build response schema description for LLM
         let response_schema = Self::build_message_schema(&output_desc);
@@ -533,7 +545,8 @@ impl DynamicGrpcService {
                     let mut response_bytes = Vec::new();
                     response_msg.encode(&mut response_bytes)?;
 
-                    console_debug!(self.status_tx, "[DEBUG] Response: {} bytes", response_bytes.len());
+                    debug!("gRPC response: {} bytes", response_bytes.len());
+                    let _ = self.status_tx.send(format!("[DEBUG] Response: {} bytes", response_bytes.len()));
 
                     return Ok(response_bytes);
                 }
@@ -678,7 +691,6 @@ impl DynamicGrpcService {
             Kind::Bytes => {
                 use base64::engine::general_purpose::STANDARD;
                 use base64::Engine;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                 let s = json.as_str().context("Expected base64 string")?;
                 let bytes = STANDARD.decode(s).context("Invalid base64")?;
                 Value::Bytes(bytes.into())

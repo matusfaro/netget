@@ -71,7 +71,6 @@ use crate::state::app_state::AppState;
 
 #[cfg(feature = "usb-smartcard")]
 use apdu::ApduHandler;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// USB Smart Card server (using vpcd approach)
 #[cfg(feature = "usb-smartcard")]
@@ -132,14 +131,21 @@ impl UsbSmartCardServer {
             }
             Err(e) => {
                 error!("Failed to connect to vpcd at {}: {}", vpcd_addr, e);
-                console_error!(status_tx, "Smart Card ERROR: vpcd daemon not running at {}");
+                error!("Make sure vpcd daemon is running: vpcd --tcp-port {}", vpcd_port);
+                let _ = status_tx.send(format!(
+                    "Smart Card ERROR: vpcd daemon not running at {}",
+                    vpcd_addr
+                ));
                 return Err(e.into());
             }
         };
 
         let local_addr = stream.local_addr()?;
 
-        console_info!(status_tx, "USB Smart Card connected to vpcd at {} (ISO 7816-4 APDU ready)");
+        let _ = status_tx.send(format!(
+            "USB Smart Card connected to vpcd at {} (ISO 7816-4 APDU ready)",
+            vpcd_addr
+        ));
 
         // Spawn handler task
         tokio::spawn(async move {
@@ -166,7 +172,8 @@ impl UsbSmartCardServer {
         stream.write_all(DEFAULT_ATR).await?;
         stream.flush().await?;
 
-        console_info!(status_tx, "Smart Card: ATR sent, ready for APDU commands");
+        info!("Sent ATR ({} bytes) to vpcd", DEFAULT_ATR.len());
+        let _ = status_tx.send("Smart Card: ATR sent, ready for APDU commands".to_string());
 
         // Main loop: receive APDU commands, send responses
         let mut buffer = vec![0u8; 4096];
@@ -205,9 +212,14 @@ impl UsbSmartCardServer {
             stream.write_all(&apdu_response).await?;
             stream.flush().await?;
 
+            debug!("Sent APDU response: {} bytes", apdu_response.len());
 
             // Notify about command processing
-            console_debug!(status_tx, "Smart Card: Processed APDU ({} bytes in, {} bytes out)");
+            let _ = status_tx.send(format!(
+                "Smart Card: Processed APDU ({} bytes in, {} bytes out)",
+                apdu_len,
+                apdu_response.len()
+            ));
         }
 
         info!("Smart card vpcd connection closed");

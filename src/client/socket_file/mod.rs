@@ -55,11 +55,12 @@ impl SocketFileClient {
         // The socket path is stored in the client's remote_addr field in app_state
         let dummy_addr = SocketAddr::from(([127, 0, 0, 1], 0));
 
+        info!("Socket File client {} connected to {}", client_id, socket_path);
 
         // Update client state
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        console_info!(status_tx, "[CLIENT] Socket File client {} connected to {}", client_id, socket_path);
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send(format!("[CLIENT] Socket File client {} connected to {}", client_id, socket_path));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Split stream
         let (mut read_half, write_half) = stream.into_split();
@@ -79,9 +80,10 @@ impl SocketFileClient {
             loop {
                 match read_half.read(&mut buffer).await {
                     Ok(0) => {
+                        info!("Socket File client {} disconnected", client_id);
                         app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                        console_info!(status_tx, "[CLIENT] Socket File client {} disconnected", client_id);
-                        console_info!(status_tx, "__UPDATE_UI__");
+                        let _ = status_tx.send(format!("[CLIENT] Socket File client {} disconnected", client_id));
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
                         break;
                     }
                     Ok(n) => {
@@ -127,7 +129,6 @@ impl SocketFileClient {
                                             // Execute actions
                                             for action in actions {
                                                 use crate::llm::actions::client_trait::Client;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                                                 match protocol.as_ref().execute_action(action) {
                                                     Ok(crate::llm::actions::client_trait::ClientActionResult::SendData(bytes)) => {
                                                         if let Ok(_) = write_half_arc.lock().await.write_all(&bytes).await {
@@ -167,8 +168,9 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                         }
                     }
                     Err(e) => {
+                        error!("Socket File client {} read error: {}", client_id, e);
                         app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
-                        console_error!(status_tx, "__UPDATE_UI__");
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
                         break;
                     }
                 }

@@ -16,7 +16,6 @@ use crate::protocol::{Event, StartupParams};
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use crate::client::ollama::actions::OLLAMA_CLIENT_RESPONSE_RECEIVED_EVENT;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Ollama client that connects to the Ollama API
 pub struct OllamaClientImpl;
@@ -43,8 +42,8 @@ impl OllamaClientImpl {
 
         // Update status
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        console_info!(status_tx, "[CLIENT] Ollama client {} ready (endpoint: {})", client_id, remote_addr);
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send(format!("[CLIENT] Ollama client {} ready (endpoint: {})", client_id, remote_addr));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // For Ollama client, spawn a background task that monitors for client removal
         // The actual API requests are made on-demand via actions
@@ -157,7 +156,8 @@ impl OllamaClientImpl {
                 }
             }
             Err(e) => {
-                console_error!(status_tx, "[ERROR] Ollama request failed: {}", e);
+                error!("Ollama client {} request failed: {}", client_id, e);
+                let _ = status_tx.send(format!("[ERROR] Ollama request failed: {}", e));
                 Err(e.into())
             }
         }
@@ -257,7 +257,8 @@ impl OllamaClientImpl {
                 }
             }
             Err(e) => {
-                console_error!(status_tx, "[ERROR] Ollama request failed: {}", e);
+                error!("Ollama client {} request failed: {}", client_id, e);
+                let _ = status_tx.send(format!("[ERROR] Ollama request failed: {}", e));
                 Err(e.into())
             }
         }
@@ -348,7 +349,8 @@ impl OllamaClientImpl {
                 }
             }
             Err(e) => {
-                console_error!(status_tx, "[ERROR] Ollama request failed: {}", e);
+                error!("Ollama client {} request failed: {}", client_id, e);
+                let _ = status_tx.send(format!("[ERROR] Ollama request failed: {}", e));
                 Err(e.into())
             }
         }
@@ -447,7 +449,8 @@ impl OllamaClientImpl {
                 }
             }
             Err(e) => {
-                console_error!(status_tx, "[ERROR] Ollama embeddings request failed: {}", e);
+                error!("Ollama client {} embeddings request failed: {}", client_id, e);
+                let _ = status_tx.send(format!("[ERROR] Ollama embeddings request failed: {}", e));
                 Err(e.into())
             }
         }

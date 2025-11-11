@@ -80,7 +80,8 @@ impl CassandraServer {
         let listener = TcpListener::bind(listen_addr).await?;
         let actual_addr = listener.local_addr()?;
 
-        console_info!(status_tx, "[INFO] Cassandra server listening on {}", actual_addr);
+        info!("Cassandra/CQL server starting on {}", actual_addr);
+        let _ = status_tx.send(format!("[INFO] Cassandra server listening on {}", actual_addr));
 
         let server = Arc::new(CassandraServer::new(
             llm_client,
@@ -94,7 +95,8 @@ impl CassandraServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, addr)) => {
-                        console_debug!(status_tx, "[DEBUG] Cassandra connection from {}", addr);
+                        debug!("Cassandra connection from {}", addr);
+                        let _ = status_tx.send(format!("[DEBUG] Cassandra connection from {}", addr));
 
                         let server_clone = server.clone();
                         let status_tx_clone = status_tx.clone();
@@ -106,7 +108,8 @@ impl CassandraServer {
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "[ERROR] Accept failed: {}", e);
+                        error!("Failed to accept Cassandra connection: {}", e);
+                        let _ = status_tx.send(format!("[ERROR] Accept failed: {}", e));
                     }
                 }
             }
@@ -158,7 +161,8 @@ impl CassandraServer {
             // Read data from stream
             let n = match stream.read_buf(&mut buffer).await {
                 Ok(0) => {
-                    console_debug!(status_tx, "[DEBUG] Cassandra client {} disconnected", addr);
+                    debug!("Cassandra client {} disconnected", addr);
+                    let _ = status_tx.send(format!("[DEBUG] Cassandra client {} disconnected", addr));
                     break;
                 }
                 Ok(n) => n,
@@ -212,7 +216,8 @@ impl CassandraServer {
                         }
                     }
                     Err(e) => {
-                        console_error!(status_tx, "[ERROR] Frame error: {}", e);
+                        error!("Frame handling error: {}", e);
+                        let _ = status_tx.send(format!("[ERROR] Frame error: {}", e));
                         // Send error frame and close connection
                         break;
                     }
@@ -244,7 +249,8 @@ impl CassandraServer {
             .context("Failed to parse Cassandra frame")?;
         let frame = parsed.envelope;
 
-        console_trace!(status_tx, "[TRACE] Cassandra ← {:?}", frame.opcode);
+        trace!("Received frame: opcode={:?}, stream={}", frame.opcode, frame.stream_id);
+        let _ = status_tx.send(format!("[TRACE] Cassandra ← {:?}", frame.opcode));
 
         match frame.opcode {
             Opcode::Startup => {
@@ -272,7 +278,8 @@ impl CassandraServer {
                     .await
             }
             _ => {
-                console_warn!(status_tx, "[WARN] Unsupported opcode: {:?}", frame.opcode);
+                warn!("Unsupported Cassandra opcode: {:?}", frame.opcode);
+                let _ = status_tx.send(format!("[WARN] Unsupported opcode: {:?}", frame.opcode));
                 // Send error response
                 self.send_error(frame.stream_id, 0x000A, "Unsupported operation", stream, status_tx)
                     .await?;
@@ -324,7 +331,8 @@ impl CassandraServer {
 
         // Show messages
         for message in &execution_result.messages {
-            console_info!(status_tx, "[INFO] {}", message);
+            info!("{}", message);
+            let _ = status_tx.send(format!("[INFO] {}", message));
         }
 
         // Execute the protocol actions
@@ -396,7 +404,8 @@ impl CassandraServer {
 
         // Show messages
         for message in &execution_result.messages {
-            console_info!(status_tx, "[INFO] {}", message);
+            info!("{}", message);
+            let _ = status_tx.send(format!("[INFO] {}", message));
         }
 
         // Execute the protocol actions
@@ -447,7 +456,8 @@ impl CassandraServer {
         // Parse query from frame body
         let query_str = self.parse_query(&frame)?;
 
-        console_debug!(status_tx, "[DEBUG] Cassandra ← Query: {}", query_str);
+        debug!("Handling QUERY from connection {}: {}", connection_id, query_str);
+        let _ = status_tx.send(format!("[DEBUG] Cassandra ← Query: {}", query_str));
 
         let protocol = CassandraProtocol::new(
             connection_id,
@@ -477,7 +487,8 @@ impl CassandraServer {
 
         // Show messages
         for message in &execution_result.messages {
-            console_info!(status_tx, "[INFO] {}", message);
+            info!("{}", message);
+            let _ = status_tx.send(format!("[INFO] {}", message));
         }
 
         // Execute the protocol actions
@@ -571,7 +582,8 @@ impl CassandraServer {
         let bytes = response.encode_with(Compression::None)?;
         stream.write_all(&bytes).await?;
 
-        console_trace!(status_tx, "[TRACE] Cassandra → READY");
+        trace!("Sent READY response ({} bytes)", bytes.len());
+        let _ = status_tx.send(format!("[TRACE] Cassandra → READY"));
 
         Ok(())
     }
@@ -627,7 +639,8 @@ impl CassandraServer {
         let bytes = response.encode_with(Compression::None)?;
         stream.write_all(&bytes).await?;
 
-        console_trace!(status_tx, "[TRACE] Cassandra → SUPPORTED");
+        trace!("Sent SUPPORTED response ({} bytes)", bytes.len());
+        let _ = status_tx.send(format!("[TRACE] Cassandra → SUPPORTED"));
 
         Ok(())
     }
@@ -721,7 +734,8 @@ impl CassandraServer {
         let bytes = response.encode_with(Compression::None)?;
         stream.write_all(&bytes).await?;
 
-        console_trace!(status_tx, "[TRACE] Cassandra → RESULT ({} rows)", rows.len());
+        trace!("Sent RESULT rows response ({} bytes)", bytes.len());
+        let _ = status_tx.send(format!("[TRACE] Cassandra → RESULT ({} rows)", rows.len()));
 
         Ok(())
     }
@@ -763,7 +777,6 @@ impl CassandraServer {
         // Generate statement ID from query hash
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
         let mut hasher = DefaultHasher::new();
         query.hash(&mut hasher);
         let hash = hasher.finish();
@@ -810,7 +823,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
 
         // Show messages
         for message in &execution_result.messages {
-            console_info!(status_tx, "[INFO] {}", message);
+            info!("{}", message);
+            let _ = status_tx.send(format!("[INFO] {}", message));
         }
 
         // Execute the protocol actions
@@ -917,7 +931,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
 
         // Show messages
         for message in &execution_result.messages {
-            console_info!(status_tx, "[INFO] {}", message);
+            info!("{}", message);
+            let _ = status_tx.send(format!("[INFO] {}", message));
         }
 
         // Execute the protocol actions
@@ -1137,7 +1152,11 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
         let bytes = response.encode_with(Compression::None)?;
         stream.write_all(&bytes).await?;
 
-        console_trace!(status_tx, "[TRACE] Cassandra → RESULT (Prepared: {} params)");
+        trace!("Sent RESULT (Prepared) response ({} bytes)", bytes.len());
+        let _ = status_tx.send(format!(
+            "[TRACE] Cassandra → RESULT (Prepared: {} params)",
+            param_count
+        ));
 
         Ok(())
     }
@@ -1175,7 +1194,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
         let bytes = response.encode_with(Compression::None)?;
         stream.write_all(&bytes).await?;
 
-        console_trace!(status_tx, "[TRACE] Cassandra → ERROR 0x{:04X}", error_code);
+        trace!("Sent ERROR response: 0x{:04X} - {}", error_code, message);
+        let _ = status_tx.send(format!("[TRACE] Cassandra → ERROR 0x{:04X}", error_code));
 
         Ok(())
     }
@@ -1228,7 +1248,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
 
         // Show messages
         for message in &execution_result.messages {
-            console_info!(status_tx, "[INFO] {}", message);
+            info!("{}", message);
+            let _ = status_tx.send(format!("[INFO] {}", message));
         }
 
         // Execute the protocol actions
@@ -1333,7 +1354,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
         let bytes = response.encode_with(Compression::None)?;
         stream.write_all(&bytes).await?;
 
-        console_trace!(status_tx, "[TRACE] Cassandra → AUTHENTICATE ({})", authenticator);
+        trace!("Sent AUTHENTICATE response: {}", authenticator);
+        let _ = status_tx.send(format!("[TRACE] Cassandra → AUTHENTICATE ({})", authenticator));
 
         Ok(())
     }
@@ -1362,7 +1384,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
         let bytes = response.encode_with(Compression::None)?;
         stream.write_all(&bytes).await?;
 
-        console_trace!(status_tx, "[TRACE] Cassandra → AUTH_SUCCESS");
+        trace!("Sent AUTH_SUCCESS response");
+        let _ = status_tx.send(format!("[TRACE] Cassandra → AUTH_SUCCESS"));
 
         Ok(())
     }

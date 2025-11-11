@@ -74,11 +74,12 @@ impl BluetoothClient {
             .next()
             .context("No Bluetooth adapters found")?;
 
+        info!("Bluetooth client {} using adapter: {:?}", client_id, adapter.adapter_info().await?);
 
         // Update client state
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        console_info!(status_tx, "[CLIENT] Bluetooth client {} initialized", client_id);
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send(format!("[CLIENT] Bluetooth client {} initialized", client_id));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Initialize client data
         let client_data = Arc::new(Mutex::new(ClientData {
@@ -160,7 +161,8 @@ impl BluetoothClient {
             data.adapter.clone()
         };
 
-        console_info!(status_tx, "[CLIENT] Scanning for BLE devices...");
+        info!("Bluetooth client {} starting scan for {} seconds", client_id, duration_secs);
+        let _ = status_tx.send(format!("[CLIENT] Scanning for BLE devices..."));
 
         adapter.start_scan(ScanFilter::default()).await?;
         tokio::time::sleep(Duration::from_secs(duration_secs)).await;
@@ -181,7 +183,8 @@ impl BluetoothClient {
             }
         }
 
-        console_info!(status_tx, "[CLIENT] Found {} BLE devices", devices.len());
+        info!("Bluetooth client {} found {} devices", client_id, devices.len());
+        let _ = status_tx.send(format!("[CLIENT] Found {} BLE devices", devices.len()));
 
         // Call LLM with scan results
         let protocol = Arc::new(BluetoothClientProtocol::new());
@@ -281,7 +284,8 @@ impl BluetoothClient {
             .context("Device not found")?;
 
         // Connect to the device
-        console_info!(status_tx, "[CLIENT] Connecting to BLE device...");
+        info!("Bluetooth client {} connecting to device", client_id);
+        let _ = status_tx.send(format!("[CLIENT] Connecting to BLE device..."));
 
         peripheral.connect().await?;
         peripheral.discover_services().await?;
@@ -290,7 +294,8 @@ impl BluetoothClient {
         let device_addr = device_props.address.to_string();
         let device_name_str = device_props.local_name.unwrap_or_else(|| "Unknown".to_string());
 
-        console_info!(status_tx, "[CLIENT] Connected to {}", device_name_str);
+        info!("Bluetooth client {} connected to {} ({})", client_id, device_name_str, device_addr);
+        let _ = status_tx.send(format!("[CLIENT] Connected to {}", device_name_str));
 
         // Store peripheral
         {
@@ -435,7 +440,6 @@ impl BluetoothClient {
     ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
         use crate::llm::actions::client_trait::Client;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
         let protocol = BluetoothClientProtocol::new();
 
         match protocol.execute_action(action)? {

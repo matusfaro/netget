@@ -223,42 +223,7 @@ fi
 
 ## Logging (CRITICAL)
 
-**Console logging macros**: Use `console_trace!`, `console_debug!`, `console_info!`, `console_warn!`, `console_error!` for dual logging to both file and TUI:
-
-```rust
-use crate::{console_info, console_debug, console_error};
-
-console_info!(status_tx, "Server started on {}", addr);
-console_debug!(status_tx, "Received {} bytes", n);
-console_error!(status_tx, "Connection failed: {}", err);
-```
-
-**Implementation**: Each macro:
-- Takes `status_tx` (or `self.status_tx`) as first parameter
-- Accepts standard format string and arguments
-- Logs to tracing → `netget.log` (file)
-- Logs to status channel → TUI (user interface)
-- Skips file logging for messages starting with `__` (e.g., `__UPDATE_UI__`)
-
-**Levels**: ERROR (critical failures), WARN (non-fatal issues), INFO (lifecycle events), DEBUG (summaries), TRACE (detailed payloads).
-
-**Benefits**:
-- Single call instead of two separate logging statements
-- Message formatted once (efficient)
-- Impossible to forget one destination
-- Consistent logging across entire codebase
-- Automatic handling of special control messages
-
-**Edge cases**: If you need different messages for file vs TUI (rare):
-```rust
-tracing::info!("Detailed technical info: {:?}", data);
-status_tx.send(format!("✓ User-friendly message"));
-```
-
-**Import**: Add to your file (usually already present):
-```rust
-use crate::{console_info, console_debug, console_error, console_warn, console_trace};
-```
+**Dual logging**: ALL logs to tracing macros (`debug!`, `trace!`, etc.) → `netget.log` AND `status_tx.send()` → TUI. **Levels**: ERROR (critical), WARN (non-fatal), INFO (lifecycle), DEBUG (summaries), TRACE (payloads).
 
 ## UI & Technical Details
 

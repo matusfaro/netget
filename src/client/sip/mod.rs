@@ -72,8 +72,8 @@ impl SipClient {
         app_state
             .update_client_status(client_id, ClientStatus::Connected)
             .await;
-        console_info!(status_tx, "[CLIENT] SIP client {} connected", client_id);
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send(format!("[CLIENT] SIP client {} connected", client_id));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Initialize client data
         let client_data = Arc::new(Mutex::new(ClientData {
@@ -441,7 +441,11 @@ impl SipClient {
                         // Send request
                         match socket.send(&request).await {
                             Ok(sent) => {
-                                console_info!(status_tx, "[CLIENT] SIP client {} sent {} request");
+                                info!("SIP client {} sent {} bytes", client_id, sent);
+                                let _ = status_tx.send(format!(
+                                    "[CLIENT] SIP client {} sent {} request",
+                                    client_id, name
+                                ));
                             }
                             Err(e) => {
                                 error!("SIP client {} send error: {}", client_id, e);
@@ -452,7 +456,8 @@ impl SipClient {
                 }
             }
             Ok(ClientActionResult::Disconnect) => {
-                console_info!(status_tx, "[CLIENT] SIP client {} disconnecting", client_id);
+                info!("SIP client {} disconnecting", client_id);
+                let _ = status_tx.send(format!("[CLIENT] SIP client {} disconnecting", client_id));
             }
             Ok(ClientActionResult::WaitForMore) => {
                 trace!("SIP client {} waiting for more data", client_id);
@@ -712,7 +717,6 @@ impl SipClient {
     /// Generate a random branch parameter
     fn generate_branch() -> String {
         use rand::Rng;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
         let branch: u32 = rand::thread_rng().gen();
         format!("{:x}", branch)
     }

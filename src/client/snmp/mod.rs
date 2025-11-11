@@ -127,11 +127,12 @@ impl SnmpClient {
         let remote_sock_addr: SocketAddr = remote_addr.parse()
             .context("Invalid remote address")?;
 
+        info!("SNMP client {} connected to {} (local: {})", client_id, remote_sock_addr, local_addr);
 
         // Update client state
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        console_info!(status_tx, "[CLIENT] SNMP client {} connected", client_id);
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send(format!("[CLIENT] SNMP client {} connected", client_id));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Call LLM with connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -272,8 +273,9 @@ impl SnmpClient {
                     }
                 }
                 Ok(ClientActionResult::Disconnect) => {
+                    info!("SNMP client {} disconnecting", client_id);
                     app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                    console_info!(status_tx, "__UPDATE_UI__");
+                    let _ = status_tx.send("__UPDATE_UI__".to_string());
                 }
                 Ok(ClientActionResult::WaitForMore) => {
                     // No action needed
@@ -560,7 +562,6 @@ impl SnmpClient {
     /// Format v2 value for JSON
     fn format_v2_value(value: &v2::VarBindValue) -> Value {
         use v2::VarBindValue;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
         match value {
             VarBindValue::Unspecified => serde_json::json!(null),
             VarBindValue::NoSuchObject => serde_json::json!("(no such object)"),

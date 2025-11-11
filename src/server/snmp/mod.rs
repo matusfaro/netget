@@ -88,11 +88,13 @@ impl SnmpServer {
                         let data = buffer[..n].to_vec();
 
                         // DEBUG: Log summary
-                        console_debug!(status_tx, "[DEBUG] SNMP received {} bytes from {}", n, peer_addr);
+                        debug!("SNMP received {} bytes from {}", n, peer_addr);
+                        let _ = status_tx.send(format!("[DEBUG] SNMP received {} bytes from {}", n, peer_addr));
 
                         // TRACE: Log full payload
                         let hex_str = hex::encode(&data);
-                        console_trace!(status_tx, "[TRACE] SNMP data (hex): {}", hex_str);
+                        trace!("SNMP data (hex): {}", hex_str);
+                        let _ = status_tx.send(format!("[TRACE] SNMP data (hex): {}", hex_str));
 
                         // Parse the SNMP message
                         let parsed = match Self::parse_snmp_message(&data) {
@@ -227,7 +229,6 @@ impl SnmpServer {
 
                         // Add connection to ServerInstance (SNMP "connection" = recent peer)
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -243,14 +244,16 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        console_info!(status_tx, "__UPDATE_UI__");
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         // DEBUG: Log summary
-                        console_debug!(status_tx, "[DEBUG] SNMP received {} bytes from {}", n, peer_addr);
+                        debug!("SNMP received {} bytes from {}", n, peer_addr);
+                        let _ = status_tx.send(format!("[DEBUG] SNMP received {} bytes from {}", n, peer_addr));
 
                         // TRACE: Log full payload
                         let hex_str = hex::encode(&data);
-                        console_trace!(status_tx, "[TRACE] SNMP data (hex): {}", hex_str);
+                        trace!("SNMP data (hex): {}", hex_str);
+                        let _ = status_tx.send(format!("[TRACE] SNMP data (hex): {}", hex_str));
 
                         // Parse the SNMP message
                         let parsed = match Self::parse_snmp_message(&data) {

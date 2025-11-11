@@ -58,11 +58,12 @@ impl TorrentTrackerClient {
         // BitTorrent tracker is HTTP-based, so we don't maintain a persistent connection
         // We'll just track the tracker URL and make HTTP requests as needed
 
+        info!("BitTorrent Tracker client {} initialized for {}", client_id, remote_addr);
 
         // Update client state
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        console_info!(status_tx, "[CLIENT] BitTorrent Tracker client {} connected to {}", client_id, remote_addr);
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send(format!("[CLIENT] BitTorrent Tracker client {} connected to {}", client_id, remote_addr));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Call LLM with connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -134,7 +135,6 @@ impl TorrentTrackerClient {
         status_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         use crate::llm::actions::client_trait::ClientActionResult;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         match protocol.execute_action(action)? {
             ClientActionResult::Custom { name, data } if name == "tracker_announce" => {
@@ -260,8 +260,9 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                 }
             }
             ClientActionResult::Disconnect => {
+                info!("Tracker client {} disconnecting", client_id);
                 app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                console_info!(status_tx, "__UPDATE_UI__");
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
             }
             _ => {}
         }

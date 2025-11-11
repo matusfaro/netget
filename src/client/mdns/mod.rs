@@ -48,8 +48,8 @@ impl MdnsClient {
 
         // Update status
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        console_info!(status_tx, "[CLIENT] mDNS client {} initialized", client_id);
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send(format!("[CLIENT] mDNS client {} initialized", client_id));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Call LLM with connected event to get initial instructions
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -132,7 +132,6 @@ impl MdnsClient {
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         use crate::llm::actions::client_trait::Client;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
         let protocol = Arc::new(crate::client::mdns::actions::MdnsClientProtocol::new());
 
         match protocol.as_ref().execute_action(action.clone()) {
@@ -142,7 +141,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                         let service_type = data["service_type"].as_str()
                             .ok_or_else(|| anyhow::anyhow!("Missing service_type"))?;
 
-                        console_info!(status_tx, "[CLIENT] Browsing for mDNS service: {}", service_type);
+                        info!("mDNS client {} browsing for service: {}", client_id, service_type);
+                        let _ = status_tx.send(format!("[CLIENT] Browsing for mDNS service: {}", service_type));
 
                         // Start browsing
                         let receiver = mdns.browse(service_type)
@@ -285,10 +285,12 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                         // Use mdns to resolve hostname (timeout in milliseconds)
                         match mdns.resolve_hostname(hostname, Some(5000)) {
                             Ok(addrs) => {
-                                console_info!(status_tx, "[CLIENT] Resolved {}: {:?}", hostname, addrs);
+                                info!("Resolved {} to {} addresses", hostname, addrs.len());
+                                let _ = status_tx.send(format!("[CLIENT] Resolved {}: {:?}", hostname, addrs));
                             }
                             Err(e) => {
-                                console_warn!(status_tx, "[CLIENT] Failed to resolve {}: {}", hostname, e);
+                                warn!("Failed to resolve {}: {}", hostname, e);
+                                let _ = status_tx.send(format!("[CLIENT] Failed to resolve {}: {}", hostname, e));
                             }
                         }
                     }
@@ -298,8 +300,9 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                 }
             }
             Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
+                info!("mDNS client {} disconnecting", client_id);
                 app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                console_info!(status_tx, "[CLIENT] mDNS client {} disconnected", client_id);
+                let _ = status_tx.send(format!("[CLIENT] mDNS client {} disconnected", client_id));
             }
             Ok(crate::llm::actions::client_trait::ClientActionResult::WaitForMore) => {
                 trace!("mDNS client {} waiting for more data", client_id);

@@ -35,7 +35,8 @@ impl MdnsServer {
     ) -> Result<SocketAddr> {
         use mdns_sd::{ServiceDaemon, ServiceInfo};
 
-        console_info!(status_tx, "[INFO] mDNS server starting");
+        info!("mDNS server (action-based) starting");
+        let _ = status_tx.send("[INFO] mDNS server starting".to_string());
 
         let protocol = Arc::new(MdnsProtocol::new());
 
@@ -58,7 +59,8 @@ impl MdnsServer {
         ).await {
             // Display messages from LLM
             for message in &execution_result.messages {
-                console_info!(status_tx, "[INFO] {}", message);
+                info!("{}", message);
+                let _ = status_tx.send(format!("[INFO] {}", message));
             }
 
             // Process raw actions for manual mDNS service registration
@@ -104,15 +106,21 @@ impl MdnsServer {
                                     // Register service
                                     match mdns.register(service_info) {
                                         Ok(_) => {
-                                            console_info!(status_tx, "[INFO] → mDNS registered service: {} ({}:{})");
+                                            info!("mDNS registered service: {} ({}:{})", instance_name, local_ip, port);
+                                            let _ = status_tx.send(format!(
+                                                "[INFO] → mDNS registered service: {} ({}:{})",
+                                                instance_name, local_ip, port
+                                            ));
                                         }
                                         Err(e) => {
-                                            console_error!(status_tx, "[ERROR] ✗ Failed to register mDNS service: {}", e);
+                                            error!("Failed to register mDNS service: {}", e);
+                                            let _ = status_tx.send(format!("[ERROR] ✗ Failed to register mDNS service: {}", e));
                                         }
                                     }
                                 }
                                 Err(e) => {
-                                    console_error!(status_tx, "[ERROR] ✗ Failed to create ServiceInfo: {}", e);
+                                    error!("Failed to create ServiceInfo: {}", e);
+                                    let _ = status_tx.send(format!("[ERROR] ✗ Failed to create ServiceInfo: {}", e));
                                 }
                             }
                         }
@@ -139,7 +147,6 @@ impl MdnsServer {
 #[cfg(feature = "mdns")]
 fn get_local_ip() -> Option<String> {
     use std::net::UdpSocket;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
     // Try to get local IP by connecting to a public DNS server
     // This doesn't actually send any packets, just determines the local IP

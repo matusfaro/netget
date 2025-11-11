@@ -30,7 +30,11 @@ impl WhoisServer {
         let local_addr = listener.local_addr()?;
 
         // INFO: Log lifecycle event
-        console_info!(status_tx, "[INFO] WHOIS server (action-based) listening on {}");
+        info!("WHOIS server (action-based) listening on {}", local_addr);
+        let _ = status_tx.send(format!(
+            "[INFO] WHOIS server (action-based) listening on {}",
+            local_addr
+        ));
 
         let protocol = Arc::new(actions::WhoisProtocol::new());
 
@@ -62,7 +66,7 @@ impl WhoisServer {
                         app_state
                             .add_connection_to_server(server_id, conn_state)
                             .await;
-                        console_info!(status_tx, "__UPDATE_UI__");
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         // DEBUG: Log connection summary
                         debug!("WHOIS client connected from {}", peer_addr);
@@ -91,7 +95,8 @@ impl WhoisServer {
                     }
                     Err(e) => {
                         // ERROR: Critical failure
-                        console_error!(status_tx, "[ERROR] WHOIS accept error: {}", e);
+                        error!("WHOIS accept error: {}", e);
+                        let _ = status_tx.send(format!("[ERROR] WHOIS accept error: {}", e));
                         break;
                     }
                 }
@@ -128,7 +133,7 @@ async fn handle_whois_connection(
                 app_state
                     .update_connection_status(server_id, connection_id, ConnectionStatus::Closed)
                     .await;
-                console_info!(status_tx, "__UPDATE_UI__");
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
                 break;
             }
             Ok(n) => {
@@ -148,10 +153,15 @@ async fn handle_whois_connection(
                     .await;
 
                 // DEBUG: Log summary
-                console_debug!(status_tx, "[DEBUG] WHOIS received {} bytes from {}");
+                debug!("WHOIS received {} bytes from {}", n, peer_addr);
+                let _ = status_tx.send(format!(
+                    "[DEBUG] WHOIS received {} bytes from {}",
+                    n, peer_addr
+                ));
 
                 // TRACE: Log full payload
-                console_trace!(status_tx, "[TRACE] WHOIS query data: {}", query_str.trim());
+                trace!("WHOIS query data: {}", query_str.trim());
+                let _ = status_tx.send(format!("[TRACE] WHOIS query data: {}", query_str.trim()));
 
                 // Parse query (trim whitespace and newlines)
                 let query = query_str.trim().to_string();
@@ -165,7 +175,11 @@ async fn handle_whois_connection(
                 );
 
                 // DEBUG: Log LLM call
-                console_debug!(status_tx, "[DEBUG] WHOIS calling LLM for query from {}");
+                debug!("WHOIS calling LLM for query from {}", peer_addr);
+                let _ = status_tx.send(format!(
+                    "[DEBUG] WHOIS calling LLM for query from {}",
+                    peer_addr
+                ));
 
                 // Call LLM
                 match call_llm(
@@ -181,11 +195,19 @@ async fn handle_whois_connection(
                     Ok(execution_result) => {
                         // Display messages from LLM
                         for message in &execution_result.messages {
-                            console_info!(status_tx, "[INFO] {}", message);
+                            info!("{}", message);
+                            let _ = status_tx.send(format!("[INFO] {}", message));
                         }
 
                         // DEBUG: Log protocol results count
-                        console_debug!(status_tx, "[DEBUG] WHOIS got {} protocol results");
+                        debug!(
+                            "WHOIS got {} protocol results",
+                            execution_result.protocol_results.len()
+                        );
+                        let _ = status_tx.send(format!(
+                            "[DEBUG] WHOIS got {} protocol results",
+                            execution_result.protocol_results.len()
+                        ));
 
                         // Send all outputs to client and check for close
                         let mut should_close = false;
@@ -213,13 +235,29 @@ async fn handle_whois_connection(
                                         .await;
 
                                     // DEBUG: Log summary
-                                    console_debug!(status_tx, "[DEBUG] WHOIS sent {} bytes to {}");
+                                    debug!("WHOIS sent {} bytes to {}", output_data.len(), peer_addr);
+                                    let _ = status_tx.send(format!(
+                                        "[DEBUG] WHOIS sent {} bytes to {}",
+                                        output_data.len(),
+                                        peer_addr
+                                    ));
 
                                     // TRACE: Log full payload
-                                    console_trace!(status_tx, "[TRACE] WHOIS response: {}");
+                                    trace!(
+                                        "WHOIS response: {}",
+                                        String::from_utf8_lossy(&output_data)
+                                    );
+                                    let _ = status_tx.send(format!(
+                                        "[TRACE] WHOIS response: {}",
+                                        String::from_utf8_lossy(&output_data)
+                                    ));
 
                                     // INFO: User-facing message
-                                    console_info!(status_tx, "→ WHOIS response to {} ({} bytes)");
+                                    let _ = status_tx.send(format!(
+                                        "→ WHOIS response to {} ({} bytes)",
+                                        peer_addr,
+                                        output_data.len()
+                                    ));
                                 }
                                 crate::llm::actions::protocol_trait::ActionResult::CloseConnection => {
                                     should_close = true;
@@ -238,7 +276,8 @@ async fn handle_whois_connection(
                     }
                     Err(e) => {
                         // ERROR: LLM call failed
-                        console_error!(status_tx, "✗ WHOIS LLM error: {}", e);
+                        error!("WHOIS LLM call failed: {}", e);
+                        let _ = status_tx.send(format!("✗ WHOIS LLM error: {}", e));
                         break;
                     }
                 }
@@ -255,9 +294,8 @@ async fn handle_whois_connection(
 
     // Update connection status to closed
     use crate::state::server::ConnectionStatus;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
     app_state
         .update_connection_status(server_id, connection_id, ConnectionStatus::Closed)
         .await;
-    console_info!(status_tx, "__UPDATE_UI__");
+    let _ = status_tx.send("__UPDATE_UI__".to_string());
 }

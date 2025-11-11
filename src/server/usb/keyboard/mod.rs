@@ -77,7 +77,11 @@ impl UsbKeyboardServer {
         let listener =
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        console_info!(status_tx, "USB Keyboard server listening on {}");
+        info!("USB Keyboard server listening on {}", local_addr);
+        let _ = status_tx.send(format!(
+            "USB Keyboard server listening on {}",
+            local_addr
+        ));
 
         let connections = Arc::new(Mutex::new(HashMap::new()));
         let protocol = Arc::new(crate::server::usb::keyboard::UsbKeyboardProtocol::new());
@@ -96,7 +100,6 @@ impl UsbKeyboardServer {
 
                         // Add connection to ServerInstance
                         use crate::state::server::{
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                             ConnectionState as ServerConnectionState, ConnectionStatus,
                             ProtocolConnectionInfo,
                         };
@@ -120,7 +123,7 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                         app_state
                             .add_connection_to_server(server_id, conn_state)
                             .await;
-                        console_info!(status_tx, "__UPDATE_UI__");
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         // Handle USB/IP connection
                         let llm_client_clone = llm_client.clone();
@@ -219,7 +222,14 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
         // We bind to port 3240 (standard USB/IP port) on the remote address
         let usbip_addr = SocketAddr::new(remote_addr.ip(), 3240);
 
-        console_info!(status_tx, "USB keyboard device starting on {} - will be ready for: sudo usbip attach -r {} -b 1-1");
+        info!(
+            "Starting USB/IP server for keyboard on {} (connection {})",
+            usbip_addr, connection_id
+        );
+        let _ = status_tx.send(format!(
+            "USB keyboard device starting on {} - will be ready for: sudo usbip attach -r {} -b 1-1",
+            usbip_addr, usbip_addr
+        ));
 
         // Spawn USB/IP protocol server
         let connection_id_clone = connection_id;
@@ -231,7 +241,14 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
         // Wait a moment for server to start
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        console_info!(status_tx, "USB keyboard ready - run: sudo usbip list -r {} && sudo usbip attach -r {} -b 1-1");
+        info!(
+            "USB keyboard device ready on {} (connection {})",
+            usbip_addr, connection_id
+        );
+        let _ = status_tx.send(format!(
+            "USB keyboard ready - run: sudo usbip list -r {} && sudo usbip attach -r {} -b 1-1",
+            usbip_addr, usbip_addr
+        ));
 
         // Call LLM on device attach
         if let Err(e) = Self::call_llm_on_attach(

@@ -104,7 +104,6 @@ impl Server for PostgresqlProtocol {
         > {
             Box::pin(async move {
                 use crate::server::postgresql::PostgresqlServer;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                 let send_first = ctx.startup_params
                     .as_ref()
                     .and_then(|p| p.get_optional_bool("send_first"))
@@ -160,7 +159,11 @@ impl PostgresqlProtocol {
             rows.len()
         );
 
-        console_debug!(self.status_tx, "[DEBUG] PostgreSQL → Result set: {} columns, {} rows");
+        let _ = self.status_tx.send(format!(
+            "[DEBUG] PostgreSQL → Result set: {} columns, {} rows",
+            columns.len(),
+            rows.len()
+        ));
 
         Ok(ActionResult::Custom {
             name: "postgresql_query_response".to_string(),
@@ -187,8 +190,15 @@ impl PostgresqlProtocol {
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown error");
 
+        debug!(
+            "PostgreSQL error response: {} {} - {}",
+            severity, code, message
+        );
 
-        console_debug!(self.status_tx, "[DEBUG] PostgreSQL ✗ {} {}: {}");
+        let _ = self.status_tx.send(format!(
+            "[DEBUG] PostgreSQL ✗ {} {}: {}",
+            severity, code, message
+        ));
 
         Ok(ActionResult::Custom {
             name: "postgresql_error".to_string(),

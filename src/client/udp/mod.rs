@@ -58,11 +58,12 @@ impl UdpClient {
 
         let local_addr = socket.local_addr()?;
 
+        info!("UDP client {} bound to {} (default target: {})", client_id, local_addr, default_target);
 
         // Update client state
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        console_info!(status_tx, "[CLIENT] UDP client {} ready", client_id);
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send(format!("[CLIENT] UDP client {} ready", client_id));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Initialize client data
         let client_data = Arc::new(Mutex::new(ClientData {
@@ -184,9 +185,10 @@ impl UdpClient {
                             }
                         }
                         Err(e) => {
+                            error!("UDP client {} receive error: {}", client_id, e);
                             app_state.update_client_status(client_id, ClientStatus::Error(e.to_string())).await;
-                            console_error!(status_tx, "[CLIENT] UDP client {} error: {}", client_id, e);
-                            console_error!(status_tx, "__UPDATE_UI__");
+                            let _ = status_tx.send(format!("[CLIENT] UDP client {} error: {}", client_id, e));
+                            let _ = status_tx.send("__UPDATE_UI__".to_string());
                             break;
                         }
                     }
@@ -265,7 +267,6 @@ impl UdpClient {
         let protocol = Arc::new(UdpClientProtocol::new());
         for action in llm_result.actions {
             use crate::llm::actions::client_trait::Client;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
             let action_result = protocol.as_ref().execute_action(action)?;
 
             match action_result {
@@ -308,9 +309,10 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                     }
                 }
                 ClientActionResult::Disconnect => {
+                    info!("UDP client {} closing socket", client_id);
                     app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                    console_info!(status_tx, "[CLIENT] UDP client {} closed", client_id);
-                    console_info!(status_tx, "__UPDATE_UI__");
+                    let _ = status_tx.send(format!("[CLIENT] UDP client {} closed", client_id));
+                    let _ = status_tx.send("__UPDATE_UI__".to_string());
                     return Ok(());
                 }
                 ClientActionResult::WaitForMore => {

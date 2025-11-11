@@ -36,7 +36,8 @@ impl NfsServer {
     ) -> Result<SocketAddr> {
         use nfsserve::tcp::{NFSTcp, NFSTcpListener};
 
-        console_info!(status_tx, "[INFO] NFS server starting on {}", listen_addr);
+        info!("NFS server (LLM-controlled) starting on {}", listen_addr);
+        let _ = status_tx.send(format!("[INFO] NFS server starting on {}", listen_addr));
 
         let protocol = Arc::new(NfsProtocol::new());
 
@@ -57,7 +58,8 @@ impl NfsServer {
         let actual_port = nfs_listener.get_listen_port();
         let actual_addr = SocketAddr::new(listen_addr.ip(), actual_port);
 
-        console_info!(status_tx, "→ NFS server listening on {}", actual_addr);
+        info!("NFS server listening on {}", actual_addr);
+        let _ = status_tx.send(format!("→ NFS server listening on {}", actual_addr));
 
         // Spawn server handler
         tokio::spawn(async move {
@@ -65,7 +67,8 @@ impl NfsServer {
 
             // Handle connections forever (nfsserve manages connections internally)
             if let Err(e) = nfs_listener.handle_forever().await {
-                console_error!(status_tx, "✗ NFS server error: {}", e);
+                error!("NFS server error: {}", e);
+                let _ = status_tx.send(format!("✗ NFS server error: {}", e));
             }
         });
 
@@ -81,7 +84,7 @@ impl NfsServer {
         status_tx: mpsc::UnboundedSender<String>,
         _server_id: crate::state::ServerId,
     ) -> Result<SocketAddr> {
-        console_error!(status_tx, "[ERROR] NFS feature not enabled at compile time");
+        let _ = status_tx.send("[ERROR] NFS feature not enabled at compile time".to_string());
         Err(anyhow::anyhow!("NFS feature not enabled"))
     }
 }
@@ -117,7 +120,8 @@ impl LlmNfsFileSystem {
 
     /// Consult the LLM for NFS operations
     async fn consult_llm(&self, operation: &str, params: serde_json::Value) -> Result<Vec<serde_json::Value>> {
-        console_debug!(self.status_tx, "[DEBUG] NFS {}: {:?}", operation, params);
+        debug!("Consulting LLM for NFS {} operation", operation);
+        let _ = self.status_tx.send(format!("[DEBUG] NFS {}: {:?}", operation, params));
 
         // Create NFS operation event
         let event = Event::new(&NFS_OPERATION_EVENT, serde_json::json!({
@@ -125,7 +129,8 @@ impl LlmNfsFileSystem {
             "params": params
         }));
 
-        console_trace!(self.status_tx, "[TRACE] Calling LLM for NFS {}", operation);
+        trace!("Calling LLM for NFS {} operation", operation);
+        let _ = self.status_tx.send(format!("[TRACE] Calling LLM for NFS {}", operation));
 
         // Call LLM with Event-based approach
         let execution_result = call_llm(
@@ -139,7 +144,8 @@ impl LlmNfsFileSystem {
 
         // Display messages from LLM
         for message in &execution_result.messages {
-            console_info!(self.status_tx, "[INFO] {}", message);
+            info!("{}", message);
+            let _ = self.status_tx.send(format!("[INFO] {}", message));
         }
 
         debug!("LLM returned {} actions for NFS {}", execution_result.raw_actions.len(), operation);
@@ -758,7 +764,6 @@ impl NFSFileSystem for LlmNfsFileSystem {
 
     async fn symlink(&self, dirid: fileid3, linkname: &filename3, symlink: &nfspath3, attr: &sattr3) -> Result<(fileid3, fattr3), nfsstat3> {
         use nfsserve::nfs::set_mode3;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         let linkname_str = String::from_utf8_lossy(linkname).to_string();
         let target_str = String::from_utf8_lossy(symlink).to_string();

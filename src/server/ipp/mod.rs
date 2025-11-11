@@ -41,7 +41,8 @@ impl IppServer {
     ) -> anyhow::Result<SocketAddr> {
         let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        console_info!(status_tx, "[INFO] IPP server listening on {}", local_addr);
+        info!("IPP server listening on {}", local_addr);
+        let _ = status_tx.send(format!("[INFO] IPP server listening on {}", local_addr));
 
         let protocol = Arc::new(IppProtocol::new());
 
@@ -52,11 +53,11 @@ impl IppServer {
                     Ok((stream, remote_addr)) => {
                         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        console_info!(status_tx, "[INFO] IPP connection from {}", remote_addr);
+                        info!("IPP connection {} from {}", connection_id, remote_addr);
+                        let _ = status_tx.send(format!("[INFO] IPP connection from {}", remote_addr));
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -72,7 +73,7 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        console_info!(status_tx, "__UPDATE_UI__");
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let llm_client_clone = llm_client.clone();
                         let app_state_clone = app_state.clone();
@@ -116,7 +117,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "[ERROR] Failed to accept IPP connection: {}", e);
+                        error!("Failed to accept IPP connection: {}", e);
+                        let _ = status_tx.send(format!("[ERROR] Failed to accept IPP connection: {}", e));
                         break;
                     }
                 }
@@ -153,7 +155,8 @@ async fn handle_ipp_request_with_llm(
     let body_bytes = match req.into_body().collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
-            console_error!(status_tx, "[ERROR] Failed to read IPP request body: {}", e);
+            error!("Failed to read IPP request body: {}", e);
+            let _ = status_tx.send(format!("[ERROR] Failed to read IPP request body: {}", e));
             Bytes::new()
         }
     };
@@ -164,7 +167,10 @@ async fn handle_ipp_request_with_llm(
         uri,
         body_bytes.len()
     );
-    console_debug!(status_tx, "[DEBUG] IPP {} {} ({} bytes)");
+    let _ = status_tx.send(format!(
+        "[DEBUG] IPP {} {} ({} bytes)",
+        method, uri, body_bytes.len()
+    ));
 
     // Parse IPP request if body is present
     let operation_name = if !body_bytes.is_empty() {
@@ -211,7 +217,8 @@ async fn handle_ipp_request_with_llm(
                                 .unwrap_or("");
                             let body = hex::decode(body_hex).unwrap_or_default();
 
-                            console_debug!(status_tx, "[DEBUG] IPP → {} response", status);
+                            debug!("IPP response: status={}", status);
+                            let _ = status_tx.send(format!("[DEBUG] IPP → {} response", status));
 
                             return Ok(Response::builder()
                                 .status(status)
@@ -235,7 +242,8 @@ async fn handle_ipp_request_with_llm(
                 .unwrap())
         }
         Err(e) => {
-            console_error!(status_tx, "[ERROR] LLM error for IPP request: {}", e);
+            error!("LLM error for IPP request: {}", e);
+            let _ = status_tx.send(format!("[ERROR] LLM error for IPP request: {}", e));
 
             Ok(Response::builder()
                 .status(500)

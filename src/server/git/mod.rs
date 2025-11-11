@@ -49,7 +49,8 @@ impl GitServer {
         let listener =
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        console_info!(status_tx, "[INFO] Git server listening on {}", local_addr);
+        info!("Git server listening on {}", local_addr);
+        let _ = status_tx.send(format!("[INFO] Git server listening on {}", local_addr));
 
         let protocol = Arc::new(GitProtocol::new());
 
@@ -66,7 +67,6 @@ impl GitServer {
 
                         // Add connection to ServerInstance
                         use crate::state::server::{
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                             ConnectionState as ServerConnectionState, ConnectionStatus,
                             ProtocolConnectionInfo,
                         };
@@ -87,7 +87,7 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                         app_state
                             .add_connection_to_server(server_id, conn_state)
                             .await;
-                        console_info!(status_tx, "__UPDATE_UI__");
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let llm_client_clone = llm_client.clone();
                         let app_state_clone = app_state.clone();
@@ -165,7 +165,8 @@ async fn handle_git_request(
     let uri = req.uri().clone();
     let path = uri.path();
 
-    console_debug!(status_tx, "[DEBUG] Git {} {}", method, path);
+    debug!("Git request: {} {}", method, path);
+    let _ = status_tx.send(format!("[DEBUG] Git {} {}", method, path));
 
     // Parse repository name from path
     // Format: /<repo>/info/refs or /<repo>/git-upload-pack
@@ -209,7 +210,8 @@ async fn handle_git_request(
             let body_bytes = match req.collect().await {
                 Ok(collected) => collected.to_bytes(),
                 Err(e) => {
-                    console_error!(status_tx, "[ERROR] Failed to read request body: {}", e);
+                    error!("Failed to read request body: {}", e);
+                    let _ = status_tx.send(format!("[ERROR] Failed to read request body: {}", e));
                     return Ok(build_error_response(
                         StatusCode::BAD_REQUEST,
                         "Failed to read request body",
@@ -217,7 +219,15 @@ async fn handle_git_request(
                 }
             };
 
-            console_trace!(status_tx, "[TRACE] Git upload-pack request: {} bytes");
+            trace!(
+                "Git upload-pack request body ({} bytes): {:?}",
+                body_bytes.len(),
+                body_bytes
+            );
+            let _ = status_tx.send(format!(
+                "[TRACE] Git upload-pack request: {} bytes",
+                body_bytes.len()
+            ));
 
             handle_upload_pack(
                 repo_name,
@@ -273,7 +283,8 @@ async fn handle_info_refs(
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let repo = repo_name.unwrap_or_else(|| "default".to_string());
 
-    console_debug!(status_tx, "[DEBUG] Git info/refs for repo: {}", repo);
+    debug!("Git info/refs for repository: {}", repo);
+    let _ = status_tx.send(format!("[DEBUG] Git info/refs for repo: {}", repo));
 
     // Get sync actions for reference advertisement
     let sync_actions = protocol.get_sync_actions();
@@ -314,13 +325,15 @@ Provide references for this repository."#,
         repo, actions_desc
     );
 
-    console_debug!(status_tx, "[DEBUG] Calling LLM for ref advertisement");
+    debug!("Calling LLM for Git ref advertisement: {}", repo);
+    let _ = status_tx.send(format!("[DEBUG] Calling LLM for ref advertisement"));
 
     // Call LLM with retry
     let model_str = match crate::llm::ensure_model_selected(model).await {
         Ok(m) => m,
         Err(e) => {
-            console_error!(status_tx, "[ERROR] Failed to select model: {}", e);
+            error!("Failed to select model: {}", e);
+            let _ = status_tx.send(format!("[ERROR] Failed to select model: {}", e));
             return Ok(build_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &format!("Model selection failed: {}", e),
@@ -337,7 +350,8 @@ Provide references for this repository."#,
     {
         Ok(response) => response,
         Err(e) => {
-            console_error!(status_tx, "[ERROR] LLM call failed: {}", e);
+            error!("LLM call failed: {}", e);
+            let _ = status_tx.send(format!("[ERROR] LLM call failed: {}", e));
             return Ok(build_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &format!("Internal error: {}", e),
@@ -345,13 +359,15 @@ Provide references for this repository."#,
         }
     };
 
-    console_trace!(status_tx, "[TRACE] LLM response: {}", llm_response);
+    trace!("LLM response for Git refs: {}", llm_response);
+    let _ = status_tx.send(format!("[TRACE] LLM response: {}", llm_response));
 
     // Parse LLM response as actions
     let actions_result: Value = match serde_json::from_str(&llm_response) {
         Ok(v) => v,
         Err(e) => {
-            console_error!(status_tx, "[ERROR] Failed to parse LLM response: {}", e);
+            error!("Failed to parse LLM response: {}", e);
+            let _ = status_tx.send(format!("[ERROR] Failed to parse LLM response: {}", e));
             return Ok(build_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Invalid LLM response",
@@ -439,7 +455,8 @@ async fn handle_upload_pack(
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let repo = repo_name.unwrap_or_else(|| "default".to_string());
 
-    console_debug!(status_tx, "[DEBUG] Git upload-pack for repo: {}", repo);
+    debug!("Git upload-pack for repository: {}", repo);
+    let _ = status_tx.send(format!("[DEBUG] Git upload-pack for repo: {}", repo));
 
     // For MVP, we'll just send a simple pack response
     // In a full implementation, we'd parse the want/have negotiation from body
@@ -482,13 +499,15 @@ Generate a pack file response."#,
         actions_desc
     );
 
-    console_debug!(status_tx, "[DEBUG] Calling LLM for pack generation");
+    debug!("Calling LLM for Git pack generation: {}", repo);
+    let _ = status_tx.send("[DEBUG] Calling LLM for pack generation".to_string());
 
     // Call LLM with retry
     let model_str = match crate::llm::ensure_model_selected(model).await {
         Ok(m) => m,
         Err(e) => {
-            console_error!(status_tx, "[ERROR] Failed to select model: {}", e);
+            error!("Failed to select model: {}", e);
+            let _ = status_tx.send(format!("[ERROR] Failed to select model: {}", e));
             return Ok(build_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &format!("Model selection failed: {}", e),
@@ -505,7 +524,8 @@ Generate a pack file response."#,
     {
         Ok(response) => response,
         Err(e) => {
-            console_error!(status_tx, "[ERROR] LLM call failed: {}", e);
+            error!("LLM call failed: {}", e);
+            let _ = status_tx.send(format!("[ERROR] LLM call failed: {}", e));
             return Ok(build_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &format!("Internal error: {}", e),
@@ -513,7 +533,8 @@ Generate a pack file response."#,
         }
     };
 
-    console_trace!(status_tx, "[TRACE] LLM response for pack generation");
+    trace!("LLM response for Git pack: {}", llm_response);
+    let _ = status_tx.send(format!("[TRACE] LLM response for pack generation"));
 
     // Parse and execute actions (similar to handle_info_refs)
     let actions_result: Value = match serde_json::from_str(&llm_response) {

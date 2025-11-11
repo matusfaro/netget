@@ -112,7 +112,6 @@ impl TlsServer {
 
                             // Add connection to ServerInstance
                             use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                             let now = std::time::Instant::now();
                             let conn_state = ServerConnectionState {
                                 id: connection_id,
@@ -299,30 +298,35 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                                         } else {
                                             data_str.to_string()
                                         };
-                                        console_debug!(status_tx, "[DEBUG] TLS sent {} bytes to {}: {}", output_data.len(), connection_id, preview);
+                                        debug!("TLS sent {} bytes to {}: {}", output_data.len(), connection_id, preview);
+                                        let _ = status_tx.send(format!("[DEBUG] TLS sent {} bytes to {}: {}", output_data.len(), connection_id, preview));
 
                                         // TRACE: Log full text payload
-                                        console_trace!(status_tx, "[TRACE] TLS sent (text): {:?}", data_str);
+                                        trace!("TLS sent (text): {:?}", data_str);
+                                        let _ = status_tx.send(format!("[TRACE] TLS sent (text): {:?}", data_str));
                                     } else {
-                                        console_debug!(status_tx, "[DEBUG] TLS sent {} bytes to {} (binary data)", output_data.len(), connection_id);
+                                        debug!("TLS sent {} bytes to {} (binary data)", output_data.len(), connection_id);
+                                        let _ = status_tx.send(format!("[DEBUG] TLS sent {} bytes to {} (binary data)", output_data.len(), connection_id));
 
                                         // TRACE: Log full hex payload
                                         let hex_str = hex::encode(&output_data);
-                                        console_trace!(status_tx, "[TRACE] TLS sent (hex): {}", hex_str);
+                                        trace!("TLS sent (hex): {}", hex_str);
+                                        let _ = status_tx.send(format!("[TRACE] TLS sent (hex): {}", hex_str));
                                     }
-                                    console_trace!(status_tx, "→ Sent banner to {connection_id}");
+                                    let _ = status_tx.send(format!("→ Sent banner to {connection_id}"));
                                 }
                             }
                             ActionResult::CloseConnection => {
                                 connections.lock().await.remove(&connection_id);
-                                console_error!(status_tx, "✗ Closed TLS connection {connection_id} after banner");
+                                let _ = status_tx.send(format!("✗ Closed TLS connection {connection_id} after banner"));
                             }
                             _ => {}
                         }
                     }
                 }
                 Err(e) => {
-                    console_error!(status_tx, "✗ LLM error: {e}");
+                    error!("LLM error generating banner: {}", e);
+                    let _ = status_tx.send(format!("✗ LLM error: {e}"));
                 }
             }
         }
@@ -356,7 +360,7 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                 .and_modify(|conn| {
                     conn.queued_data.extend_from_slice(&data);
                 });
-            console_info!(status_tx, "⏸ Queued {} bytes for {}", data.len(), connection_id);
+            let _ = status_tx.send(format!("⏸ Queued {} bytes for {}", data.len(), connection_id));
             return;
         }
 
@@ -441,18 +445,22 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                                         } else {
                                             data_str.to_string()
                                         };
-                                        console_debug!(status_tx, "[DEBUG] TLS sent {} bytes to {}: {}", output_data.len(), connection_id, preview);
+                                        debug!("TLS sent {} bytes to {}: {}", output_data.len(), connection_id, preview);
+                                        let _ = status_tx.send(format!("[DEBUG] TLS sent {} bytes to {}: {}", output_data.len(), connection_id, preview));
 
                                         // TRACE: Log full text payload
-                                        console_trace!(status_tx, "[TRACE] TLS sent (text): {:?}", data_str);
+                                        trace!("TLS sent (text): {:?}", data_str);
+                                        let _ = status_tx.send(format!("[TRACE] TLS sent (text): {:?}", data_str));
                                     } else {
-                                        console_debug!(status_tx, "[DEBUG] TLS sent {} bytes to {} (binary data)", output_data.len(), connection_id);
+                                        debug!("TLS sent {} bytes to {} (binary data)", output_data.len(), connection_id);
+                                        let _ = status_tx.send(format!("[DEBUG] TLS sent {} bytes to {} (binary data)", output_data.len(), connection_id));
 
                                         // TRACE: Log full hex payload
                                         let hex_str = hex::encode(&output_data);
-                                        console_trace!(status_tx, "[TRACE] TLS sent (hex): {}", hex_str);
+                                        trace!("TLS sent (hex): {}", hex_str);
+                                        let _ = status_tx.send(format!("[TRACE] TLS sent (hex): {}", hex_str));
                                     }
-                                    console_trace!(status_tx, "→ Sent {} bytes to {}", output_data.len(), connection_id);
+                                    let _ = status_tx.send(format!("→ Sent {} bytes to {}", output_data.len(), connection_id));
                                 }
                             }
                             ActionResult::CloseConnection => {
@@ -470,14 +478,14 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                         connections.lock().await
                             .entry(connection_id)
                             .and_modify(|conn| conn.state = ConnectionState::Accumulating);
-                        console_info!(status_tx, "⏳ Waiting for more data from {connection_id}");
+                        let _ = status_tx.send(format!("⏳ Waiting for more data from {connection_id}"));
                         return;
                     }
 
                     // Handle close_connection
                     if should_close {
                         connections.lock().await.remove(&connection_id);
-                        console_error!(status_tx, "✗ Closed TLS connection {connection_id}");
+                        let _ = status_tx.send(format!("✗ Closed TLS connection {connection_id}"));
                         return;
                     }
 
@@ -490,7 +498,7 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                     };
 
                     if has_queued {
-                        console_info!(status_tx, "▶ Processing queued data for {connection_id}");
+                        let _ = status_tx.send(format!("▶ Processing queued data for {connection_id}"));
                         // Loop continues to process queued data
                     } else {
                         // Go to Idle state
@@ -501,7 +509,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                     }
                 }
                 Err(e) => {
-                    console_error!(status_tx, "✗ LLM error: {e}");
+                    error!("LLM error for TLS data: {}", e);
+                    let _ = status_tx.send(format!("✗ LLM error: {e}"));
                     connections.lock().await
                         .entry(connection_id)
                         .and_modify(|conn| conn.state = ConnectionState::Idle);

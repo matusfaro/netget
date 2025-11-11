@@ -103,14 +103,19 @@ impl OpenvpnServer {
         server_id: crate::state::ServerId,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<SocketAddr> {
-        console_info!(status_tx, "[INFO] Starting OpenVPN VPN server on {} (full VPN tunnel support)");
+        info!("Starting OpenVPN VPN server on {}", bind_addr);
+        let _ = status_tx.send(format!(
+            "[INFO] Starting OpenVPN VPN server on {} (full VPN tunnel support)",
+            bind_addr
+        ));
 
         // Generate server session ID
         let server_session_id = rand::random::<u64>();
+        info!("OpenVPN server session ID: {:016x}", server_session_id);
 
         // Create TLS configuration for control channel
         let tls_config = Self::create_tls_config()?;
-        console_info!(status_tx, "[INFO] TLS configuration created");
+        let _ = status_tx.send("[INFO] TLS configuration created".to_string());
 
         // Determine TUN interface name based on OS
         let interface_name: String = if cfg!(target_os = "linux") {
@@ -123,7 +128,8 @@ impl OpenvpnServer {
             return Err(anyhow::anyhow!("Unsupported operating system for OpenVPN"));
         };
 
-        console_info!(status_tx, "[INFO] Creating TUN interface: {}", interface_name);
+        info!("Creating TUN interface: {}", interface_name);
+        let _ = status_tx.send(format!("[INFO] Creating TUN interface: {}", interface_name));
 
         // Create TUN device
         let mut tun_config = tun::Configuration::default();
@@ -146,15 +152,17 @@ impl OpenvpnServer {
         let tun_device = tun::create_as_async(&tun_config)
             .context("Failed to create TUN device")?;
 
-        console_info!(status_tx, "[INFO] TUN interface created: {}", interface_name);
+        info!("TUN interface created successfully: {}", interface_name);
+        let _ = status_tx.send(format!("[INFO] TUN interface created: {}", interface_name));
 
         // Bind UDP socket
         let socket = UdpSocket::bind(bind_addr).await
             .context("Failed to bind UDP socket")?;
         let local_addr = socket.local_addr()?;
 
-        console_info!(status_tx, "[INFO] OpenVPN listening on {}", local_addr);
-        console_info!(status_tx, "[INFO] VPN subnet: {}", VPN_NETWORK);
+        info!("OpenVPN server listening on {}", local_addr);
+        let _ = status_tx.send(format!("[INFO] OpenVPN listening on {}", local_addr));
+        let _ = status_tx.send(format!("[INFO] VPN subnet: {}", VPN_NETWORK));
 
         let server = Arc::new(OpenvpnServer {
             tun: Arc::new(RwLock::new(tun_device)),
@@ -189,8 +197,9 @@ impl OpenvpnServer {
             }
         });
 
-        console_info!(status_tx, "→ OpenVPN VPN server ready on {}", local_addr);
-        console_info!(status_tx, "[INFO] Clients can connect to {} with VPN subnet {}", local_addr, VPN_NETWORK);
+        info!("OpenVPN VPN server ready on {}", local_addr);
+        let _ = status_tx.send(format!("→ OpenVPN VPN server ready on {}", local_addr));
+        let _ = status_tx.send(format!("[INFO] Clients can connect to {} with VPN subnet {}", local_addr, VPN_NETWORK));
 
         Ok(local_addr)
     }
@@ -302,11 +311,13 @@ impl OpenvpnServer {
         server_id: crate::state::ServerId,
         status_tx: &mpsc::UnboundedSender<String>,
     ) {
-        console_info!(status_tx, "[INFO] OpenVPN handshake from {}", peer_addr);
+        info!("OpenVPN handshake from {}", peer_addr);
+        let _ = status_tx.send(format!("[INFO] OpenVPN handshake from {}", peer_addr));
 
         // Check peer limit
         if self.peer_manager.count().await >= MAX_PEERS {
-            console_warn!(status_tx, "[WARN] Max peers reached, rejecting {}", peer_addr);
+            warn!("Maximum peers reached, rejecting {}", peer_addr);
+            let _ = status_tx.send(format!("[WARN] Max peers reached, rejecting {}", peer_addr));
             return;
         }
 
@@ -328,7 +339,8 @@ impl OpenvpnServer {
             }
         };
 
-        console_info!(status_tx, "[INFO] Allocated VPN IP {} to {}", vpn_ip, peer_addr);
+        info!("Allocated VPN IP {} to {}", vpn_ip, peer_addr);
+        let _ = status_tx.send(format!("[INFO] Allocated VPN IP {} to {}", vpn_ip, peer_addr));
 
         peer.mark_connected(vpn_ip);
 
@@ -358,7 +370,7 @@ impl OpenvpnServer {
         };
 
         app_state.add_connection_to_server(server_id, conn_state).await;
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Trigger LLM event
         let _event = Event::new(
@@ -396,7 +408,8 @@ impl OpenvpnServer {
         let serialized = response.serialize();
 
         if let Err(e) = self.socket.send_to(&serialized, peer.addr).await {
-            console_error!(status_tx, "[ERROR] Failed to send handshake response: {}", e);
+            error!("Failed to send handshake response: {}", e);
+            let _ = status_tx.send(format!("[ERROR] Failed to send handshake response: {}", e));
         } else {
             debug!("Sent handshake response to {}", peer.addr);
         }
@@ -411,7 +424,6 @@ impl OpenvpnServer {
         // In a full implementation, this would derive keys from TLS master secret
         // For MVP, we use a simplified approach with hardcoded keys
         use crypto::derive_data_keys;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
         let master_secret = b"simplified_master_secret_for_mvp";
         let client_random = b"client_random_data_12345678";
@@ -430,7 +442,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
             if let Err(e) = p.init_data_cipher(&keys, true) {
                 error!("Failed to initialize cipher: {}", e);
             } else {
-                console_debug!(status_tx, "[DEBUG] Data channel ready for {}", peer.addr);
+                debug!("Data channel initialized for {}", peer.addr);
+                let _ = status_tx.send(format!("[DEBUG] Data channel ready for {}", peer.addr));
             }
         }).await;
     }
@@ -491,7 +504,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
 
         // Write decrypted IP packet to TUN
         if let Err(e) = self.tun.write().await.write(&plaintext).await {
-            console_error!(status_tx, "[ERROR] TUN write failed: {}", e);
+            error!("Failed to write to TUN: {}", e);
+            let _ = status_tx.send(format!("[ERROR] TUN write failed: {}", e));
         }
 
         // Update stats

@@ -53,7 +53,8 @@ impl MercurialServer {
         let listener =
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        console_info!(status_tx, "[INFO] Mercurial server listening on {}", local_addr);
+        info!("Mercurial server listening on {}", local_addr);
+        let _ = status_tx.send(format!("[INFO] Mercurial server listening on {}", local_addr));
 
         let protocol = Arc::new(MercurialProtocol::new());
 
@@ -70,7 +71,6 @@ impl MercurialServer {
 
                         // Add connection to ServerInstance
                         use crate::state::server::{
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                             ConnectionState as ServerConnectionState, ConnectionStatus,
                             ProtocolConnectionInfo,
                         };
@@ -91,7 +91,7 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                         app_state
                             .add_connection_to_server(server_id, conn_state)
                             .await;
-                        console_info!(status_tx, "__UPDATE_UI__");
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let llm_client_clone = llm_client.clone();
                         let app_state_clone = app_state.clone();
@@ -170,7 +170,8 @@ async fn handle_mercurial_request(
     let path = uri.path();
     let query = uri.query().unwrap_or("");
 
-    console_debug!(status_tx, "[DEBUG] Mercurial {} {}?{}", method, path, query);
+    debug!("Mercurial request: {} {}?{}", method, path, query);
+    let _ = status_tx.send(format!("[DEBUG] Mercurial {} {}?{}", method, path, query));
 
     // Parse query parameters
     let params: HashMap<String, String> = parse_query_params(query);
@@ -243,7 +244,8 @@ async fn handle_mercurial_request(
             let body_bytes = match req.collect().await {
                 Ok(collected) => collected.to_bytes(),
                 Err(e) => {
-                    console_error!(status_tx, "[ERROR] Failed to read request body: {}", e);
+                    error!("Failed to read request body: {}", e);
+                    let _ = status_tx.send(format!("[ERROR] Failed to read request body: {}", e));
                     return Ok(build_error_response(
                         StatusCode::BAD_REQUEST,
                         "Failed to read request body",
@@ -251,7 +253,14 @@ async fn handle_mercurial_request(
                 }
             };
 
-            console_trace!(status_tx, "[TRACE] Mercurial getbundle request: {} bytes");
+            trace!(
+                "Mercurial getbundle request body ({} bytes)",
+                body_bytes.len()
+            );
+            let _ = status_tx.send(format!(
+                "[TRACE] Mercurial getbundle request: {} bytes",
+                body_bytes.len()
+            ));
 
             handle_getbundle(
                 repo_name,
@@ -321,7 +330,8 @@ async fn handle_capabilities(
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let repo = repo_name.unwrap_or_else(|| "default".to_string());
 
-    console_debug!(status_tx, "[DEBUG] Mercurial capabilities for repo: {}", repo);
+    debug!("Mercurial capabilities for repository: {}", repo);
+    let _ = status_tx.send(format!("[DEBUG] Mercurial capabilities for repo: {}", repo));
 
     // Get sync actions for capabilities response
     let sync_actions = protocol.get_sync_actions();
@@ -357,13 +367,15 @@ Provide standard Mercurial capabilities for this repository."#,
         repo, actions_desc
     );
 
-    console_debug!(status_tx, "[DEBUG] Calling LLM for capabilities");
+    debug!("Calling LLM for Mercurial capabilities: {}", repo);
+    let _ = status_tx.send("[DEBUG] Calling LLM for capabilities".to_string());
 
     // Call LLM with retry
     let model_str = match crate::llm::ensure_model_selected(model).await {
         Ok(m) => m,
         Err(e) => {
-            console_error!(status_tx, "[ERROR] Failed to select model: {}", e);
+            error!("Failed to select model: {}", e);
+            let _ = status_tx.send(format!("[ERROR] Failed to select model: {}", e));
             return Ok(build_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &format!("Model selection failed: {}", e),
@@ -380,7 +392,8 @@ Provide standard Mercurial capabilities for this repository."#,
     {
         Ok(response) => response,
         Err(e) => {
-            console_error!(status_tx, "[ERROR] LLM call failed: {}", e);
+            error!("LLM call failed: {}", e);
+            let _ = status_tx.send(format!("[ERROR] LLM call failed: {}", e));
             return Ok(build_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &format!("Internal error: {}", e),
@@ -388,13 +401,15 @@ Provide standard Mercurial capabilities for this repository."#,
         }
     };
 
-    console_trace!(status_tx, "[TRACE] LLM response: {}", llm_response);
+    trace!("LLM response for Mercurial capabilities: {}", llm_response);
+    let _ = status_tx.send(format!("[TRACE] LLM response: {}", llm_response));
 
     // Parse LLM response as actions
     let actions_result: Value = match serde_json::from_str(&llm_response) {
         Ok(v) => v,
         Err(e) => {
-            console_error!(status_tx, "[ERROR] Failed to parse LLM response: {}", e);
+            error!("Failed to parse LLM response: {}", e);
+            let _ = status_tx.send(format!("[ERROR] Failed to parse LLM response: {}", e));
             return Ok(build_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Invalid LLM response",
@@ -485,7 +500,8 @@ async fn handle_heads(
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let repo = repo_name.unwrap_or_else(|| "default".to_string());
 
-    console_debug!(status_tx, "[DEBUG] Mercurial heads for repo: {}", repo);
+    debug!("Mercurial heads for repository: {}", repo);
+    let _ = status_tx.send(format!("[DEBUG] Mercurial heads for repo: {}", repo));
 
     let sync_actions = protocol.get_sync_actions();
     let model = app_state.get_ollama_model().await;
@@ -519,12 +535,14 @@ Provide repository heads."#,
         repo, actions_desc
     );
 
-    console_debug!(status_tx, "[DEBUG] Calling LLM for heads");
+    debug!("Calling LLM for Mercurial heads: {}", repo);
+    let _ = status_tx.send("[DEBUG] Calling LLM for heads".to_string());
 
     let model_str = match crate::llm::ensure_model_selected(model).await {
         Ok(m) => m,
         Err(e) => {
-            console_error!(status_tx, "[ERROR] Failed to select model: {}", e);
+            error!("Failed to select model: {}", e);
+            let _ = status_tx.send(format!("[ERROR] Failed to select model: {}", e));
             return Ok(build_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &format!("Model selection failed: {}", e),
@@ -537,7 +555,8 @@ Provide repository heads."#,
     {
         Ok(response) => response,
         Err(e) => {
-            console_error!(status_tx, "[ERROR] LLM call failed: {}", e);
+            error!("LLM call failed: {}", e);
+            let _ = status_tx.send(format!("[ERROR] LLM call failed: {}", e));
             return Ok(build_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &format!("Internal error: {}", e),
@@ -545,7 +564,8 @@ Provide repository heads."#,
         }
     };
 
-    console_trace!(status_tx, "[TRACE] LLM response: {}", llm_response);
+    trace!("LLM response for Mercurial heads: {}", llm_response);
+    let _ = status_tx.send(format!("[TRACE] LLM response: {}", llm_response));
 
     let actions_result: Value = match serde_json::from_str(&llm_response) {
         Ok(v) => v,
@@ -622,7 +642,8 @@ async fn handle_branchmap(
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let repo = repo_name.unwrap_or_else(|| "default".to_string());
 
-    console_debug!(status_tx, "[DEBUG] Mercurial branchmap for repo: {}", repo);
+    debug!("Mercurial branchmap for repository: {}", repo);
+    let _ = status_tx.send(format!("[DEBUG] Mercurial branchmap for repo: {}", repo));
 
     let sync_actions = protocol.get_sync_actions();
     let model = app_state.get_ollama_model().await;
@@ -658,12 +679,14 @@ Provide branch mappings for this repository."#,
         repo, actions_desc
     );
 
-    console_debug!(status_tx, "[DEBUG] Calling LLM for branchmap");
+    debug!("Calling LLM for Mercurial branchmap: {}", repo);
+    let _ = status_tx.send("[DEBUG] Calling LLM for branchmap".to_string());
 
     let model_str = match crate::llm::ensure_model_selected(model).await {
         Ok(m) => m,
         Err(e) => {
-            console_error!(status_tx, "[ERROR] Failed to select model: {}", e);
+            error!("Failed to select model: {}", e);
+            let _ = status_tx.send(format!("[ERROR] Failed to select model: {}", e));
             return Ok(build_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &format!("Model selection failed: {}", e),
@@ -769,7 +792,11 @@ async fn handle_listkeys(
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let repo = repo_name.unwrap_or_else(|| "default".to_string());
 
-    console_debug!(status_tx, "[DEBUG] Mercurial listkeys for repo: {}, namespace: {}");
+    debug!("Mercurial listkeys for repository: {}, namespace: {}", repo, namespace);
+    let _ = status_tx.send(format!(
+        "[DEBUG] Mercurial listkeys for repo: {}, namespace: {}",
+        repo, namespace
+    ));
 
     let sync_actions = protocol.get_sync_actions();
     let model = app_state.get_ollama_model().await;
@@ -811,12 +838,14 @@ Provide key-value mappings for this namespace."#,
         repo, namespace, actions_desc
     );
 
-    console_debug!(status_tx, "[DEBUG] Calling LLM for listkeys");
+    debug!("Calling LLM for Mercurial listkeys: {}, {}", repo, namespace);
+    let _ = status_tx.send("[DEBUG] Calling LLM for listkeys".to_string());
 
     let model_str = match crate::llm::ensure_model_selected(model).await {
         Ok(m) => m,
         Err(e) => {
-            console_error!(status_tx, "[ERROR] Failed to select model: {}", e);
+            error!("Failed to select model: {}", e);
+            let _ = status_tx.send(format!("[ERROR] Failed to select model: {}", e));
             return Ok(build_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &format!("Model selection failed: {}", e),
@@ -915,7 +944,8 @@ async fn handle_getbundle(
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let repo = repo_name.unwrap_or_else(|| "default".to_string());
 
-    console_debug!(status_tx, "[DEBUG] Mercurial getbundle for repo: {}", repo);
+    debug!("Mercurial getbundle for repository: {}", repo);
+    let _ = status_tx.send(format!("[DEBUG] Mercurial getbundle for repo: {}", repo));
 
     let sync_actions = protocol.get_sync_actions();
     let model = app_state.get_ollama_model().await;
@@ -955,12 +985,14 @@ Generate a bundle response."#,
         repo, actions_desc
     );
 
-    console_debug!(status_tx, "[DEBUG] Calling LLM for getbundle");
+    debug!("Calling LLM for Mercurial getbundle: {}", repo);
+    let _ = status_tx.send("[DEBUG] Calling LLM for getbundle".to_string());
 
     let model_str = match crate::llm::ensure_model_selected(model).await {
         Ok(m) => m,
         Err(e) => {
-            console_error!(status_tx, "[ERROR] Failed to select model: {}", e);
+            error!("Failed to select model: {}", e);
+            let _ = status_tx.send(format!("[ERROR] Failed to select model: {}", e));
             return Ok(build_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 &format!("Model selection failed: {}", e),

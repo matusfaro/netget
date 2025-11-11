@@ -55,7 +55,8 @@ impl RedisServer {
         let listener = TcpListener::bind(listen_addr).await?;
         let actual_addr = listener.local_addr()?;
 
-        console_info!(status_tx, "[INFO] Redis server listening on {}", actual_addr);
+        info!("Redis server starting on {}", actual_addr);
+        let _ = status_tx.send(format!("[INFO] Redis server listening on {}", actual_addr));
 
         let server = Arc::new(RedisServer::new(
             llm_client,
@@ -71,7 +72,8 @@ impl RedisServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, addr)) => {
-                        console_debug!(status_tx, "[DEBUG] Redis connection from {}", addr);
+                        debug!("Redis connection from {}", addr);
+                        let _ = status_tx.send(format!("[DEBUG] Redis connection from {}", addr));
 
                         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(actual_addr);
@@ -79,7 +81,6 @@ impl RedisServer {
                         // Track the connection
                         if let Some(server_id) = server.server_id {
                             use crate::state::server::{
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                                 ConnectionState as ServerConnectionState, ConnectionStatus,
                                 ProtocolConnectionInfo,
                             };
@@ -118,7 +119,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "[ERROR] Redis accept error: {}", e);
+                        error!("Redis accept error: {}", e);
+                        let _ = status_tx.send(format!("[ERROR] Redis accept error: {}", e));
                     }
                 }
             }

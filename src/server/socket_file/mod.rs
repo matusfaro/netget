@@ -84,7 +84,6 @@ impl SocketFileServer {
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         // Use a dummy SocketAddr since Unix sockets don't have IP addresses
                         let dummy_addr = "127.0.0.1:0".parse().unwrap();
@@ -105,7 +104,7 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                             })),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        console_info!(status_tx, "__UPDATE_UI__");
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         // Handle connection (send data first if needed)
                         let llm_client_clone = llm_client.clone();
@@ -272,30 +271,35 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                                         } else {
                                             data_str.to_string()
                                         };
-                                        console_debug!(status_tx, "[DEBUG] Socket file sent {} bytes to {}: {}", output_data.len(), connection_id, preview);
+                                        debug!("Socket file sent {} bytes to {}: {}", output_data.len(), connection_id, preview);
+                                        let _ = status_tx.send(format!("[DEBUG] Socket file sent {} bytes to {}: {}", output_data.len(), connection_id, preview));
 
                                         // TRACE: Log full text payload
-                                        console_trace!(status_tx, "[TRACE] Socket file sent (text): {:?}", data_str);
+                                        trace!("Socket file sent (text): {:?}", data_str);
+                                        let _ = status_tx.send(format!("[TRACE] Socket file sent (text): {:?}", data_str));
                                     } else {
-                                        console_debug!(status_tx, "[DEBUG] Socket file sent {} bytes to {} (binary data)", output_data.len(), connection_id);
+                                        debug!("Socket file sent {} bytes to {} (binary data)", output_data.len(), connection_id);
+                                        let _ = status_tx.send(format!("[DEBUG] Socket file sent {} bytes to {} (binary data)", output_data.len(), connection_id));
 
                                         // TRACE: Log full hex payload
                                         let hex_str = hex::encode(&output_data);
-                                        console_trace!(status_tx, "[TRACE] Socket file sent (hex): {}", hex_str);
+                                        trace!("Socket file sent (hex): {}", hex_str);
+                                        let _ = status_tx.send(format!("[TRACE] Socket file sent (hex): {}", hex_str));
                                     }
-                                    console_trace!(status_tx, "→ Sent banner to socket file connection {connection_id}");
+                                    let _ = status_tx.send(format!("→ Sent banner to socket file connection {connection_id}"));
                                 }
                             }
                             ActionResult::CloseConnection => {
                                 connections.lock().await.remove(&connection_id);
-                                console_error!(status_tx, "✗ Closed socket file connection {connection_id} after banner");
+                                let _ = status_tx.send(format!("✗ Closed socket file connection {connection_id} after banner"));
                             }
                             _ => {}
                         }
                     }
                 }
                 Err(e) => {
-                    console_error!(status_tx, "✗ LLM error: {e}");
+                    error!("LLM error generating socket file banner: {}", e);
+                    let _ = status_tx.send(format!("✗ LLM error: {e}"));
                 }
             }
         }
@@ -329,7 +333,7 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                 .and_modify(|conn| {
                     conn.queued_data.extend_from_slice(&data);
                 });
-            console_info!(status_tx, "⏸ Queued {} bytes for socket file connection {}", data.len(), connection_id);
+            let _ = status_tx.send(format!("⏸ Queued {} bytes for socket file connection {}", data.len(), connection_id));
             return;
         }
 
@@ -414,18 +418,22 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                                         } else {
                                             data_str.to_string()
                                         };
-                                        console_debug!(status_tx, "[DEBUG] Socket file sent {} bytes to {}: {}", output_data.len(), connection_id, preview);
+                                        debug!("Socket file sent {} bytes to {}: {}", output_data.len(), connection_id, preview);
+                                        let _ = status_tx.send(format!("[DEBUG] Socket file sent {} bytes to {}: {}", output_data.len(), connection_id, preview));
 
                                         // TRACE: Log full text payload
-                                        console_trace!(status_tx, "[TRACE] Socket file sent (text): {:?}", data_str);
+                                        trace!("Socket file sent (text): {:?}", data_str);
+                                        let _ = status_tx.send(format!("[TRACE] Socket file sent (text): {:?}", data_str));
                                     } else {
-                                        console_debug!(status_tx, "[DEBUG] Socket file sent {} bytes to {} (binary data)", output_data.len(), connection_id);
+                                        debug!("Socket file sent {} bytes to {} (binary data)", output_data.len(), connection_id);
+                                        let _ = status_tx.send(format!("[DEBUG] Socket file sent {} bytes to {} (binary data)", output_data.len(), connection_id));
 
                                         // TRACE: Log full hex payload
                                         let hex_str = hex::encode(&output_data);
-                                        console_trace!(status_tx, "[TRACE] Socket file sent (hex): {}", hex_str);
+                                        trace!("Socket file sent (hex): {}", hex_str);
+                                        let _ = status_tx.send(format!("[TRACE] Socket file sent (hex): {}", hex_str));
                                     }
-                                    console_trace!(status_tx, "→ Sent {} bytes to socket file connection {}", output_data.len(), connection_id);
+                                    let _ = status_tx.send(format!("→ Sent {} bytes to socket file connection {}", output_data.len(), connection_id));
                                 }
                             }
                             ActionResult::CloseConnection => {
@@ -443,14 +451,14 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                         connections.lock().await
                             .entry(connection_id)
                             .and_modify(|conn| conn.state = ConnectionState::Accumulating);
-                        console_info!(status_tx, "⏳ Waiting for more data from socket file connection {connection_id}");
+                        let _ = status_tx.send(format!("⏳ Waiting for more data from socket file connection {connection_id}"));
                         return;
                     }
 
                     // Handle close_connection
                     if should_close {
                         connections.lock().await.remove(&connection_id);
-                        console_error!(status_tx, "✗ Closed socket file connection {connection_id}");
+                        let _ = status_tx.send(format!("✗ Closed socket file connection {connection_id}"));
                         return;
                     }
 
@@ -463,7 +471,7 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                     };
 
                     if has_queued {
-                        console_info!(status_tx, "▶ Processing queued data for socket file connection {connection_id}");
+                        let _ = status_tx.send(format!("▶ Processing queued data for socket file connection {connection_id}"));
                         // Loop continues to process queued data
                     } else {
                         // Go to Idle state
@@ -474,7 +482,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                     }
                 }
                 Err(e) => {
-                    console_error!(status_tx, "✗ LLM error: {e}");
+                    error!("LLM error for socket file data: {}", e);
+                    let _ = status_tx.send(format!("✗ LLM error: {e}"));
                     connections.lock().await
                         .entry(connection_id)
                         .and_modify(|conn| conn.state = ConnectionState::Idle);

@@ -24,7 +24,6 @@ use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Maximum IKE packet size
 const MAX_PACKET_SIZE: usize = 65535;
@@ -81,12 +80,20 @@ impl IpsecServer {
         _server_id: crate::state::ServerId,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<SocketAddr> {
-        console_info!(status_tx, "[INFO] Starting IPSec/IKEv2 enhanced honeypot on {} (detailed protocol analysis)");
+        info!("Starting IPSec/IKEv2 enhanced honeypot on {}", bind_addr);
+        let _ = status_tx.send(format!(
+            "[INFO] Starting IPSec/IKEv2 enhanced honeypot on {} (detailed protocol analysis)",
+            bind_addr
+        ));
 
         // Bind UDP socket (IKE uses UDP port 500, NAT-T uses 4500)
         let socket = UdpSocket::bind(bind_addr).await?;
         let local_addr = socket.local_addr()?;
-        console_info!(status_tx, "[INFO] IPSec/IKEv2 honeypot listening on {}");
+        info!("IPSec/IKEv2 honeypot listening on {}", local_addr);
+        let _ = status_tx.send(format!(
+            "[INFO] IPSec/IKEv2 honeypot listening on {}",
+            local_addr
+        ));
 
         let socket = Arc::new(socket);
 
@@ -189,7 +196,10 @@ impl IpsecServer {
                 packet_length,
                 payload_names
             );
-            console_trace!(status_tx, "[TRACE] IPSec: {} {} from {} ({} bytes, payloads=[{}])");
+            let _ = status_tx.send(format!(
+                "[TRACE] IPSec: {} {} from {} ({} bytes, payloads=[{}])",
+                ike_version, exchange_name, peer_addr, len, payload_names
+            ));
 
             // For handshake initiation, provide detailed analysis
             if is_handshake {
@@ -212,7 +222,14 @@ impl IpsecServer {
                 .await;
             } else {
                 // Log other packet types for reconnaissance detection
-                console_debug!(status_tx, "[DEBUG] IPSec: {} {} from {} (logged, payloads=[{}])");
+                debug!(
+                    "IPSec {} {} from {} (honeypot: logged only, payloads=[{}])",
+                    ike_version, exchange_name, peer_addr, payload_names
+                );
+                let _ = status_tx.send(format!(
+                    "[DEBUG] IPSec: {} {} from {} (logged, payloads=[{}])",
+                    ike_version, exchange_name, peer_addr, payload_names
+                ));
             }
         }
     }
@@ -294,7 +311,14 @@ impl IpsecServer {
     ) {
         let payload_names = Self::format_payload_types(payload_types);
 
-        console_info!(status_tx, "[INFO] IPSec: {} handshake from {} (payloads=[{}])");
+        info!(
+            "IPSec {} handshake from {} (enhanced honeypot, payloads=[{}])",
+            ike_version, peer_addr, payload_names
+        );
+        let _ = status_tx.send(format!(
+            "[INFO] IPSec: {} handshake from {} (payloads=[{}])",
+            ike_version, peer_addr, payload_names
+        ));
 
         // Build enhanced event for LLM
         let _event = Event::new(

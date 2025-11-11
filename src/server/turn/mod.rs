@@ -52,7 +52,8 @@ impl TurnServer {
     ) -> Result<SocketAddr> {
         let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
         let local_addr = socket.local_addr()?;
-        console_info!(status_tx, "[INFO] TURN server listening on {}", local_addr);
+        info!("TURN server (action-based) listening on {}", local_addr);
+        let _ = status_tx.send(format!("[INFO] TURN server listening on {}", local_addr));
 
         let protocol = Arc::new(TurnProtocol::new());
         let server = Arc::new(Self::new());
@@ -71,7 +72,6 @@ impl TurnServer {
 
                         // Add connection to ServerInstance
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
 
                         // Get allocation info for this client
@@ -97,14 +97,16 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        console_info!(status_tx, "__UPDATE_UI__");
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         // DEBUG: Log summary
-                        console_debug!(status_tx, "[DEBUG] TURN received {} bytes from {}", n, peer_addr);
+                        debug!("TURN received {} bytes from {}", n, peer_addr);
+                        let _ = status_tx.send(format!("[DEBUG] TURN received {} bytes from {}", n, peer_addr));
 
                         // TRACE: Log full payload
                         let hex_str = hex::encode(&data);
-                        console_trace!(status_tx, "[TRACE] TURN data (hex): {}", hex_str);
+                        trace!("TURN data (hex): {}", hex_str);
+                        let _ = status_tx.send(format!("[TRACE] TURN data (hex): {}", hex_str));
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -246,7 +248,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "✗ TURN receive error: {}", e);
+                        error!("TURN receive error: {}", e);
+                        let _ = status_tx.send(format!("✗ TURN receive error: {}", e));
                         break;
                     }
                 }
@@ -269,7 +272,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
 
                 allocations.retain(|id, alloc| {
                     if alloc.expires_at <= now {
-                        console_debug!(status_tx, "[DEBUG] TURN expired allocation {} for {}", id, alloc.client_addr);
+                        debug!("TURN expired allocation {} for {}", id, alloc.client_addr);
+                        let _ = status_tx.send(format!("[DEBUG] TURN expired allocation {} for {}", id, alloc.client_addr));
                         false
                     } else {
                         true
@@ -278,7 +282,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
 
                 let removed = initial_count - allocations.len();
                 if removed > 0 {
-                    console_debug!(status_tx, "[DEBUG] TURN cleanup removed {} expired allocations", removed);
+                    debug!("TURN cleanup removed {} expired allocations", removed);
+                    let _ = status_tx.send(format!("[DEBUG] TURN cleanup removed {} expired allocations", removed));
                 }
             }
         });

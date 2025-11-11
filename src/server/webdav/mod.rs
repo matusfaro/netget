@@ -47,13 +47,15 @@ impl WebDavServer {
             let listener = match tokio::net::TcpListener::bind(listen_addr).await {
                 Ok(l) => l,
                 Err(e) => {
-                    console_error!(status_tx, "✗ WebDAV bind failed: {}", e);
+                    error!("Failed to bind WebDAV listener: {}", e);
+                    let _ = status_tx.send(format!("✗ WebDAV bind failed: {}", e));
                     return;
                 }
             };
 
             let local_addr = listener.local_addr().unwrap();
-            console_info!(status_tx, "→ WebDAV server listening on {}", local_addr);
+            info!("WebDAV server listening on {}", local_addr);
+            let _ = status_tx.send(format!("→ WebDAV server listening on {}", local_addr));
 
             loop {
                 match listener.accept().await {
@@ -65,7 +67,6 @@ impl WebDavServer {
 
                         // Add connection to ServerInstance
                         use crate::state::server::{
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                             ConnectionState as ServerConnectionState, ConnectionStatus,
                             ProtocolConnectionInfo,
                         };
@@ -86,7 +87,7 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                         app_state
                             .add_connection_to_server(server_id, conn_state)
                             .await;
-                        console_info!(status_tx, "__UPDATE_UI__");
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         let dav_clone = dav_server.clone();
                         let app_clone = app_state.clone();

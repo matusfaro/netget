@@ -42,11 +42,12 @@ impl NtpClient {
 
         let local_addr = socket.local_addr()?;
 
+        info!("NTP client {} connected to {} (local: {})", client_id, remote_sock_addr, local_addr);
 
         // Update client state
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        console_info!(status_tx, "[CLIENT] NTP client {} connected", client_id);
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send(format!("[CLIENT] NTP client {} connected", client_id));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Wrap socket in Arc for sharing
         let socket = Arc::new(socket);
@@ -137,8 +138,9 @@ impl NtpClient {
                                     }
                                 }
                                 Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
+                                    info!("NTP client {} disconnecting", client_id);
                                     app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                                    console_info!(status_tx, "__UPDATE_UI__");
+                                    let _ = status_tx.send("__UPDATE_UI__".to_string());
                                     break;
                                 }
                                 _ => {}
@@ -153,7 +155,7 @@ impl NtpClient {
 
             // Mark as disconnected after query completes
             app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-            console_info!(status_tx, "__UPDATE_UI__");
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
         });
 
         Ok(local_addr)
@@ -168,7 +170,6 @@ impl NtpClient {
 
         // Set transmit timestamp to current time
         use std::time::{SystemTime, UNIX_EPOCH};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
         let unix_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()

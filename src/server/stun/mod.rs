@@ -30,7 +30,8 @@ impl StunServer {
     ) -> Result<SocketAddr> {
         let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
         let local_addr = socket.local_addr()?;
-        console_info!(status_tx, "[INFO] STUN server listening on {}", local_addr);
+        info!("STUN server (action-based) listening on {}", local_addr);
+        let _ = status_tx.send(format!("[INFO] STUN server listening on {}", local_addr));
 
         let protocol = Arc::new(StunProtocol::new());
 
@@ -45,7 +46,6 @@ impl StunServer {
 
                         // Add connection to ServerInstance (STUN "connection" = transaction)
                         use crate::state::server::{ConnectionState as ServerConnectionState, ProtocolConnectionInfo, ConnectionStatus};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
                         let now = std::time::Instant::now();
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -61,14 +61,16 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                             protocol_info: ProtocolConnectionInfo::empty(),
                         };
                         app_state.add_connection_to_server(server_id, conn_state).await;
-                        console_info!(status_tx, "__UPDATE_UI__");
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         // DEBUG: Log summary
-                        console_debug!(status_tx, "[DEBUG] STUN received {} bytes from {}", n, peer_addr);
+                        debug!("STUN received {} bytes from {}", n, peer_addr);
+                        let _ = status_tx.send(format!("[DEBUG] STUN received {} bytes from {}", n, peer_addr));
 
                         // TRACE: Log full payload
                         let hex_str = hex::encode(&data);
-                        console_trace!(status_tx, "[TRACE] STUN data (hex): {}", hex_str);
+                        trace!("STUN data (hex): {}", hex_str);
+                        let _ = status_tx.send(format!("[TRACE] STUN data (hex): {}", hex_str));
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -152,7 +154,8 @@ use crate::{console_trace, console_debug, console_info, console_warn, console_er
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "✗ STUN receive error: {}", e);
+                        error!("STUN receive error: {}", e);
+                        let _ = status_tx.send(format!("✗ STUN receive error: {}", e));
                         break;
                     }
                 }

@@ -20,7 +20,6 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
 
 /// Per-client data for LLM handling
 struct ClientData {
@@ -75,7 +74,8 @@ impl SshClient {
 
         let password = password.unwrap();
 
-        console_info!(status_tx, "[CLIENT] SSH connecting to {} as {}", remote_addr, username);
+        info!("SSH client {} connecting to {} as user '{}'", client_id, remote_addr, username);
+        let _ = status_tx.send(format!("[CLIENT] SSH connecting to {} as {}", remote_addr, username));
 
         // Parse address
         let addr = match remote_addr.parse::<SocketAddr>() {
@@ -121,11 +121,12 @@ impl SshClient {
             return Err(anyhow::anyhow!("SSH authentication failed: incorrect credentials"));
         }
 
-        console_info!(status_tx, "[CLIENT] SSH client {} authenticated", client_id);
+        info!("SSH client {} authenticated successfully", client_id);
+        let _ = status_tx.send(format!("[CLIENT] SSH client {} authenticated", client_id));
 
         // Update client status
         app_state.update_client_status(client_id, ClientStatus::Connected).await;
-        console_info!(status_tx, "__UPDATE_UI__");
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Get local address (use the connected socket address)
         let local_addr = addr; // russh doesn't expose local addr easily, using remote for now
@@ -224,7 +225,8 @@ impl SshClient {
                     .and_then(|v| v.as_str())
                     .context("Missing command in action data")?;
 
-                console_info!(status_tx, "[CLIENT] SSH executing: {}", command);
+                info!("SSH client {} executing command: {}", client_id, command);
+                let _ = status_tx.send(format!("[CLIENT] SSH executing: {}", command));
 
                 // Open channel and execute command
                 let session = session_arc.lock().await;
@@ -332,11 +334,12 @@ impl SshClient {
                 Ok(())
             }
             ClientActionResult::Disconnect => {
-                console_info!(status_tx, "[CLIENT] SSH client {} disconnecting", client_id);
+                info!("SSH client {} disconnecting", client_id);
+                let _ = status_tx.send(format!("[CLIENT] SSH client {} disconnecting", client_id));
                 app_state
                     .update_client_status(client_id, ClientStatus::Disconnected)
                     .await;
-                console_info!(status_tx, "__UPDATE_UI__");
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                 // Close session
                 let session = session_arc.lock().await;

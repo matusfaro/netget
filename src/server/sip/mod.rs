@@ -33,7 +33,8 @@ impl SipServer {
     ) -> Result<SocketAddr> {
         let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
         let local_addr = socket.local_addr()?;
-        console_info!(status_tx, "[INFO] SIP server listening on {}", local_addr);
+        info!("SIP server (action-based) listening on {}", local_addr);
+        let _ = status_tx.send(format!("[INFO] SIP server listening on {}", local_addr));
 
         let protocol = Arc::new(SipProtocol::new());
 
@@ -68,10 +69,14 @@ impl SipServer {
                         app_state
                             .add_connection_to_server(server_id, conn_state)
                             .await;
-                        console_info!(status_tx, "__UPDATE_UI__");
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         // DEBUG: Log summary
-                        console_debug!(status_tx, "[DEBUG] SIP received {} bytes from {}");
+                        debug!("SIP received {} bytes from {}", n, peer_addr);
+                        let _ = status_tx.send(format!(
+                            "[DEBUG] SIP received {} bytes from {}",
+                            n, peer_addr
+                        ));
 
                         // TRACE: Log first 200 chars of message (SIP is text-based)
                         if let Ok(text) = String::from_utf8(data.clone()) {
@@ -80,7 +85,8 @@ impl SipServer {
                             } else {
                                 text.clone()
                             };
-                            console_trace!(status_tx, "[TRACE] SIP message: {}", preview);
+                            trace!("SIP message: {}", preview);
+                            let _ = status_tx.send(format!("[TRACE] SIP message: {}", preview));
                         }
 
                         let llm_clone = llm_client.clone();
@@ -170,7 +176,8 @@ impl SipServer {
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "[ERROR] SIP recv error: {}", e);
+                        error!("SIP recv error: {}", e);
+                        let _ = status_tx.send(format!("[ERROR] SIP recv error: {}", e));
                     }
                 }
             }
@@ -426,7 +433,6 @@ impl SipServer {
     /// Generate a random tag for SIP responses
     fn generate_tag() -> String {
         use rand::Rng;
-use crate::{console_trace, console_debug, console_info, console_warn, console_error};
         let tag: u32 = rand::thread_rng().gen();
         format!("{:x}", tag)
     }
