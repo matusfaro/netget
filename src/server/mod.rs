@@ -353,6 +353,13 @@ pub use imap::actions::ImapProtocol;
 #[cfg(feature = "imap")]
 pub use imap::ImapServer;
 
+#[cfg(feature = "pop3")]
+pub mod pop3;
+#[cfg(feature = "pop3")]
+pub use pop3::actions::Pop3Protocol;
+#[cfg(feature = "pop3")]
+pub use pop3::Pop3Server;
+
 #[cfg(feature = "nntp")]
 pub mod nntp;
 #[cfg(feature = "nntp")]
