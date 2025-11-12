@@ -88,6 +88,12 @@ pub mod etcd;
 #[cfg(feature = "etcd")]
 pub use etcd::actions::EtcdClientProtocol;
 
+// zookeeper client
+#[cfg(feature = "zookeeper")]
+pub mod zookeeper;
+#[cfg(feature = "zookeeper")]
+pub use zookeeper::actions::ZookeeperClientProtocol;
+
 // git client
 #[cfg(feature = "git")]
 pub mod git;

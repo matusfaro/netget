@@ -290,6 +290,9 @@ impl ServerRegistry {
         #[cfg(feature = "etcd")]
         self.register(Arc::new(crate::server::EtcdProtocol::new()));
 
+        #[cfg(feature = "zookeeper")]
+        self.register(Arc::new(crate::server::ZookeeperProtocol::new()));
+
         #[cfg(feature = "tor")]
         self.register(Arc::new(crate::server::TorDirectoryProtocol::new()));
 

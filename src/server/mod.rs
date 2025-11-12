@@ -531,6 +531,13 @@ pub use xmlrpc::actions::XmlRpcProtocol;
 #[cfg(feature = "xmlrpc")]
 pub use xmlrpc::XmlRpcServer;
 
+#[cfg(feature = "zookeeper")]
+pub mod zookeeper;
+#[cfg(feature = "zookeeper")]
+pub use zookeeper::actions::ZookeeperProtocol;
+#[cfg(feature = "zookeeper")]
+pub use zookeeper::ZookeeperServer;
+
 #[cfg(feature = "tor")]
 pub mod tor_directory;
 #[cfg(feature = "tor")]
