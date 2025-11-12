@@ -10,7 +10,7 @@ use tokio::sync::Mutex;
 use super::mock_matcher::{LlmContext, MockMatcher};
 
 /// Complete mock LLM configuration
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct MockLlmConfig {
     /// Rules to match against LLM calls (evaluated in order)
     #[serde(skip)]
@@ -27,6 +27,17 @@ pub struct MockLlmConfig {
     /// History of all LLM calls (for debugging)
     #[serde(skip)]
     pub call_history: Arc<Mutex<Vec<MockCallRecord>>>,
+}
+
+impl Clone for MockLlmConfig {
+    fn clone(&self) -> Self {
+        Self {
+            rules: self.rules.iter().map(|r| r.shallow_clone()).collect(),
+            serialized_rules: self.serialized_rules.clone(),
+            was_verified: Arc::clone(&self.was_verified),
+            call_history: Arc::clone(&self.call_history),
+        }
+    }
 }
 
 impl MockLlmConfig {
@@ -169,6 +180,19 @@ impl MockRule {
             min_calls: s.min_calls,
             max_calls: s.max_calls,
             actual_calls: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    /// Shallow clone (clones Arc references, not underlying data)
+    pub fn shallow_clone(&self) -> Self {
+        Self {
+            matcher: None, // Don't clone the matcher (not needed after serialization)
+            serialized_matcher: self.serialized_matcher.clone(),
+            response: self.response.clone(),
+            expected_calls: self.expected_calls,
+            min_calls: self.min_calls,
+            max_calls: self.max_calls,
+            actual_calls: Arc::clone(&self.actual_calls),
         }
     }
 }
