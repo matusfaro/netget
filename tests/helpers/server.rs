@@ -17,6 +17,8 @@ pub struct NetGetServer {
     pub stack: String,
     /// Captured server output lines (for verification)
     pub output_lines: std::sync::Arc<tokio::sync::Mutex<Vec<String>>>,
+    /// Mock configuration (for verification)
+    mock_config: Option<netget::testing::MockLlmConfig>,
 }
 
 impl NetGetServer {
@@ -26,12 +28,14 @@ impl NetGetServer {
         port: u16,
         stack: String,
         output_lines: std::sync::Arc<tokio::sync::Mutex<Vec<String>>>,
+        mock_config: Option<netget::testing::MockLlmConfig>,
     ) -> Self {
         Self {
             child,
             port,
             stack,
             output_lines,
+            mock_config,
         }
     }
 
@@ -85,6 +89,125 @@ impl NetGetServer {
     pub async fn get_output(&self) -> Vec<String> {
         self.output_lines.lock().await.clone()
     }
+
+    /// Verify all mock expectations were met
+    ///
+    /// Must be called before dropping the server if mocks were configured.
+    /// Fails if any expectation is not met.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let server = start_netget_server(config).await?;
+    /// // ... test logic ...
+    /// server.verify_mocks().await?;  // MANDATORY if mocks configured
+    /// server.stop().await?;
+    /// ```
+    pub async fn verify_mocks(&self) -> E2EResult<()> {
+        let Some(ref mock_config) = self.mock_config else {
+            // No mocks configured, nothing to verify
+            return Ok(());
+        };
+
+        // Mark as verified
+        mock_config.mark_verified();
+
+        let mut errors = Vec::new();
+
+        for (idx, rule) in mock_config.rules.iter().enumerate() {
+            let actual = rule.actual_calls.load(std::sync::atomic::Ordering::SeqCst);
+
+            // Check exact count
+            if let Some(expected) = rule.expected_calls {
+                if actual != expected {
+                    errors.push(format!(
+                        "Rule #{} ({}): Expected {} calls, got {}",
+                        idx,
+                        rule.describe(),
+                        expected,
+                        actual
+                    ));
+                }
+            }
+
+            // Check minimum
+            if let Some(min) = rule.min_calls {
+                if actual < min {
+                    errors.push(format!(
+                        "Rule #{} ({}): Expected at least {} calls, got {}",
+                        idx,
+                        rule.describe(),
+                        min,
+                        actual
+                    ));
+                }
+            }
+
+            // Check maximum
+            if let Some(max) = rule.max_calls {
+                if actual > max {
+                    errors.push(format!(
+                        "Rule #{} ({}): Expected at most {} calls, got {}",
+                        idx,
+                        rule.describe(),
+                        max,
+                        actual
+                    ));
+                }
+            }
+        }
+
+        if !errors.is_empty() {
+            // Print detailed diagnostics
+            eprintln!("\n❌ Mock verification failed:");
+            for error in &errors {
+                eprintln!("  {}", error);
+            }
+            eprintln!("\nAll LLM call history:");
+            let history = mock_config.call_history.lock().await;
+            for (idx, call) in history.iter().enumerate() {
+                eprintln!(
+                    "  Call #{}: {} -> matched rule #{}",
+                    idx + 1,
+                    call.context.event_type.as_deref().unwrap_or("(none)"),
+                    call.matched_rule_idx
+                );
+            }
+            eprintln!();
+
+            return Err(format!("Mock verification failed:\n{}", errors.join("\n")).into());
+        }
+
+        println!("✅ All mock expectations verified successfully");
+        Ok(())
+    }
+}
+
+impl Drop for NetGetServer {
+    fn drop(&mut self) {
+        if let Some(ref mock_config) = self.mock_config {
+            // Check if verify was called
+            if !mock_config.is_verified() {
+                eprintln!("⚠️  WARNING: Mock expectations not verified!");
+                eprintln!("   Call server.verify_mocks().await? before dropping");
+
+                // Print unmet expectations
+                for (idx, rule) in mock_config.rules.iter().enumerate() {
+                    let actual = rule.actual_calls.load(std::sync::atomic::Ordering::SeqCst);
+                    if let Some(expected) = rule.expected_calls {
+                        if actual != expected {
+                            eprintln!(
+                                "   Rule #{}: Expected {} calls, got {} - {}",
+                                idx,
+                                expected,
+                                actual,
+                                rule.describe()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Configuration for a server test (re-export for backward compatibility)
@@ -120,6 +243,7 @@ pub async fn start_netget_server(config: ServerConfig) -> E2EResult<NetGetServer
         server.port,
         server.stack,
         instance.output_lines,
+        instance.mock_config,
     ))
 }
 

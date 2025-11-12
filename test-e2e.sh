@@ -30,14 +30,22 @@ cd "$PROJECT_ROOT"
 PROTOCOLS=()
 VERBOSE=false
 DRY_RUN=false
+USE_OLLAMA=false  # Default: use mocks (no Ollama)
 
-for arg in "$@"; do
-    case "$arg" in
+# Process arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --use-ollama)
+            USE_OLLAMA=true
+            shift
+            ;;
         --verbose|-v)
             VERBOSE=true
+            shift
             ;;
         --dry-run|-n)
             DRY_RUN=true
+            shift
             ;;
         --help|-h)
             echo "E2E Test Runner for NetGet"
@@ -46,24 +54,31 @@ for arg in "$@"; do
             echo "  $0 [OPTIONS] [PROTOCOLS...]"
             echo ""
             echo "Options:"
+            echo "  --use-ollama     Use real Ollama instead of mocks (requires Ollama running)"
             echo "  --verbose, -v    Show detailed test output"
             echo "  --dry-run, -n    Show what would be run without executing"
             echo "  --help, -h       Show this help message"
             echo ""
+            echo "Test Modes:"
+            echo "  Default          Use mock LLM responses (no Ollama required)"
+            echo "  --use-ollama     Use real Ollama (requires Ollama running)"
+            echo ""
             echo "Examples:"
-            echo "  $0                    # List available E2E test protocols"
-            echo "  $0 all                # Run all E2E tests"
-            echo "  $0 whois dns http     # Run specific protocol tests"
-            echo "  $0 --dry-run tor      # Preview what would be executed"
+            echo "  $0                          # List available E2E test protocols"
+            echo "  $0 all                      # Run all E2E tests with mocks"
+            echo "  $0 amqp tcp                 # Run AMQP and TCP tests with mocks"
+            echo "  $0 --use-ollama whois       # Run WHOIS tests with real Ollama"
+            echo "  $0 --dry-run tor            # Preview what would be executed"
             exit 0
             ;;
         -*)
-            echo -e "${RED}Error: Unknown option: $arg${NC}" >&2
+            echo -e "${RED}Error: Unknown option: $1${NC}" >&2
             echo "Use --help for usage information" >&2
             exit 1
             ;;
         *)
-            PROTOCOLS+=("$arg")
+            PROTOCOLS+=("$1")
+            shift
             ;;
     esac
 done
@@ -213,6 +228,17 @@ fi
 echo -e "${GREEN}All validations passed!${NC}"
 echo ""
 
+# Export flag for tests if using Ollama
+if [ "$USE_OLLAMA" = true ]; then
+    export NETGET_USE_OLLAMA=1
+    echo -e "${BLUE}Test Mode:${NC} Real (using Ollama)"
+    echo -e "  ${YELLOW}→${NC} Using real Ollama (requires Ollama running)"
+else
+    echo -e "${BLUE}Test Mode:${NC} Mock (default)"
+    echo -e "  ${YELLOW}→${NC} Using mock LLM responses (no Ollama required)"
+fi
+echo ""
+
 # Setup Ollama lock for concurrent test safety
 OLLAMA_LOCK_PATH="${OLLAMA_LOCK_PATH:-./netget-ollama.lock}"
 export OLLAMA_LOCK_PATH
@@ -278,9 +304,15 @@ for protocol in "${PROTOCOLS[@]}"; do
         --features "$all_required_features"
     )
 
-    # Add verbose flag if requested
-    if [ "$VERBOSE" = true ]; then
-        TEST_CMD+=(-- --nocapture --test-threads=1)
+    # Add test arguments (--use-ollama and/or verbose)
+    if [ "$USE_OLLAMA" = true ] || [ "$VERBOSE" = true ]; then
+        TEST_CMD+=(--)
+        if [ "$USE_OLLAMA" = true ]; then
+            TEST_CMD+=(--use-ollama)
+        fi
+        if [ "$VERBOSE" = true ]; then
+            TEST_CMD+=(--nocapture --test-threads=1)
+        fi
     fi
 
     # Run the test (or show what would be run in dry-run mode)

@@ -16,5 +16,6 @@ pub mod scripting;
 pub mod server;
 pub mod settings;
 pub mod state;
+pub mod testing;
 pub mod ui;
 pub mod utils;

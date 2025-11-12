@@ -21,6 +21,8 @@ pub struct NetGetClient {
     pub local_addr: Option<String>,
     /// Captured client output lines (for verification)
     pub output_lines: std::sync::Arc<tokio::sync::Mutex<Vec<String>>>,
+    /// Mock configuration (if mocks were used)
+    mock_config: Option<netget::testing::MockLlmConfig>,
 }
 
 impl NetGetClient {
@@ -32,6 +34,7 @@ impl NetGetClient {
         remote_addr: String,
         local_addr: Option<String>,
         output_lines: std::sync::Arc<tokio::sync::Mutex<Vec<String>>>,
+        mock_config: Option<netget::testing::MockLlmConfig>,
     ) -> Self {
         Self {
             child,
@@ -40,6 +43,7 @@ impl NetGetClient {
             remote_addr,
             local_addr,
             output_lines,
+            mock_config,
         }
     }
 
@@ -93,6 +97,99 @@ impl NetGetClient {
     pub async fn get_output(&self) -> Vec<String> {
         self.output_lines.lock().await.clone()
     }
+
+    /// Verify all mock expectations were met
+    ///
+    /// Must be called before dropping the client if mocks were configured.
+    /// Fails if any expectation is not met.
+    pub async fn verify_mocks(&self) -> E2EResult<()> {
+        let Some(ref mock_config) = self.mock_config else {
+            // No mocks configured, nothing to verify
+            return Ok(());
+        };
+
+        // Mark as verified
+        mock_config.mark_verified();
+
+        let mut errors = Vec::new();
+
+        for (idx, rule) in mock_config.rules.iter().enumerate() {
+            let actual = rule.actual_calls.load(std::sync::atomic::Ordering::SeqCst);
+
+            // Check exact count
+            if let Some(expected) = rule.expected_calls {
+                if actual != expected {
+                    errors.push(format!(
+                        "Rule #{} ({}): Expected {} calls, got {}",
+                        idx,
+                        rule.describe(),
+                        expected,
+                        actual
+                    ));
+                }
+            }
+
+            // Check minimum
+            if let Some(min) = rule.min_calls {
+                if actual < min {
+                    errors.push(format!(
+                        "Rule #{} ({}): Expected at least {} calls, got {}",
+                        idx,
+                        rule.describe(),
+                        min,
+                        actual
+                    ));
+                }
+            }
+
+            // Check maximum
+            if let Some(max) = rule.max_calls {
+                if actual > max {
+                    errors.push(format!(
+                        "Rule #{} ({}): Expected at most {} calls, got {}",
+                        idx,
+                        rule.describe(),
+                        max,
+                        actual
+                    ));
+                }
+            }
+        }
+
+        if !errors.is_empty() {
+            // Print detailed diagnostics
+            eprintln!("\n❌ Mock verification failed:");
+            for error in &errors {
+                eprintln!("  {}", error);
+            }
+            eprintln!("\nAll LLM call history:");
+            let history = mock_config.call_history.lock().await;
+            for (idx, call) in history.iter().enumerate() {
+                eprintln!(
+                    "  Call #{}: {} -> matched rule #{}",
+                    idx + 1,
+                    call.context.event_type.as_deref().unwrap_or("(none)"),
+                    call.matched_rule_idx
+                );
+            }
+
+            return Err(format!("Mock verification failed: {} errors", errors.len()).into());
+        }
+
+        Ok(())
+    }
+}
+
+impl Drop for NetGetClient {
+    fn drop(&mut self) {
+        if let Some(ref mock_config) = self.mock_config {
+            if !mock_config.is_verified() {
+                eprintln!("\n⚠️  WARNING: Client dropped without calling .verify_mocks()!");
+                eprintln!("   Mock expectations may not have been checked.");
+                eprintln!("   Add `client.verify_mocks().await?;` before dropping the client.\n");
+            }
+        }
+    }
 }
 
 /// Start a NetGet client with the given configuration
@@ -126,6 +223,7 @@ pub async fn start_netget_client(config: NetGetConfig) -> E2EResult<NetGetClient
         client.remote_addr,
         client.local_addr,
         instance.output_lines,
+        instance.mock_config,
     ))
 }
 
