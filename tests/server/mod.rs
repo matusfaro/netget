@@ -58,6 +58,8 @@ pub mod dynamo;
 pub mod elasticsearch;
 #[cfg(feature = "etcd")]
 pub mod etcd;
+#[cfg(feature = "zookeeper")]
+pub mod zookeeper;
 #[cfg(feature = "git")]
 pub mod git;
 #[cfg(feature = "grpc")]

@@ -96,6 +96,7 @@ bitcoin = ["dep:bitcoin"]  # Bitcoin P2P protocol server (LLM-controlled, not a 
 mcp = ["dep:axum", "dep:tower-http", "async-trait"]  # Model Context Protocol (JSON-RPC 2.0 over HTTP/SSE)
 grpc = ["dep:tonic", "dep:prost", "dep:prost-reflect", "dep:prost-types", "dep:tonic-reflection", "dep:tower", "dep:tempfile", "async-trait"]  # gRPC server with dynamic schema support
 etcd = ["grpc", "dep:etcd-client"]  # etcd v3 key-value store server (KV service via gRPC)
+zookeeper = ["dep:zookeeper-async"]  # ZooKeeper distributed coordination server and client with binary protocol support
 xmlrpc = ["quick-xml", "dep:xmlrpc"]  # XML-RPC server and client with LLM-controlled method execution
 tor = ["dep:tor-netdoc", "dep:tor-cert", "dep:tor-cell", "dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:ed25519-dalek", "dep:x25519-dalek", "dep:sha2", "dep:aes", "dep:ctr", "dep:hmac", "dep:hkdf", "dep:arti-client", "dep:tor-rtcompat"]  # Tor directory mirror and OR protocol relay (Guard/Middle/Exit) with cell handling
 vnc = ["async-trait"]  # VNC server and client with custom RFB protocol implementation
@@ -198,6 +199,7 @@ all-protocols = [
     "kafka",
     "kubernetes",
     "etcd",
+    "zookeeper",
     "torrent-tracker",
     "torrent-dht",
     "torrent-peer",
@@ -440,6 +442,9 @@ tonic-reflection = { version = "0.12", optional = true }
 tower = { version = "0.5", optional = true }
 tempfile = { version = "3.13", optional = true }
 etcd-client = { version = "0.15", optional = true }
+
+# ZooKeeper client
+zookeeper-async = { version = "5.0", optional = true }
 
 # XML-RPC server and client (XML parsing for RPC protocol)
 quick-xml = { version = "0.37", optional = true, features = ["serialize"] }

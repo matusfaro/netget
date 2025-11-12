@@ -102,6 +102,9 @@ impl ClientRegistry {
         #[cfg(feature = "git")]
         self.register(Arc::new(crate::client::git::GitClientProtocol::new()));
 
+        #[cfg(feature = "zookeeper")]
+        self.register(Arc::new(crate::client::zookeeper::ZookeeperClientProtocol::new()));
+
         #[cfg(feature = "grpc")]
         self.register(Arc::new(crate::client::grpc::GrpcClientProtocol::new()));
 
