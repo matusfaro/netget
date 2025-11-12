@@ -218,6 +218,9 @@ impl ServerRegistry {
         #[cfg(feature = "nfs")]
         self.register(Arc::new(crate::server::NfsProtocol::new()));
 
+        #[cfg(feature = "nfc")]
+        self.register(Arc::new(crate::server::NfcServerProtocol));
+
         #[cfg(feature = "smb")]
         self.register(Arc::new(crate::server::SmbProtocol::new()));
 

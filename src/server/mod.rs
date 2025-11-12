@@ -311,6 +311,13 @@ pub use nfs::actions::NfsProtocol;
 #[cfg(feature = "nfs")]
 pub use nfs::NfsServer;
 
+#[cfg(feature = "nfc")]
+pub mod nfc;
+#[cfg(feature = "nfc")]
+pub use nfc::actions::NfcServerProtocol;
+#[cfg(feature = "nfc")]
+pub use nfc::NfcServer;
+
 #[cfg(feature = "smb")]
 pub mod smb;
 #[cfg(feature = "smb")]
