@@ -69,6 +69,7 @@ webrtc = ["dep:webrtc"]  # WebRTC client for peer-to-peer data channels (no medi
 sip = []  # SIP uses only UDP, no extra deps (manual protocol implementation)
 ldap = ["dep:ldap3_proto", "rasn", "dep:ldap3"]
 imap = ["imap-codec", "dep:async-imap", "dep:async-native-tls"]  # IMAP uses imap-codec for protocol parsing
+pop3 = ["dep:rustls", "dep:tokio-rustls", "dep:webpki-roots"]  # POP3 email retrieval (manual implementation with TLS support)
 nntp = []  # NNTP (Network News Transfer Protocol) for Usenet, uses only TCP, no extra deps
 mqtt = ["dep:rumqttd", "dep:rumqttc"]  # MQTT broker and client for IoT messaging
 socks5 = ["dep:tokio-socks"]  # SOCKS5 server and client (client uses tokio-socks)
@@ -166,6 +167,7 @@ all-protocols = [
     "sip",
     "ldap",
     "imap",
+    "pop3",
     "nntp",
     "mqtt",
     "socks5",

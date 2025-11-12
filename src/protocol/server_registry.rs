@@ -131,6 +131,9 @@ impl ServerRegistry {
         #[cfg(feature = "imap")]
         self.register(Arc::new(crate::server::ImapProtocol::new()));
 
+        #[cfg(feature = "pop3")]
+        self.register(Arc::new(crate::server::Pop3Protocol::new()));
+
         #[cfg(feature = "nntp")]
         self.register(Arc::new(crate::server::NntpProtocol::new()));
 

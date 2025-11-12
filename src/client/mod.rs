@@ -322,6 +322,12 @@ pub mod smtp;
 #[cfg(feature = "smtp")]
 pub use smtp::actions::SmtpClientProtocol;
 
+// pop3 client
+#[cfg(feature = "pop3")]
+pub mod pop3;
+#[cfg(feature = "pop3")]
+pub use pop3::actions::Pop3ClientProtocol;
+
 // snmp client
 #[cfg(feature = "snmp")]
 pub mod snmp;
