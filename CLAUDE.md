@@ -255,13 +255,23 @@ Research: **Server library** (crate eval: compliance, maturity, LLM control), **
 7. **cli/server_startup.rs**: Add feature-gated match arm
 8. **state/server.rs**: Add `ProtocolConnectionInfo` variant
 9. **Cargo.toml** (MANDATORY): Add feature flag, optional deps, include in all-protocols
-10. **tests/server/<protocol>/e2e_test.rs**: Create feature-gated E2E test (< 10 LLM calls)
-11. **tests/server/<protocol>/CLAUDE.md** (MANDATORY): Document test strategy, LLM budget, runtime
+10. **tests/server/<protocol>/e2e_test.rs**: Create feature-gated E2E test with MOCKS (MANDATORY)
+    - **CRITICAL**: Use `.with_mock()` builder pattern to configure mock LLM responses
+    - **CRITICAL**: Call `.verify_mocks().await?` before test ends
+    - **CRITICAL**: Define expected invocation counts with `.expect_calls(N)`
+    - Tests should pass in mock mode (no Ollama required)
+    - Real Ollama testing is optional (for validation only)
+    - Example: see `tests/server/amqp/e2e_test.rs::test_amqp_broker_with_mocks`
+11. **tests/server/<protocol>/CLAUDE.md** (MANDATORY): Document test strategy, mock expectations
 12. **tests/server/helpers.rs**: Update if needed
 
-**Validation**: Compiles with feature, tests pass, both CLAUDE.md files exist, < 10 LLM calls
+**Validation**:
+- Compiles with feature
+- Tests pass in mock mode (`NETGET_TEST_MODE=mock ./test-e2e.sh <protocol>`)
+- Mock expectations verified (`server.verify_mocks().await?` called)
+- Both CLAUDE.md files exist
 
-**Common Pitfalls**: Missing feature flags/gates, missing CLAUDE.md files, inefficient E2E tests, forgetting dual logging, using `--all-features` for single protocol
+**Common Pitfalls**: Missing feature flags/gates, missing CLAUDE.md files, not using mocks, forgetting `.verify_mocks()`, forgetting dual logging, using `--all-features` for single protocol
 
 ## Client Capability (NEW)
 

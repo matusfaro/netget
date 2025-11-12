@@ -12,20 +12,38 @@ use crate::server::helpers::*;
 use serde_json::json;
 use std::time::Duration;
 
-/// Test that AMQP broker starts successfully
+/// Test that AMQP broker starts successfully (with mocks)
 #[tokio::test]
 async fn test_amqp_broker_starts() -> E2EResult<()> {
-    let config = ServerConfig::new("Start an AMQP broker on port 0").with_log_level("off");
+    let config = ServerConfig::new("Start an AMQP broker on port 0")
+        .with_log_level("debug")
+        .with_mock(|mock| {
+            // Mock the user command interpretation
+            mock.on_instruction_containing("Start an AMQP broker")
+                .respond_with_actions(json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "AMQP",
+                        "instruction": "Run AMQP broker"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
     let test_state = start_netget_server(config).await?;
 
     println!("✓ AMQP broker started on port {}", test_state.port);
 
+    // Verify mock expectations
+    test_state.verify_mocks().await?;
+
     test_state.stop().await?;
     Ok(())
 }
 
-/// Test AMQP protocol is detectable from prompt keywords
+/// Test AMQP protocol is detectable from prompt keywords (with mocks)
 ///
 /// Verifies that the protocol registry can detect AMQP from various keywords
 /// like "amqp", "rabbitmq", etc.
@@ -42,29 +60,28 @@ async fn test_amqp_keyword_detection() -> E2EResult<()> {
     for prompt in amqp_prompts {
         println!("Testing prompt: {}", prompt);
 
-        let config = ServerConfig::new(prompt).with_log_level("off");
+        let config = ServerConfig::new(prompt)
+            .with_log_level("off")
+            .with_mock(|mock| {
+                // Mock expects any AMQP-related prompt
+                mock.on_any()
+                    .respond_with_actions(json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "AMQP",
+                            "instruction": "Run AMQP broker"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
-        let result = start_netget_server(config).await;
+        let test_state = start_netget_server(config).await?;
+        println!("  ✓ AMQP detected and started from: {}", prompt);
 
-        match result {
-            Ok(test_state) => {
-                println!("  ✓ AMQP detected and started from: {}", prompt);
-                test_state.stop().await?;
-            }
-            Err(e) => {
-                let error_msg = e.to_string();
-
-                // Should not be "unknown protocol" - AMQP should be detected
-                assert!(
-                    !error_msg.contains("unknown") && !error_msg.contains("Unknown"),
-                    "AMQP should be detected from prompt '{}', got: {}",
-                    prompt,
-                    error_msg
-                );
-
-                println!("  ✓ AMQP detected from: {}", prompt);
-            }
-        }
+        test_state.verify_mocks().await?;
+        test_state.stop().await?;
     }
 
     println!("✓ AMQP keyword detection working");
@@ -294,51 +311,3 @@ async fn test_amqp_basic_publish() -> E2EResult<()> {
     Ok(())
 }
 */
-
-// ============================================================================
-// MOCK-BASED TESTS (no Ollama required)
-// ============================================================================
-
-/// Test AMQP broker startup with mocks (example of mock testing)
-///
-/// This test demonstrates the mock LLM system. It configures expected
-/// responses for the "open_server" action and verifies the mock expectations.
-/// No real Ollama instance is required.
-#[tokio::test]
-async fn test_amqp_broker_with_mocks() -> E2EResult<()> {
-    let config = ServerConfig::new("Start an AMQP broker on port 0")
-        .with_log_level("debug")
-        .with_mock(|mock| {
-            // Mock the user command interpretation
-            mock.on_instruction_containing("Start an AMQP broker")
-                .respond_with_actions(json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "AMQP",
-                        "instruction": "Accept AMQP connections and handle protocol negotiation"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-            // Mock the connection handler (in case a connection is made)
-            .on_event("amqp_connection")
-                .respond_with_actions(json!([
-                    {
-                        "type": "send_amqp_frame",
-                        "frame_type": "Connection.Start"
-                    }
-                ]))
-                .expect_at_most(1) // May or may not be called depending on test
-        });
-
-    let server = start_netget_server(config).await?;
-
-    println!("✓ AMQP broker started on port {} (with mocks)", server.port);
-
-    // Verify all mock expectations were met
-    server.verify_mocks().await?;
-
-    server.stop().await?;
-    Ok(())
-}

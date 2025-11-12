@@ -320,6 +320,11 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
         .stderr(Stdio::piped())
         .kill_on_drop(true);
 
+    // Pass mock config environment variable if set
+    if let Ok(mock_config_json) = std::env::var("NETGET_MOCK_CONFIG_JSON") {
+        cmd.env("NETGET_MOCK_CONFIG_JSON", mock_config_json);
+    }
+
     // Debug: print the command being executed
     println!("[DEBUG] Executing: {:?}", cmd);
 
@@ -588,6 +593,11 @@ async fn wait_for_netget_startup_with_capture(
             // Check for "Server is running" or "advertising" as alternative confirmations
             if line.contains("Server is running") || line.contains("advertising") {
                 server_confirmations.insert("confirmed".to_string());
+            }
+
+            // Check for non-interactive mode completion
+            if line.contains("Press Ctrl+C to stop") {
+                server_confirmations.insert("non_interactive".to_string());
             }
 
             // Heuristic: If we had startup messages and haven't seen a new one in a bit,

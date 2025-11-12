@@ -473,9 +473,16 @@ impl OllamaClient {
     async fn handle_mock_request(&self, prompt: &str, config_json: &str) -> Result<String> {
         use crate::testing::{LlmContext, MockLlmConfig};
 
-        // Parse mock configuration
-        let config: MockLlmConfig = serde_json::from_str(config_json)
+        // Parse serialized mock configuration
+        #[derive(serde::Deserialize)]
+        struct SerializedConfig {
+            serialized_rules: Vec<crate::testing::mock_config::SerializedMockRule>,
+        }
+        let serialized: SerializedConfig = serde_json::from_str(config_json)
             .context("Failed to parse NETGET_MOCK_CONFIG_JSON")?;
+
+        // Reconstruct config from serialized rules
+        let config = MockLlmConfig::from_serialized(serialized.serialized_rules);
 
         // Extract context from prompt
         let context = self.extract_llm_context(prompt);
@@ -543,6 +550,24 @@ impl OllamaClient {
                 .or_else(|| instruction_line.split("Your instruction:").nth(1))
             {
                 context = context.with_instruction(instruction.trim());
+            }
+        } else {
+            // Fallback: Look for last user message (after "# Task" section)
+            // For initial network requests, the user's prompt is the instruction
+            if let Some(task_idx) = prompt.find("# Task") {
+                let after_task = &prompt[task_idx..];
+                // Find the last non-empty, non-header line as the instruction
+                for line in after_task.lines().rev() {
+                    let trimmed = line.trim();
+                    if !trimmed.is_empty()
+                        && !trimmed.starts_with('#')
+                        && !trimmed.contains("You are")
+                        && !trimmed.contains("NetGet")
+                    {
+                        context = context.with_instruction(trimmed);
+                        break;
+                    }
+                }
             }
         }
 
