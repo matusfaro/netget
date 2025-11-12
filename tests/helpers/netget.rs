@@ -90,31 +90,15 @@ pub struct NetGetConfig {
     pub mock_config: Option<netget::testing::MockLlmConfig>,
 }
 
-/// Test mode for E2E tests
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TestMode {
-    /// Only use real Ollama (fail if unavailable)
-    Real,
-    /// Only use mocks (fail if no mocks configured)
-    Mock,
-    /// Prefer mock, fall back to Ollama (default)
-    Auto,
-}
-
-impl TestMode {
-    /// Detect mode from environment
-    pub fn detect() -> Self {
-        match std::env::var("NETGET_TEST_MODE").as_deref() {
-            Ok("real") => TestMode::Real,
-            Ok("mock") => TestMode::Mock,
-            Ok("auto") => TestMode::Auto,
-            Ok(other) => {
-                eprintln!("⚠️  Unknown NETGET_TEST_MODE: '{}', using Auto", other);
-                TestMode::Auto
-            }
-            Err(_) => TestMode::Auto, // Default
-        }
+/// Detect if --use-ollama flag is present (from test args or environment)
+fn should_use_ollama() -> bool {
+    // Check environment variable (set by test-e2e.sh)
+    if std::env::var("NETGET_USE_OLLAMA").is_ok() {
+        return true;
     }
+
+    // Check command line args (for cargo test -- --use-ollama)
+    std::env::args().any(|arg| arg == "--use-ollama")
 }
 
 impl NetGetConfig {
@@ -231,45 +215,30 @@ impl NetGetConfig {
 /// Start a NetGet instance with the given configuration
 /// Returns instance with 0+ servers and 0+ clients
 pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
-    // Detect test mode
-    let mode = TestMode::detect();
+    let use_ollama = should_use_ollama();
     let has_mocks = config.mock_config.is_some();
 
-    // Enforce mode requirements
-    match mode {
-        TestMode::Real => {
-            if has_mocks {
-                println!("⚠️  Real mode: Ignoring configured mocks");
-            }
-            // Check Ollama availability
-            if !check_ollama_available().await {
-                return Err("Real mode requires Ollama, but Ollama is not available at http://localhost:11434".into());
-            }
-            println!("🤖 Real mode: Using Ollama");
-            // Clear any mock environment variables
-            std::env::remove_var("NETGET_MOCK_CONFIG_JSON");
+    if use_ollama {
+        // Real mode: Use Ollama
+        if has_mocks {
+            println!("⚠️  --use-ollama: Ignoring configured mocks");
         }
-        TestMode::Mock => {
-            if !has_mocks {
-                return Err("Mock mode requires mocks to be configured via .with_mock()".into());
-            }
-            println!("🔧 Mock mode: Using configured mocks");
-            // Set mock environment variable
-            let config_json = serde_json::to_string(&config.mock_config)?;
-            std::env::set_var("NETGET_MOCK_CONFIG_JSON", config_json);
+        // Check Ollama availability
+        if !check_ollama_available().await {
+            return Err("--use-ollama requires Ollama, but Ollama is not available at http://localhost:11434".into());
         }
-        TestMode::Auto => {
-            if has_mocks {
-                println!("🔧 Auto mode: Using mocks (available)");
-                // Set mock environment variable
-                let config_json = serde_json::to_string(&config.mock_config)?;
-                std::env::set_var("NETGET_MOCK_CONFIG_JSON", config_json);
-            } else if check_ollama_available().await {
-                println!("🤖 Auto mode: Using real Ollama (no mocks configured)");
-            } else {
-                return Err("Auto mode: No mocks configured and Ollama not available at http://localhost:11434".into());
-            }
+        println!("🤖 Using real Ollama");
+        // Clear any mock environment variables
+        std::env::remove_var("NETGET_MOCK_CONFIG_JSON");
+    } else {
+        // Mock mode (default): Use mocks
+        if !has_mocks {
+            return Err("Mock mode (default) requires mocks to be configured via .with_mock()\nUse --use-ollama flag to use real Ollama instead".into());
         }
+        println!("🔧 Using mock LLM responses");
+        // Set mock environment variable
+        let config_json = serde_json::to_string(&config.mock_config)?;
+        std::env::set_var("NETGET_MOCK_CONFIG_JSON", config_json);
     }
 
     // Get the path to the binary

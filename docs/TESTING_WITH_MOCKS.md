@@ -58,7 +58,16 @@ async fn test_my_protocol() -> E2EResult<()> {
 
 Run with:
 ```bash
-NETGET_TEST_MODE=mock ./test-e2e.sh tcp
+# Using test-e2e.sh (mocks are the default)
+./test-e2e.sh tcp
+
+# Or with cargo test
+cargo test --no-default-features --features tcp --test server::tcp::e2e_test
+
+# To use real Ollama instead:
+./test-e2e.sh --use-ollama tcp
+# Or:
+cargo test --no-default-features --features tcp --test server::tcp::e2e_test -- --use-ollama
 ```
 
 ## Why Use Mocks?
@@ -192,39 +201,37 @@ async fn test_client_protocol() -> E2EResult<()> {
 
 ## Test Modes
 
-Set via `NETGET_TEST_MODE` environment variable:
+By default, tests use mocks (no Ollama required). Use `--use-ollama` flag to test with real Ollama.
 
-### Mock Mode (Recommended for CI)
+### Mock Mode (Default - Recommended for CI)
 
 ```bash
-NETGET_TEST_MODE=mock ./test-e2e.sh tcp
+# Using test-e2e.sh
+./test-e2e.sh tcp
+
+# Or with cargo test
+cargo test --no-default-features --features tcp
 ```
 
 - ✅ Only uses mocks
 - ✅ Fails if mocks not configured
-- ✅ Fast and deterministic
+- ✅ Fast and deterministic (milliseconds)
+- ✅ No Ollama required
 
-### Real Mode
+### Real Mode (with --use-ollama)
 
 ```bash
-NETGET_TEST_MODE=real ./test-e2e.sh tcp
+# Using test-e2e.sh
+./test-e2e.sh --use-ollama tcp
+
+# Or with cargo test
+cargo test --no-default-features --features tcp -- --use-ollama
 ```
 
 - ✅ Only uses real Ollama
 - ✅ Fails if Ollama unavailable
 - ✅ Validates actual LLM behavior
-
-### Auto Mode (Default)
-
-```bash
-./test-e2e.sh tcp
-# or
-NETGET_TEST_MODE=auto ./test-e2e.sh tcp
-```
-
-- ✅ Prefers mocks if configured
-- ✅ Falls back to Ollama if no mocks
-- ✅ Best for local development
+- ⚠️ Slower (2-10 seconds per LLM call)
 
 ## Mock Builder API
 
@@ -433,7 +440,7 @@ client.verify_mocks().await?;
 
 ### Error: "Mock mode requires mocks to be configured"
 
-**Cause:** Running with `NETGET_TEST_MODE=mock` but no `.with_mock()` configured.
+**Cause:** Running in mock mode (default) but no `.with_mock()` configured.
 
 **Fix:**
 ```rust

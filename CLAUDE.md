@@ -267,7 +267,10 @@ Research: **Server library** (crate eval: compliance, maturity, LLM control), **
 
 **Validation**:
 - Compiles with feature
-- Tests pass in mock mode (`NETGET_TEST_MODE=mock ./test-e2e.sh <protocol>`)
+- Tests pass in mock mode (default): `./test-e2e.sh <protocol>`
+- Tests pass with real Ollama: `./test-e2e.sh --use-ollama <protocol>`
+- Tests pass with cargo: `cargo test --features <protocol> --test server::<protocol>::e2e_test`
+- Tests pass with cargo + Ollama: `cargo test --features <protocol> --test server::<protocol>::e2e_test -- --use-ollama`
 - Mock expectations verified (`server.verify_mocks().await?` called)
 - Both CLAUDE.md files exist
 
