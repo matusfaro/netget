@@ -226,6 +226,12 @@ pub mod nfs;
 #[cfg(feature = "nfs")]
 pub use nfs::actions::NfsClientProtocol;
 
+// nfc client
+#[cfg(feature = "nfc-client")]
+pub mod nfc;
+#[cfg(feature = "nfc-client")]
+pub use nfc::NfcClientProtocol;
+
 // nntp client
 #[cfg(feature = "nntp")]
 pub mod nntp;

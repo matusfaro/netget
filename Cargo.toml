@@ -23,6 +23,8 @@ bootp = ["dhcproto"]  # BOOTP (Bootstrap Protocol) - DHCP predecessor, uses same
 ntp = ["dep:rsntp"]  # NTP client support
 bluetooth-ble-client = ["btleplug"]  # Bluetooth Low Energy (BLE) client for connecting to BLE devices
 bluetooth-ble = ["ble-peripheral-rust"]  # Bluetooth Low Energy (BLE) GATT server (peripheral mode)
+nfc = ["dep:pcsc", "dep:ndef-rs"]  # NFC card emulation server via PC/SC (ISO14443, MIFARE, NFC tags)
+nfc-client = ["dep:pcsc", "dep:ndef-rs"]  # NFC reader/writer client via PC/SC (ISO14443, APDU, NDEF)
 bluetooth-ble-keyboard = ["bluetooth-ble"]  # BLE HID keyboard server
 bluetooth-ble-mouse = ["bluetooth-ble"]  # BLE HID mouse server
 bluetooth-ble-beacon = ["bluetooth-ble"]  # BLE beacon (iBeacon, Eddystone)
@@ -234,6 +236,8 @@ all-protocols = [
     "bluetooth-ble-cycling",
     "bluetooth-ble-running",
     "bluetooth-ble-weight-scale",
+    "nfc",
+    "nfc-client",
 ]
 
 [dependencies]
@@ -566,6 +570,10 @@ nfs3_types = { version = "0.4", optional = true }
 btleplug = { version = "0.11", optional = true }
 # Bluetooth Low Energy (BLE) server/peripheral - cross-platform (Windows, macOS, Linux)
 ble-peripheral-rust = { version = "0.2", optional = true }
+# NFC (Near Field Communication) via PC/SC - cross-platform smart card API (Windows/macOS native, Linux pcscd)
+pcsc = { version = "2.9", optional = true }
+# NDEF (NFC Data Exchange Format) message parsing and generation
+ndef-rs = { version = "0.2", optional = true }
 # USB client
 nusb = { version = "0.1", optional = true }
 

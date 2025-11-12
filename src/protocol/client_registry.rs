@@ -178,6 +178,9 @@ impl ClientRegistry {
         #[cfg(feature = "nfs")]
         self.register(Arc::new(crate::client::nfs::NfsClientProtocol::new()));
 
+        #[cfg(feature = "nfc-client")]
+        self.register(Arc::new(crate::client::nfc::NfcClientProtocol));
+
         #[cfg(feature = "nntp")]
         self.register(Arc::new(crate::client::nntp::NntpClientProtocol::new()));
 
