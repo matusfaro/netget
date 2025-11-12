@@ -22,8 +22,35 @@ async fn test_ftp_greeting() -> E2EResult<()> {
     // PROMPT: Tell the LLM to respond to CONNECT with FTP greeting
     let prompt = "listen on port {AVAILABLE_PORT} via ftp. When a client sends 'CONNECT', respond with '220 NetGet FTP Server\\r\\n'";
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: User command interpretation (start server)
+                    .on_instruction_containing("ftp")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "TCP",
+                            "instruction": "FTP server that responds to CONNECT with 220 greeting"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: TCP connection received event (send greeting when client sends CONNECT)
+                    .on_event("tcp_connection_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_tcp_data",
+                            "data": "323230204e657447657420465450205365727665720d0a" // "220 NetGet FTP Server\r\n" in hex
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Send CONNECT and verify FTP greeting
@@ -54,6 +81,9 @@ async fn test_ftp_greeting() -> E2EResult<()> {
         Ok(Err(e)) => return Err(format!("Read error: {}", e).into()),
         Err(_) => return Err("Greeting timeout".into()),
     }
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
 
     server.stop().await?;
     println!("=== Test passed ===\n");

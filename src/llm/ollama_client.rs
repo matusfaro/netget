@@ -561,8 +561,9 @@ impl OllamaClient {
                     let trimmed = line.trim();
                     if !trimmed.is_empty()
                         && !trimmed.starts_with('#')
-                        && !trimmed.contains("You are")
-                        && !trimmed.contains("NetGet")
+                        && !trimmed.starts_with("You are")
+                        && !trimmed.starts_with("You ")
+                        && trimmed.len() > 10  // Skip very short lines that are likely metadata
                     {
                         context = context.with_instruction(trimmed);
                         break;
