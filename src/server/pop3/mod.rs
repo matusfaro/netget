@@ -165,20 +165,11 @@ impl Pop3Session {
         status_tx: mpsc::UnboundedSender<String>,
         protocol: Arc<Pop3Protocol>,
     ) -> Result<()> {
-        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        use tokio::io::{AsyncBufReadExt, BufReader};
 
         let (read_half, write_half) = tokio::io::split(stream);
         let mut reader = BufReader::new(read_half);
         let write_half = Arc::new(tokio::sync::Mutex::new(write_half));
-
-        // Initialize connection state
-        app_state
-            .add_server_connection(
-                server_id,
-                connection_id,
-                crate::state::server::ProtocolConnectionInfo::None,
-            )
-            .await;
 
         // Send initial greeting
         let greeting_event = Event::new(
@@ -253,7 +244,6 @@ impl Pop3Session {
             }
         }
 
-        app_state.remove_server_connection(server_id, connection_id).await;
         Ok(())
     }
 
@@ -266,20 +256,11 @@ impl Pop3Session {
         status_tx: mpsc::UnboundedSender<String>,
         protocol: Arc<Pop3Protocol>,
     ) -> Result<()> {
-        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        use tokio::io::{AsyncBufReadExt, BufReader};
 
         let (read_half, write_half) = tokio::io::split(stream);
         let mut reader = BufReader::new(read_half);
         let write_half = Arc::new(tokio::sync::Mutex::new(write_half));
-
-        // Initialize connection state
-        app_state
-            .add_server_connection(
-                server_id,
-                connection_id,
-                crate::state::server::ProtocolConnectionInfo::None,
-            )
-            .await;
 
         // Send initial greeting
         let greeting_event = Event::new(
@@ -354,7 +335,6 @@ impl Pop3Session {
             }
         }
 
-        app_state.remove_server_connection(server_id, connection_id).await;
         Ok(())
     }
 
@@ -362,7 +342,7 @@ impl Pop3Session {
         event: &Event,
         llm_client: &OllamaClient,
         app_state: &Arc<AppState>,
-        status_tx: &mpsc::UnboundedSender<String>,
+        _status_tx: &mpsc::UnboundedSender<String>,
         protocol: &Arc<Pop3Protocol>,
         server_id: crate::state::ServerId,
         connection_id: crate::server::connection::ConnectionId,
@@ -373,33 +353,21 @@ impl Pop3Session {
     {
         use tokio::io::AsyncWriteExt;
 
-        // Get current connection state
-        let state_opt = app_state.get_connection_state(server_id, connection_id).await;
-
         // Call LLM for action
         let llm_result = call_llm(
             llm_client,
             app_state,
-            status_tx,
-            &protocol.as_ref(),
             server_id,
             Some(connection_id),
-            Some(event),
-            state_opt,
+            event,
+            protocol.as_ref(),
         )
         .await?;
 
-        // Update connection state
-        if let Some(new_state) = llm_result.state {
-            app_state
-                .update_connection_state(server_id, connection_id, new_state)
-                .await;
-        }
-
         // Execute actions
-        for action in llm_result.actions {
-            match action.result {
-                ActionResult::SendData(data) => {
+        for action in llm_result.protocol_results {
+            match action {
+                ActionResult::Output(data) => {
                     let mut writer = write_half.lock().await;
                     writer.write_all(&data).await?;
                     writer.flush().await?;
