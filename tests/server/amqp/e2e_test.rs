@@ -9,6 +9,7 @@
 #![cfg(feature = "amqp")]
 
 use crate::server::helpers::*;
+use serde_json::json;
 use std::time::Duration;
 
 /// Test that AMQP broker starts successfully
@@ -293,3 +294,51 @@ async fn test_amqp_basic_publish() -> E2EResult<()> {
     Ok(())
 }
 */
+
+// ============================================================================
+// MOCK-BASED TESTS (no Ollama required)
+// ============================================================================
+
+/// Test AMQP broker startup with mocks (example of mock testing)
+///
+/// This test demonstrates the mock LLM system. It configures expected
+/// responses for the "open_server" action and verifies the mock expectations.
+/// No real Ollama instance is required.
+#[tokio::test]
+async fn test_amqp_broker_with_mocks() -> E2EResult<()> {
+    let config = ServerConfig::new("Start an AMQP broker on port 0")
+        .with_log_level("debug")
+        .with_mock(|mock| {
+            // Mock the user command interpretation
+            mock.on_instruction_containing("Start an AMQP broker")
+                .respond_with_actions(json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "AMQP",
+                        "instruction": "Accept AMQP connections and handle protocol negotiation"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+            // Mock the connection handler (in case a connection is made)
+            .on_event("amqp_connection")
+                .respond_with_actions(json!([
+                    {
+                        "type": "send_amqp_frame",
+                        "frame_type": "Connection.Start"
+                    }
+                ]))
+                .expect_at_most(1) // May or may not be called depending on test
+        });
+
+    let server = start_netget_server(config).await?;
+
+    println!("✓ AMQP broker started on port {} (with mocks)", server.port);
+
+    // Verify all mock expectations were met
+    server.verify_mocks().await?;
+
+    server.stop().await?;
+    Ok(())
+}
