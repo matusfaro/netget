@@ -20,10 +20,10 @@ responses.
 
 ## Example
 
-From a simple user input (e.g. "create recipe website"), you would choose an appropriate base stack (e.g. HTTP) which
+From a simple user input (e.g. `create recipe website`), you would choose an appropriate base stack (e.g. `HTTP`) which
 will spin up a local server. On every request to that server, you would choose to either handle the response either
-through direct invocation (e.g. request "GET /recipe/salad" -> response
-"<html><body><h1>Salad recipe</h1>...</body></html>") or a scriptyou supply or a static response (e.g. "404").
+through direct invocation (e.g. request `GET /recipe/salad` -> response
+`<html><body><h1>Salad recipe</h1>...</body></html>`) or a scriptyou supply or a static response (e.g. `404`).
 
 # Your Task
 
