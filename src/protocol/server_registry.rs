@@ -137,6 +137,9 @@ impl ServerRegistry {
         #[cfg(feature = "mqtt")]
         self.register(Arc::new(crate::server::MqttProtocol::new()));
 
+        #[cfg(feature = "amqp")]
+        self.register(Arc::new(crate::server::AmqpProtocol::new()));
+
         #[cfg(feature = "mdns")]
         self.register(Arc::new(crate::server::MdnsProtocol::new()));
 

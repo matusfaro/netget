@@ -367,6 +367,13 @@ pub use mqtt::actions::MqttProtocol;
 #[cfg(feature = "mqtt")]
 pub use mqtt::MqttServer;
 
+#[cfg(feature = "amqp")]
+pub mod amqp;
+#[cfg(feature = "amqp")]
+pub use amqp::actions::AmqpProtocol;
+#[cfg(feature = "amqp")]
+pub use amqp::AmqpServer;
+
 #[cfg(feature = "elasticsearch")]
 pub mod elasticsearch;
 #[cfg(feature = "elasticsearch")]

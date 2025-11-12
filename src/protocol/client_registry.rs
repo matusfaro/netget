@@ -166,6 +166,9 @@ impl ClientRegistry {
         #[cfg(feature = "mqtt")]
         self.register(Arc::new(crate::client::mqtt::MqttClientProtocol::new()));
 
+        #[cfg(feature = "amqp")]
+        self.register(Arc::new(crate::client::amqp::AmqpClientProtocol::new()));
+
         #[cfg(feature = "mysql")]
         self.register(Arc::new(crate::client::mysql::MysqlClientProtocol::new()));
 

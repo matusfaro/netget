@@ -71,6 +71,7 @@ ldap = ["dep:ldap3_proto", "rasn", "dep:ldap3"]
 imap = ["imap-codec", "dep:async-imap", "dep:async-native-tls"]  # IMAP uses imap-codec for protocol parsing
 nntp = []  # NNTP (Network News Transfer Protocol) for Usenet, uses only TCP, no extra deps
 mqtt = ["dep:rumqttd", "dep:rumqttc"]  # MQTT broker and client for IoT messaging
+amqp = ["dep:lapin"]  # AMQP broker and client for RabbitMQ compatibility
 socks5 = ["dep:tokio-socks"]  # SOCKS5 server and client (client uses tokio-socks)
 elasticsearch = []  # Elasticsearch uses only HTTP, no extra deps
 dynamo = ["aws-config", "aws-sdk-dynamodb", "aws-smithy-types"]  # DynamoDB client
@@ -168,6 +169,7 @@ all-protocols = [
     "imap",
     "nntp",
     "mqtt",
+    "amqp",
     "socks5",
     "elasticsearch",
     "dynamo",
@@ -544,6 +546,8 @@ tor-rtcompat = { version = "0.36", optional = true }
 git2 = { version = "0.19", optional = true }
 # MQTT client
 rumqttc = { version = "0.24", optional = true }
+# AMQP client
+lapin = { version = "4.0.0-rc.1", optional = true }
 # Kafka client
 rdkafka = { version = "0.36", optional = true }
 # Kubernetes client with v1.30 API support (latest in k8s-openapi 0.24)

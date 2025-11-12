@@ -202,6 +202,12 @@ pub mod mqtt;
 #[cfg(feature = "mqtt")]
 pub use mqtt::actions::MqttClientProtocol;
 
+// amqp client
+#[cfg(feature = "amqp")]
+pub mod amqp;
+#[cfg(feature = "amqp")]
+pub use amqp::actions::AmqpClientProtocol;
+
 // mysql client
 #[cfg(feature = "mysql")]
 pub mod mysql;
