@@ -1,5 +1,7 @@
 //! Client protocol e2e tests
 
+#[cfg(feature = "amqp")]
+pub mod amqp;
 #[cfg(feature = "http")]
 pub mod http;
 #[cfg(feature = "ollama")]

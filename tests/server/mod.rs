@@ -1,5 +1,7 @@
 //! Server protocol e2e tests
 
+#[cfg(feature = "amqp")]
+pub mod amqp;
 #[cfg(feature = "bgp")]
 pub mod bgp;
 #[cfg(feature = "bluetooth-ble")]
