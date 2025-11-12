@@ -2,14 +2,14 @@
 pub mod actions;
 
 use crate::llm::action_helper::call_llm;
-use crate::llm::actions::protocol_trait::{ActionResult, Server};
+use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error};
+use crate::console_debug;
 use actions::{ZookeeperProtocol, ZOOKEEPER_REQUEST_EVENT};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -75,32 +75,6 @@ impl ZookeeperServer {
 
                         let connection_id =
                             ConnectionId::new(app_state.get_next_unified_id().await);
-                        let local_addr_conn = stream.local_addr().unwrap_or(actual_addr);
-
-                        // Track the connection
-                        if let Some(server_id) = server.server_id {
-                            use crate::state::server::{
-                                ConnectionState as ServerConnectionState, ConnectionStatus,
-                                ProtocolConnectionInfo,
-                            };
-                            let now = std::time::Instant::now();
-                            let conn_state = ServerConnectionState {
-                                id: connection_id,
-                                remote_addr: addr,
-                                local_addr: local_addr_conn,
-                                bytes_sent: 0,
-                                bytes_received: 0,
-                                packets_sent: 0,
-                                packets_received: 0,
-                                last_activity: now,
-                                status: ConnectionStatus::Active,
-                                status_changed_at: now,
-                                protocol_info: ProtocolConnectionInfo::empty(),
-                            };
-                            app_state
-                                .add_server_connection(server_id, connection_id, conn_state)
-                                .await;
-                        }
 
                         // Clone server components for the connection handler
                         let server_clone = Arc::clone(&server);
@@ -121,11 +95,6 @@ impl ZookeeperServer {
                             .await
                             {
                                 error!("ZooKeeper connection error: {}", e);
-                            }
-
-                            // Remove connection when done
-                            if let Some(server_id) = server_id_opt {
-                                app_state.remove_server_connection(server_id, connection_id).await;
                             }
                         });
                     }

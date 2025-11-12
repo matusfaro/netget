@@ -3,18 +3,13 @@ pub mod actions;
 
 pub use actions::ZookeeperClientProtocol;
 
-use crate::llm::actions::client_trait::Client;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{error, info, trace};
+use tracing::{info, trace};
 
-use crate::client::zookeeper::actions::ZOOKEEPER_CLIENT_DATA_RECEIVED_EVENT;
-use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
-use crate::llm::ClientLlmResult;
-use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 
@@ -25,11 +20,13 @@ impl ZookeeperClient {
     /// Connect to a ZooKeeper server with integrated LLM actions
     pub async fn connect_with_llm_actions(
         remote_addr: String,
-        llm_client: OllamaClient,
+        _llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         client_id: ClientId,
     ) -> Result<SocketAddr> {
+        use anyhow::Context;
+
         // Parse remote address
         let remote_sock_addr: SocketAddr = remote_addr
             .parse()
