@@ -230,8 +230,6 @@ all-protocols = [
     "bluetooth-ble-weight-scale",
 ]
 
-e2e-tests = []  # Feature flag for E2E tests
-
 [dependencies]
 # Async runtime
 tokio = { version = "1.41", features = ["full"] }
