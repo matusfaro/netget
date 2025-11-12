@@ -340,6 +340,21 @@ impl OllamaClient {
         prompt: &str,
         format: Option<serde_json::Value>,
     ) -> Result<String> {
+        // CHECK FOR MOCK MODE (test environment)
+        if let Ok(mock_config_json) = std::env::var("NETGET_MOCK_CONFIG_JSON") {
+            return self.handle_mock_request(prompt, &mock_config_json).await;
+        }
+
+        // Legacy: Simple mock response (backward compatibility)
+        if let Ok(mock_response) = std::env::var("NETGET_TEST_MOCK_LLM_RESPONSE") {
+            info!(
+                "🔧 TEST MODE: Using legacy mock LLM response (length: {} chars)",
+                mock_response.len()
+            );
+            debug!("Mock response: {}", mock_response);
+            return Ok(mock_response);
+        }
+
         // DEBUG: Summary
         debug!(
             "LLM request: model={}, prompt_len={} chars, format={}",
@@ -450,6 +465,101 @@ impl OllamaClient {
         }
 
         Ok(response.response)
+    }
+
+    /// Handle mock LLM request (test environment)
+    ///
+    /// Parses the mock configuration from JSON and matches the prompt against rules.
+    async fn handle_mock_request(&self, prompt: &str, config_json: &str) -> Result<String> {
+        use crate::testing::{LlmContext, MockLlmConfig};
+
+        // Parse mock configuration
+        let config: MockLlmConfig = serde_json::from_str(config_json)
+            .context("Failed to parse NETGET_MOCK_CONFIG_JSON")?;
+
+        // Extract context from prompt
+        let context = self.extract_llm_context(prompt);
+
+        info!(
+            "🔧 MOCK MODE: Matching against {} rules",
+            config.rules.len()
+        );
+        debug!("Context: event_type={:?}, instruction='{}'",
+            context.event_type, context.instruction);
+
+        // Find matching rule
+        if let Some((rule_idx, response)) = config.find_match(&context).await {
+            info!(
+                "✓ MOCK MODE: Matched rule #{} - {}",
+                rule_idx,
+                config.rules[rule_idx].describe()
+            );
+
+            let response_str = response.to_response_string();
+            debug!("Mock response: {}", response_str);
+
+            return Ok(response_str);
+        }
+
+        // No match found - this is an error
+        warn!("✗ MOCK MODE: No matching rule found for prompt");
+        warn!("  Event type: {:?}", context.event_type);
+        warn!("  Instruction: {}", context.instruction);
+
+        Err(anyhow::anyhow!(
+            "Mock mode: No matching rule for LLM call. Context: event_type={:?}, instruction='{}'",
+            context.event_type,
+            context.instruction
+        ))
+    }
+
+    /// Extract LLM context from prompt text
+    ///
+    /// Attempts to parse event type, instruction, and other metadata from the prompt.
+    fn extract_llm_context(&self, prompt: &str) -> crate::testing::LlmContext {
+        use crate::testing::LlmContext;
+
+        let mut context = LlmContext::new(prompt.to_string());
+
+        // Try to extract event type from prompt
+        // Look for patterns like "Event: tcp_connection_received" or similar
+        if let Some(event_line) = prompt.lines().find(|line| line.contains("Event:")) {
+            if let Some(event_type) = event_line.split("Event:").nth(1) {
+                let event_type = event_type.trim().split_whitespace().next().unwrap_or("");
+                if !event_type.is_empty() {
+                    context = context.with_event_type(event_type);
+                }
+            }
+        }
+
+        // Try to extract instruction
+        // Look for "Your instruction:" or similar patterns
+        if let Some(instruction_line) = prompt.lines().find(|line| {
+            line.contains("Your instruction:") || line.contains("instruction:")
+        }) {
+            if let Some(instruction) = instruction_line
+                .split("instruction:")
+                .nth(1)
+                .or_else(|| instruction_line.split("Your instruction:").nth(1))
+            {
+                context = context.with_instruction(instruction.trim());
+            }
+        }
+
+        // Try to extract event data (JSON after "Data:" or "Event data:")
+        if let Some(data_start_idx) = prompt.find("Data:").or_else(|| prompt.find("Event data:")) {
+            let after_data = &prompt[data_start_idx..];
+            // Try to find JSON object
+            if let Some(json_start) = after_data.find('{') {
+                let json_str = &after_data[json_start..];
+                // Try to parse as JSON
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(json_str) {
+                    context = context.with_event_data(json);
+                }
+            }
+        }
+
+        context
     }
 
     /// Generate a structured LlmResponse for data/connection events

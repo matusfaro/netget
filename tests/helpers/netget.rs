@@ -19,6 +19,8 @@ pub struct NetGetInstance {
     pub clients: Vec<NetGetClient>,
     /// Captured output lines (for verification)
     pub output_lines: std::sync::Arc<tokio::sync::Mutex<Vec<String>>>,
+    /// Mock configuration (for verification)
+    pub mock_config: Option<netget::testing::MockLlmConfig>,
 }
 
 /// Information about a server that was started
@@ -84,6 +86,35 @@ pub struct NetGetConfig {
     pub include_disabled_protocols: bool,
     /// Enable Ollama lock for concurrent test execution (default: true)
     pub ollama_lock: bool,
+    /// Mock LLM configuration (for testing without Ollama)
+    pub mock_config: Option<netget::testing::MockLlmConfig>,
+}
+
+/// Test mode for E2E tests
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestMode {
+    /// Only use real Ollama (fail if unavailable)
+    Real,
+    /// Only use mocks (fail if no mocks configured)
+    Mock,
+    /// Prefer mock, fall back to Ollama (default)
+    Auto,
+}
+
+impl TestMode {
+    /// Detect mode from environment
+    pub fn detect() -> Self {
+        match std::env::var("NETGET_TEST_MODE").as_deref() {
+            Ok("real") => TestMode::Real,
+            Ok("mock") => TestMode::Mock,
+            Ok("auto") => TestMode::Auto,
+            Ok(other) => {
+                eprintln!("⚠️  Unknown NETGET_TEST_MODE: '{}', using Auto", other);
+                TestMode::Auto
+            }
+            Err(_) => TestMode::Auto, // Default
+        }
+    }
 }
 
 impl NetGetConfig {
@@ -97,6 +128,7 @@ impl NetGetConfig {
             no_scripts: false,
             include_disabled_protocols: false,
             ollama_lock: true, // Enable by default for concurrent testing
+            mock_config: None,
         }
     }
 
@@ -110,6 +142,7 @@ impl NetGetConfig {
             no_scripts: true,
             include_disabled_protocols: false,
             ollama_lock: true,
+            mock_config: None,
         }
     }
 
@@ -130,6 +163,7 @@ impl NetGetConfig {
             no_scripts: false,
             include_disabled_protocols: false,
             ollama_lock: true,
+            mock_config: None,
         }
     }
 
@@ -168,11 +202,76 @@ impl NetGetConfig {
         self.ollama_lock = enabled;
         self
     }
+
+    /// Configure mock LLM responses (for testing without Ollama)
+    ///
+    /// # Example
+    /// ```ignore
+    /// use netget::testing::MockLlmBuilder;
+    ///
+    /// let config = NetGetConfig::new("Start TCP server on port 0")
+    ///     .with_mock(|mock| {
+    ///         mock.on_event("tcp_connection_received")
+    ///             .respond_with_actions(json!([
+    ///                 {"type": "send_tcp_data", "data": "48656c6c6f"}
+    ///             ]))
+    ///             .expect_calls(1)
+    ///     });
+    /// ```
+    pub fn with_mock<F>(mut self, builder_fn: F) -> Self
+    where
+        F: FnOnce(netget::testing::MockLlmBuilder) -> netget::testing::MockLlmBuilder,
+    {
+        let builder = netget::testing::MockLlmBuilder::new();
+        self.mock_config = Some(builder_fn(builder).build());
+        self
+    }
 }
 
 /// Start a NetGet instance with the given configuration
 /// Returns instance with 0+ servers and 0+ clients
 pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
+    // Detect test mode
+    let mode = TestMode::detect();
+    let has_mocks = config.mock_config.is_some();
+
+    // Enforce mode requirements
+    match mode {
+        TestMode::Real => {
+            if has_mocks {
+                println!("⚠️  Real mode: Ignoring configured mocks");
+            }
+            // Check Ollama availability
+            if !check_ollama_available().await {
+                return Err("Real mode requires Ollama, but Ollama is not available at http://localhost:11434".into());
+            }
+            println!("🤖 Real mode: Using Ollama");
+            // Clear any mock environment variables
+            std::env::remove_var("NETGET_MOCK_CONFIG_JSON");
+        }
+        TestMode::Mock => {
+            if !has_mocks {
+                return Err("Mock mode requires mocks to be configured via .with_mock()".into());
+            }
+            println!("🔧 Mock mode: Using configured mocks");
+            // Set mock environment variable
+            let config_json = serde_json::to_string(&config.mock_config)?;
+            std::env::set_var("NETGET_MOCK_CONFIG_JSON", config_json);
+        }
+        TestMode::Auto => {
+            if has_mocks {
+                println!("🔧 Auto mode: Using mocks (available)");
+                // Set mock environment variable
+                let config_json = serde_json::to_string(&config.mock_config)?;
+                std::env::set_var("NETGET_MOCK_CONFIG_JSON", config_json);
+            } else if check_ollama_available().await {
+                println!("🤖 Auto mode: Using real Ollama (no mocks configured)");
+            } else {
+                return Err("Auto mode: No mocks configured and Ollama not available at http://localhost:11434".into());
+            }
+        }
+    }
+
     // Get the path to the binary
     let binary_path = get_netget_binary_path()?;
 
@@ -265,6 +364,7 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
         servers,
         clients,
         output_lines,
+        mock_config: config.mock_config.clone(),
     })
 }
 
@@ -525,4 +625,19 @@ async fn wait_for_netget_startup_with_capture(
     timeout(Duration::from_secs(120), wait_future)
         .await
         .map_err(|_| "Timeout waiting for netget startup")?
+}
+
+/// Check if Ollama is available
+async fn check_ollama_available() -> bool {
+    // Try to connect to Ollama
+    let client = reqwest::Client::new();
+    match tokio::time::timeout(
+        Duration::from_secs(2),
+        client.get("http://localhost:11434/api/tags").send(),
+    )
+    .await
+    {
+        Ok(Ok(response)) => response.status().is_success(),
+        _ => false,
+    }
 }
