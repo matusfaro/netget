@@ -91,6 +91,25 @@ impl Protocol for NfcServerProtocol {
         "application"
     }
 
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{
+            DevelopmentState, PrivilegeRequirement, ProtocolMetadataV2,
+        };
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Incomplete)
+            .privilege_requirement(PrivilegeRequirement::None)
+            .implementation("Virtual NFC tag/card simulation via PC/SC metadata")
+            .llm_control("ATR configuration, NDEF message content, APDU response simulation")
+            .e2e_testing("Virtual only - cannot test with real readers (hardware cannot emulate)")
+            .notes("Simulation only. Most PC/SC readers cannot emulate cards. Use Android HCE or smart card simulator hardware for real card emulation.")
+            .build()
+    }
+
+    fn description(&self) -> &'static str {
+        "Virtual NFC tag/card emulation for testing (simulation only, not usable with real readers)"
+    }
+
     fn get_event_types(&self) -> Vec<&LazyLock<EventType>> {
         vec![
             &NFC_SERVER_STARTED_EVENT,
