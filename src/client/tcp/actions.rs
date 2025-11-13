@@ -64,16 +64,24 @@ impl Protocol for TcpClientProtocol {
         vec![
             ActionDefinition {
                 name: "send_tcp_data".to_string(),
-                description: "Send raw TCP data to the server".to_string(),
-                parameters: vec![Parameter {
-                    name: "data_hex".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Hexadecimal encoded data to send".to_string(),
-                    required: true,
-                }],
+                description: "Send raw TCP data to the server (UTF-8 string or hex-encoded)".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "data".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "UTF-8 string data to send (preferred for text)".to_string(),
+                        required: false,
+                    },
+                    Parameter {
+                        name: "data_hex".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Hexadecimal encoded data to send (for binary data)".to_string(),
+                        required: false,
+                    },
+                ],
                 example: json!({
                     "type": "send_tcp_data",
-                    "data_hex": "48656c6c6f"
+                    "data": "Hello World"
                 }),
             },
             ActionDefinition {
@@ -90,16 +98,24 @@ impl Protocol for TcpClientProtocol {
         vec![
             ActionDefinition {
                 name: "send_tcp_data".to_string(),
-                description: "Send TCP data in response to received data".to_string(),
-                parameters: vec![Parameter {
-                    name: "data_hex".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Hexadecimal encoded data to send".to_string(),
-                    required: true,
-                }],
+                description: "Send TCP data in response to received data (UTF-8 string or hex-encoded)".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "data".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "UTF-8 string data to send (preferred for text)".to_string(),
+                        required: false,
+                    },
+                    Parameter {
+                        name: "data_hex".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Hexadecimal encoded data to send (for binary data)".to_string(),
+                        required: false,
+                    },
+                ],
                 example: json!({
                     "type": "send_tcp_data",
-                    "data_hex": "48656c6c6f"
+                    "data": "Hello World"
                 }),
             },
             ActionDefinition {
@@ -186,12 +202,19 @@ impl Client for TcpClientProtocol {
 
         match action_type {
             "send_tcp_data" => {
-                let data_hex = action
-                    .get("data_hex")
-                    .and_then(|v| v.as_str())
-                    .context("Missing 'data_hex' field")?;
-
-                let data = hex::decode(data_hex).context("Invalid hex data")?;
+                // Support both UTF-8 string (data) and hex-encoded (data_hex)
+                // Prefer UTF-8 for easier LLM interaction
+                let data = if let Some(utf8_data) = action.get("data").and_then(|v| v.as_str()) {
+                    // UTF-8 string provided
+                    utf8_data.as_bytes().to_vec()
+                } else if let Some(hex_data) = action.get("data_hex").and_then(|v| v.as_str()) {
+                    // Hex string provided
+                    hex::decode(hex_data).context("Invalid hex data in data_hex field")?
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "Missing 'data' or 'data_hex' field in send_tcp_data action"
+                    ));
+                };
 
                 Ok(ClientActionResult::SendData(data))
             }

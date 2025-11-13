@@ -4,12 +4,12 @@
 use crate::llm::actions::{
     client_trait::{Client, ClientActionResult},
     protocol_trait::Protocol,
-    ActionDefinition, ParameterDefinition,
+    ActionDefinition, Parameter, ParameterDefinition,
 };
 use crate::protocol::ConnectContext;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use serde_json::json;
 use std::future::Future;
 use std::net::SocketAddr;
@@ -22,7 +22,7 @@ pub static NFC_READERS_LISTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "nfc_readers_listed",
         "Available NFC/smart card readers enumerated via PC/SC",
     )
-    .with_parameters(vec![ParameterDefinition {
+    .with_parameters(vec![Parameter {
         name: "readers".to_string(),
         type_hint: "array".to_string(),
         description: "List of reader names (strings)".to_string(),
@@ -37,13 +37,13 @@ pub static NFC_CARD_DETECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "NFC card/tag detected in reader",
     )
     .with_parameters(vec![
-        ParameterDefinition {
+        Parameter {
             name: "atr".to_string(),
             type_hint: "string".to_string(),
             description: "Answer to Reset (ATR) hex string".to_string(),
             required: true,
         },
-        ParameterDefinition {
+        Parameter {
             name: "protocol".to_string(),
             type_hint: "string".to_string(),
             description: "Active protocol (T0, T1, etc.)".to_string(),
@@ -59,25 +59,25 @@ pub static NFC_APDU_RESPONSE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "APDU response received from card/tag",
     )
     .with_parameters(vec![
-        ParameterDefinition {
+        Parameter {
             name: "response_hex".to_string(),
             type_hint: "string".to_string(),
             description: "Response APDU as hex string (includes SW1 SW2 status bytes)".to_string(),
             required: true,
         },
-        ParameterDefinition {
+        Parameter {
             name: "sw1".to_string(),
             type_hint: "string".to_string(),
             description: "Status byte 1 (hex)".to_string(),
             required: true,
         },
-        ParameterDefinition {
+        Parameter {
             name: "sw2".to_string(),
             type_hint: "string".to_string(),
             description: "Status byte 2 (hex)".to_string(),
             required: true,
         },
-        ParameterDefinition {
+        Parameter {
             name: "data_hex".to_string(),
             type_hint: "string".to_string(),
             description: "Response data (without status bytes) as hex string".to_string(),
@@ -92,7 +92,7 @@ pub static NFC_NDEF_READ_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "nfc_ndef_read",
         "NDEF message read from NFC tag",
     )
-    .with_parameters(vec![ParameterDefinition {
+    .with_parameters(vec![Parameter {
         name: "records".to_string(),
         type_hint: "array".to_string(),
         description: "Array of NDEF records with type, payload, etc.".to_string(),
@@ -120,6 +120,18 @@ impl Protocol for NfcClientProtocol {
         "application"
     }
 
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Incomplete)
+            .implementation("PC/SC API for NFC/smart card reader access")
+            .llm_control("Full APDU command control, NDEF reading/writing")
+            .e2e_testing("Requires physical NFC reader hardware (ACR122U recommended)")
+            .notes("Cross-platform via PC/SC (Windows/macOS native, Linux via pcscd)")
+            .build()
+    }
+
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
             (*NFC_READERS_LISTED_EVENT).clone(),
@@ -130,6 +142,22 @@ impl Protocol for NfcClientProtocol {
         ]
     }
 
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["nfc", "smart card", "pcsc", "reader", "apdu", "ndef"]
+    }
+
+    fn description(&self) -> &'static str {
+        "NFC/Smart card reader client using PC/SC API"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Connect to NFC reader and read tag UID"
+    }
+
+    fn group_name(&self) -> &'static str {
+        "NFC & Smart Cards"
+    }
+
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
         vec![
             ParameterDefinition {
@@ -137,6 +165,7 @@ impl Protocol for NfcClientProtocol {
                 type_hint: "number".to_string(),
                 description: "Index of PC/SC reader to use (0-based, default: 0)".to_string(),
                 required: false,
+                example: json!(0),
             },
             ParameterDefinition {
                 name: "reader_name".to_string(),
@@ -144,6 +173,7 @@ impl Protocol for NfcClientProtocol {
                 description: "Name of specific reader to use (optional, overrides reader_index)"
                     .to_string(),
                 required: false,
+                example: json!("reader_name"),
             },
         ]
     }
@@ -163,7 +193,7 @@ impl Protocol for NfcClientProtocol {
                 description: "Connect to NFC card/tag in reader (waits for card if not present)"
                     .to_string(),
                 parameters: vec![
-                    ParameterDefinition {
+                    Parameter {
                         name: "timeout_ms".to_string(),
                         type_hint: "number".to_string(),
                         description: "Timeout in milliseconds to wait for card (default: 30000)"
@@ -193,37 +223,37 @@ impl Protocol for NfcClientProtocol {
                 name: "send_apdu".to_string(),
                 description: "Send APDU command to card/tag (structured format)".to_string(),
                 parameters: vec![
-                    ParameterDefinition {
+                    Parameter {
                         name: "cla".to_string(),
                         type_hint: "string".to_string(),
                         description: "Class byte (hex, e.g., '00')".to_string(),
                         required: true,
                     },
-                    ParameterDefinition {
+                    Parameter {
                         name: "ins".to_string(),
                         type_hint: "string".to_string(),
                         description: "Instruction byte (hex, e.g., 'A4' for SELECT)".to_string(),
                         required: true,
                     },
-                    ParameterDefinition {
+                    Parameter {
                         name: "p1".to_string(),
                         type_hint: "string".to_string(),
                         description: "Parameter 1 byte (hex)".to_string(),
                         required: true,
                     },
-                    ParameterDefinition {
+                    Parameter {
                         name: "p2".to_string(),
                         type_hint: "string".to_string(),
                         description: "Parameter 2 byte (hex)".to_string(),
                         required: true,
                     },
-                    ParameterDefinition {
+                    Parameter {
                         name: "data".to_string(),
                         type_hint: "string".to_string(),
                         description: "Command data (hex string, optional)".to_string(),
                         required: false,
                     },
-                    ParameterDefinition {
+                    Parameter {
                         name: "le".to_string(),
                         type_hint: "string".to_string(),
                         description: "Expected response length (hex, optional)".to_string(),
@@ -243,7 +273,7 @@ impl Protocol for NfcClientProtocol {
             ActionDefinition {
                 name: "send_apdu_raw".to_string(),
                 description: "Send raw APDU command (hex string)".to_string(),
-                parameters: vec![ParameterDefinition {
+                parameters: vec![Parameter {
                     name: "apdu_hex".to_string(),
                     type_hint: "string".to_string(),
                     description: "Raw APDU command as hex string".to_string(),
@@ -265,7 +295,7 @@ impl Protocol for NfcClientProtocol {
             ActionDefinition {
                 name: "write_ndef".to_string(),
                 description: "Write NDEF message to NFC tag".to_string(),
-                parameters: vec![ParameterDefinition {
+                parameters: vec![Parameter {
                     name: "records".to_string(),
                     type_hint: "array".to_string(),
                     description: "Array of NDEF records to write".to_string(),
@@ -306,12 +336,23 @@ impl Client for NfcClientProtocol {
         Box::pin(async move {
             // NFC client uses PC/SC, not socket addresses
             // Remote addr is ignored, we use reader_index from startup params
+
+            // Build startup params JSON manually since StartupParams doesn't expose to_json
+            let startup_params_json = if let Some(ref params) = ctx.startup_params {
+                serde_json::json!({
+                    "reader_index": params.get_optional_u64("reader_index"),
+                    "reader_name": params.get_optional_string("reader_name"),
+                })
+            } else {
+                serde_json::json!({})
+            };
+
             crate::client::nfc::NfcClient::connect_with_llm_actions(
                 ctx.llm_client,
-                ctx.app_state,
+                ctx.state,
                 ctx.status_tx,
                 ctx.client_id,
-                ctx.startup_params,
+                startup_params_json,
             )
             .await
         })

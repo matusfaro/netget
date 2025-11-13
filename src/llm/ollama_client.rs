@@ -471,7 +471,7 @@ impl OllamaClient {
     ///
     /// Parses the mock configuration from JSON and matches the prompt against rules.
     async fn handle_mock_request(&self, prompt: &str, config_json: &str) -> Result<String> {
-        use crate::testing::{LlmContext, MockLlmConfig};
+        use crate::testing::MockLlmConfig;
 
         // Parse serialized mock configuration
         #[derive(serde::Deserialize)]

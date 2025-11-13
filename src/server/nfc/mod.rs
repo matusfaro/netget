@@ -21,7 +21,7 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::server::nfc::actions::*;
 use crate::state::app_state::AppState;
-use crate::state::server::{ConnectionState, ServerId};
+use crate::state::server::ServerId;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::net::SocketAddr;
@@ -100,22 +100,22 @@ impl NfcServer {
             tag_type.clone(),
         )));
 
-        // Set server state to Idle
-        app_state
-            .set_server_connection_state(server_id, ConnectionState::Idle)
-            .await;
-
         // Call LLM with server started event
         let event = Event::new(&NFC_SERVER_STARTED_EVENT, json!({}));
+        let protocol = NfcServerProtocol;
 
-        call_llm(
-            llm_client.clone(),
-            app_state.clone(),
-            status_tx.clone(),
+        let _result = call_llm(
+            &llm_client,
+            &app_state,
             server_id,
-            Some(&event),
+            None, // No connection ID for server-level event
+            &event,
+            &protocol,
         )
         .await?;
+
+        // Note: No need to handle results for server startup event
+        // Virtual tag doesn't process startup actions
 
         // NOTE: Since this is a virtual server, we don't actually listen on network
         // In a real implementation, you would:
@@ -161,8 +161,8 @@ impl NfcServer {
                     // For virtual server, just log it
                 }
             }
-            ActionResult::ModifyInstruction(new_instruction) => {
-                debug!("Updating server instruction: {}", new_instruction);
+            ActionResult::NoAction => {
+                // No operation needed
             }
             _ => {
                 warn!("Unhandled action result: {:?}", result);

@@ -20,7 +20,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error};
 
 /// AMQP server/broker
 pub struct AmqpServer;

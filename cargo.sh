@@ -58,24 +58,18 @@ if [[ "$CARGO_USE_ISOLATION" == true ]] && [[ "$CARGO_CLEANUP_OLD" == true ]] &&
     fi
 fi
 
-# Determine session PID (use CARGO_SESSION_PID if set, otherwise current PID)
-SESSION_PID="${CARGO_SESSION_PID:-$$}"
-
 # Set target directory based on isolation mode
 if [[ "$CARGO_USE_ISOLATION" == true ]]; then
-    # Create session-specific build directory using session PID
-    # CARGO_SESSION_PID is set by cargo-isolated.sh to ensure consistency
-    # All invocations from the same shell session share the same directory
-    export CARGO_TARGET_DIR="${PROJECT_ROOT}/target-claude/claude-${SESSION_PID}"
-    mkdir -p "$CARGO_TARGET_DIR"
-    BUILD_MODE="Isolated"
-else
-    # Use standard target directory (don't override CARGO_TARGET_DIR if already set)
-    if [[ -z "$CARGO_TARGET_DIR" ]]; then
-        export CARGO_TARGET_DIR="${PROJECT_ROOT}/target"
-    fi
-    BUILD_MODE="Standard"
+    # Legacy isolated mode - no longer used
+    # DEPRECATED: Now using shared target/ directory for better cache sharing
+    echo "Warning: CARGO_USE_ISOLATION=true is deprecated. Using shared target/ directory." >&2
 fi
+
+# Use standard target directory (don't override CARGO_TARGET_DIR if already set)
+if [[ -z "$CARGO_TARGET_DIR" ]]; then
+    export CARGO_TARGET_DIR="${PROJECT_ROOT}/target"
+fi
+BUILD_MODE="Shared"
 
 # Check for sccache
 if [[ "$RUSTC_WRAPPER" == "sccache" ]]; then
@@ -121,15 +115,15 @@ fi
 # Create tmp directory for logs
 mkdir -p "${PROJECT_ROOT}/tmp"
 
-# Determine log file name based on command (first argument)
-COMMAND="${CARGO_ARGS[0]:-unknown}"
-LOG_FILE="${PROJECT_ROOT}/tmp/netget-${COMMAND}-${SESSION_PID}.log"
+# Clean up log files older than 1 day
+find "${PROJECT_ROOT}/tmp" -name "netget-*.log" -type f -mtime +1 -delete 2>/dev/null || true
 
-# Echo the target directory and session info for visibility
+# Determine log file name based on command and PPID
+COMMAND="${CARGO_ARGS[0]:-unknown}"
+LOG_FILE="${PROJECT_ROOT}/tmp/netget-${COMMAND}-${PPID}.log"
+
+# Echo the target directory info for visibility
 echo "=== Cargo $BUILD_MODE Build ===" >&2
-if [[ "$CARGO_USE_ISOLATION" == true ]]; then
-    echo "Session PID: ${SESSION_PID}" >&2
-fi
 echo "Target directory: $CARGO_TARGET_DIR" >&2
 echo "Command: cargo ${CARGO_ARGS[*]}" >&2
 echo "Log file: $LOG_FILE" >&2

@@ -180,10 +180,35 @@ fi
 # Find specific error types
 ./cargo-isolated.sh --print-last | grep "error\[E0425\]"  # Unresolved names
 ./cargo-isolated.sh --print-last | grep "error\[E0599\]"  # Method not found
+./cargo-isolated.sh --print-last | grep "error\[E0308\]"  # Type mismatches
+./cargo-isolated.sh --print-last | grep "error\[E0277\]"  # Trait not implemented
 
-# Find test failures
-./cargo-isolated.sh --print-last | grep "FAILED"
-./cargo-isolated.sh --print-last | grep "assertion"
+# Find warnings (can accumulate and become errors)
+./cargo-isolated.sh --print-last | grep "^warning:"
+
+# Find test failures with context
+./cargo-isolated.sh --print-last | grep -A 5 "FAILED"
+./cargo-isolated.sh --print-last | grep -B 2 -A 5 "assertion"
+
+# Find specific file errors
+./cargo-isolated.sh --print-last | grep "src/server/nfc/"
+
+# Find all unique error codes
+./cargo-isolated.sh --print-last | grep -oE "error\[E[0-9]+\]" | sort -u
+
+# Count total errors and warnings
+echo "Errors: $(./cargo-isolated.sh --print-last | grep -c '^error:')"
+echo "Warnings: $(./cargo-isolated.sh --print-last | grep -c '^warning:')"
+
+# Search for specific symbols or types
+./cargo-isolated.sh --print-last | grep "EventParams"
+./cargo-isolated.sh --print-last | grep "ndef_record"
+
+# View compilation progress (features being compiled)
+./cargo-isolated.sh --print-last | grep "Compiling"
+
+# Check if build succeeded
+./cargo-isolated.sh --print-last | tail -5 | grep -q "Finished" && echo "Build succeeded" || echo "Build failed"
 ```
 
 3. **Fix ALL issues before rebuilding**:
@@ -219,7 +244,41 @@ fi
 
 **Time savings**: Fixing 10 errors one-by-one = 10-20 minutes. Fixing all at once = 30 seconds + one build.
 
-**Log files**: Located in `./tmp/netget-<command>-{PPID}.log`. Use `./cargo-isolated.sh --print-last` to view the most recent log.
+**Log files**: Located in `./tmp/netget-<command>-{PPID}.log`. Use `./cargo-isolated.sh --print-last` to view the most recent log. Old logs (>1 day) are automatically cleaned up on each run.
+
+**Multiple instances**: Each Claude instance has its own PPID, so logs are automatically isolated:
+```bash
+# Instance 1 (PPID=12345) creates: ./tmp/netget-build-12345.log
+# Instance 2 (PPID=67890) creates: ./tmp/netget-build-67890.log
+
+# Each instance reads its own log with --print-last
+./cargo-isolated.sh --print-last  # Reads the most recent log file
+
+# Or directly read specific log files
+cat ./tmp/netget-build-12345.log | grep "error\[E"
+tail -100 ./tmp/netget-test-67890.log
+```
+
+**Advanced log analysis patterns**:
+```bash
+# Combine multiple grep patterns
+./cargo-isolated.sh --print-last | grep -E "error\[E|warning:"
+
+# Extract just the error messages (without file paths)
+./cargo-isolated.sh --print-last | grep "^error:" | sed 's/^error: //'
+
+# Find errors in specific modules
+./cargo-isolated.sh --print-last | grep "error" | grep -E "server/(nfc|tcp|http)"
+
+# Show context around errors (2 lines before, 5 after)
+./cargo-isolated.sh --print-last | grep -B 2 -A 5 "^error:"
+
+# Find dependency compilation issues
+./cargo-isolated.sh --print-last | grep "error" | grep -v "src/"
+
+# View only the summary (last 20 lines usually show totals)
+./cargo-isolated.sh --print-last | tail -20
+```
 
 ## Logging (CRITICAL)
 
