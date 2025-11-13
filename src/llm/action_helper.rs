@@ -347,9 +347,12 @@ pub async fn call_llm(
         truncated_desc,
     );
 
-    // Add event trigger as a user message
-    let event_trigger =
-        PromptBuilder::build_event_trigger_message(&event_description, event.data.clone());
+    // Add event trigger as a user message (include event ID for mock testing compatibility)
+    let event_trigger = PromptBuilder::build_event_trigger_message_with_id(
+        event.id(),
+        &event_description,
+        event.data.clone(),
+    );
     conversation.add_user_message(event_trigger);
 
     // Generate response with retry (no tool calling for network events)

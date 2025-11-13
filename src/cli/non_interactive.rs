@@ -94,6 +94,10 @@ pub async fn run_non_interactive(
     let ollama_url = args.ollama_url.as_deref().unwrap_or("http://localhost:11434");
     let llm = OllamaClient::new_with_options(ollama_url, lock_enabled)
         .with_mock_config_file(args.mock_config_file.clone());
+
+    // Store the configured LLM client in state so spawned servers can use it
+    state.set_llm_client(llm.clone()).await;
+
     let mut event_handler = EventHandler::new(state.clone(), llm.clone());
 
     // Create status channel for messages from spawned servers
@@ -232,6 +236,9 @@ pub async fn run_with_actions(
     let ollama_url = args.ollama_url.as_deref().unwrap_or("http://localhost:11434");
     let llm = OllamaClient::new_with_options(ollama_url, lock_enabled)
         .with_mock_config_file(args.mock_config_file.clone());
+
+    // Store the configured LLM client in state so spawned servers can use it
+    state.set_llm_client(llm.clone()).await;
 
     // Create status channel
     let (_status_tx, mut status_rx) = mpsc::unbounded_channel::<String>();

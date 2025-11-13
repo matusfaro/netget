@@ -45,7 +45,7 @@ async fn test_ftp_greeting() -> E2EResult<()> {
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_tcp_data",
-                            "data": "323230204e657447657420465450205365727665720d0a" // "220 NetGet FTP Server\r\n" in hex
+                            "data": "220 NetGet FTP Server\r\n"
                         }
                     ]))
                     .expect_calls(1)
@@ -120,7 +120,7 @@ async fn test_ftp_user_command() -> E2EResult<()> {
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_tcp_data",
-                            "data": "3333312050617373776f72642072657175697265640d0a" // "331 Password required\r\n" in hex
+                            "data": "331 Password required\r\n"
                         }
                     ]))
                     .expect_calls(1)
@@ -195,7 +195,7 @@ async fn test_ftp_pwd_command() -> E2EResult<()> {
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_tcp_data",
-                            "data": "323537202220222f686f6d652f7573657222220d0a" // "257 \"/home/user\"\r\n" in hex
+                            "data": "257 \"/home/user\"\r\n"
                         }
                     ]))
                     .expect_calls(1)
@@ -270,7 +270,7 @@ async fn test_simple_echo() -> E2EResult<()> {
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_tcp_data",
-                            "data": "41434b3a2048656c6c6f2c204c4c4d21" // "ACK: Hello, LLM!" in hex
+                            "data": "ACK: Hello, LLM!"
                         }
                     ]))
                     .expect_calls(1)
@@ -353,7 +353,7 @@ async fn test_custom_response() -> E2EResult<()> {
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_tcp_data",
-                            "data": "504f4e470d0a" // "PONG\r\n" in hex
+                            "data": "PONG\r\n"
                         }
                     ]))
                     .expect_calls(1)

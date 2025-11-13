@@ -586,6 +586,30 @@ Understand what the user wants and respond with the appropriate actions to make 
         }
     }
 
+    /// Build event trigger message with event ID (for mock testing compatibility)
+    ///
+    /// # Arguments
+    /// * `event_id` - Event type ID (e.g., "bootp_request")
+    /// * `event_description` - Description of the network event
+    /// * `context_json` - Structured context data (protocol-specific parameters)
+    pub fn build_event_trigger_message_with_id(
+        event_id: &str,
+        event_description: &str,
+        context_json: serde_json::Value,
+    ) -> String {
+        if context_json.is_null() || context_json == serde_json::json!({}) {
+            format!("Event ID: {}\nEvent: {}", event_id, event_description)
+        } else {
+            format!(
+                "Event ID: {}\nEvent: {}\n\nContext data:\n{}",
+                event_id,
+                event_description,
+                serde_json::to_string_pretty(&context_json)
+                    .unwrap_or_else(|_| context_json.to_string())
+            )
+        }
+    }
+
     /// Build prompt for scheduled task execution
     ///
     /// # Arguments

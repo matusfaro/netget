@@ -250,6 +250,8 @@ struct AppStateInner {
     next_client_id: u32,
     /// Current Ollama model (None = not yet selected/validated)
     ollama_model: Option<String>,
+    /// Configured LLM client (with mock config, lock settings, etc.)
+    llm_client: Option<crate::llm::OllamaClient>,
     /// Available scripting environments (Python, Node.js)
     scripting_env: crate::scripting::ScriptingEnvironment,
     /// Currently selected scripting mode (LLM, Python, or JavaScript)
@@ -316,6 +318,7 @@ impl AppState {
                 next_server_id: 1,
                 next_client_id: 1,
                 ollama_model: None,
+                llm_client: None,
                 scripting_env,
                 selected_scripting_mode,
                 event_handler_mode,
@@ -632,6 +635,16 @@ impl AppState {
     /// Get the Ollama API base URL
     pub async fn get_ollama_url(&self) -> String {
         self.inner.read().await.ollama_url.clone()
+    }
+
+    /// Set the configured LLM client
+    pub async fn set_llm_client(&self, client: crate::llm::OllamaClient) {
+        self.inner.write().await.llm_client = Some(client);
+    }
+
+    /// Get the configured LLM client
+    pub async fn get_llm_client(&self) -> Option<crate::llm::OllamaClient> {
+        self.inner.read().await.llm_client.clone()
     }
 
     /// Get the unique instance ID for this NetGet process

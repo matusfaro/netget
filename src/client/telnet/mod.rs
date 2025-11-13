@@ -11,7 +11,9 @@ use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace};
 
-use crate::client::telnet::actions::TELNET_CLIENT_DATA_RECEIVED_EVENT;
+use crate::client::telnet::actions::{
+    TELNET_CLIENT_CONNECTED_EVENT, TELNET_CLIENT_DATA_RECEIVED_EVENT,
+};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
@@ -85,6 +87,89 @@ impl TelnetClient {
             queued_data: Vec::new(),
             memory: String::new(),
         }));
+
+        // Clone for connected event
+        let write_half_for_connected = write_half_arc.clone();
+
+        // Call LLM with telnet_connected event
+        if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
+            let event = Event::new(
+                &TELNET_CLIENT_CONNECTED_EVENT,
+                serde_json::json!({
+                    "remote_addr": remote_sock_addr.to_string(),
+                }),
+            );
+
+            match call_llm_for_client(
+                &llm_client,
+                &app_state,
+                client_id.to_string(),
+                &instruction,
+                &client_data.lock().await.memory,
+                Some(&event),
+                &crate::client::telnet::actions::TelnetClientProtocol,
+                &status_tx,
+            )
+            .await
+            {
+                Ok(result) => {
+                    // Update memory if provided
+                    if let Some(new_memory) = result.memory_updates {
+                        client_data.lock().await.memory = new_memory;
+                    }
+
+                    // Execute actions from LLM response
+                    for action in result.actions {
+                        if let Some(action_type) = action["type"].as_str() {
+                            match action_type {
+                                "send_command" => {
+                                    if let Some(command) = action["command"].as_str() {
+                                        let command_line = format!("{}\r\n", command);
+                                        if let Err(e) = write_half_for_connected
+                                            .lock()
+                                            .await
+                                            .write_all(command_line.as_bytes())
+                                            .await
+                                        {
+                                            error!("Failed to send command after connect: {}", e);
+                                        } else {
+                                            info!("Sent Telnet command after connect: {}", command);
+                                        }
+                                    }
+                                }
+                                "send_text" => {
+                                    if let Some(text) = action["text"].as_str() {
+                                        if let Err(e) = write_half_for_connected
+                                            .lock()
+                                            .await
+                                            .write_all(text.as_bytes())
+                                            .await
+                                        {
+                                            error!("Failed to send text after connect: {}", e);
+                                        } else {
+                                            info!("Sent Telnet text after connect: {}", text);
+                                        }
+                                    }
+                                }
+                                "disconnect" => {
+                                    info!("LLM requested disconnect after connect");
+                                    return Ok(local_addr);
+                                }
+                                "wait_for_more" => {
+                                    // Just wait for data
+                                }
+                                _ => {
+                                    trace!("Unknown action type after connect: {}", action_type);
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("LLM error on telnet_connected event: {}", e);
+                }
+            }
+        }
 
         // Clone for telnet negotiation handler
         let write_half_for_negotiation = write_half_arc.clone();

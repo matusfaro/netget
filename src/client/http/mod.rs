@@ -9,7 +9,9 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
-use crate::client::http::actions::HTTP_CLIENT_RESPONSE_RECEIVED_EVENT;
+use crate::client::http::actions::{
+    HTTP_CLIENT_CONNECTED_EVENT, HTTP_CLIENT_RESPONSE_RECEIVED_EVENT,
+};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
@@ -24,7 +26,7 @@ impl HttpClient {
     /// Connect to an HTTP server with integrated LLM actions
     pub async fn connect_with_llm_actions(
         remote_addr: String,
-        _llm_client: OllamaClient,
+        llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         client_id: ClientId,
@@ -62,6 +64,54 @@ impl HttpClient {
             client_id, remote_addr
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
+
+        // Call LLM with http_connected event
+        if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
+            let event = Event::new(
+                &HTTP_CLIENT_CONNECTED_EVENT,
+                serde_json::json!({
+                    "base_url": remote_addr.clone(),
+                }),
+            );
+
+            match call_llm_for_client(
+                &llm_client,
+                &app_state,
+                client_id.to_string(),
+                &instruction,
+                &String::new(), // No memory yet for initial connection
+                Some(&event),
+                &crate::client::http::actions::HttpClientProtocol,
+                &status_tx,
+            )
+            .await
+            {
+                Ok(result) => {
+                    // Execute actions from LLM response
+                    // Note: For HTTP, actions are typically send_http_request which will be handled
+                    // by the action execution system, not here directly
+                    for action in result.actions {
+                        if let Some(action_type) = action["type"].as_str() {
+                            match action_type {
+                                "send_http_request" => {
+                                    // This will be handled by the client_startup system
+                                    // via ClientActionResult::Custom
+                                    info!("HTTP client ready to make request after connect");
+                                }
+                                "disconnect" => {
+                                    info!("LLM requested disconnect after connect");
+                                    return Ok("0.0.0.0:0".parse().unwrap());
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("LLM error on http_connected event: {}", e);
+                }
+            }
+        }
 
         // For HTTP client, we'll spawn a background task that processes LLM-requested actions
         // The actual requests are made on-demand via actions, not in a read loop

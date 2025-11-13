@@ -12,7 +12,9 @@ use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, trace};
 
-use crate::client::redis::actions::REDIS_CLIENT_RESPONSE_RECEIVED_EVENT;
+use crate::client::redis::actions::{
+    REDIS_CLIENT_CONNECTED_EVENT, REDIS_CLIENT_RESPONSE_RECEIVED_EVENT,
+};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
@@ -55,7 +57,66 @@ impl RedisClient {
         // Split stream
         let (read_half, write_half) = tokio::io::split(stream);
         let write_half_arc = Arc::new(Mutex::new(write_half));
+        let write_half_for_connected = write_half_arc.clone();
         let mut reader = BufReader::new(read_half);
+
+        // Call LLM with redis_connected event
+        if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
+            let event = Event::new(
+                &REDIS_CLIENT_CONNECTED_EVENT,
+                serde_json::json!({
+                    "remote_addr": remote_sock_addr.to_string(),
+                }),
+            );
+
+            match call_llm_for_client(
+                &llm_client,
+                &app_state,
+                client_id.to_string(),
+                &instruction,
+                &String::new(), // No memory yet for initial connection
+                Some(&event),
+                &crate::client::redis::actions::RedisClientProtocol::new(),
+                &status_tx,
+            )
+            .await
+            {
+                Ok(result) => {
+                    // Execute actions from LLM response
+                    for action in result.actions {
+                        if let Some(action_type) = action["type"].as_str() {
+                            match action_type {
+                                "execute_redis_command" => {
+                                    if let Some(command) = action["command"].as_str() {
+                                        let command_line = format!("{}\r\n", command);
+                                        if let Err(e) = write_half_for_connected
+                                            .lock()
+                                            .await
+                                            .write_all(command_line.as_bytes())
+                                            .await
+                                        {
+                                            error!("Failed to send Redis command after connect: {}", e);
+                                        } else {
+                                            info!("Sent Redis command after connect: {}", command);
+                                        }
+                                    }
+                                }
+                                "disconnect" => {
+                                    info!("LLM requested disconnect after connect");
+                                    return Ok(local_addr);
+                                }
+                                _ => {
+                                    trace!("Unknown action type after connect: {}", action_type);
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("LLM error on redis_connected event: {}", e);
+                }
+            }
+        }
 
         // Spawn read loop for Redis responses
         tokio::spawn(async move {

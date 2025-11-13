@@ -345,10 +345,18 @@ pub async fn start_server_from_action(
     let (status_tx, _status_rx) = mpsc::unbounded_channel();
 
     // Build spawn context
-    let ollama_url = state.get_ollama_url().await;
+    // Use the configured LLM client from state (includes mock config, lock settings, etc.)
+    // If not available (shouldn't happen), fall back to creating a new client
+    let llm_client = if let Some(client) = state.get_llm_client().await {
+        client
+    } else {
+        let ollama_url = state.get_ollama_url().await;
+        OllamaClient::new(ollama_url)
+    };
+
     let spawn_ctx = crate::protocol::SpawnContext {
         listen_addr,
-        llm_client: OllamaClient::new(ollama_url),
+        llm_client,
         state: Arc::new(state.clone()),
         status_tx,
         server_id,

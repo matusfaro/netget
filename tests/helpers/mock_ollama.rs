@@ -266,10 +266,11 @@ async fn handle_chat(
     // Extract context from request
     let context = extract_context(&request);
 
-    // DEBUG: Log extracted context
-    eprintln!("🔍 Mock context extracted:");
+    // DEBUG: Log extracted context [FIX v2]
+    eprintln!("🔍🔍🔍 Mock context extracted:");
     eprintln!("  event_type: {:?}", context.event_type);
     eprintln!("  instruction: {}", &context.instruction[..context.instruction.len().min(200)]);
+    eprintln!("  prompt preview: {}", &context.prompt[..context.prompt.len().min(500)]);
 
     // Get mock response
     let config = state.config.lock().await;
@@ -394,12 +395,21 @@ fn extract_context(request: &OllamaChatRequest) -> LlmContext {
     let mut context = LlmContext::new(prompt.to_string());
 
     // Try to extract event type from prompt
-    // Look for patterns like "Event: tcp_connection_received" or similar
-    if let Some(event_line) = prompt.lines().find(|line| line.contains("Event:")) {
+    // First look for "Event ID:" format (preferred for mock testing)
+    if let Some(event_id_line) = prompt.lines().find(|line| line.contains("Event ID:")) {
+        if let Some(event_id) = event_id_line.split("Event ID:").nth(1) {
+            let event_id = event_id.trim();
+            if !event_id.is_empty() {
+                debug!("🔧 Extracted event type from Event ID: '{}'", event_id);
+                context.event_type = Some(event_id.to_string());
+            }
+        }
+    } else if let Some(event_line) = prompt.lines().find(|line| line.contains("Event:")) {
+        // Fallback: try to extract from "Event:" line (legacy format)
         if let Some(event_type) = event_line.split("Event:").nth(1) {
             let event_type = event_type.trim().split_whitespace().next().unwrap_or("");
             if !event_type.is_empty() {
-                debug!("🔧 Extracted event type: '{}'", event_type);
+                debug!("🔧 Extracted event type from Event: '{}'", event_type);
                 context.event_type = Some(event_type.to_string());
             }
         }
@@ -475,14 +485,24 @@ fn extract_context(request: &OllamaChatRequest) -> LlmContext {
 
 /// Extract LLM context from a generate request prompt
 fn extract_context_from_prompt(prompt: &str) -> LlmContext {
-    let mut context = LlmContext::new(String::new());
+    let mut context = LlmContext::new(prompt.to_string());
 
     // Try to extract event type from prompt
-    if let Some(event_line) = prompt.lines().find(|line| line.contains("Event:")) {
+    // First look for "Event ID:" format (preferred for mock testing)
+    if let Some(event_id_line) = prompt.lines().find(|line| line.contains("Event ID:")) {
+        if let Some(event_id) = event_id_line.split("Event ID:").nth(1) {
+            let event_id = event_id.trim();
+            if !event_id.is_empty() {
+                debug!("🔧 Extracted event type from Event ID: '{}'", event_id);
+                context.event_type = Some(event_id.to_string());
+            }
+        }
+    } else if let Some(event_line) = prompt.lines().find(|line| line.contains("Event:")) {
+        // Fallback: try to extract from "Event:" line (legacy format)
         if let Some(event_type) = event_line.split("Event:").nth(1) {
             let event_type = event_type.trim().split_whitespace().next().unwrap_or("");
             if !event_type.is_empty() {
-                debug!("🔧 Extracted event type: '{}'", event_type);
+                debug!("🔧 Extracted event type from Event: '{}'", event_type);
                 context.event_type = Some(event_type.to_string());
             }
         }
