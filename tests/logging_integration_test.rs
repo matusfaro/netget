@@ -3,68 +3,47 @@
 //! This test spawns NetGet and verifies that the LLM can create log files
 //! using the append_to_log action.
 
+mod helpers;
+
 #[cfg(test)]
 mod logging_integration_tests {
-    use std::process::{Command, Stdio};
-    use std::time::Duration;
-    use tokio::time::sleep;
-
-    /// Helper to get the netget binary path from cargo
-    fn get_netget_binary() -> &'static str {
-        env!("CARGO_BIN_EXE_netget")
-    }
+    use crate::helpers::common::E2EResult;
+    use crate::helpers::netget::{start_netget, NetGetConfig};
+    use serde_json::json;
 
     #[tokio::test]
-    async fn test_append_to_log_creates_file() {
-        // Get an available port
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("Failed to bind to port 0");
-        let port = listener
-            .local_addr()
-            .expect("Failed to get local addr")
-            .port();
-        drop(listener);
+    async fn test_append_to_log_creates_file() -> E2EResult<()> {
+        // Start NetGet with mock LLM that returns append_to_log action
+        let server = start_netget(
+            NetGetConfig::new("Open a TCP server on port {AVAILABLE_PORT}. Then append the text 'hello' into the log 'test'")
+                .with_mock(|mock| {
+                    // Mock response for the initial prompt (opens server + appends to log)
+                    mock.on_any()
+                        .respond_with_actions(json!([
+                            {
+                                "type": "open_server",
+                                "base_stack": "TCP",
+                                "port": 0,
+                                "instruction": "TCP echo server"
+                            },
+                            {
+                                "type": "append_to_log",
+                                "output_name": "test",
+                                "content": "hello"
+                            }
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                }),
+        )
+        .await?;
 
-        // Prompt NetGet to open a server and append to a log
-        let prompt = format!(
-            "Open a TCP server on port {}. Then append the text 'hello' into the log 'test'",
-            port
-        );
-
-        println!("Starting NetGet with prompt: {}", prompt);
-
-        let mut child = Command::new(get_netget_binary())
-            .arg(prompt)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("Failed to start netget");
-
-        // Wait for LLM processing and action execution
-        println!("Waiting for LLM to process and create log file...");
-        sleep(Duration::from_secs(15)).await;
-
-        // Kill the NetGet process
-        let _ = child.kill();
-        let output = child.wait_with_output().expect("Failed to wait for child");
-
-        // Debug output if test fails
-        if !output.status.success() {
-            eprintln!(
-                "NetGet stdout:\n{}",
-                String::from_utf8_lossy(&output.stdout)
-            );
-            eprintln!(
-                "NetGet stderr:\n{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
+        // Wait a bit for the action to be executed
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
         // Look for a log file matching pattern: netget_test_*.log
-        let current_dir = std::env::current_dir().expect("Failed to get current directory");
-        let entries = std::fs::read_dir(&current_dir).expect("Failed to read current directory");
+        let current_dir = std::env::current_dir()?;
+        let entries = std::fs::read_dir(&current_dir)?;
 
         let mut found_log_file = None;
         for entry in entries {
@@ -78,13 +57,12 @@ mod logging_integration_tests {
             }
         }
 
-        // Clean up the log file after test
+        // Verify and clean up the log file
         if let Some(log_path) = &found_log_file {
             println!("✓ Found log file: {:?}", log_path);
 
             // Read and verify content
-            let content = std::fs::read_to_string(log_path).expect("Failed to read log file");
-
+            let content = std::fs::read_to_string(log_path)?;
             println!("Log file content:\n{}", content);
 
             assert!(
@@ -94,15 +72,22 @@ mod logging_integration_tests {
             );
 
             // Clean up
-            std::fs::remove_file(log_path).expect("Failed to remove log file");
+            std::fs::remove_file(log_path)?;
             println!("✓ Cleaned up log file");
         } else {
-            panic!(
+            // Stop the server before returning error
+            server.stop().await?;
+            return Err(format!(
                 "No log file found matching pattern netget_test_*.log in {:?}",
                 current_dir
-            );
+            )
+            .into());
         }
 
+        // Stop the server
+        server.stop().await?;
+
         println!("✓ Test passed! Log file was created and contained expected content.");
+        Ok(())
     }
 }

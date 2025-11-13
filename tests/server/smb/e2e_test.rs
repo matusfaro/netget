@@ -5,7 +5,7 @@
 
 #![cfg(all(test, feature = "smb", feature = "smb"))]
 
-use crate::server::helpers::{start_netget_server, E2EResult, ServerConfig};
+use crate::server::helpers::{start_netget_server, E2EResult};
 
 use std::io::{Read, Write};
 use std::net::TcpStream;

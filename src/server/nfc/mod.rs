@@ -34,10 +34,15 @@ pub use actions::NfcServerProtocol;
 
 /// Virtual NFC tag state
 struct VirtualNfcTag {
+    #[allow(dead_code)]
     atr: String,                         // Answer to Reset
+    #[allow(dead_code)]
     uid: String,                         // Tag UID
+    #[allow(dead_code)]
     tag_type: String,                    // Tag type
+    #[allow(dead_code)]
     ndef_records: Vec<Value>,            // NDEF message records
+    #[allow(dead_code)]
     selected_application: Option<String>, // Currently selected application ID
 }
 

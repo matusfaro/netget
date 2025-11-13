@@ -364,6 +364,29 @@ brew install openvpn          # macOS
 sudo ./cargo-isolated.sh test --features openvpn --test server::openvpn::e2e_test
 ```
 
+### Test Parallelism (CRITICAL)
+
+**Mock Mode (Default)**: Tests use mock LLM responses and can run in parallel.
+
+```bash
+# Run with high parallelism (100 concurrent tests) - FAST
+./cargo-isolated.sh test --features openvpn --test server::openvpn::e2e_test -- --test-threads=100
+```
+
+**Real Ollama Mode**: When using `--use-ollama`, tests must run sequentially to avoid LLM API conflicts.
+
+```bash
+# Run with NO parallelism (1 test at a time) - REQUIRED for Ollama
+./cargo-isolated.sh test --features openvpn --test server::openvpn::e2e_test -- --use-ollama --test-threads=1
+```
+
+**Why this matters**:
+
+- **Mock mode**: No actual LLM calls, tests are fast and independent → use `--test-threads=100`
+- **Ollama mode**: Shares LLM API, concurrent calls cause conflicts → use `--test-threads=1`
+
+**Default behavior**: Tests run in mock mode with high parallelism. Only use `--use-ollama` for validation.
+
 ### Run Specific Tests
 
 ```bash
@@ -395,17 +418,30 @@ sudo ./cargo-isolated.sh test --features openvpn --test server::openvpn::e2e_tes
 ```
 running 5 tests
 test test_openvpn_client_availability ... ok
-test test_openvpn_server_startup ... ok
+test test_openvpn_server_startup ... FAILED
 test test_openvpn_handshake_with_client ... FAILED
-test test_openvpn_protocol_compatibility ... ok
-test test_openvpn_manual_handshake_v2 ... ok
+test test_openvpn_protocol_compatibility ... FAILED
+test test_openvpn_manual_handshake_v2 ... FAILED
 
 failures:
 
----- test_openvpn_handshake_with_client stdout ----
-thread 'test_openvpn_handshake_with_client' panicked at 'assertion failed: This test requires root/sudo privileges for TUN interface creation. Run with: sudo cargo test'
+---- test_openvpn_server_startup stdout ----
+thread 'test_openvpn_server_startup' panicked at tests/server/openvpn/e2e_test.rs:98:9:
+This test requires root/sudo privileges for TUN interface creation. Run with: sudo cargo test
 
-test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.34s
+---- test_openvpn_handshake_with_client stdout ----
+thread 'test_openvpn_handshake_with_client' panicked at tests/server/openvpn/e2e_test.rs:147:9:
+This test requires root/sudo privileges for TUN interface creation. Run with: sudo cargo test
+
+---- test_openvpn_protocol_compatibility stdout ----
+thread 'test_openvpn_protocol_compatibility' panicked at tests/server/openvpn/e2e_test.rs:268:9:
+This test requires root/sudo privileges for TUN interface creation. Run with: sudo cargo test
+
+---- test_openvpn_manual_handshake_v2 stdout ----
+thread 'test_openvpn_manual_handshake_v2' panicked at tests/server/openvpn/e2e_test.rs:315:9:
+This test requires root/sudo privileges for TUN interface creation. Run with: sudo cargo test
+
+test result: FAILED. 1 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
 ```
 
 ### Expected Output (With Sudo)
@@ -425,21 +461,43 @@ test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 ### GitHub Actions
 
+**Mock Mode (Recommended for CI)**:
+
+```yaml
+- name: Run OpenVPN E2E tests (Mock Mode)
+  run: ./cargo-isolated.sh test --features openvpn --test server::openvpn::e2e_test -- --test-threads=100
+```
+
+**With Sudo (Full Testing)**:
+
 ```yaml
 - name: Install OpenVPN
   run: sudo apt-get update && sudo apt-get install -y openvpn
 
-- name: Run OpenVPN E2E tests
-  run: sudo ./cargo-isolated.sh test --features openvpn --test server::openvpn::e2e_test
+- name: Run OpenVPN E2E tests with sudo
+  run: sudo ./cargo-isolated.sh test --features openvpn --test server::openvpn::e2e_test -- --test-threads=100
 ```
 
-### Skip Handshake Test in CI
+**With Real Ollama (Optional Validation)**:
 
-If sudo is problematic:
+```yaml
+- name: Install and start Ollama
+  run: |
+    curl -sSL https://ollama.ai/install.sh | sh
+    ollama serve &
+    ollama pull qwen3-coder:30b
+
+- name: Run OpenVPN E2E tests with Ollama
+  run: sudo ./cargo-isolated.sh test --features openvpn --test server::openvpn::e2e_test -- --use-ollama --test-threads=1
+```
+
+### Skip TUN Interface Tests in CI
+
+If sudo is problematic, run only the client availability check:
 
 ```bash
-# Run only non-sudo tests
-./cargo-isolated.sh test --features openvpn --test server::openvpn::e2e_test -- --skip handshake
+# Run only tests that don't require sudo
+./cargo-isolated.sh test --features openvpn --test server::openvpn::e2e_test -- test_openvpn_client_availability --test-threads=100
 ```
 
 ## Future Improvements

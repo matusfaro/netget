@@ -5,7 +5,6 @@
 #[cfg(all(test, feature = "ospf"))]
 mod tests {
     use crate::helpers::*;
-    use std::net::{Ipv4Addr, SocketAddr};
     use tokio::net::UdpSocket;
 
     // Helper: Parse IPv4 address to bytes

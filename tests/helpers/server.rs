@@ -14,11 +14,20 @@ pub struct NetGetServer {
     /// The port the server is listening on
     pub port: u16,
     /// The actual protocol stack that was started
+    #[allow(dead_code)]
     pub stack: String,
     /// Captured server output lines (for verification)
     pub output_lines: std::sync::Arc<tokio::sync::Mutex<Vec<String>>>,
-    /// Mock configuration (for verification)
+    /// Mock Ollama server (for verification and lifecycle)
+    /// IMPORTANT: Must NOT have underscore prefix - field must be kept alive for entire test duration
+    #[allow(dead_code)]
+    mock_ollama_server: Option<super::mock_ollama::MockOllamaServer>,
+    /// Mock configuration (DEPRECATED - kept for backward compat, use mock_ollama_server for verification)
     mock_config: Option<netget::testing::MockLlmConfig>,
+    /// Temporary mock config file (DEPRECATED - not used anymore)
+    /// IMPORTANT: Must NOT have underscore prefix - field must be kept alive for entire test duration
+    #[allow(dead_code)]
+    mock_temp_file: Option<tempfile::TempPath>,
 }
 
 impl NetGetServer {
@@ -28,14 +37,18 @@ impl NetGetServer {
         port: u16,
         stack: String,
         output_lines: std::sync::Arc<tokio::sync::Mutex<Vec<String>>>,
+        mock_ollama_server: Option<super::mock_ollama::MockOllamaServer>,
         mock_config: Option<netget::testing::MockLlmConfig>,
+        mock_temp_file: Option<tempfile::TempPath>,
     ) -> Self {
         Self {
             child,
             port,
             stack,
             output_lines,
+            mock_ollama_server,
             mock_config,
+            mock_temp_file,
         }
     }
 
@@ -69,17 +82,20 @@ impl NetGetServer {
     }
 
     /// Check if the server is still running
+    #[allow(dead_code)]
     pub fn is_running(&mut self) -> bool {
         matches!(self.child.try_wait(), Ok(None))
     }
 
     /// Check if output contains a specific string
+    #[allow(dead_code)]
     pub async fn output_contains(&self, needle: &str) -> bool {
         let lines = self.output_lines.lock().await;
         lines.iter().any(|line| line.contains(needle))
     }
 
     /// Count occurrences of a pattern in output
+    #[allow(dead_code)]
     pub async fn count_in_output(&self, needle: &str) -> usize {
         let lines = self.output_lines.lock().await;
         lines.iter().filter(|line| line.contains(needle)).count()
@@ -102,7 +118,14 @@ impl NetGetServer {
     /// server.verify_mocks().await?;  // MANDATORY if mocks configured
     /// server.stop().await?;
     /// ```
+    #[allow(dead_code)]
     pub async fn verify_mocks(&self) -> E2EResult<()> {
+        // Prefer mock Ollama server if available (new approach)
+        if let Some(ref server) = self.mock_ollama_server {
+            return server.verify_calls().await;
+        }
+
+        // Fallback to old method (DEPRECATED - for backward compat)
         let Some(ref mock_config) = self.mock_config else {
             // No mocks configured, nothing to verify
             return Ok(());
@@ -243,7 +266,9 @@ pub async fn start_netget_server(config: ServerConfig) -> E2EResult<NetGetServer
         server.port,
         server.stack,
         instance.output_lines,
+        instance.mock_ollama_server,
         instance.mock_config,
+        instance.mock_temp_file,
     ))
 }
 
@@ -266,6 +291,7 @@ pub async fn start_netget_server(config: ServerConfig) -> E2EResult<NetGetServer
 /// let server = start_netget_server(config).await?;
 /// wait_for_server_startup(&server, Duration::from_secs(10), "IMAP").await?;
 /// ```
+#[allow(dead_code)]
 pub async fn wait_for_server_startup(
     server: &NetGetServer,
     timeout_duration: Duration,
@@ -325,6 +351,7 @@ pub async fn wait_for_server_startup(
 /// let server = start_netget_server(config).await?;
 /// assert_stack_name(&server, "HTTP");
 /// ```
+#[allow(dead_code)]
 pub fn assert_stack_name(server: &NetGetServer, expected_stack: &str) {
     assert_eq!(
         server.stack, expected_stack,
@@ -351,11 +378,13 @@ pub fn assert_stack_name(server: &NetGetServer, expected_stack: &str) {
 /// let output = get_server_output(&server).await;
 /// assert!(output.iter().any(|line| line.contains("ready")));
 /// ```
+#[allow(dead_code)]
 pub async fn get_server_output(server: &NetGetServer) -> Vec<String> {
     server.get_output().await
 }
 
 /// Extract base_stack value from open_server prompt
+#[allow(dead_code)]
 pub fn extract_base_stack_from_prompt(prompt: &str) -> Option<String> {
     // Look for "base_stack <value>" pattern in the prompt
     let prompt_lower = prompt.to_lowercase();
@@ -379,6 +408,7 @@ pub fn extract_base_stack_from_prompt(prompt: &str) -> Option<String> {
 }
 
 /// Extract port number from prompt
+#[allow(dead_code)]
 pub fn extract_port_from_prompt(prompt: &str) -> u16 {
     let prompt_lower = prompt.to_lowercase();
 

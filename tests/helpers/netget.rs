@@ -19,10 +19,16 @@ pub struct NetGetInstance {
     pub clients: Vec<NetGetClient>,
     /// Captured output lines (for verification)
     pub output_lines: std::sync::Arc<tokio::sync::Mutex<Vec<String>>>,
-    /// Mock configuration (for verification)
+    /// Mock Ollama server (for verification and lifecycle)
+    /// IMPORTANT: Must NOT have underscore prefix - field must be kept alive for entire test duration
+    #[allow(dead_code)]
+    pub mock_ollama_server: Option<super::mock_ollama::MockOllamaServer>,
+    /// Temporary mock config file (kept alive for duration of test) - DEPRECATED, use mock_ollama_server
+    /// IMPORTANT: Must NOT have underscore prefix - field must be kept alive for entire test duration
+    #[allow(dead_code)]
+    pub mock_temp_file: Option<tempfile::TempPath>,
+    /// Mock configuration (DEPRECATED - kept for backward compat, use mock_ollama_server for verification)
     pub mock_config: Option<netget::testing::MockLlmConfig>,
-    /// Temporary mock config file (kept alive for duration of test)
-    _mock_temp_file: Option<tempfile::TempPath>,
 }
 
 /// Information about a server that was started
@@ -38,6 +44,7 @@ pub struct NetGetServer {
 
 /// Information about a client that was started
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct NetGetClient {
     /// Client ID (e.g., "1")
     pub id: String,
@@ -119,6 +126,7 @@ impl NetGetConfig {
     }
 
     /// Create a new config with scripts disabled
+    #[allow(dead_code)]
     pub fn new_no_scripts(prompt: impl Into<String>) -> Self {
         Self {
             prompt: prompt.into(),
@@ -140,6 +148,7 @@ impl NetGetConfig {
     /// - Detailed state transitions
     ///
     /// Use this when debugging LLM behavior or protocol-level issues.
+    #[allow(dead_code)]
     pub fn new_with_trace(prompt: impl Into<String>) -> Self {
         Self {
             prompt: prompt.into(),
@@ -154,36 +163,42 @@ impl NetGetConfig {
     }
 
     /// Set the model to use
+    #[allow(dead_code)]
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
         self.model = Some(model.into());
         self
     }
 
     /// Set the log level
+    #[allow(dead_code)]
     pub fn with_log_level(mut self, level: impl Into<String>) -> Self {
         self.log_level = level.into();
         self
     }
 
     /// Set the listen address
+    #[allow(dead_code)]
     pub fn with_listen_addr(mut self, addr: impl Into<String>) -> Self {
         self.listen_addr = addr.into();
         self
     }
 
     /// Disable script generation
+    #[allow(dead_code)]
     pub fn with_no_scripts(mut self, no_scripts: bool) -> Self {
         self.no_scripts = no_scripts;
         self
     }
 
     /// Include disabled protocols (for testing honeypot-only protocols like IPSec, OpenVPN)
+    #[allow(dead_code)]
     pub fn with_include_disabled_protocols(mut self, include_disabled: bool) -> Self {
         self.include_disabled_protocols = include_disabled;
         self
     }
 
     /// Enable or disable Ollama lock for concurrent testing
+    #[allow(dead_code)]
     pub fn with_ollama_lock(mut self, enabled: bool) -> Self {
         self.ollama_lock = enabled;
         self
@@ -220,8 +235,8 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
     let use_ollama = should_use_ollama();
     let has_mocks = config.mock_config.is_some();
 
-    // Write mock config to temp file (if in mock mode)
-    let mock_config_file = if use_ollama {
+    // Start mock Ollama server (if in mock mode with mocks configured)
+    let mock_ollama_server = if use_ollama {
         // Real mode: Use Ollama
         if has_mocks {
             println!("⚠️  --use-ollama: Ignoring configured mocks");
@@ -233,26 +248,20 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
         println!("🤖 Using real Ollama");
         None
     } else {
-        // Mock mode (default): Use mocks (or show helpful error when Ollama is called without mocks)
+        // Mock mode (default): Use mock Ollama HTTP server
         if !has_mocks {
             println!("🔧 Mock mode enabled but no mocks configured");
             println!("   → If Ollama is called, you'll see what needs to be mocked");
+            None
         } else {
             println!("🔧 Using mock LLM responses");
+
+            // Start mock Ollama HTTP server
+            let mock_config = config.mock_config.clone().unwrap();
+            let server = super::mock_ollama::MockOllamaServer::start(mock_config).await?;
+            println!("🔧 Mock Ollama server started on {}", server.base_url());
+            Some(server)
         }
-
-        // Write mock config to a temporary file (empty if no mocks configured)
-        use std::io::Write;
-        let mock_json = match &config.mock_config {
-            Some(cfg) => serde_json::to_string(cfg)?,
-            None => serde_json::json!({"serialized_rules": []}).to_string(),
-        };
-        let mut temp_file = tempfile::NamedTempFile::new()?;
-        temp_file.write_all(mock_json.as_bytes())?;
-        temp_file.flush()?;
-
-        // Keep the file alive by converting to path (file will be deleted when test ends)
-        Some(temp_file.into_temp_path())
     };
 
     // Get the path to the binary
@@ -294,10 +303,9 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
         cmd.arg("--ollama-lock");
     }
 
-    // Add --mock-config-file if using mocks
-    if let Some(ref mock_file_path) = mock_config_file {
-        cmd.arg("--mock-config-file")
-            .arg(mock_file_path.as_os_str());
+    // Add --ollama-url if using mock server
+    if let Some(ref mock_server) = mock_ollama_server {
+        cmd.arg("--ollama-url").arg(mock_server.base_url());
     }
 
     // Add the prompt as a single argument (for non-interactive mode)
@@ -353,8 +361,9 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
         servers,
         clients,
         output_lines,
-        mock_config: config.mock_config.clone(),
-        _mock_temp_file: mock_config_file,
+        mock_ollama_server,
+        mock_temp_file: None, // DEPRECATED - not used anymore
+        mock_config: config.mock_config.clone(), // DEPRECATED - kept for backward compat
     })
 }
 
@@ -646,7 +655,14 @@ async fn wait_for_netget_startup_with_capture(
 
 impl NetGetInstance {
     /// Verify all mock expectations were met
+    #[allow(dead_code)]
     pub async fn verify_mocks(&self) -> E2EResult<()> {
+        // Use mock server verification if available (new approach)
+        if let Some(ref mock_server) = self.mock_ollama_server {
+            return mock_server.verify_calls().await;
+        }
+
+        // Fallback to deprecated mock_config verification (backward compat)
         let Some(ref mock_config) = self.mock_config else {
             // No mocks configured, nothing to verify
             return Ok(());
@@ -726,6 +742,7 @@ impl NetGetInstance {
     }
 
     /// Stop the NetGet instance gracefully
+    #[allow(dead_code)]
     pub async fn stop(mut self) -> E2EResult<()> {
         // Try to stop gracefully with Ctrl+C
         #[cfg(unix)]
@@ -755,12 +772,14 @@ impl NetGetInstance {
     }
 
     /// Check if output contains a specific string
+    #[allow(dead_code)]
     pub async fn output_contains(&self, needle: &str) -> bool {
         let lines = self.output_lines.lock().await;
         lines.iter().any(|line| line.contains(needle))
     }
 
     /// Get all output lines
+    #[allow(dead_code)]
     pub async fn get_output(&self) -> Vec<String> {
         self.output_lines.lock().await.clone()
     }

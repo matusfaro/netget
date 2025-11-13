@@ -49,7 +49,7 @@ mod ipp_client_tests {
                 .and()
         });
 
-        let mut server = start_netget_server(server_config).await?;
+        let server = start_netget_server(server_config).await?;
         println!("Server started on port {}", server.port);
 
         // Give server time to start
@@ -95,7 +95,7 @@ mod ipp_client_tests {
                 .and()
         });
 
-        let mut client = start_netget_client(client_config).await?;
+        let client = start_netget_client(client_config).await?;
 
         // Give client time to connect and query
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -160,7 +160,7 @@ mod ipp_client_tests {
                 .and()
         });
 
-        let mut server = start_netget_server(server_config).await?;
+        let server = start_netget_server(server_config).await?;
         println!("Server started on port {}", server.port);
 
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -208,7 +208,7 @@ mod ipp_client_tests {
                 .and()
         });
 
-        let mut client = start_netget_client(client_config).await?;
+        let client = start_netget_client(client_config).await?;
 
         tokio::time::sleep(Duration::from_secs(2)).await;
 
@@ -268,7 +268,7 @@ mod ipp_client_tests {
                 .and()
         });
 
-        let mut server = start_netget_server(server_config).await?;
+        let server = start_netget_server(server_config).await?;
         println!("Server started on port {}", server.port);
 
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -314,7 +314,7 @@ mod ipp_client_tests {
                 .and()
         });
 
-        let mut client = start_netget_client(client_config).await?;
+        let client = start_netget_client(client_config).await?;
 
         tokio::time::sleep(Duration::from_secs(2)).await;
 

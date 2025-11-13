@@ -11,11 +11,6 @@ mod tool_call_integration_tests {
     use tokio::net::TcpListener;
     use tokio::time::sleep;
 
-    /// Helper to get the netget binary path from cargo
-    fn get_netget_binary() -> &'static str {
-        env!("CARGO_BIN_EXE_netget")
-    }
-
     /// Helper to get an available port
     async fn get_available_port() -> u16 {
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -30,8 +25,17 @@ mod tool_call_integration_tests {
     }
 
     /// Test that MySQL server can read schema.sql and count records
+    ///
+    /// NOTE: This test requires a real LLM (Ollama) and is skipped by default.
+    /// Run with: USE_OLLAMA=1 cargo test --features mysql --test tool_call_integration_test
     #[tokio::test]
     async fn test_mysql_reads_schema_and_counts_records() {
+        // Skip if USE_OLLAMA is not set
+        if std::env::var("USE_OLLAMA").unwrap_or_default() != "1" {
+            eprintln!("Skipping test (requires USE_OLLAMA=1 and real Ollama server)");
+            return;
+        }
+
         // 1. Get an available port to avoid conflicts
         let port = get_available_port().await;
 
@@ -53,8 +57,8 @@ mod tool_call_integration_tests {
             .expect("Failed to start netget");
 
         // 2. Wait for server to start (give it time for LLM processing and server startup)
-        println!("Waiting for server to start...");
-        sleep(Duration::from_secs(20)).await;
+        println!("Waiting for server to start (this takes time with real LLM)...");
+        sleep(Duration::from_secs(60)).await;
 
         // 3. Check that the process is still running
         match child.try_wait() {
@@ -137,8 +141,17 @@ mod tool_call_integration_tests {
     }
 
     /// Test that MySQL server can read its instructions from a file
+    ///
+    /// NOTE: This test requires a real LLM (Ollama) and is skipped by default.
+    /// Run with: USE_OLLAMA=1 cargo test --features mysql --test tool_call_integration_test
     #[tokio::test]
     async fn test_mysql_reads_instructions_from_file() {
+        // Skip if USE_OLLAMA is not set
+        if std::env::var("USE_OLLAMA").unwrap_or_default() != "1" {
+            eprintln!("Skipping test (requires USE_OLLAMA=1 and real Ollama server)");
+            return;
+        }
+
         // 1. Get an available port to avoid conflicts
         let port = get_available_port().await;
 
@@ -160,8 +173,8 @@ mod tool_call_integration_tests {
             .expect("Failed to start netget");
 
         // 2. Wait for server to start and process the file instructions
-        println!("Waiting for server to read prompt file and start...");
-        sleep(Duration::from_secs(20)).await;
+        println!("Waiting for server to read prompt file and start (this takes time with real LLM)...");
+        sleep(Duration::from_secs(60)).await;
 
         // 3. Check that the process is still running
         match child.try_wait() {

@@ -39,7 +39,7 @@ mod openai_client_tests {
                 .and()
         });
 
-        let mut client = start_netget_client(client_config).await?;
+        let client = start_netget_client(client_config).await?;
 
         // Give client time to initialize
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -93,7 +93,7 @@ mod openai_client_tests {
                 .and()
         });
 
-        let mut client = start_netget_client(client_config).await?;
+        let client = start_netget_client(client_config).await?;
 
         tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -139,7 +139,7 @@ mod openai_client_tests {
                 .and()
         });
 
-        let mut client = start_netget_client(client_config).await?;
+        let client = start_netget_client(client_config).await?;
 
         tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -188,7 +188,7 @@ mod openai_client_tests {
                 .and()
         });
 
-        let mut client = start_netget_client(client_config).await?;
+        let client = start_netget_client(client_config).await?;
 
         tokio::time::sleep(Duration::from_millis(500)).await;
 

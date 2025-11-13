@@ -615,7 +615,6 @@ impl ServerRegistry {
         }
 
         // For single-word keywords, check word boundaries
-        let keyword_bytes = keyword.as_bytes();
         let input_bytes = input.as_bytes();
 
         if let Some(pos) = input.find(keyword) {

@@ -36,6 +36,7 @@ pub type E2EResult<T> = Result<T, Box<dyn std::error::Error>>;
 ///     Duration::from_secs(5),
 /// ).await?;
 /// ```
+#[allow(dead_code)]
 pub async fn retry_with_backoff<F, Fut, T, E>(
     mut condition: F,
     initial_delay: Duration,
@@ -83,6 +84,7 @@ where
 }
 
 /// Retry a condition with default settings (50ms initial, 1s max, 10s timeout)
+#[allow(dead_code)]
 pub async fn retry<F, Fut, T, E>(condition: F) -> Result<T, Box<dyn std::error::Error>>
 where
     F: FnMut() -> Fut,
@@ -161,6 +163,7 @@ pub fn get_netget_binary_path() -> E2EResult<PathBuf> {
 }
 
 /// Kill all running netget processes (useful for cleanup)
+#[allow(dead_code)]
 pub async fn cleanup_stray_processes() {
     #[cfg(unix)]
     {
@@ -173,6 +176,7 @@ pub async fn cleanup_stray_processes() {
 }
 
 /// Helper to build a simple test prompt
+#[allow(dead_code)]
 pub fn build_prompt(base_stack: &str, port: u16, instructions: &str) -> String {
     if port == 0 {
         format!("listen on port 0 via {}. {}", base_stack, instructions)

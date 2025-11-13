@@ -166,10 +166,10 @@ pub mod jsonrpc;
 #[cfg(feature = "jsonrpc")]
 pub use jsonrpc::actions::JsonRpcClientProtocol;
 
-// kafka client
-#[cfg(feature = "kafka")]
+// kafka client (requires rdkafka library)
+#[cfg(all(feature = "kafka", feature = "rdkafka"))]
 pub mod kafka;
-#[cfg(feature = "kafka")]
+#[cfg(all(feature = "kafka", feature = "rdkafka"))]
 pub use kafka::actions::KafkaClientProtocol;
 
 // kubernetes client

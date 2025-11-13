@@ -63,7 +63,19 @@ pub async fn start_server_by_id(
     let metadata = protocol.metadata();
     let system_caps = state.get_system_capabilities().await;
 
-    if !metadata.privilege_requirement.is_met_by(&system_caps) {
+    // Determine if the actual port being used requires privileges
+    let requires_privileges = match &metadata.privilege_requirement {
+        crate::protocol::metadata::PrivilegeRequirement::PrivilegedPort(_) => {
+            // Only require privileges if actually binding to a privileged port
+            server.port < 1024
+        }
+        _ => {
+            // For other requirements (RawSockets, Root, etc.), check as normal
+            !metadata.privilege_requirement.is_met_by(&system_caps)
+        }
+    };
+
+    if requires_privileges && !system_caps.can_bind_privileged_ports {
         let error_msg = format!(
             "Cannot start {} server on port {}: {}. Current capabilities: {}",
             protocol_name,
@@ -332,9 +344,10 @@ pub async fn start_server_from_action(
     let (status_tx, _status_rx) = mpsc::unbounded_channel();
 
     // Build spawn context
+    let ollama_url = state.get_ollama_url().await;
     let spawn_ctx = crate::protocol::SpawnContext {
         listen_addr,
-        llm_client: OllamaClient::new("http://localhost:11434"),
+        llm_client: OllamaClient::new(ollama_url),
         state: Arc::new(state.clone()),
         status_tx,
         server_id,

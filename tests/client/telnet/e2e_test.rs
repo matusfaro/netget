@@ -44,7 +44,7 @@ mod telnet_client_tests {
                 .and()
         });
 
-        let mut server = start_netget_server(server_config).await?;
+        let server = start_netget_server(server_config).await?;
 
         tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -79,7 +79,7 @@ mod telnet_client_tests {
                 .and()
         });
 
-        let mut client = start_netget_client(client_config).await?;
+        let client = start_netget_client(client_config).await?;
 
         tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -138,7 +138,7 @@ mod telnet_client_tests {
                 .and()
         });
 
-        let mut server = start_netget_server(server_config).await?;
+        let server = start_netget_server(server_config).await?;
 
         tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -174,7 +174,7 @@ mod telnet_client_tests {
                 .and()
         });
 
-        let mut client = start_netget_client(client_config).await?;
+        let client = start_netget_client(client_config).await?;
 
         tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -222,7 +222,7 @@ mod telnet_client_tests {
                 .and()
         });
 
-        let mut server = start_netget_server(server_config).await?;
+        let server = start_netget_server(server_config).await?;
 
         tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -248,7 +248,7 @@ mod telnet_client_tests {
                 .and()
         });
 
-        let mut client = start_netget_client(client_config).await?;
+        let client = start_netget_client(client_config).await?;
 
         tokio::time::sleep(Duration::from_millis(500)).await;
 

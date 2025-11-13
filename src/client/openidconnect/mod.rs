@@ -21,7 +21,7 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
+use crate::console_error;
 
 use openidconnect::{
     core::{CoreClient, CoreProviderMetadata, CoreTokenResponse, CoreUserInfoClaims},

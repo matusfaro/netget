@@ -7,7 +7,7 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use super::super::super::helpers::{self, E2EResult};
 
 #[tokio::test]
 async fn test_webdav_server_start() -> E2EResult<()> {

@@ -3,7 +3,6 @@
 //! These tests snapshot the generated prompts to detect changes.
 //! When prompts change, review the diff to ensure it's intentional.
 
-use netget::llm::actions::protocol_trait::Server;
 use netget::llm::actions::Protocol;
 use netget::llm::PromptBuilder;
 use netget::state::app_state::AppState;

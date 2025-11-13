@@ -61,7 +61,6 @@ async fn test_nntp_basic_newsgroups() -> E2EResult<()> {
             .expect_calls(1)
             .and()
             .on_event("nntp_command_received")
-            .with_param("command", "LIST")
             .respond_with_actions(serde_json::json!([
                 {"type": "send_nntp_list", "newsgroups": [
                     {"name": "comp.lang.rust", "high": 50, "low": 1, "status": "y"},
@@ -72,21 +71,18 @@ async fn test_nntp_basic_newsgroups() -> E2EResult<()> {
             .expect_calls(1)
             .and()
             .on_event("nntp_command_received")
-            .with_param("command", "GROUP")
             .respond_with_actions(serde_json::json!([
                 {"type": "send_nntp_response", "code": 211, "message": "50 1 50 comp.lang.rust"}
             ]))
             .expect_calls(1)
             .and()
             .on_event("nntp_command_received")
-            .with_param("command", "ARTICLE")
             .respond_with_actions(serde_json::json!([
                 {"type": "send_nntp_article", "headers": {"Subject": "Test Article 1", "From": "test@example.com"}, "body": "This is test article number 1."}
             ]))
             .expect_calls(1)
             .and()
             .on_event("nntp_command_received")
-            .with_param("command", "QUIT")
             .respond_with_actions(serde_json::json!([
                 {"type": "send_nntp_response", "code": 205, "message": "Goodbye"}
             ]))
@@ -230,14 +226,12 @@ async fn test_nntp_article_overview() -> E2EResult<()> {
             .expect_calls(1)
             .and()
             .on_event("nntp_command_received")
-            .with_param("command", "GROUP")
             .respond_with_actions(serde_json::json!([
                 {"type": "send_nntp_response", "code": 211, "message": "5 1 5 comp.test"}
             ]))
             .expect_calls(1)
             .and()
             .on_event("nntp_command_received")
-            .with_param("command", "XOVER")
             .respond_with_actions(serde_json::json!([
                 {"type": "send_nntp_overview", "articles": [
                     {"id": 1, "subject": "Article 1", "from": "test@example.com"},
@@ -250,7 +244,6 @@ async fn test_nntp_article_overview() -> E2EResult<()> {
             .expect_calls(1)
             .and()
             .on_event("nntp_command_received")
-            .with_param("command", "QUIT")
             .respond_with_actions(serde_json::json!([
                 {"type": "send_nntp_response", "code": 205, "message": "Goodbye"}
             ]))

@@ -13,7 +13,7 @@ use aws_sdk_sqs::Client;
 use std::time::Duration;
 use tokio::time::sleep;
 
-use super::super::helpers::{start_netget_server, ServerConfig};
+use super::super::helpers::start_netget_server;
 
 /// Test basic SQS queue operations: CreateQueue, SendMessage, ReceiveMessage, DeleteMessage
 ///

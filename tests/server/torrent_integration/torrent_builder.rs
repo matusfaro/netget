@@ -3,7 +3,6 @@
 //! Creates .torrent files programmatically for E2E tests
 
 use anyhow::Result;
-use serde::Serialize;
 use sha1::{Digest, Sha1};
 use std::collections::HashMap;
 

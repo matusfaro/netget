@@ -5,7 +5,7 @@
 
 #![cfg(feature = "doh")]
 
-use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use super::super::super::helpers::{self, E2EResult};
 use hickory_proto::op::{Message as DnsMessage, Query};
 use hickory_proto::rr::{Name, RecordType};
 use reqwest::Client;

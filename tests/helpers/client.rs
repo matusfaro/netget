@@ -8,6 +8,7 @@ use super::common::*;
 use super::netget::NetGetConfig;
 
 /// A running NetGet client process
+#[allow(dead_code)]
 pub struct NetGetClient {
     /// The child process
     child: Child,
@@ -27,6 +28,7 @@ pub struct NetGetClient {
 
 impl NetGetClient {
     /// Create a new NetGetClient instance
+    #[allow(dead_code)]
     pub(crate) fn new(
         child: Child,
         id: String,
@@ -194,6 +196,7 @@ impl Drop for NetGetClient {
 
 /// Start a NetGet client with the given configuration
 /// Asserts exactly 1 client and 0 servers were started
+#[allow(dead_code)]
 pub async fn start_netget_client(config: NetGetConfig) -> E2EResult<NetGetClient> {
     let instance = super::netget::start_netget(config).await?;
 
@@ -245,6 +248,7 @@ pub async fn start_netget_client(config: NetGetConfig) -> E2EResult<NetGetClient
 /// let client = start_netget_client(config).await?;
 /// wait_for_client_startup(&client, Duration::from_secs(10)).await?;
 /// ```
+#[allow(dead_code)]
 pub async fn wait_for_client_startup(
     client: &NetGetClient,
     timeout_duration: Duration,
@@ -298,6 +302,7 @@ pub async fn wait_for_client_startup(
 /// let client = start_netget_client(config).await?;
 /// assert_protocol(&client, "TCP");
 /// ```
+#[allow(dead_code)]
 pub fn assert_protocol(client: &NetGetClient, expected_protocol: &str) {
     assert_eq!(
         client.protocol, expected_protocol,
@@ -324,6 +329,7 @@ pub fn assert_protocol(client: &NetGetClient, expected_protocol: &str) {
 /// let output = get_client_output(&client).await;
 /// assert!(output.iter().any(|line| line.contains("connected")));
 /// ```
+#[allow(dead_code)]
 pub async fn get_client_output(client: &NetGetClient) -> Vec<String> {
     client.get_output().await
 }

@@ -52,7 +52,7 @@ async fn test_footer_updates_cleanly_on_server_start() -> E2EResult<()> {
                 .and()
         });
 
-    let mut server = start_netget_server(config).await?;
+    let server = start_netget_server(config).await?;
     println!("TCP server started on port {}", server.port);
 
     // Give the server time to fully initialize and update UI
@@ -139,7 +139,7 @@ async fn test_footer_handles_multiple_server_startups() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
         });
-    let mut server1 = start_netget_server(config1).await?;
+    let server1 = start_netget_server(config1).await?;
     println!("Server 1 started on port {}", server1.port);
 
     // Verify first server works
@@ -178,7 +178,7 @@ async fn test_footer_handles_multiple_server_startups() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
         });
-    let mut server2 = start_netget_server(config2).await?;
+    let server2 = start_netget_server(config2).await?;
     println!("Server 2 started on port {}", server2.port);
 
     // Verify second server works
@@ -213,19 +213,31 @@ async fn test_footer_handles_multiple_server_startups() -> E2EResult<()> {
 /// This validates the fix for the double newline bug.
 /// The bug caused formatted messages ([SERVER], etc.) to print TWO newlines instead of one.
 /// This test checks that output doesn't have excessive consecutive blank lines.
-///
-/// NOTE: This test is less critical than the other two tests and can be flaky due to LLM timing.
-/// It's kept as documentation of what we're testing for, but the other tests provide better
-/// coverage of the actual footer update behavior.
 #[tokio::test]
-#[ignore] // Flaky due to LLM timing - other tests provide sufficient coverage
 async fn test_server_output_spacing() -> E2EResult<()> {
     println!("\n=== E2E Test: Server Output Spacing ===");
 
     let prompt = "listen on port {AVAILABLE_PORT} via tcp";
 
-    let server =
-        start_netget_server(NetGetConfig::new(prompt).with_log_level("info")).await?;
+    let config = NetGetConfig::new(prompt)
+        .with_log_level("info")
+        .with_mock(|mock| {
+            mock
+                // Mock server startup
+                .on_instruction_containing("tcp")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "TCP",
+                        "instruction": "TCP server for spacing test"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = start_netget_server(config).await?;
     println!("TCP server started on port {}", server.port);
 
     // Give server time to print all startup messages
@@ -260,6 +272,8 @@ async fn test_server_output_spacing() -> E2EResult<()> {
     );
 
     println!("✓ Messages are properly spaced");
+
+    // Note: Mock verification skipped - see comment in first test
 
     server.stop().await?;
     println!("=== Test completed ===\n");

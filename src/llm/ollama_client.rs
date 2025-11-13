@@ -367,16 +367,6 @@ impl OllamaClient {
             debug!("No mock config file set");
         }
 
-        // Legacy: Simple mock response (backward compatibility for old tests)
-        if let Ok(mock_response) = std::env::var("NETGET_TEST_MOCK_LLM_RESPONSE") {
-            info!(
-                "🔧 TEST MODE: Using legacy mock LLM response (length: {} chars)",
-                mock_response.len()
-            );
-            debug!("Mock response: {}", mock_response);
-            return Ok(mock_response);
-        }
-
         // DEBUG: Summary
         debug!(
             "LLM request: model={}, prompt_len={} chars, format={}",
@@ -656,15 +646,21 @@ impl OllamaClient {
                 let json_str = &after_data[json_start..];
                 trace!("🔍 Found JSON starting at: {}", &json_str[..json_str.len().min(100)]);
 
-                // Try to parse as JSON - this may fail if there's text after the JSON
-                match serde_json::from_str::<serde_json::Value>(json_str) {
-                    Ok(json) => {
-                        trace!("🔍 Successfully parsed event data: {}", json);
+                // Try to parse as JSON using streaming parser (stops at first complete JSON value)
+                // This allows text after the JSON object without causing parse errors
+                use serde_json::Deserializer;
+                let mut deserializer = Deserializer::from_str(json_str).into_iter::<serde_json::Value>();
+                match deserializer.next() {
+                    Some(Ok(json)) => {
+                        debug!("🔍 Successfully parsed event data: {}", json);
                         context = context.with_event_data(json);
                     }
-                    Err(e) => {
-                        trace!("🔍 Failed to parse event data as JSON: {}", e);
-                        trace!("🔍 JSON string was: {}", &json_str[..json_str.len().min(200)]);
+                    Some(Err(e)) => {
+                        debug!("🔍 Failed to parse event data as JSON: {}", e);
+                        debug!("🔍 JSON string was: {}", &json_str[..json_str.len().min(200)]);
+                    }
+                    None => {
+                        debug!("🔍 No JSON value found");
                     }
                 }
             } else {

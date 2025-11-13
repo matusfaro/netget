@@ -5,7 +5,7 @@
 
 #![cfg(feature = "http2")]
 
-use super::super::helpers::{self, E2EResult, ServerConfig};
+use super::super::helpers::{self, E2EResult};
 use std::time::Duration;
 use tokio::time::sleep;
 

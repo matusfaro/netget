@@ -5,7 +5,6 @@
 
 #![cfg(all(feature = "ssh-agent", unix))]
 
-use std::path::PathBuf;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;

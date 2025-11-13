@@ -20,6 +20,7 @@ use tracing::{debug, error, info, trace};
 /// ZooKeeper server implementation
 pub struct ZookeeperServer {
     llm_client: OllamaClient,
+    #[allow(dead_code)]
     app_state: Arc<AppState>,
     #[allow(dead_code)]
     status_tx: mpsc::UnboundedSender<String>,

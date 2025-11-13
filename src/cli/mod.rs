@@ -52,7 +52,8 @@ pub async fn run() -> Result<()> {
         // Interactive TUI mode - no prompt and terminal is available
         debug!("Entering interactive TUI mode");
         debug!("Creating AppState...");
-        let state = AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock);
+        let ollama_url = args.ollama_url.clone().unwrap_or_else(|| "http://localhost:11434".to_string());
+        let state = AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock, ollama_url);
         debug!("AppState created");
 
         // Determine scripting mode with priority: CLI arg > saved setting > auto-detected
@@ -116,7 +117,8 @@ pub async fn run() -> Result<()> {
         debug!("Getting ollama lock status...");
         let lock_enabled = state.get_ollama_lock_enabled().await;
         debug!("Creating OllamaClient...");
-        let llm = OllamaClient::new_with_options("http://localhost:11434", lock_enabled)
+        let ollama_url = args.ollama_url.as_deref().unwrap_or("http://localhost:11434");
+        let llm = OllamaClient::new_with_options(ollama_url, lock_enabled)
             .with_mock_config_file(args.mock_config_file.clone());
         debug!("Creating EventHandler...");
         let event_handler = EventHandler::new(state.clone(), llm.clone());

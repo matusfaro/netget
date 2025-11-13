@@ -26,19 +26,7 @@ When receiving BOOTREQUEST:
     let server_config = NetGetConfig::new(format!("Listen on port {{AVAILABLE_PORT}} via BOOTP. {}", instruction))
         .with_mock(|mock| {
             mock
-                // Mock 1: Server startup (user command)
-                .on_any()
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "BOOTP",
-                        "instruction": instruction
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: BOOTP request received (bootp_request event)
+                // Mock 1: BOOTP request received (bootp_request event) - MUST COME FIRST for specificity
                 .on_event("bootp_request")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -51,9 +39,21 @@ When receiving BOOTREQUEST:
                 ]))
                 .expect_calls(1)
                 .and()
+                // Mock 2: Server startup (user command) - Generic matcher comes AFTER specific matchers
+                .on_any()
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,  // Port 0 = OS assigns available port automatically
+                        "base_stack": "BOOTP",
+                        "instruction": instruction
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
         });
 
-    let mut server = start_netget_server(server_config).await?;
+    let server = start_netget_server(server_config).await?;
 
     // Give server time to initialize
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -202,19 +202,7 @@ When receiving BOOTREQUEST:
     let server_config = NetGetConfig::new(format!("Listen on port {{AVAILABLE_PORT}} via BOOTP. {}", instruction))
         .with_mock(|mock| {
             mock
-                // Mock 1: Server startup (user command)
-                .on_any()
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "BOOTP",
-                        "instruction": instruction
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: BOOTP request received (bootp_request event)
+                // Mock 1: BOOTP request received (bootp_request event) - MUST COME FIRST for specificity
                 .on_event("bootp_request")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -227,9 +215,21 @@ When receiving BOOTREQUEST:
                 ]))
                 .expect_calls(1)
                 .and()
+                // Mock 2: Server startup (user command) - Generic matcher comes AFTER specific matchers
+                .on_any()
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,  // Port 0 = OS assigns available port automatically
+                        "base_stack": "BOOTP",
+                        "instruction": instruction
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
         });
 
-    let mut server = start_netget_server(server_config).await?;
+    let server = start_netget_server(server_config).await?;
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -323,19 +323,7 @@ Use server IP 192.168.1.1 for all responses.
     let server_config = NetGetConfig::new(format!("Listen on port {{AVAILABLE_PORT}} via BOOTP. {}", instruction))
         .with_mock(|mock| {
             mock
-                // Mock 1: Server startup (user command)
-                .on_any()
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "BOOTP",
-                        "instruction": instruction
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: BOOTP request received (bootp_request event) for specific MAC
+                // Mock 1: BOOTP request received (bootp_request event) for specific MAC - MUST COME FIRST for specificity
                 .on_event("bootp_request")
                 .and_event_data_contains("client_mac", "00:11:22:33:44:55")
                 .respond_with_actions(serde_json::json!([
@@ -348,9 +336,21 @@ Use server IP 192.168.1.1 for all responses.
                 ]))
                 .expect_calls(1)
                 .and()
+                // Mock 2: Server startup (user command) - Generic matcher comes AFTER specific matchers
+                .on_any()
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,  // Port 0 = OS assigns available port automatically
+                        "base_stack": "BOOTP",
+                        "instruction": instruction
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
         });
 
-    let mut server = start_netget_server(server_config).await?;
+    let server = start_netget_server(server_config).await?;
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 

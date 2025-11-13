@@ -146,7 +146,7 @@ impl ClientRegistry {
             crate::client::jsonrpc::JsonRpcClientProtocol::new(),
         ));
 
-        #[cfg(feature = "kafka")]
+        #[cfg(all(feature = "kafka", feature = "rdkafka"))]
         self.register(Arc::new(crate::client::kafka::KafkaClientProtocol::new()));
 
         #[cfg(feature = "kubernetes")]

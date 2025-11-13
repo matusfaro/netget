@@ -29,7 +29,9 @@ pub use actions::NfcClientProtocol;
 #[derive(Debug, Clone, PartialEq)]
 enum ConnectionState {
     Idle,
+    #[allow(dead_code)]
     Processing,
+    #[allow(dead_code)]
     Accumulating,
 }
 
@@ -155,9 +157,13 @@ impl NfcClient {
 /// NFC client state
 #[cfg(feature = "nfc-client")]
 struct NfcClientState {
+    #[allow(dead_code)]
     ctx: pcsc::Context,
+    #[allow(dead_code)]
     reader_name: String,
+    #[allow(dead_code)]
     card: Option<pcsc::Card>,
+    #[allow(dead_code)]
     connection_state: ConnectionState,
 }
 

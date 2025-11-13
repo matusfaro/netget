@@ -208,7 +208,7 @@ async fn test_smb_llm_denies_user() -> E2EResult<()> {
                     {"type": "smb_negotiate_response", "dialect": "SMB 2.1"}
                 ])).expect_calls(1).and()
                 .on_event("smb_session_setup_received").respond_with_actions(serde_json::json!([
-                    {"type": "smb_auth_denied", "status": 0xC0000016}
+                    {"type": "smb_auth_denied", "status": 0xC0000016u32 as i32}
                 ])).expect_calls(1).and()
             })
     ).await?;

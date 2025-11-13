@@ -25,7 +25,8 @@ pub async fn run_non_interactive(
     debug!("Prompt: {}", prompt);
 
     // Create application state
-    let state = AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock);
+    let ollama_url = args.ollama_url.clone().unwrap_or_else(|| "http://localhost:11434".to_string());
+    let state = AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock, ollama_url);
 
     // Determine configured model: args override settings
     let configured_model = args.model.clone().or(settings.model.clone());
@@ -89,7 +90,8 @@ pub async fn run_non_interactive(
 
     // Create event handler and LLM client
     let lock_enabled = state.get_ollama_lock_enabled().await;
-    let llm = OllamaClient::new_with_options("http://localhost:11434", lock_enabled)
+    let ollama_url = args.ollama_url.as_deref().unwrap_or("http://localhost:11434");
+    let llm = OllamaClient::new_with_options(ollama_url, lock_enabled)
         .with_mock_config_file(args.mock_config_file.clone());
     let mut event_handler = EventHandler::new(state.clone(), llm.clone());
 
@@ -198,7 +200,8 @@ pub async fn run_with_actions(
     debug!("Loading {} actions", actions.len());
 
     // Create application state
-    let state = AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock);
+    let ollama_url = args.ollama_url.clone().unwrap_or_else(|| "http://localhost:11434".to_string());
+    let state = AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock, ollama_url);
 
     // Determine scripting mode
     let mode_to_set = if let Some(mode) = args.parse_scripting_mode()? {
@@ -225,7 +228,8 @@ pub async fn run_with_actions(
 
     // Create LLM client
     let lock_enabled = state.get_ollama_lock_enabled().await;
-    let llm = OllamaClient::new_with_options("http://localhost:11434", lock_enabled)
+    let ollama_url = args.ollama_url.as_deref().unwrap_or("http://localhost:11434");
+    let llm = OllamaClient::new_with_options(ollama_url, lock_enabled)
         .with_mock_config_file(args.mock_config_file.clone());
 
     // Create status channel

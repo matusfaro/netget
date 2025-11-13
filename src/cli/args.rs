@@ -103,6 +103,15 @@ pub struct Args {
     )]
     pub ollama_lock: bool,
 
+    /// Ollama API base URL (default: http://localhost:11434)
+    #[clap(
+        long = "ollama-url",
+        value_name = "URL",
+        help = "Base URL for Ollama API (default: http://localhost:11434). Use this to point to a custom Ollama instance or mock server for testing.",
+        hide = true  // Hidden from help output - primarily for testing
+    )]
+    pub ollama_url: Option<String>,
+
     /// Terminal color theme (auto, light, dark, neutral)
     #[clap(
         long = "theme",

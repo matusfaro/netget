@@ -6,7 +6,6 @@
 
 #[cfg(all(test, feature = "webrtc"))]
 mod tests {
-    use netget::protocol::EventType;
     use netget::llm::ollama_client::OllamaClient;
     use netget::state::app_state::AppState;
     use std::sync::Arc;
