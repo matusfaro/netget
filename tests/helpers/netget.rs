@@ -243,7 +243,10 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
 
         // Write mock config to a temporary file (empty if no mocks configured)
         use std::io::Write;
-        let mock_json = serde_json::to_string(&config.mock_config)?;
+        let mock_json = match &config.mock_config {
+            Some(cfg) => serde_json::to_string(cfg)?,
+            None => serde_json::json!({"serialized_rules": []}).to_string(),
+        };
         let mut temp_file = tempfile::NamedTempFile::new()?;
         temp_file.write_all(mock_json.as_bytes())?;
         temp_file.flush()?;

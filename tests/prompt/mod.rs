@@ -145,13 +145,12 @@ async fn test_user_input_prompt() {
     // Assert snapshot
     snapshot_util::assert_snapshot("user_input_prompt", SNAPSHOT_DIR, &prompt);
 
-    // Sanity checks - should include scripting info
-    assert!(prompt.contains("Script-Based Responses"));
-    assert!(prompt.contains("Selected environment:"));
+    // Sanity checks - should include scripting/event handler info
+    assert!(prompt.contains("Event Handler Configuration"));
+    assert!(prompt.contains("Script Handlers"));
     assert!(prompt.contains("Python")); // Selected language
-    assert!(prompt.contains("When to Use Scripts"));
-    assert!(prompt.contains("Available Base Stacks"));
     assert!(prompt.contains("script_inline"));
+    assert!(prompt.contains("Available Base Stacks"));
 }
 
 #[tokio::test]
@@ -264,9 +263,9 @@ async fn test_user_input_prompt_without_web_search() {
         "Prompt should still contain 'read_file'"
     );
 
-    // Should have base stacks and scripting info
+    // Should have base stacks and event handler info
     assert!(prompt.contains("Available Base Stacks"));
-    assert!(prompt.contains("Script-Based Responses"));
+    assert!(prompt.contains("Event Handler Configuration"));
 }
 
 #[tokio::test]

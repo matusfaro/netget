@@ -175,7 +175,7 @@ mod e2e_bgp {
                     .expect_calls(1)
                     .and()
                     // Mock 2: OPEN message received (bgp_open_received event)
-                    .on_event("bgp_open_received")
+                    .on_event("bgp_open")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_bgp_open",
@@ -190,7 +190,7 @@ mod e2e_bgp {
                     .expect_calls(1)
                     .and()
                     // Mock 3: KEEPALIVE received (bgp_keepalive_received event)
-                    .on_event("bgp_keepalive_received")
+                    .on_event("bgp_keepalive")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_bgp_keepalive"
@@ -297,7 +297,7 @@ mod e2e_bgp {
                     .and()
                     // Mock 2: Invalid OPEN received (bgp_open_received event)
                     // LLM may choose to send NOTIFICATION or accept the invalid version
-                    .on_event("bgp_open_received")
+                    .on_event("bgp_open")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_bgp_notification",
@@ -392,7 +392,7 @@ mod e2e_bgp {
                     .expect_calls(1)
                     .and()
                     // Mock 2: OPEN received - respond with OPEN
-                    .on_event("bgp_open_received")
+                    .on_event("bgp_open")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_bgp_open",
@@ -407,7 +407,7 @@ mod e2e_bgp {
                     .expect_calls(1)
                     .and()
                     // Mock 3: First KEEPALIVE - respond with KEEPALIVE (peering establishment)
-                    .on_event("bgp_keepalive_received")
+                    .on_event("bgp_keepalive")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_bgp_keepalive"
@@ -419,7 +419,7 @@ mod e2e_bgp {
                     .expect_calls(1)
                     .and()
                     // Mock 4: Second KEEPALIVE - respond with KEEPALIVE (or no response)
-                    .on_event("bgp_keepalive_received")
+                    .on_event("bgp_keepalive")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_bgp_keepalive"
@@ -517,7 +517,7 @@ mod e2e_bgp {
                     .expect_calls(1)
                     .and()
                     // Mock 2: OPEN received - respond with OPEN
-                    .on_event("bgp_open_received")
+                    .on_event("bgp_open")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_bgp_open",
@@ -532,7 +532,7 @@ mod e2e_bgp {
                     .expect_calls(1)
                     .and()
                     // Mock 3: KEEPALIVE received - respond with KEEPALIVE (establish peering)
-                    .on_event("bgp_keepalive_received")
+                    .on_event("bgp_keepalive")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_bgp_keepalive"
@@ -544,7 +544,7 @@ mod e2e_bgp {
                     .expect_calls(1)
                     .and()
                     // Mock 4: NOTIFICATION (Cease) received - close connection gracefully
-                    .on_event("bgp_notification_received")
+                    .on_event("bgp_notification")
                     .and_event_data_contains("error_code", "6")
                     .respond_with_actions(serde_json::json!([
                         {

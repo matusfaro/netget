@@ -10,7 +10,7 @@
 //!
 //! ## Architecture
 //!
-//! ```
+//! ```text
 //! ┌───────────┐    TCP     ┌──────┐    PC/SC    ┌─────────┐
 //! │  NetGet   │ ◄─────────► vpcd  │ ◄──────────► pcscd   │
 //! │ + APDU    │  port 35963│ drv  │             │ daemon  │

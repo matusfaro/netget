@@ -10,7 +10,7 @@
 //!
 //! ## Architecture
 //!
-//! ```
+//! ```text
 //! ┌────────────┐    USB/IP    ┌──────────┐    CTAPHID    ┌─────────────┐
 //! │   Browser  │ ◄───────────► │ USB/IP   │ ◄────────────► │  NetGet     │
 //! │  (Chrome)  │     HID       │ Client   │    64-byte    │  + FIDO2    │

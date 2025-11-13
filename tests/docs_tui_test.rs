@@ -3,9 +3,10 @@
 //! These tests capture the visual output of the /docs command to ensure
 //! the formatting and colors remain consistent.
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 use std::time::Duration;
+use pty_process::{Pty, Command as PtyCommand};
 
 #[path = "snapshot_util.rs"]
 mod snapshot_util;
@@ -18,37 +19,28 @@ fn test_docs_list_all_protocols() {
     // Use cargo's env variable to get the actual binary path
     let binary_path = env!("CARGO_BIN_EXE_netget");
 
-    // Run netget with /docs command
-    let mut child = Command::new(binary_path)
-        .env("COLUMNS", "120") // Set terminal width
-        .env("LINES", "50") // Set terminal height
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+    // Create a PTY for the process
+    let pty = Pty::new().expect("Failed to create PTY");
+    pty.resize(pty_process::Size::new(50, 120)).ok();
+
+    // Spawn netget with PTY
+    let mut child = PtyCommand::new(binary_path)
+        .spawn(&pty.pts().expect("Failed to get PTY slave"))
         .expect("Failed to spawn netget");
 
     // Send commands
-    let stdin = child.stdin.as_mut().expect("Failed to open stdin");
-    stdin
+    let mut master = pty.pts().expect("Failed to get PTY master");
+    master
         .write_all(b"/docs\n/exit\n")
-        .expect("Failed to write to stdin");
+        .expect("Failed to write to PTY");
 
-    // Wait for completion with timeout
-    let output = match wait_with_timeout(child, Duration::from_secs(10)) {
-        Ok(output) => output,
-        Err((mut child, e)) => {
-            let _ = child.kill();
-            panic!("Command timed out: {}", e);
-        }
-    };
+    // Read output with timeout
+    let mut full_output = String::new();
+    std::thread::sleep(Duration::from_secs(2)); // Give it time to process
+    master.read_to_string(&mut full_output).ok(); // Best effort read
 
-    // Combine stdout and stderr
-    let full_output = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    // Wait for child to exit
+    let _ = child.wait();
 
     // Extract just the /docs output (skip startup logs)
     let docs_output = extract_docs_section(&full_output, "/docs");
@@ -83,6 +75,8 @@ fn test_docs_bgp_protocol() {
     stdin
         .write_all(b"/docs bgp\n/exit\n")
         .expect("Failed to write to stdin");
+    // Drop stdin to signal EOF to the child process
+    drop(child.stdin.take());
 
     // Wait for completion with timeout
     let output = match wait_with_timeout(child, Duration::from_secs(10)) {
@@ -140,6 +134,8 @@ fn test_docs_ssh_protocol() {
     stdin
         .write_all(b"/docs ssh\n/exit\n")
         .expect("Failed to write to stdin");
+    // Drop stdin to signal EOF to the child process
+    drop(child.stdin.take());
 
     // Wait for completion with timeout
     let output = match wait_with_timeout(child, Duration::from_secs(10)) {

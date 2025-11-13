@@ -372,6 +372,7 @@ Here's what I'll do:
 - **Protocol**: Proxy
 - **Port**: 8080
 - **Status**: Running
+- **Instruction**: Act as HTTP proxy
 - **Memory**: connections: 0
 requests_intercepted: 5
 

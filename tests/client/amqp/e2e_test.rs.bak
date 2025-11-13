@@ -31,7 +31,7 @@ mod amqp_client_tests {
                         "instruction": "Accept all client connections"
                     }
                 ]))
-                // .expect_calls(1)
+                .expect_calls(1)
                 .and()
                 // Mock 2: Client connection received
                 .on_event("amqp_connection_received")
@@ -52,7 +52,7 @@ mod amqp_client_tests {
                         }
                     }
                 ]))
-                // .expect_calls(1)
+                .expect_calls(1)
                 .and()
         });
 
@@ -81,7 +81,7 @@ mod amqp_client_tests {
                         "instruction": "Connect and wait for connection to establish"
                     }
                 ]))
-                // .expect_calls(1)
+                .expect_calls(1)
                 .and()
                 // Mock 2: Client connected
                 .on_event("amqp_connected")
@@ -90,7 +90,7 @@ mod amqp_client_tests {
                         "type": "wait_for_more"
                     }
                 ]))
-                // .expect_calls(1)
+                .expect_calls(1)
                 .and()
         });
 
@@ -147,7 +147,7 @@ mod amqp_client_tests {
                                 "instruction": "Connect to AMQP broker"
                             }
                         ]))
-                        // .expect_calls(1)
+                        .expect_calls(1)
                         .and()
                 });
 

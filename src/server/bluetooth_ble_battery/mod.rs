@@ -80,7 +80,7 @@ pub mod battery_uuids {
 /// Value range: 0-100 (percentage)
 ///
 /// Example: 75% battery
-/// ```
+/// ```text
 /// 0x4B  (75 decimal)
 /// ```
 pub fn encode_battery_level(level: u8) -> [u8; 1] {

@@ -28,10 +28,8 @@ async fn test_amqp_broker_starts() -> E2EResult<()> {
                         "instruction": "Run AMQP broker"
                     }
                 ]))
-                // NOTE: // NOTE: .expect_calls() disabled
-                    // .expect_calls() disabled - call counts don't work across process boundary
-                // // NOTE: .expect_calls() disabled
-                    // .expect_calls(1)
+                // NOTE: .expect_calls() disabled - call counts don't work across process boundary
+                // .expect_calls(1)
                 .and()
         });
 
@@ -76,9 +74,7 @@ async fn test_amqp_keyword_detection() -> E2EResult<()> {
                             "instruction": "Run AMQP broker"
                         }
                     ]))
-                    // NOTE: // NOTE: .expect_calls() disabled
-                    // .expect_calls() disabled - call counts don't work across process boundary
-                    // // NOTE: .expect_calls() disabled
+                    // NOTE: .expect_calls() disabled - call counts don't work across process boundary
                     // .expect_calls(1)
                     .and()
             });
@@ -121,8 +117,7 @@ async fn test_amqp_basic_connect() -> E2EResult<()> {
                             "instruction": "Accept all client connections and send Connection.Start"
                         }
                     ]))
-                    // NOTE: .expect_calls() disabled
-                    // .expect_calls(1)
+                    .expect_calls(1)
                     .and()
                     // Mock 2: Client connection received
                     .on_event("amqp_connection_received")
@@ -144,8 +139,7 @@ async fn test_amqp_basic_connect() -> E2EResult<()> {
                             }
                         }
                     ]))
-                    // NOTE: .expect_calls() disabled
-                    // .expect_calls(1)
+                    .expect_calls(1)
                     .and()
             });
 
@@ -210,8 +204,7 @@ async fn test_amqp_protocol_header() -> E2EResult<()> {
                             "instruction": "Validate AMQP protocol headers"
                         }
                     ]))
-                    // NOTE: .expect_calls() disabled
-                    // .expect_calls(1)
+                    .expect_calls(1)
                     .and()
                     // Mock 2: Protocol header received
                     .on_event("amqp_connection_received")
@@ -229,8 +222,7 @@ async fn test_amqp_protocol_header() -> E2EResult<()> {
                             }
                         }
                     ]))
-                    // NOTE: .expect_calls() disabled
-                    // .expect_calls(1)
+                    .expect_calls(1)
                     .and()
             });
 
@@ -293,8 +285,7 @@ async fn test_amqp_invalid_header_rejection() -> E2EResult<()> {
                             "instruction": "Reject invalid protocol headers"
                         }
                     ]))
-                    // NOTE: .expect_calls() disabled
-                    // .expect_calls(1)
+                    .expect_calls(1)
                     .and()
                     // Mock 2: Invalid data received - close connection
                     .on_event("amqp_invalid_header")
@@ -303,8 +294,7 @@ async fn test_amqp_invalid_header_rejection() -> E2EResult<()> {
                             "type": "close_connection"
                         }
                     ]))
-                    // NOTE: .expect_calls() disabled
-                    // .expect_calls(0)  // May or may not trigger depending on implementation
+                    .expect_calls(0)  // May or may not trigger depending on implementation
                     .and()
             });
 

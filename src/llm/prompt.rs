@@ -375,7 +375,8 @@ Your response must be **pure JSON** only:
                     "protocol_name": s.protocol_name,
                     "port": s.port,
                     "status": s.status.to_string(),
-                    "memory": s.memory
+                    "memory": s.memory,
+                    "instruction": s.instruction
                 })
             })
         });

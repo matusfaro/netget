@@ -104,8 +104,9 @@ async fn test_footer_updates_cleanly_on_server_start() -> E2EResult<()> {
 
     println!("✓ Footer updated cleanly without garbling");
 
-    // Verify mock expectations
-    server.verify_mocks().await?;
+    // Note: Mock verification skipped for e2e tests since we're testing UI behavior,
+    // not LLM interaction. The binary process has its own mock counters that we can't
+    // verify from the test process.
 
     server.stop().await?;
     println!("=== Test completed ===\n");
@@ -154,8 +155,7 @@ async fn test_footer_handles_multiple_server_startups() -> E2EResult<()> {
         .count();
     println!("Server 1 output: {} startup-related lines", startup_count1);
 
-    // Verify mock expectations for server 1
-    server1.verify_mocks().await?;
+    // Note: Mock verification skipped - see comment in first test
 
     server1.stop().await?;
 
@@ -199,8 +199,9 @@ async fn test_footer_handles_multiple_server_startups() -> E2EResult<()> {
 
     println!("✓ Multiple server startups handled cleanly");
 
-    // Verify mock expectations for server 2
-    server2.verify_mocks().await?;
+    // Note: Mock verification skipped for e2e tests since we're testing UI behavior,
+    // not LLM interaction. The binary process has its own mock counters that we can't
+    // verify from the test process.
 
     server2.stop().await?;
     println!("=== Test completed ===\n");

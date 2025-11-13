@@ -123,7 +123,7 @@ pub const HID_REMOTE_REPORT_DESCRIPTOR: &[u8] = &[
 /// - Bytes 0-1: Button bits (16 buttons)
 ///
 /// Example: Play/Pause pressed
-/// ```
+/// ```text
 /// 01 00  (bit 0 set)
 /// ```
 pub fn build_remote_report(button: &str) -> [u8; 2] {
