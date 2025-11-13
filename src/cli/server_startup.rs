@@ -192,8 +192,22 @@ pub async fn start_server_from_action(
 ) -> Result<ServerId> {
     use crate::state::server::ServerStatus;
 
+    // If port is 0, find an available port automatically
+    let actual_port = if port == 0 {
+        use tokio::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").await
+            .map_err(|e| anyhow::anyhow!("Failed to find available port: {}", e))?;
+        let found_port = listener.local_addr()
+            .map_err(|e| anyhow::anyhow!("Failed to get local address: {}", e))?
+            .port();
+        drop(listener);
+        found_port
+    } else {
+        port
+    };
+
     // Get default listen address (always 127.0.0.1 for security)
-    let listen_addr: SocketAddr = format!("127.0.0.1:{}", port)
+    let listen_addr: SocketAddr = format!("127.0.0.1:{}", actual_port)
         .parse()
         .map_err(|e| anyhow::anyhow!("Invalid port: {}", e))?;
 
@@ -210,7 +224,7 @@ pub async fn start_server_from_action(
         let error_msg = format!(
             "Cannot start {} server on port {}: {}",
             base_stack,
-            port,
+            actual_port,
             metadata.privilege_requirement.description()
         );
         return Err(anyhow::anyhow!(error_msg));
@@ -219,7 +233,7 @@ pub async fn start_server_from_action(
     // Create server instance
     let server = crate::state::server::ServerInstance {
         id: ServerId::new(0), // Will be assigned by add_server
-        port,
+        port: actual_port,
         protocol_name: base_stack.to_string(),
         instruction: instruction.clone(),
         memory: String::new(),
