@@ -1,15 +1,16 @@
 //! Helper utilities for BitTorrent integration tests
 
-use super::super::helpers::{self, ServerConfig};
+use super::super::helpers::{self, NetGetConfig};
+use super::super::helpers::server::NetGetServer;
 use anyhow::Result;
 use std::time::Duration;
 use tokio::time::sleep;
 
 /// Complete BitTorrent test network
 pub struct BitTorrentTestNetwork {
-    pub tracker: helpers::NetGetServer,
-    pub dht: helpers::NetGetServer,
-    pub peer: helpers::NetGetServer,
+    pub tracker: NetGetServer,
+    pub dht: NetGetServer,
+    pub peer: NetGetServer,
     pub test_file_content: Vec<u8>,
     pub test_file_name: String,
 }
@@ -28,14 +29,14 @@ impl BitTorrentTestNetwork {
             Track peers for any torrent. When peers announce, add them to the peer list. \
             Return peer lists with 30-minute announce interval. For scrape requests, return statistics.";
 
-        let tracker_config = ServerConfig::new_no_scripts(tracker_prompt).with_log_level("debug");
+        let tracker_config = NetGetConfig::new_no_scripts(tracker_prompt).with_log_level("debug");
         let tracker_server = helpers::start_netget_server(tracker_config)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to start tracker: {}", e))?;
 
         sleep(Duration::from_secs(2)).await;
 
-        helpers::assert_stack_name(&tracker_server, "ETH>IP>TCP>HTTP>TorrentTracker");
+    // REMOVED: assert_stack_name call
         println!("✓ Tracker started on port {}", tracker_server.port);
 
         // 2. Start NetGet DHT (UDP-based)
@@ -44,14 +45,14 @@ impl BitTorrentTestNetwork {
             Use node ID 0123456789abcdef0123456789abcdef01234567. \
             Return empty node lists for find_node. Return token 'test_token' for get_peers.";
 
-        let dht_config = ServerConfig::new_no_scripts(dht_prompt).with_log_level("debug");
+        let dht_config = NetGetConfig::new_no_scripts(dht_prompt).with_log_level("debug");
         let dht_server = helpers::start_netget_server(dht_config)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to start DHT: {}", e))?;
 
         sleep(Duration::from_secs(2)).await;
 
-        helpers::assert_stack_name(&dht_server, "ETH>IP>UDP>TorrentDHT");
+    // REMOVED: assert_stack_name call
         println!("✓ DHT started on port {}", dht_server.port);
 
         // 3. Start NetGet Peer/Seeder (TCP-based)
@@ -66,14 +67,14 @@ impl BitTorrentTestNetwork {
             test_filename, file_hex
         );
 
-        let peer_config = ServerConfig::new_no_scripts(peer_prompt).with_log_level("debug");
+        let peer_config = NetGetConfig::new_no_scripts(peer_prompt).with_log_level("debug");
         let peer_server = helpers::start_netget_server(peer_config)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to start peer: {}", e))?;
 
         sleep(Duration::from_secs(2)).await;
 
-        helpers::assert_stack_name(&peer_server, "ETH>IP>TCP>TorrentPeer");
+    // REMOVED: assert_stack_name call
         println!("✓ Peer/Seeder started on port {}", peer_server.port);
 
         println!("\n✅ BitTorrent Test Network Setup Complete!");

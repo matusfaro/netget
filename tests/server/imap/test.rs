@@ -6,7 +6,7 @@
 //! - Validating IMAP responses against RFC 3501 expectations
 
 use crate::server::helpers::{
-    start_netget_server, wait_for_server_startup, E2EResult, ServerConfig,
+    start_netget_server, wait_for_server_startup, E2EResult, NetGetConfig,
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
@@ -58,7 +58,7 @@ async fn test_imap_greeting() -> E2EResult<()> {
     let prompt =
         "listen on port {AVAILABLE_PORT} via imap. Send greeting: * OK IMAP4rev1 Server Ready";
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
@@ -121,7 +121,7 @@ async fn test_imap_greeting() -> E2EResult<()> {
 async fn test_imap_capability() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via imap. Support IMAP4rev1, IDLE, NAMESPACE capabilities.";
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
@@ -209,7 +209,7 @@ async fn test_imap_capability() -> E2EResult<()> {
 async fn test_imap_login() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via imap. Allow LOGIN for username 'testuser' with password 'testpass'. Any other credentials should fail.";
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
@@ -278,7 +278,7 @@ async fn test_imap_login() -> E2EResult<()> {
 async fn test_imap_login_failure() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via imap. Allow LOGIN for username 'testuser' with password 'testpass'. Reject invalid credentials with 'A001 NO Invalid credentials'.";
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
@@ -346,7 +346,7 @@ async fn test_imap_select_mailbox() -> E2EResult<()> {
          INBOX has 5 messages, 2 recent. After SELECT INBOX, respond with: \
          * 5 EXISTS\r\n* 2 RECENT\r\n* FLAGS (\\Seen \\Answered \\Flagged \\Deleted \\Draft)\r\nA002 OK [READ-WRITE] SELECT completed";
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
@@ -444,7 +444,7 @@ async fn test_imap_list_mailboxes() -> E2EResult<()> {
          After LIST \"\" \"*\", respond with: \
          * LIST () \"/\" \"INBOX\"\r\n* LIST () \"/\" \"Sent\"\r\n* LIST () \"/\" \"Drafts\"\r\nA003 OK LIST completed";
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
@@ -550,7 +550,7 @@ async fn test_imap_fetch_message() -> E2EResult<()> {
          After FETCH 1 (FLAGS BODY[]), respond with: \
          * 1 FETCH (FLAGS (\\Seen) BODY[] {{50}}\r\nFrom: test@example.com\r\nSubject: Test\r\n\r\nHello)\r\nA004 OK FETCH completed";
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
@@ -660,7 +660,7 @@ async fn test_imap_search() -> E2EResult<()> {
          After SEARCH ALL, respond with: \
          * SEARCH 1 2 3 4 5\r\nA005 OK SEARCH completed";
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
@@ -769,7 +769,7 @@ async fn test_imap_logout() -> E2EResult<()> {
          After LOGOUT, respond with: \
          * BYE IMAP4rev1 Server logging out\r\nA001 OK LOGOUT completed";
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
@@ -843,7 +843,7 @@ async fn test_imap_noop() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via imap. Allow LOGIN for 'alice'. \
          NOOP command should respond with A003 OK NOOP completed";
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
@@ -928,7 +928,7 @@ async fn test_imap_status() -> E2EResult<()> {
          After STATUS INBOX (MESSAGES RECENT), respond with: \
          * STATUS \"INBOX\" (MESSAGES 5 RECENT 2)\r\nA004 OK STATUS completed";
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup

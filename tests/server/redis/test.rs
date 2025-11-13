@@ -7,7 +7,7 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use super::super::super::helpers::{self, E2EResult, NetGetConfig};
 use redis::AsyncCommands;
 use std::time::Duration;
 
@@ -22,7 +22,7 @@ async fn test_redis_ping() -> E2EResult<()> {
 
     // Start the server
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
@@ -125,7 +125,7 @@ async fn test_redis_get_set() -> E2EResult<()> {
         For GET key commands, use redis_bulk_string value='test_value'.";
 
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     .on_instruction_containing("Redis")
@@ -177,7 +177,7 @@ async fn test_redis_integer_response() -> E2EResult<()> {
         For DEL commands, use redis_integer value=1.";
 
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock.on_instruction_containing("Redis").respond_with_actions(serde_json::json!([
                     {"type": "open_server", "port": 0, "base_stack": "Redis", "instruction": "Redis with INCR"}
@@ -215,7 +215,7 @@ async fn test_redis_array_response() -> E2EResult<()> {
         For KEYS commands, use redis_array values=['key1','key2','key3'].";
 
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock.on_instruction_containing("Redis").respond_with_actions(serde_json::json!([
                     {"type": "open_server", "port": 0, "base_stack": "Redis", "instruction": "Redis with KEYS"}
@@ -256,7 +256,7 @@ async fn test_redis_null_response() -> E2EResult<()> {
         For other GET commands, use redis_bulk_string value='exists'.";
 
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock.on_instruction_containing("Redis").respond_with_actions(serde_json::json!([
                     {"type": "open_server", "port": 0, "base_stack": "Redis", "instruction": "Redis with null"}
@@ -294,7 +294,7 @@ async fn test_redis_error_response() -> E2EResult<()> {
         For other commands, use redis_simple_string value='OK'.";
 
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock.on_instruction_containing("Redis").respond_with_actions(serde_json::json!([
                     {"type": "open_server", "port": 0, "base_stack": "Redis", "instruction": "Redis with errors"}

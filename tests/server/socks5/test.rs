@@ -213,7 +213,7 @@ async fn test_socks5_basic_connect() -> E2EResult<()> {
 
     // Start the SOCKS5 server with mocks
     let server = start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup (user command)
@@ -328,7 +328,7 @@ async fn test_socks5_with_authentication() -> E2EResult<()> {
 
     // Start the SOCKS5 server with mocks
     let server = start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
@@ -421,7 +421,7 @@ async fn test_socks5_connection_rejection() -> E2EResult<()> {
 
     // Start the SOCKS5 server with mocks
     let server = start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
@@ -509,7 +509,7 @@ async fn test_socks5_domain_name() -> E2EResult<()> {
 
     // Start the SOCKS5 server with mocks
     let server = start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
@@ -599,7 +599,7 @@ async fn test_socks5_mitm_inspection() -> E2EResult<()> {
 
     // Start the SOCKS5 server with mocks
     let server = start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup

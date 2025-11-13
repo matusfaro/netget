@@ -10,7 +10,7 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use super::super::super::helpers::{self, E2EResult, NetGetConfig};
 use std::net::UdpSocket;
 use std::time::Duration;
 
@@ -22,7 +22,7 @@ async fn test_udp_echo_server() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via udp. Echo back any data you receive.";
 
     // Start the server
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 .on_instruction_containing("udp")

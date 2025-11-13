@@ -7,7 +7,7 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use super::super::super::helpers::{self, E2EResult, NetGetConfig};
 use hickory_client::client::{AsyncClient, ClientHandle};
 use hickory_client::rr::{DNSClass, Name, RecordType};
 use hickory_client::udp::UdpClientStream;
@@ -21,7 +21,7 @@ async fn test_dns_a_record_query() -> E2EResult<()> {
     // PROMPT: Tell the LLM to act as a DNS server with mocks
     let prompt = "listen on port {AVAILABLE_PORT} via dns. Respond to all A record queries for example.com with IP address 93.184.216.34";
 
-    let server_config = ServerConfig::new(prompt)
+    let server_config = NetGetConfig::new(prompt)
         .with_log_level("debug")
         .with_mock(|mock| {
             mock
@@ -108,7 +108,7 @@ async fn test_dns_multiple_records() -> E2EResult<()> {
     // PROMPT: Tell the LLM to handle multiple record types
     let prompt = "listen on port {AVAILABLE_PORT} via dns. For example.com A records return 1.2.3.4. For mail.example.com A records return 5.6.7.8";
 
-    let server_config = ServerConfig::new(prompt)
+    let server_config = NetGetConfig::new(prompt)
         .with_log_level("debug")
         .with_mock(|mock| {
             mock
@@ -211,7 +211,7 @@ async fn test_dns_txt_record() -> E2EResult<()> {
     // PROMPT: Tell the LLM to handle TXT records
     let prompt = "listen on port {AVAILABLE_PORT} via dns. For TXT record queries on example.com, return 'v=spf1 include:_spf.example.com ~all'";
 
-    let server_config = ServerConfig::new(prompt)
+    let server_config = NetGetConfig::new(prompt)
         .with_log_level("debug")
         .with_mock(|mock| {
             mock
@@ -287,7 +287,7 @@ async fn test_dns_nxdomain() -> E2EResult<()> {
     // PROMPT: Tell the LLM to return NXDOMAIN for unknown domains
     let prompt = "listen on port {AVAILABLE_PORT} via dns. Only respond with A records for known.example.com (1.2.3.4). For all other domains, return NXDOMAIN";
 
-    let server_config = ServerConfig::new(prompt)
+    let server_config = NetGetConfig::new(prompt)
         .with_log_level("debug")
         .with_mock(|mock| {
             mock

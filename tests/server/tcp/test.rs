@@ -11,7 +11,7 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use super::super::super::helpers::{self, E2EResult, NetGetConfig};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -24,7 +24,7 @@ async fn test_ftp_greeting() -> E2EResult<()> {
 
     // Start the server with mocks
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: User command interpretation (start server)
@@ -100,7 +100,7 @@ async fn test_ftp_user_command() -> E2EResult<()> {
 
     // Start the server with mocks
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: User command interpretation (start server)
@@ -175,7 +175,7 @@ async fn test_ftp_pwd_command() -> E2EResult<()> {
 
     // Start the server with mocks
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: User command interpretation (start server)
@@ -250,7 +250,7 @@ async fn test_simple_echo() -> E2EResult<()> {
 
     // Start the server with mocks
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: User command interpretation (start server)
@@ -333,7 +333,7 @@ async fn test_custom_response() -> E2EResult<()> {
 
     // Start the server with mocks
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: User command interpretation (start server)

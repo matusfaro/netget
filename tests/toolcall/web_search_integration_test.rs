@@ -36,11 +36,13 @@ async fn test_htcpcp_tea_accepts_message_teapot() {
     // Start NetGet HTTP server with RFC 7168 instructions
     // LLM should learn to accept message/teapot
     let prompt = format!(
-        "Start an HTTP server on port {}.\
-             Implement RFC 7168 by reading https://datatracker.ietf.org/doc/html/rfc7168\
-             and ensure to read the accepted media type from that RFC. When you receive a\
-             request: if Content-Type is correct, respond with 200 OK. For any other\
-             Content-Type, respond with 415 Unsupported Media Type.",
+        "Start an HTTP server on port {}. \
+             Implement RFC 7168 (HTCPCP-TEA) by reading https://datatracker.ietf.org/doc/html/rfc7168. \
+             This RFC extends HTCPCP to support tea and defines the media type 'message/teapot'. \
+             IMPORTANT: When you receive a request, check the Content-Type header: \
+             - If Content-Type is 'message/teapot', respond with 200 OK \
+             - For ANY other Content-Type, respond with 415 Unsupported Media Type. \
+             You can use web_search to verify the RFC, but the key requirement is: accept message/teapot.",
         port
     );
 
@@ -133,11 +135,13 @@ async fn test_htcpcp_coffeepot_rejects_message_teapot() {
     // Start NetGet HTTP server with RFC 2324 instructions
     // This should only accept message/coffeepot, not message/teapot
     let prompt = format!(
-        "Start an HTTP server on port {}.\
-             Implement RFC 2324 by reading https://datatracker.ietf.org/doc/html/rfc2324\
-             and ensure to read the accepted media type from that RFC. When you receive a\
-             request: if Content-Type is correct, respond with 200 OK. For any other\
-             Content-Type, respond with 415 Unsupported Media Type.",
+        "Start an HTTP server on port {}. \
+             Implement RFC 2324 (HTCPCP/1.0) by reading https://datatracker.ietf.org/doc/html/rfc2324. \
+             This RFC defines ONLY the media type 'message/coffeepot' (NOT message/teapot - that's in a different RFC). \
+             IMPORTANT: When you receive a request, check the Content-Type header: \
+             - If Content-Type is 'message/coffeepot', respond with 200 OK \
+             - For ANY other Content-Type (including message/teapot), respond with 415 Unsupported Media Type. \
+             You can use web_search to verify the RFC, but the key requirement is: ONLY accept message/coffeepot.",
         port
     );
 

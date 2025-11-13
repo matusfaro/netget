@@ -7,7 +7,7 @@
 //! NOTE: These tests use basic TCP connectivity checks instead of rdkafka clients
 //! because rdkafka crashes when connecting to mock/incomplete Kafka implementations.
 
-use crate::server::helpers::{start_netget_server, wait_for_server_startup, ServerConfig};
+use crate::server::helpers::{start_netget_server, wait_for_server_startup, NetGetConfig};
 use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::time::sleep;
@@ -29,7 +29,7 @@ When consumers fetch from 'test-topic', return the stored messages.
 Log all requests at DEBUG level.
 "#;
 
-    let config = ServerConfig::new(prompt.to_string())
+    let config = NetGetConfig::new(prompt.to_string())
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup (user command)
@@ -79,7 +79,7 @@ When consumers fetch from 'orders', return all stored messages.
 Log all produce and fetch requests at DEBUG level.
 "#;
 
-    let config = ServerConfig::new(prompt.to_string())
+    let config = NetGetConfig::new(prompt.to_string())
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup (user command)
@@ -130,7 +130,7 @@ When clients request metadata, respond with:
 Log all metadata requests at DEBUG level.
 "#;
 
-    let config = ServerConfig::new(prompt.to_string())
+    let config = NetGetConfig::new(prompt.to_string())
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup (user command)

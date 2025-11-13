@@ -5,7 +5,7 @@
 
 #![cfg(feature = "openai")]
 
-use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use super::super::super::helpers::{self, E2EResult, NetGetConfig};
 use serde_json::Value;
 use std::time::Duration;
 
@@ -17,7 +17,7 @@ async fn test_openai_list_models() -> E2EResult<()> {
     let prompt = "Open OpenAI on port {AVAILABLE_PORT}. This is an OpenAI-compatible API server \
         that wraps Ollama. When clients request GET /v1/models, list available Ollama models.";
 
-    let server_config = ServerConfig::new(prompt).with_mock(|mock| {
+    let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
         mock.on_instruction_containing("OpenAI")
             .respond_with_actions(serde_json::json!([
                 {
@@ -112,7 +112,7 @@ async fn test_openai_chat_completion() -> E2EResult<()> {
         that wraps Ollama. When clients send POST /v1/chat/completions requests, \
         use Ollama to generate responses and return them in OpenAI format.";
 
-    let server_config = ServerConfig::new(prompt).with_mock(|mock| {
+    let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
         mock.on_instruction_containing("OpenAI")
             .respond_with_actions(serde_json::json!([
                 {
@@ -270,7 +270,7 @@ async fn test_openai_invalid_endpoint() -> E2EResult<()> {
 
     let prompt = "Open OpenAI on port {AVAILABLE_PORT}. Return 404 errors for unknown endpoints.";
 
-    let server_config = ServerConfig::new(prompt).with_mock(|mock| {
+    let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
         mock.on_instruction_containing("OpenAI")
             .respond_with_actions(serde_json::json!([
                 {
@@ -346,7 +346,7 @@ async fn test_openai_with_rust_client() -> E2EResult<()> {
         that wraps Ollama. When clients request models, list available Ollama models. \
         When clients request chat completions, use Ollama to generate responses.";
 
-    let server_config = ServerConfig::new(prompt).with_mock(|mock| {
+    let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
         mock.on_instruction_containing("OpenAI")
             .respond_with_actions(serde_json::json!([
                 {

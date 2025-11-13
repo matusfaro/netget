@@ -8,7 +8,8 @@
 
 #[cfg(feature = "elasticsearch")]
 mod tests {
-    use crate::server::helpers::{retry, start_netget_server, E2EResult, ServerConfig};
+    use crate::helpers::retry;
+    use crate::server::helpers::{start_netget_server, E2EResult, NetGetConfig};
     use reqwest::Client;
     use serde_json::json;
 
@@ -17,7 +18,7 @@ mod tests {
         println!("\n=== Test: Elasticsearch Search ===");
 
         let prompt = "Start Elasticsearch on port 0 with product search";
-        let config = ServerConfig::new(prompt)
+        let config = NetGetConfig::new(prompt)
             .with_log_level("off")
             .with_mock(|mock| {
                 mock
@@ -137,7 +138,7 @@ mod tests {
         println!("\n=== Test: Elasticsearch Index Document ===");
 
         let prompt = "Start an Elasticsearch server on port 0";
-        let config = ServerConfig::new(prompt)
+        let config = NetGetConfig::new(prompt)
             .with_log_level("off")
             .with_mock(|mock| {
                 mock
@@ -233,7 +234,7 @@ mod tests {
         println!("\n=== Test: Elasticsearch Get Document ===");
 
         let prompt = "Start Elasticsearch on port 0 with product id 123";
-        let config = ServerConfig::new(prompt)
+        let config = NetGetConfig::new(prompt)
             .with_log_level("off")
             .with_mock(|mock| {
                 mock
@@ -324,7 +325,7 @@ mod tests {
         println!("\n=== Test: Elasticsearch Bulk Operations ===");
 
         let prompt = "Start an Elasticsearch server on port 0 that handles bulk requests";
-        let config = ServerConfig::new(prompt)
+        let config = NetGetConfig::new(prompt)
             .with_log_level("off")
             .with_mock(|mock| {
                 mock
@@ -441,7 +442,7 @@ mod tests {
         println!("\n=== Test: Elasticsearch Cluster Health ===");
 
         let prompt = "Start an Elasticsearch cluster on port 0";
-        let config = ServerConfig::new(prompt)
+        let config = NetGetConfig::new(prompt)
             .with_log_level("off")
             .with_mock(|mock| {
                 mock
@@ -532,7 +533,7 @@ mod tests {
         println!("\n=== Test: Elasticsearch Root Endpoint ===");
 
         let prompt = "Start an Elasticsearch search engine on port 0";
-        let config = ServerConfig::new(prompt)
+        let config = NetGetConfig::new(prompt)
             .with_log_level("off")
             .with_mock(|mock| {
                 mock
@@ -638,7 +639,7 @@ mod tests {
         println!("\n=== Test: Elasticsearch Delete Document ===");
 
         let prompt = "Start Elasticsearch on port 0";
-        let config = ServerConfig::new(prompt)
+        let config = NetGetConfig::new(prompt)
             .with_log_level("off")
             .with_mock(|mock| {
                 mock

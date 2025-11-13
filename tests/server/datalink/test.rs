@@ -7,7 +7,7 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use super::super::super::helpers::{self, E2EResult, NetGetConfig};
 use std::process::Command;
 
 #[tokio::test]
@@ -28,7 +28,7 @@ async fn test_arp_responder() -> E2EResult<()> {
     );
 
     // Start the server (requires --use-ollama flag since this test needs real LLM)
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(NetGetConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Use arp command or arping to verify

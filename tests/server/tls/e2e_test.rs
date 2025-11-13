@@ -5,7 +5,7 @@
 
 #![cfg(feature = "tls")]
 
-use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use super::super::super::helpers::{self, E2EResult, NetGetConfig};
 use rustls::{ClientConfig, RootCertStore};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -105,7 +105,7 @@ async fn test_tls_echo_server() -> E2EResult<()> {
     let prompt = r#"listen on port {AVAILABLE_PORT} via tls. When client connects, send "Welcome to secure echo server\n". Echo back any received data."#;
 
     // Start server with mocks
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_log_level("info")
         .with_mock(|mock| {
             mock
@@ -222,7 +222,7 @@ async fn test_tls_http_like_server() -> E2EResult<()> {
 - For anything else: return "HTTP/1.1 404 Not Found\r\n\r\n""#;
 
     // Start server with mocks
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_log_level("info")
         .with_mock(|mock| {
             mock

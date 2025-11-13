@@ -5,7 +5,7 @@
 
 #[cfg(all(test, feature = "ldap", feature = "ldap"))]
 mod e2e_ldap {
-    use crate::server::helpers::{start_netget_server, E2EResult, ServerConfig};
+    use crate::server::helpers::{start_netget_server, E2EResult, NetGetConfig};
     use ldap3::{LdapConnAsync, Scope, SearchEntry};
     use std::time::Duration;
     use tokio::time::sleep;
@@ -17,7 +17,7 @@ mod e2e_ldap {
 
         let prompt = "Start LDAP server on port 0. Accept all bind requests with success=true.";
 
-        let server_config = ServerConfig::new_no_scripts(prompt)
+        let server_config = NetGetConfig::new_no_scripts(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
@@ -88,7 +88,7 @@ mod e2e_ldap {
 
         let prompt = "Start LDAP server on port 0. Only accept bind if dn='cn=admin,dc=example,dc=com' AND password='correct123'. Reject all others.";
 
-        let server_config = ServerConfig::new_no_scripts(prompt)
+        let server_config = NetGetConfig::new_no_scripts(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
@@ -165,7 +165,7 @@ mod e2e_ldap {
 
         let prompt = "Start LDAP server on port 0. Accept all binds. For search, return 2 users: john and jane with emails.";
 
-        let server_config = ServerConfig::new_no_scripts(prompt)
+        let server_config = NetGetConfig::new_no_scripts(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
@@ -282,7 +282,7 @@ mod e2e_ldap {
 
         let prompt = "Start LDAP server on port 0. Accept all binds. For search with 'john', return 1 entry: john@example.com.";
 
-        let server_config = ServerConfig::new_no_scripts(prompt)
+        let server_config = NetGetConfig::new_no_scripts(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
@@ -394,7 +394,7 @@ mod e2e_ldap {
 
         let prompt = "Start LDAP server on port 0. Accept bind as admin/admin123. Accept all add operations.";
 
-        let server_config = ServerConfig::new_no_scripts(prompt)
+        let server_config = NetGetConfig::new_no_scripts(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
@@ -481,7 +481,7 @@ mod e2e_ldap {
 
         let prompt = "Start LDAP server on port 0. Accept all binds. Accept all modify operations.";
 
-        let server_config = ServerConfig::new_no_scripts(prompt)
+        let server_config = NetGetConfig::new_no_scripts(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
@@ -564,7 +564,7 @@ mod e2e_ldap {
 
         let prompt = "Start LDAP server on port 0. Accept all binds. Accept all delete operations.";
 
-        let server_config = ServerConfig::new_no_scripts(prompt)
+        let server_config = NetGetConfig::new_no_scripts(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup

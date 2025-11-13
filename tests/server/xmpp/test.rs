@@ -5,7 +5,7 @@
 
 #![cfg(feature = "xmpp")]
 
-use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use super::super::super::helpers::{self, E2EResult, NetGetConfig};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -18,7 +18,7 @@ async fn test_xmpp_stream_header() -> E2EResult<()> {
         respond with: <?xml version='1.0'?><stream:stream xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams' from='localhost' id='stream-123' version='1.0'>";
 
     // Start the server
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 .on_instruction_containing("xmpp")
@@ -86,7 +86,7 @@ async fn test_xmpp_message() -> E2EResult<()> {
         <message from='bot@localhost' to='[sender]' type='chat'><body>Echo: [body]</body></message>";
 
     // Start the server
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 .on_instruction_containing("xmpp")
@@ -178,7 +178,7 @@ async fn test_xmpp_presence() -> E2EResult<()> {
         <presence from='server@localhost' type='available'><status>Server online</status></presence>";
 
     // Start the server
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 .on_instruction_containing("xmpp")

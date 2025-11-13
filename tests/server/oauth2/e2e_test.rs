@@ -5,7 +5,7 @@
 
 #![cfg(all(test, feature = "oauth2"))]
 
-use crate::server::helpers::{self, E2EResult, ServerConfig};
+use crate::server::helpers::{self, E2EResult, NetGetConfig};
 use serde_json::Value;
 use std::time::Duration;
 
@@ -18,7 +18,7 @@ async fn test_oauth2_authorization_code_flow() -> E2EResult<()> {
         For authorization requests, approve all and return code 'AUTH_xyz123'. \
         For token requests with valid code, return access token 'ACCESS_token_456' with 1-hour expiry and refresh token 'REFRESH_token_789'.";
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: User command to open OAuth2 server
@@ -200,7 +200,7 @@ async fn test_oauth2_client_credentials_flow() -> E2EResult<()> {
     let prompt = "Open oauth2 on port {AVAILABLE_PORT}. Accept client 'service' with secret 'service_secret'. \
         For token requests with grant_type=client_credentials, return access token 'SERVICE_token_123' with scope 'api:read api:write'.";
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: User command to open OAuth2 server
@@ -303,7 +303,7 @@ async fn test_oauth2_token_introspection() -> E2EResult<()> {
         if token starts with 'VALID_', return active=true with scope 'read write' and client_id 'testapp'. \
         Otherwise return active=false.";
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: User command to open OAuth2 server
@@ -457,7 +457,7 @@ async fn test_oauth2_token_revocation() -> E2EResult<()> {
 
     let prompt = "Open oauth2 on port {AVAILABLE_PORT}. For revocation requests, always succeed and return 200 OK.";
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: User command to open OAuth2 server

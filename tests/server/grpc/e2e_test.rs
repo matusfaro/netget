@@ -5,7 +5,7 @@
 
 #![cfg(feature = "grpc")]
 
-use super::super::helpers::{self, E2EResult};
+use super::super::helpers::{self, E2EResult, NetGetConfig};
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -56,13 +56,14 @@ fn compile_proto_to_fds(proto_text: &str) -> E2EResult<Vec<u8>> {
 
     // Compile with protoc
     let output = Command::new("protoc")
+        .current_dir(&temp_dir)
         .arg("--include_imports")
         .arg("--include_source_info")
         .arg(format!(
             "--descriptor_set_out={}",
             descriptor_file.display()
         ))
-        .arg(format!("--proto_path={}", temp_dir.display()))
+        .arg("--proto_path=.")
         .arg(proto_file.file_name().unwrap())
         .output()?;
 
@@ -108,7 +109,7 @@ When you receive GetUser requests, respond with a User message containing the re
     );
 
     // Start the server with mocks
-    let server_config = ServerConfig::new_no_scripts(prompt)
+    let server_config = NetGetConfig::new_no_scripts(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup (user command)
@@ -247,7 +248,7 @@ When you receive CreateUser requests, respond with a User message having id=456 
     );
 
     // Start the server with mocks
-    let server_config = ServerConfig::new_no_scripts(prompt)
+    let server_config = NetGetConfig::new_no_scripts(prompt)
         .with_mock(|mock| {
             mock
                 // Mock: Server startup with file loading
@@ -320,7 +321,7 @@ When you receive GetUser requests, respond with a User message containing the re
     );
 
     // Start the server with mocks
-    let server_config = ServerConfig::new_no_scripts(prompt)
+    let server_config = NetGetConfig::new_no_scripts(prompt)
         .with_mock(|mock| {
             mock
                 // Mock: Server startup with inline proto text
@@ -392,7 +393,7 @@ When you receive GetUser requests:
     );
 
     // Start the server with mocks
-    let server_config = ServerConfig::new_no_scripts(prompt)
+    let server_config = NetGetConfig::new_no_scripts(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
@@ -515,7 +516,7 @@ When you receive GetUser requests, respond with a User message where the id matc
     );
 
     // Start the server with mocks
-    let server_config = ServerConfig::new_no_scripts(prompt)
+    let server_config = NetGetConfig::new_no_scripts(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup

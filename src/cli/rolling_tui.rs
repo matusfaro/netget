@@ -61,8 +61,9 @@ pub async fn run_rolling_tui(
     let configured_model = args.model.clone().or(settings.lock().await.model.clone());
 
     // Select or validate model from Ollama - print to console before entering raw mode
+    let ollama_url = args.ollama_url.as_deref().unwrap_or("http://localhost:11434");
     let selected_model =
-        match crate::llm::select_or_validate_model(configured_model.clone(), true).await {
+        match crate::llm::select_or_validate_model(configured_model.clone(), true, ollama_url).await {
             Ok(Some(model)) => {
                 info!("✓  Using model: {}", model);
                 // Print to console before raw mode is enabled

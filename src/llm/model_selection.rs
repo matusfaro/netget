@@ -16,10 +16,11 @@ pub struct ModelInfo {
 }
 
 /// Query Ollama for available models and return detailed information
-pub async fn query_available_models() -> Result<Vec<ModelInfo>> {
+pub async fn query_available_models(ollama_url: &str) -> Result<Vec<ModelInfo>> {
     let client = reqwest::Client::new();
+    let url = format!("{}/api/tags", ollama_url);
     let response = client
-        .get("http://localhost:11434/api/tags")
+        .get(&url)
         .timeout(std::time::Duration::from_secs(5))
         .send()
         .await
@@ -101,8 +102,8 @@ pub fn select_best_model(models: &[ModelInfo]) -> Option<String> {
 }
 
 /// Check if Ollama is available and return available models
-pub async fn check_ollama_availability() -> Result<Vec<ModelInfo>> {
-    query_available_models()
+pub async fn check_ollama_availability(ollama_url: &str) -> Result<Vec<ModelInfo>> {
+    query_available_models(ollama_url)
         .await
         .context("Ollama is not available")
 }
@@ -112,6 +113,7 @@ pub async fn check_ollama_availability() -> Result<Vec<ModelInfo>> {
 /// # Arguments
 /// * `configured_model` - Model from settings/args (None = auto-select)
 /// * `interactive` - Whether running in interactive mode (affects error handling)
+/// * `ollama_url` - URL of the Ollama server
 ///
 /// # Returns
 /// * `Ok(Some(model))` - Model selected and ready to use
@@ -120,6 +122,7 @@ pub async fn check_ollama_availability() -> Result<Vec<ModelInfo>> {
 pub async fn select_or_validate_model(
     configured_model: Option<String>,
     interactive: bool,
+    ollama_url: &str,
 ) -> Result<Option<String>> {
     // In mock mode, skip Ollama availability check
     if std::env::var("NETGET_MOCK_CONFIG_JSON").is_ok() {
@@ -129,7 +132,7 @@ pub async fn select_or_validate_model(
     }
 
     // Query Ollama for available models
-    let models = match check_ollama_availability().await {
+    let models = match check_ollama_availability(ollama_url).await {
         Ok(models) => models,
         Err(e) => {
             let error_msg = format!(
@@ -219,7 +222,10 @@ pub async fn ensure_model_selected(current_model: Option<String>) -> Result<Stri
     // No model set, try to auto-select one
     warn!("⚠  No model selected, attempting to auto-select from available models...");
 
-    match select_or_validate_model(None, false).await {
+    // Default to localhost:11434 since we don't have the ollama_url parameter here
+    // This function is typically called from interactive TUI mode where ollama_url
+    // should already be validated during startup
+    match select_or_validate_model(None, false, "http://localhost:11434").await {
         Ok(Some(model)) => {
             info!("✓  Auto-selected model: {}", model);
             warn!(

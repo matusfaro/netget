@@ -27,7 +27,7 @@ mod redis_client_tests {
                             "instruction": "Accept PING and respond with PONG"
                         }
                     ]))
-                    // .expect_calls(1)
+                    .expect_calls(1)
                     .and()
                     // Mock 2: Redis command received (PING)
                     .on_event("redis_command")

@@ -7,7 +7,7 @@
 
 #![cfg(all(feature = "socket_file", unix))]
 
-use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use super::super::super::helpers::{self, E2EResult, NetGetConfig};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
@@ -21,7 +21,7 @@ async fn test_socket_echo() -> E2EResult<()> {
 
     // Start the server with mocks
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup (user command)
@@ -115,7 +115,7 @@ async fn test_socket_ping_pong() -> E2EResult<()> {
 
     // Start the server with mocks
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
@@ -201,7 +201,7 @@ async fn test_socket_line_protocol() -> E2EResult<()> {
 
     // Start the server with mocks
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup

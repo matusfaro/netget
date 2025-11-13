@@ -5,7 +5,7 @@
 
 #![cfg(feature = "maven")]
 
-use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use super::super::super::helpers::{self, E2EResult, NetGetConfig};
 use std::fs;
 
 #[tokio::test]
@@ -30,7 +30,7 @@ For other artifacts, return 404.
 "#;
 
     // Start the server with mocks
-    let server_config = ServerConfig::new(prompt)
+    let server_config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
@@ -235,7 +235,7 @@ For other artifacts, return 404.
 "#;
 
     // Start the server with mocks
-    let server_config = ServerConfig::new(prompt)
+    let server_config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
@@ -367,7 +367,7 @@ Return 404 for other artifacts.
 "#;
 
     // Start the server with mocks
-    let server_config = ServerConfig::new(prompt)
+    let server_config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
@@ -511,7 +511,7 @@ For all requests, log what was requested.
 "#;
 
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(NetGetConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
     // Create a temporary directory for Maven test

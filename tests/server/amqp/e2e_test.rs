@@ -15,7 +15,7 @@ use std::time::Duration;
 /// Test that AMQP broker starts successfully (with mocks)
 #[tokio::test]
 async fn test_amqp_broker_starts() -> E2EResult<()> {
-    let config = ServerConfig::new("Start an AMQP broker on port 0")
+    let config = NetGetConfig::new("Start an AMQP broker on port 0")
         .with_log_level("debug")
         .with_mock(|mock| {
             // Mock the user command interpretation
@@ -63,7 +63,7 @@ async fn test_amqp_keyword_detection() -> E2EResult<()> {
     for prompt in amqp_prompts {
         println!("Testing prompt: {}", prompt);
 
-        let config = ServerConfig::new(prompt)
+        let config = NetGetConfig::new(prompt)
             .with_log_level("off")
             .with_mock(|mock| {
                 // Mock expects any AMQP-related prompt
@@ -107,7 +107,7 @@ async fn test_amqp_keyword_detection() -> E2EResult<()> {
 #[tokio::test]
 async fn test_amqp_basic_connect() -> E2EResult<()> {
     let config =
-        ServerConfig::new("Start an AMQP broker on port 0. Accept all client connections and send Connection.Start.")
+        NetGetConfig::new("Start an AMQP broker on port 0. Accept all client connections and send Connection.Start.")
             .with_log_level("debug")
             .with_mock(|mock| {
                 mock
@@ -196,7 +196,7 @@ async fn test_amqp_protocol_header() -> E2EResult<()> {
     use tokio::net::TcpStream;
 
     let config =
-        ServerConfig::new("Start an AMQP broker on port 0. Validate AMQP protocol headers.")
+        NetGetConfig::new("Start an AMQP broker on port 0. Validate AMQP protocol headers.")
             .with_log_level("debug")
             .with_mock(|mock| {
                 mock
@@ -279,7 +279,7 @@ async fn test_amqp_invalid_header_rejection() -> E2EResult<()> {
     use tokio::net::TcpStream;
 
     let config =
-        ServerConfig::new("Start an AMQP broker on port 0. Reject invalid protocol headers.")
+        NetGetConfig::new("Start an AMQP broker on port 0. Reject invalid protocol headers.")
             .with_log_level("debug")
             .with_mock(|mock| {
                 mock
@@ -350,7 +350,7 @@ async fn test_amqp_invalid_header_rejection() -> E2EResult<()> {
 #[tokio::test]
 #[ignore = "Queue operations not yet implemented"]
 async fn test_amqp_queue_declare() -> E2EResult<()> {
-    let config = ServerConfig::new(
+    let config = NetGetConfig::new(
         "Start an AMQP broker on port 0. \
          Allow clients to declare durable queues. \
          Return Queue.Declare-Ok for successful declarations."
@@ -391,7 +391,7 @@ async fn test_amqp_queue_declare() -> E2EResult<()> {
 #[tokio::test]
 #[ignore = "Publishing not yet implemented"]
 async fn test_amqp_basic_publish() -> E2EResult<()> {
-    let config = ServerConfig::new(
+    let config = NetGetConfig::new(
         "Start an AMQP broker on port 0. \
          Allow publishing messages to exchanges. \
          Route messages based on routing keys."

@@ -80,7 +80,7 @@ async fn test_arp_responder() -> E2EResult<()> {
     println!("✓ Using interface: {}", interface);
 
     // Single comprehensive server with mocks for ARP responses
-    let config = ServerConfig::new(format!(
+    let config = NetGetConfig::new(format!(
         r#"listen on interface {} via arp
 
 You are an ARP responder. When you receive ARP requests:

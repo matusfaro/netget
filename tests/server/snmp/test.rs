@@ -7,7 +7,7 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use super::super::super::helpers::{self, E2EResult, NetGetConfig};
 use snmp::SyncSession;
 use std::time::Duration;
 
@@ -20,7 +20,7 @@ async fn test_snmp_basic_get() -> E2EResult<()> {
 
     // Start the server with debug logging and mocks
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_log_level("debug")
             .with_mock(|mock| {
                 mock
@@ -162,7 +162,7 @@ async fn test_snmp_get_next() -> E2EResult<()> {
 
     // Start the server with mocks
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup (user command)
@@ -248,7 +248,7 @@ async fn test_snmp_interface_stats() -> E2EResult<()> {
 
     // Start the server with mocks
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
@@ -369,7 +369,7 @@ async fn test_snmp_custom_mib() -> E2EResult<()> {
 
     // Start the server with mocks
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup

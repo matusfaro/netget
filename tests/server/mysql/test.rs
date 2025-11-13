@@ -7,7 +7,7 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use super::super::super::helpers::{self, E2EResult, NetGetConfig};
 use mysql_async::prelude::*;
 use std::time::Duration;
 
@@ -22,7 +22,7 @@ async fn test_mysql_simple_query() -> E2EResult<()> {
         Other queries use mysql_ok_response affected_rows=0.";
 
     // Start the server
-    let server_config = ServerConfig::new(prompt)
+    let server_config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
@@ -144,7 +144,7 @@ async fn test_mysql_multi_row_query() -> E2EResult<()> {
         For SELECT @@* queries use mysql_query_response columns=[{name:'value',type:'VARCHAR'}] rows=[['1000']]. \
         Other queries use mysql_ok_response affected_rows=0.";
 
-    let server_config = ServerConfig::new(prompt)
+    let server_config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
@@ -241,7 +241,7 @@ async fn test_mysql_create_table() -> E2EResult<()> {
         columns=[{name:'value',type:'VARCHAR'}] rows=[['1000']]. For CREATE/INSERT/UPDATE queries, \
         use mysql_ok_response affected_rows=1. For other SELECT queries use mysql_ok_response affected_rows=0.";
 
-    let server_config = ServerConfig::new(prompt)
+    let server_config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup

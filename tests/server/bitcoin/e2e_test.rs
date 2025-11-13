@@ -5,7 +5,7 @@
 
 #[cfg(all(test, feature = "bitcoin"))]
 mod e2e_bitcoin {
-    use crate::server::helpers::{start_netget_server, E2EResult, ServerConfig};
+    use crate::server::helpers::{start_netget_server, E2EResult, NetGetConfig};
     use std::io::Cursor;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
@@ -85,7 +85,7 @@ mod e2e_bitcoin {
              Then send verack to complete the handshake. \
              After receiving verack from peer, handshake is complete.";
 
-        let config = ServerConfig::new(prompt)
+        let config = NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: User command to open server
@@ -220,7 +220,7 @@ mod e2e_bitcoin {
              Complete the version/verack handshake with peers. \
              When you receive a ping message, respond with a pong message using the same nonce.";
 
-        let config = ServerConfig::new(prompt)
+        let config = NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: User command to open server
@@ -360,7 +360,7 @@ mod e2e_bitcoin {
              Complete handshake normally. \
              When you receive a getaddr message, respond with an addr message containing an empty list (no peers to share).";
 
-        let config = ServerConfig::new(prompt)
+        let config = NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: User command to open server
@@ -487,7 +487,7 @@ mod e2e_bitcoin {
         let prompt = "listen on port 0 via bitcoin with network=testnet. \
              Accept version messages and respond appropriately for testnet.";
 
-        let config = ServerConfig::new(prompt)
+        let config = NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: User command to open server

@@ -5,7 +5,7 @@
 
 #[cfg(all(test, feature = "igmp"))]
 mod e2e_igmp {
-    use crate::server::helpers::{start_netget_server, E2EResult, ServerConfig};
+    use crate::server::helpers::{start_netget_server, E2EResult, NetGetConfig};
     use std::net::{Ipv4Addr, UdpSocket};
     use std::time::Duration;
     use tokio::time::sleep;
@@ -103,7 +103,7 @@ mod e2e_igmp {
 When you receive a general membership query (group address 0.0.0.0), respond with a
 membership report for 239.255.255.250."#;
 
-        let config = ServerConfig::new_no_scripts(prompt)
+        let config = NetGetConfig::new_no_scripts(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup (user command)
@@ -200,7 +200,7 @@ membership report for 239.255.255.250."#;
 When you receive a group-specific query for a group you're a member of, respond with
 a membership report for that group. Ignore queries for groups you haven't joined."#;
 
-        let config = ServerConfig::new_no_scripts(prompt)
+        let config = NetGetConfig::new_no_scripts(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup (user command)
@@ -306,7 +306,7 @@ a membership report for that group. Ignore queries for groups you haven't joined
 When you receive a membership report from another host for a group you're in,
 you can suppress your own report (this is optional per IGMP spec)."#;
 
-        let config = ServerConfig::new_no_scripts(prompt)
+        let config = NetGetConfig::new_no_scripts(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup (user command)
@@ -375,7 +375,7 @@ you can suppress your own report (this is optional per IGMP spec)."#;
 2. When you receive a general query, respond with reports for all joined groups
 3. Track which groups you've joined and respond appropriately to group-specific queries"#;
 
-        let config = ServerConfig::new_no_scripts(prompt)
+        let config = NetGetConfig::new_no_scripts(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup (user command)

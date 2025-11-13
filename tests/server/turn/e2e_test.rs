@@ -12,7 +12,7 @@ use std::time::Duration;
 #[tokio::test]
 async fn test_turn_basic_allocation() -> E2EResult<()> {
     let config =
-        ServerConfig::new("Start a TURN relay server on port 0 with 600 second allocations")
+        NetGetConfig::new("Start a TURN relay server on port 0 with 600 second allocations")
             .with_log_level("off")
             .with_mock(|mock| {
                 mock
@@ -149,7 +149,7 @@ async fn test_turn_basic_allocation() -> E2EResult<()> {
 #[tokio::test]
 async fn test_turn_refresh_allocation() -> E2EResult<()> {
     let config =
-        ServerConfig::new("Start a TURN relay server on port 0 allowing allocation refresh")
+        NetGetConfig::new("Start a TURN relay server on port 0 allowing allocation refresh")
             .with_log_level("off")
             .with_mock(|mock| {
                 mock
@@ -237,7 +237,7 @@ async fn test_turn_refresh_allocation() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_turn_create_permission() -> E2EResult<()> {
-    let config = ServerConfig::new(
+    let config = NetGetConfig::new(
         "Start a TURN relay server on port 0 that allows creating permissions for peers",
     )
     .with_log_level("off")
@@ -323,7 +323,7 @@ async fn test_turn_create_permission() -> E2EResult<()> {
 #[tokio::test]
 async fn test_turn_multiple_allocations() -> E2EResult<()> {
     let config =
-        ServerConfig::new("Start a TURN relay server on port 0 supporting multiple allocations")
+        NetGetConfig::new("Start a TURN relay server on port 0 supporting multiple allocations")
             .with_log_level("off")
             .with_mock(|mock| {
                 mock
@@ -388,7 +388,7 @@ async fn test_turn_multiple_allocations() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_turn_error_insufficient_capacity() -> E2EResult<()> {
-    let config = ServerConfig::new("Start a TURN relay server on port 0 that rejects allocations with error 508 Insufficient Capacity")
+    let config = NetGetConfig::new("Start a TURN relay server on port 0 that rejects allocations with error 508 Insufficient Capacity")
         .with_log_level("off")
         .with_mock(|mock| {
             mock
@@ -459,7 +459,7 @@ async fn test_turn_error_insufficient_capacity() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_turn_invalid_magic_cookie() -> E2EResult<()> {
-    let config = ServerConfig::new("Start a TURN relay server on port 0 that validates packets")
+    let config = NetGetConfig::new("Start a TURN relay server on port 0 that validates packets")
         .with_log_level("off")
         .with_mock(|mock| {
             mock
@@ -529,7 +529,7 @@ async fn test_turn_invalid_magic_cookie() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_turn_refresh_without_allocation() -> E2EResult<()> {
-    let config = ServerConfig::new("Start a TURN relay server on port 0 that tracks allocations and rejects refresh without allocation")
+    let config = NetGetConfig::new("Start a TURN relay server on port 0 that tracks allocations and rejects refresh without allocation")
         .with_log_level("off")
         .with_mock(|mock| {
             mock
@@ -609,7 +609,7 @@ async fn test_turn_refresh_without_allocation() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_turn_permission_without_allocation() -> E2EResult<()> {
-    let config = ServerConfig::new(
+    let config = NetGetConfig::new(
         "Start a TURN relay server on port 0 that rejects permission requests without allocation",
     )
     .with_mock(|mock| {
@@ -686,7 +686,7 @@ async fn test_turn_permission_without_allocation() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_turn_short_lifetime_allocation() -> E2EResult<()> {
-    let config = ServerConfig::new(
+    let config = NetGetConfig::new(
         "Start a TURN relay server on port 0 with very short 5 second allocation lifetime",
     )
     .with_mock(|mock| {
@@ -788,7 +788,7 @@ async fn test_turn_short_lifetime_allocation() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_turn_allocate_with_lifetime_attribute() -> E2EResult<()> {
-    let config = ServerConfig::new("Start a TURN relay server on port 0")
+    let config = NetGetConfig::new("Start a TURN relay server on port 0")
         .with_log_level("off")
         .with_mock(|mock| {
             mock

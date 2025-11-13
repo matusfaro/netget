@@ -5,7 +5,7 @@
 
 #![cfg(feature = "http")]
 
-use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use super::super::super::helpers::{self, E2EResult, NetGetConfig};
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -29,7 +29,7 @@ Initialize the heartbeat counter to 0 when the server starts."#;
 
     // Start the server
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_log_level("debug")
             .with_mock(|mock| {
                 mock
@@ -142,7 +142,7 @@ Initialize the ready flag to false when the server starts."#;
 
     // Start the server
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_log_level("debug")
             .with_mock(|mock| {
                 mock
@@ -266,7 +266,7 @@ Initialize metrics counter to 0 and initialized flag to false."#;
 
     // Start the server
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_log_level("debug")
             .with_mock(|mock| {
                 mock

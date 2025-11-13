@@ -5,7 +5,7 @@
 
 #![cfg(feature = "openai")]
 
-use crate::server::helpers::{self, E2EResult, ServerConfig};
+use crate::server::helpers::{self, E2EResult, NetGetConfig};
 use serde_json::Value;
 use std::time::Duration;
 
@@ -17,7 +17,7 @@ async fn test_openai_list_models() -> E2EResult<()> {
     let prompt = "Open OpenAI on port {AVAILABLE_PORT}. This is an OpenAI-compatible API server \
         that wraps Ollama. When clients request GET /v1/models, list available Ollama models.";
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: User command to open OpenAI server
@@ -132,7 +132,7 @@ async fn test_openai_chat_completion() -> E2EResult<()> {
         that wraps Ollama. When clients send POST /v1/chat/completions requests, \
         use Ollama to generate responses and return them in OpenAI format.";
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: User command to open OpenAI server
@@ -310,7 +310,7 @@ async fn test_openai_invalid_endpoint() -> E2EResult<()> {
 
     let prompt = "Open OpenAI on port {AVAILABLE_PORT}. Return 404 errors for unknown endpoints.";
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: User command to open OpenAI server
@@ -406,7 +406,7 @@ async fn test_openai_with_rust_client() -> E2EResult<()> {
         that wraps Ollama. When clients request models, list available Ollama models. \
         When clients request chat completions, use Ollama to generate responses.";
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: User command to open OpenAI server

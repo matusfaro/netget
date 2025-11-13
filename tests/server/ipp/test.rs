@@ -7,7 +7,7 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use super::super::super::helpers::{self, E2EResult, NetGetConfig};
 use std::time::Duration;
 
 #[tokio::test]
@@ -20,7 +20,7 @@ async fn test_ipp_get_printer_attributes() -> E2EResult<()> {
         \"printer-state\":\"idle\",\"printer-uri-supported\":\"ipp://localhost:{AVAILABLE_PORT}/printers/netget\"}.";
 
     // Start the server with mocks
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup (user command)
@@ -166,7 +166,7 @@ async fn test_ipp_print_job() -> E2EResult<()> {
         use ipp_job_attributes action with attributes={\"job-id\":1,\"job-state\":\"processing\",\
         \"job-name\":\"test\"}.";
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup (user command)
@@ -281,7 +281,7 @@ async fn test_ipp_basic_http() -> E2EResult<()> {
 
     let prompt = "Open IPP on port {AVAILABLE_PORT}. For all IPP requests, use ipp_response action with status=200.";
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup (user command)

@@ -5,7 +5,7 @@
 
 #![cfg(feature = "tor_directory")]
 
-use crate::server::helpers::{self, E2EResult, ServerConfig};
+use crate::server::helpers::{self, E2EResult, NetGetConfig};
 use serde_json::json;
 use std::time::Duration;
 
@@ -19,7 +19,7 @@ async fn test_tor_directory_consensus_request() -> E2EResult<()> {
         with network-status-version 3 and a few fake relays. When clients request any other path, \
         return a 404 error.";
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
@@ -119,7 +119,7 @@ async fn test_tor_directory_404_error() -> E2EResult<()> {
     let prompt = "Open TOR Directory on port {AVAILABLE_PORT}. This is a Tor directory mirror. \
         When clients request unknown paths, return a 404 Not Found error.";
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
@@ -208,7 +208,7 @@ async fn test_tor_directory_microdescriptors() -> E2EResult<()> {
         When clients request /tor/micro/d/<hash>, return a simple microdescriptor with \
         onion-key and ntor-onion-key fields.";
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup

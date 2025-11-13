@@ -7,7 +7,7 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use super::super::super::helpers::{self, E2EResult, NetGetConfig};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
@@ -20,7 +20,7 @@ async fn test_telnet_echo() -> E2EResult<()> {
         Add '> ' prompt after each echo.";
 
     // Start the server with mocks
-    let config = ServerConfig::new(prompt).with_mock(|mock| {
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
         mock
             // Mock 1: Server startup
             .on_instruction_containing("telnet")
@@ -115,7 +115,7 @@ async fn test_telnet_prompt() -> E2EResult<()> {
         when clients connect, then show a '$ ' prompt. Echo commands back with 'You said: ' prefix.";
 
     // Start the server with mocks
-    let config = ServerConfig::new(prompt).with_mock(|mock| {
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
         mock
             // Mock 1: Server startup
             .on_instruction_containing("telnet")
@@ -203,7 +203,7 @@ async fn test_telnet_multiple_lines() -> E2EResult<()> {
         where N is the line number starting from 1.";
 
     // Start the server with mocks
-    let config = ServerConfig::new(prompt).with_mock(|mock| {
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
         mock
             // Mock 1: Server startup
             .on_instruction_containing("telnet")
@@ -304,7 +304,7 @@ async fn test_telnet_concurrent_connections() -> E2EResult<()> {
         Echo each message back with the client's message.";
 
     // Start the server with mocks
-    let config = ServerConfig::new(prompt).with_mock(|mock| {
+    let config = NetGetConfig::new(prompt).with_mock(|mock| {
         mock
             // Mock 1: Server startup
             .on_instruction_containing("telnet")

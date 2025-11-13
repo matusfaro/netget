@@ -32,7 +32,8 @@ pub async fn run_non_interactive(
     let configured_model = args.model.clone().or(settings.model.clone());
 
     // Select or validate model from Ollama (non-interactive = exit on error)
-    let selected_model = crate::llm::select_or_validate_model(configured_model, false)
+    let ollama_url_for_model = args.ollama_url.as_deref().unwrap_or("http://localhost:11434");
+    let selected_model = crate::llm::select_or_validate_model(configured_model, false, ollama_url_for_model)
         .await?
         .ok_or_else(|| anyhow::anyhow!("No model available"))?;
 

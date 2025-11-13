@@ -7,7 +7,7 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use super::super::super::helpers::{self, E2EResult, NetGetConfig};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -149,7 +149,7 @@ async fn test_proxy_http_passthrough() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} using proxy stack. Pass all HTTP requests through unchanged to their destination";
 
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
@@ -227,7 +227,7 @@ async fn test_proxy_http_block() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} using proxy stack. Block all HTTP requests with status 403 and body 'Access Denied by Proxy'";
 
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
@@ -295,7 +295,7 @@ async fn test_proxy_modify_request_headers() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} using proxy stack. For all HTTP requests, add header 'X-Proxy-Modified: NetGet' and remove 'User-Agent' header before forwarding";
 
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
@@ -365,7 +365,7 @@ async fn test_proxy_modify_request_body() -> E2EResult<()> {
     let prompt = r#"listen on port {AVAILABLE_PORT} using proxy stack. Pass all HTTP requests through unchanged to their destination."#;
 
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
@@ -430,7 +430,7 @@ async fn test_proxy_filter_by_path() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} using proxy stack. Block only requests to /json with status 403. Pass all other requests through unchanged";
 
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
@@ -506,7 +506,7 @@ async fn test_proxy_https_passthrough() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} using proxy stack with no certificate (pass-through mode). Allow all HTTPS connections";
 
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
@@ -572,7 +572,7 @@ async fn test_proxy_https_block_by_sni() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} using proxy stack with no certificate. Block HTTPS connections to 127.0.0.1 with reason 'Blocked by policy'";
 
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
@@ -651,7 +651,7 @@ async fn test_proxy_url_rewrite() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} using proxy stack. Rewrite all requests to /api/* to just / before forwarding";
 
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup

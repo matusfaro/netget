@@ -20,7 +20,7 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use super::super::super::helpers::{self, E2EResult, NetGetConfig};
 
 #[tokio::test]
 async fn test_nfs_server_start() -> E2EResult<()> {
@@ -29,7 +29,7 @@ async fn test_nfs_server_start() -> E2EResult<()> {
     // PROMPT: Basic NFS server
     let prompt = "listen on port {AVAILABLE_PORT} using nfs stack. Provide NFSv3 filesystem with export /data";
 
-    let server_config = ServerConfig::new(prompt)
+    let server_config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 .on_instruction_containing("nfs")
@@ -74,7 +74,7 @@ async fn test_nfs_tcp_connection() -> E2EResult<()> {
     // PROMPT: NFS server that accepts connections
     let prompt = "listen on port {AVAILABLE_PORT} using nfs stack. Accept NFS client connections";
 
-    let server_config = ServerConfig::new(prompt)
+    let server_config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 .on_instruction_containing("nfs")
@@ -148,7 +148,7 @@ async fn test_nfs_multiple_connections() -> E2EResult<()> {
     let prompt =
         "listen on port {AVAILABLE_PORT} using nfs stack. Support multiple concurrent NFS clients";
 
-    let server_config = ServerConfig::new(prompt)
+    let server_config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 .on_instruction_containing("nfs")
@@ -210,7 +210,7 @@ async fn test_nfs_connection_lifecycle() -> E2EResult<()> {
     let prompt =
         "listen on port {AVAILABLE_PORT} using nfs stack. Handle connection lifecycle events";
 
-    let server_config = ServerConfig::new(prompt)
+    let server_config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 .on_instruction_containing("nfs")
@@ -265,7 +265,7 @@ async fn test_nfs_port_configuration() -> E2EResult<()> {
     // PROMPT: NFS on custom port
     let prompt = "listen on port {AVAILABLE_PORT} using nfs stack. Standard NFS v3 service";
 
-    let server_config = ServerConfig::new(prompt)
+    let server_config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 .on_instruction_containing("nfs")
@@ -307,7 +307,7 @@ async fn test_nfs_server_stop() -> E2EResult<()> {
     // PROMPT: NFS server with graceful shutdown
     let prompt = "listen on port {AVAILABLE_PORT} using nfs stack. Support clean shutdown";
 
-    let server_config = ServerConfig::new(prompt)
+    let server_config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 .on_instruction_containing("nfs")

@@ -7,7 +7,7 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use super::super::super::helpers::{self, E2EResult, NetGetConfig};
 
 #[tokio::test]
 async fn test_http_simple_get() -> E2EResult<()> {
@@ -19,7 +19,7 @@ async fn test_http_simple_get() -> E2EResult<()> {
 
     // Start the server
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     .on_instruction_containing("http")
@@ -83,7 +83,7 @@ async fn test_http_json_api() -> E2EResult<()> {
 
     // Start the server
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     .on_instruction_containing("http")
@@ -151,7 +151,7 @@ async fn test_http_routing() -> E2EResult<()> {
 
     // Start the server
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     .on_instruction_containing("http")
@@ -249,7 +249,7 @@ async fn test_http_headers() -> E2EResult<()> {
 
     // Start the server
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     .on_instruction_containing("http")
@@ -317,7 +317,7 @@ async fn test_http_methods() -> E2EResult<()> {
 
     // Start the server
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     .on_instruction_containing("http")
@@ -425,7 +425,7 @@ async fn test_http_error_responses() -> E2EResult<()> {
 
     // Start the server
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     .on_instruction_containing("http")
@@ -530,7 +530,7 @@ async fn test_http_simple_get_with_logging() -> E2EResult<()> {
 
     // Start the server
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     .on_instruction_containing("http")

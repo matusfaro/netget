@@ -12,7 +12,7 @@ use std::time::Duration;
 #[tokio::test]
 async fn test_pypi_comprehensive() -> E2EResult<()> {
     // Single comprehensive server with scripting for all test cases
-    let config = ServerConfig::new(
+    let config = NetGetConfig::new(
         r#"listen on port 0 via pypi
 
 You are a PyPI (Python Package Index) server implementing PEP 503 Simple Repository API.
@@ -236,7 +236,7 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
 #[tokio::test]
 async fn test_pypi_single_package() -> E2EResult<()> {
     // Simpler test with just one package for quick verification
-    let config = ServerConfig::new(
+    let config = NetGetConfig::new(
         r#"listen on port 0 via pypi
 
 Act as a minimal PyPI server with one package:

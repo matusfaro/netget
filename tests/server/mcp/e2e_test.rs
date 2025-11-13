@@ -5,7 +5,7 @@
 
 #![cfg(feature = "mcp")]
 
-use crate::server::helpers::{self, E2EResult, ServerConfig};
+use crate::server::helpers::{self, E2EResult, NetGetConfig};
 use serde_json::{json, Value};
 use std::time::Duration;
 
@@ -81,7 +81,7 @@ async fn test_mcp_initialize() -> E2EResult<()> {
         - capabilities: resources with subscribe support, tools, and prompts \
         - serverInfo: name=netget-mcp, version=0.1.0";
 
-    let server_config = ServerConfig::new(prompt)
+    let server_config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
@@ -212,7 +212,7 @@ async fn test_mcp_ping() -> E2EResult<()> {
 
     let prompt = "Listen on port {AVAILABLE_PORT} via MCP. You are an MCP server.";
 
-    let server_config = ServerConfig::new(prompt)
+    let server_config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock: Server startup
@@ -271,7 +271,7 @@ async fn test_mcp_resources_list() -> E2EResult<()> {
         - uri: file:///example.txt, name: Example File, description: A sample text file \
         - uri: file:///data.json, name: Data File, description: JSON data file";
 
-    let server_config = ServerConfig::new(prompt)
+    let server_config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
@@ -363,7 +363,7 @@ async fn test_mcp_resources_read() -> E2EResult<()> {
         When a client reads resource 'file:///example.txt', \
         return contents with uri and text: 'Hello from NetGet MCP server!'";
 
-    let server_config = ServerConfig::new(prompt)
+    let server_config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
@@ -461,7 +461,7 @@ async fn test_mcp_tools_list() -> E2EResult<()> {
         - name: calculate, description: Perform calculations, inputSchema with 'expression' string parameter \
         - name: search, description: Search files, inputSchema with 'query' string parameter";
 
-    let server_config = ServerConfig::new(prompt)
+    let server_config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
@@ -567,7 +567,7 @@ async fn test_mcp_tools_call() -> E2EResult<()> {
         When a client calls tool 'calculate' with expression '2+2', \
         return content with type text and text '4'";
 
-    let server_config = ServerConfig::new(prompt)
+    let server_config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
@@ -668,7 +668,7 @@ async fn test_mcp_prompts_list() -> E2EResult<()> {
         - name: code-review, description: Review code for quality and bugs \
         - name: summarize, description: Summarize text content";
 
-    let server_config = ServerConfig::new(prompt)
+    let server_config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
@@ -758,7 +758,7 @@ async fn test_mcp_prompts_get() -> E2EResult<()> {
         When a client gets prompt 'code-review', \
         return messages with role 'user' and content with type 'text' and text 'Review this code'";
 
-    let server_config = ServerConfig::new(prompt)
+    let server_config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
@@ -856,7 +856,7 @@ async fn test_mcp_error_handling() -> E2EResult<()> {
 
     let prompt = "Listen on port {AVAILABLE_PORT} via MCP. You are an MCP server.";
 
-    let server_config = ServerConfig::new(prompt)
+    let server_config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock: Server startup

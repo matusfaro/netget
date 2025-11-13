@@ -39,7 +39,7 @@ mod e2e_imap_client {
                      Allow LOGIN for username 'alice' with password 'secret123'. \
                      Greet with: * OK IMAP4rev1 NetGet Server Ready";
 
-        let server_config = ServerConfig::new(prompt).with_mock(|mock| {
+        let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
             mock
                 // Mock: Server startup
                 .on_instruction_containing("listen on port")
@@ -118,7 +118,7 @@ mod e2e_imap_client {
                      Only allow LOGIN for username 'alice' with password 'secret123'. \
                      Deny all other credentials.";
 
-        let server_config = ServerConfig::new(prompt).with_mock(|mock| {
+        let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
             mock.on_instruction_containing("imap")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -179,7 +179,7 @@ mod e2e_imap_client {
                      Allow LOGIN for any user. \
                      When listing mailboxes, return: INBOX, Sent, Drafts, Trash.";
 
-        let server_config = ServerConfig::new(prompt).with_mock(|mock| {
+        let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
             mock.on_instruction_containing("imap")
                 .respond_with_actions(serde_json::json!([
                     {"type": "open_server", "port": 0, "base_stack": "imap", "instruction": "Allow LOGIN, list mailboxes"}
@@ -259,7 +259,7 @@ mod e2e_imap_client {
                      INBOX has 5 messages, 2 are recent. \
                      First unseen message is #3.";
 
-        let server_config = ServerConfig::new(prompt).with_mock(|mock| {
+        let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
             mock.on_instruction_containing("imap").respond_with_actions(serde_json::json!([
                 {"type": "open_server", "port": 0, "base_stack": "imap", "instruction": "INBOX has 5 messages"}
             ])).expect_calls(1).and()
@@ -314,7 +314,7 @@ mod e2e_imap_client {
                      2. From: bob@example.com, Subject: Meeting, Body: Test message 2 \
                      3. From: charlie@example.com, Subject: Report, Body: Test message 3";
 
-        let server_config = ServerConfig::new(prompt).with_mock(|mock| {
+        let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
             mock.on_instruction_containing("imap").respond_with_actions(serde_json::json!([
                 {"type": "open_server", "port": 0, "base_stack": "imap", "instruction": "INBOX has 3 messages"}
             ])).expect_calls(1).and()
@@ -386,7 +386,7 @@ mod e2e_imap_client {
                      INBOX has 5 messages. Messages 1, 3, 5 are from alice@example.com. \
                      When searching FROM alice, return message numbers 1, 3, 5.";
 
-        let server_config = ServerConfig::new(prompt).with_mock(|mock| {
+        let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
             mock.on_instruction_containing("imap").respond_with_actions(serde_json::json!([
                 {"type": "open_server", "port": 0, "base_stack": "imap", "instruction": "5 messages, search alice"}
             ])).expect_calls(1).and()
@@ -447,7 +447,7 @@ mod e2e_imap_client {
                      Allow LOGIN for any user.";
 
         let server = start_netget_server(
-            ServerConfig::new(prompt).with_mock(|mock| {
+            NetGetConfig::new(prompt).with_mock(|mock| {
                 mock.on_instruction_containing("imap")
                     .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "IMAP", "instruction": "IMAP server"}]))
                     .expect_calls(1).and()
@@ -506,7 +506,7 @@ mod e2e_imap_client {
                      Support EXAMINE command for read-only access.";
 
         let server = start_netget_server(
-            ServerConfig::new(prompt).with_mock(|mock| {
+            NetGetConfig::new(prompt).with_mock(|mock| {
                 mock.on_instruction_containing("imap")
                     .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "IMAP", "instruction": "IMAP server"}]))
                     .expect_calls(1).and()
@@ -560,7 +560,7 @@ mod e2e_imap_client {
                      Mailbox 'Sent' has 20 messages, 5 unseen. \
                      Support STATUS command.";
 
-        let server_config = ServerConfig::new(prompt).with_mock(|mock| {
+        let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
             mock.on_instruction_containing("imap").respond_with_actions(serde_json::json!([
                 {"type": "open_server", "port": 0, "base_stack": "imap", "instruction": "Sent has 20 messages, 5 unseen"}
             ])).expect_calls(1).and()
@@ -616,7 +616,7 @@ mod e2e_imap_client {
                      Support multiple concurrent connections.";
 
         let server = start_netget_server(
-            ServerConfig::new(prompt).with_mock(|mock| {
+            NetGetConfig::new(prompt).with_mock(|mock| {
                 mock.on_instruction_containing("imap")
                     .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "IMAP", "instruction": "IMAP server"}]))
                     .expect_calls(1).and()
@@ -695,7 +695,7 @@ mod e2e_imap_client {
                      Allow LOGIN for any user. \
                      Support NOOP command.";
 
-        let server_config = ServerConfig::new(prompt).with_mock(|mock| {
+        let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
             mock.on_instruction_containing("imap").respond_with_actions(serde_json::json!([
                 {"type": "open_server", "port": 0, "base_stack": "imap", "instruction": "Support NOOP"}
             ])).expect_calls(1).and()

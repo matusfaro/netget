@@ -7,7 +7,7 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use super::super::super::helpers::{self, E2EResult, NetGetConfig};
 use std::io::Read;
 use std::net::TcpStream;
 use std::time::Duration;
@@ -20,7 +20,7 @@ async fn test_ssh_banner() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via ssh. Send SSH protocol version banner 'SSH-2.0-NetGet_1.0' when clients connect";
 
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(NetGetConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Connect and read SSH banner
@@ -250,7 +250,7 @@ async fn test_ssh_multiple_connections() -> E2EResult<()> {
 
     // Start the server with mocks
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
@@ -594,7 +594,7 @@ async fn test_ssh_script_fallback_to_llm() -> E2EResult<()> {
         The LLM should allow user 'eve' but deny other unknown users.";
 
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(NetGetConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 
     // Test 1: User handled by script (dave) - should succeed
@@ -724,7 +724,7 @@ async fn test_sftp_basic_operations() -> E2EResult<()> {
 
     // Start the server with mocks
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup

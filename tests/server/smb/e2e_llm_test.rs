@@ -5,7 +5,7 @@
 
 #![cfg(all(test, feature = "smb", feature = "smb"))]
 
-use crate::server::helpers::{start_netget_server, E2EResult, ServerConfig};
+use crate::server::helpers::{start_netget_server, E2EResult, NetGetConfig};
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -118,7 +118,7 @@ async fn test_smb_llm_allows_guest_auth() -> E2EResult<()> {
                  Allow all authentication attempts.";
 
     let server = start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock.on_instruction_containing("SMB").respond_with_actions(serde_json::json!([
                     {"type": "open_server", "port": 0, "base_stack": "SMB", "instruction": "Allow all auth"}
@@ -199,7 +199,7 @@ async fn test_smb_llm_denies_user() -> E2EResult<()> {
                  Deny 'guest' and all other users.";
 
     let server = start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock.on_instruction_containing("SMB").respond_with_actions(serde_json::json!([
                     {"type": "open_server", "port": 0, "base_stack": "SMB", "instruction": "Allow alice only"}
@@ -281,7 +281,7 @@ async fn test_smb_llm_file_creation() -> E2EResult<()> {
                  Deny files in /restricted/.";
 
     let server = start_netget_server(
-        ServerConfig::new_no_scripts(prompt)
+        NetGetConfig::new_no_scripts(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
@@ -338,7 +338,7 @@ async fn test_smb_llm_file_content() -> E2EResult<()> {
                  Provide file /welcome.txt with content 'Hello from NetGet SMB!'.";
 
     let server = start_netget_server(
-        ServerConfig::new_no_scripts(prompt)
+        NetGetConfig::new_no_scripts(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
@@ -390,7 +390,7 @@ async fn test_smb_llm_directory_listing() -> E2EResult<()> {
                  Provide directory /documents/ with files: readme.txt, notes.txt, report.pdf.";
 
     let server = start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock.on_instruction_containing("SMB").respond_with_actions(serde_json::json!([
                     {"type": "open_server", "port": 0, "base_stack": "SMB", "instruction": "Directory listing"}
@@ -435,7 +435,7 @@ async fn test_smb_llm_connection_tracking() -> E2EResult<()> {
                  Track all connections.";
 
     let server = start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock.on_instruction_containing("SMB").respond_with_actions(serde_json::json!([
                     {"type": "open_server", "port": 0, "base_stack": "SMB", "instruction": "Track connections"}
@@ -498,7 +498,7 @@ async fn test_smb_llm_receives_events() -> E2EResult<()> {
                  Allow all authentication and file operations.";
 
     let server = start_netget_server(
-        ServerConfig::new_no_scripts(prompt)
+        NetGetConfig::new_no_scripts(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup

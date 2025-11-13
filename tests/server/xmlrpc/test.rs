@@ -5,7 +5,7 @@
 
 #![cfg(feature = "xmlrpc")]
 
-use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use super::super::super::helpers::{self, E2EResult, NetGetConfig};
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
@@ -78,7 +78,7 @@ async fn test_xmlrpc_simple_method() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via xmlrpc stack. Implement method 'add' that takes two integers and returns their sum.";
 
     // Start the server
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup (user command)
@@ -165,7 +165,7 @@ async fn test_xmlrpc_introspection_list_methods() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via xmlrpc stack. Implement these methods: add, subtract, multiply. Also support system.listMethods introspection.";
 
     // Start the server
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 .on_instruction_containing("xmlrpc")
@@ -231,7 +231,7 @@ async fn test_xmlrpc_fault_response() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via xmlrpc stack. Implement method 'greet'. For unknown methods, return fault code -32601 with message 'Method not found'.";
 
     // Start the server
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 .on_instruction_containing("xmlrpc")
@@ -303,7 +303,7 @@ async fn test_xmlrpc_string_parameter() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via xmlrpc stack. Implement method 'greet' that takes a name (string) and returns 'Hello, [name]!'.";
 
     // Start the server
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 .on_instruction_containing("xmlrpc")
@@ -363,7 +363,7 @@ async fn test_xmlrpc_boolean_parameter() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via xmlrpc stack. Implement method 'toggle' that takes a boolean and returns the opposite.";
 
     // Start the server
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 .on_instruction_containing("xmlrpc")
@@ -421,7 +421,7 @@ async fn test_xmlrpc_multiple_parameters() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via xmlrpc stack. Implement method 'concat' that takes two strings and returns them concatenated with a space between.";
 
     // Start the server
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 .on_instruction_containing("xmlrpc")
@@ -481,7 +481,7 @@ async fn test_xmlrpc_non_post_request() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via xmlrpc stack. Implement method 'test'.";
 
     // Start the server (GET request won't trigger LLM, only server startup)
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 .on_instruction_containing("xmlrpc")

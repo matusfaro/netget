@@ -8,7 +8,8 @@
 
 #[cfg(feature = "dynamo")]
 mod tests {
-    use crate::server::helpers::{retry, start_netget_server, E2EResult, ServerConfig};
+    use crate::helpers::retry;
+    use crate::server::helpers::{start_netget_server, E2EResult, NetGetConfig};
     use aws_config::BehaviorVersion;
     use aws_sdk_dynamodb::types::{
         AttributeDefinition, AttributeValue, KeySchemaElement, KeyType, ScalarAttributeType,
@@ -37,7 +38,7 @@ mod tests {
         println!("\n=== Test: AWS SDK CreateTable ===");
 
         let prompt = "Start a DynamoDB server on port 0 that can create and manage tables";
-        let config = ServerConfig::new(prompt)
+        let config = NetGetConfig::new(prompt)
             .with_log_level("off")
             .with_mock(|mock| {
                 mock
@@ -122,7 +123,7 @@ mod tests {
         println!("\n=== Test: AWS SDK PutItem and GetItem ===");
 
         let prompt = "Start a DynamoDB server on port 0 that remembers items stored with PutItem";
-        let config = ServerConfig::new(prompt)
+        let config = NetGetConfig::new(prompt)
             .with_log_level("off")
             .with_mock(|mock| {
                 mock
@@ -229,7 +230,7 @@ mod tests {
         println!("\n=== Test: AWS SDK UpdateItem ===");
 
         let prompt = "Start a DynamoDB server on port 0";
-        let config = ServerConfig::new(prompt)
+        let config = NetGetConfig::new(prompt)
             .with_log_level("off")
             .with_mock(|mock| {
                 mock
@@ -323,7 +324,7 @@ mod tests {
         println!("\n=== Test: AWS SDK DeleteItem ===");
 
         let prompt = "Start a DynamoDB server on port 0";
-        let config = ServerConfig::new(prompt)
+        let config = NetGetConfig::new(prompt)
             .with_log_level("off")
             .with_mock(|mock| {
                 mock
@@ -418,7 +419,7 @@ mod tests {
         println!("\n=== Test: AWS SDK Query ===");
 
         let prompt = "Start a DynamoDB server on port 0 that can query items";
-        let config = ServerConfig::new(prompt)
+        let config = NetGetConfig::new(prompt)
             .with_log_level("off")
             .with_mock(|mock| {
                 mock
@@ -521,7 +522,7 @@ mod tests {
         println!("\n=== Test: AWS SDK Scan ===");
 
         let prompt = "Start a DynamoDB server on port 0 that supports table scans";
-        let config = ServerConfig::new(prompt)
+        let config = NetGetConfig::new(prompt)
             .with_log_level("off")
             .with_mock(|mock| {
                 mock
@@ -618,7 +619,7 @@ mod tests {
         println!("\n=== Test: AWS SDK BatchWriteItem ===");
 
         let prompt = "Start a DynamoDB server on port 0 that supports batch operations";
-        let config = ServerConfig::new(prompt)
+        let config = NetGetConfig::new(prompt)
             .with_log_level("off")
             .with_mock(|mock| {
                 mock
@@ -710,7 +711,7 @@ mod tests {
         println!("\n=== Test: AWS SDK DescribeTable ===");
 
         let prompt = "Start a DynamoDB server on port 0";
-        let config = ServerConfig::new(prompt)
+        let config = NetGetConfig::new(prompt)
             .with_log_level("off")
             .with_mock(|mock| {
                 mock

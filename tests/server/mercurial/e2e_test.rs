@@ -5,7 +5,7 @@
 
 #![cfg(all(test, feature = "mercurial"))]
 
-use super::super::helpers::{self, E2EResult, ServerConfig};
+use super::super::helpers::{self, E2EResult, NetGetConfig};
 
 #[tokio::test]
 async fn test_mercurial_capabilities() -> E2EResult<()> {
@@ -31,7 +31,7 @@ Always respond quickly with these standard capabilities."#;
 
     // Start server with mocks
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock: Server startup (user command)
@@ -111,7 +111,7 @@ Return one head node ID (40-character hex string):
 This represents the tip of the default branch."#;
 
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock.on_instruction_containing("listen on port")
                     .and_instruction_containing("mercurial")
@@ -178,7 +178,7 @@ stable abc123def456789012345678901234567890abcd
 Each line represents one branch with its head node IDs."#;
 
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock.on_instruction_containing("listen on port")
                     .and_instruction_containing("mercurial")
@@ -259,7 +259,7 @@ develop\tabc123def456789012345678901234567890abcd
 Each line is tab-separated: bookmark name, then node ID."#;
 
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock.on_instruction_containing("listen on port")
                     .and_instruction_containing("mercurial")
@@ -339,7 +339,7 @@ Return HTTP 404 error with message "Repository not found".
 Test error handling for non-existent repositories."#;
 
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock.on_instruction_containing("listen on port")
                     .and_instruction_containing("mercurial")

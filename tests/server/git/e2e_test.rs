@@ -5,7 +5,7 @@
 
 #![cfg(feature = "git")]
 
-use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use super::super::super::helpers::{self, E2EResult, NetGetConfig};
 use std::process::Command;
 use tempfile::TempDir;
 
@@ -63,7 +63,7 @@ Note: For this MVP, you can provide a simplified pack that allows git clone to s
 If you are unsure about pack format, provide minimal pack data and we will test protocol flow."#;
 
     // Start server with mocks
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup (user command)
@@ -164,7 +164,7 @@ When client requests /simple-repo/info/refs?service=git-upload-pack:
 - Return refs/tags/v1.0 with SHA: fedcba9876543210fedcba9876543210fedcba98
 - Include capabilities: multi_ack, side-band-64k"#;
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
@@ -257,7 +257,7 @@ When client requests info/refs for any other repository name:
 - Return error with 404 status code
 - Message: "Repository not found""#;
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
@@ -334,7 +334,7 @@ Create two repositories:
 When client requests info/refs for 'frontend', return frontend branches.
 When client requests info/refs for 'backend', return backend branches."#;
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
@@ -427,7 +427,7 @@ Script should return:
   }]
 }"#;
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup

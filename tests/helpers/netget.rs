@@ -250,13 +250,20 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
     } else {
         // Mock mode (default): Use mock Ollama HTTP server
         if !has_mocks {
-            println!("🔧 Mock mode enabled but no mocks configured");
-            println!("   → If Ollama is called, you'll see what needs to be mocked");
-            None
-        } else {
-            println!("🔧 Using mock LLM responses");
+            // No mocks explicitly configured - use default empty mock
+            // This allows tests to run without Ollama and see what LLM calls are made
+            println!("🔧 Mock mode: Using default empty mock (returns generic responses)");
+            println!("   → Configure specific mocks with .with_mock() for test assertions");
 
-            // Start mock Ollama HTTP server
+            // Create default empty mock config
+            let mock_config = netget::testing::MockLlmBuilder::new().build();
+            let server = super::mock_ollama::MockOllamaServer::start(mock_config).await?;
+            println!("🔧 Mock Ollama server started on {}", server.base_url());
+            Some(server)
+        } else {
+            println!("🔧 Using configured mock LLM responses");
+
+            // Start mock Ollama HTTP server with user-configured mocks
             let mock_config = config.mock_config.clone().unwrap();
             let server = super::mock_ollama::MockOllamaServer::start(mock_config).await?;
             println!("🔧 Mock Ollama server started on {}", server.base_url());

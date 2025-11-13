@@ -33,6 +33,7 @@ impl TelnetServer {
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         info!("Telnet server (action-based) listening on {}", local_addr);
+        let _ = status_tx.send(format!("[INFO] Telnet server listening on {}", local_addr));
 
         let protocol = Arc::new(TelnetProtocol::new());
 

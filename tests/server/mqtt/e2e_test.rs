@@ -16,7 +16,7 @@ use std::time::Duration;
 /// Test that MQTT broker starts successfully
 #[tokio::test]
 async fn test_mqtt_broker_starts() -> E2EResult<()> {
-    let config = ServerConfig::new("Start an MQTT broker on port 0")
+    let config = NetGetConfig::new("Start an MQTT broker on port 0")
         .with_log_level("off")
         .with_mock(|mock| {
             mock.on_instruction_containing("MQTT broker")
@@ -51,7 +51,7 @@ async fn test_mqtt_keyword_detection() -> E2EResult<()> {
     for prompt in mqtt_prompts {
         println!("Testing prompt: {}", prompt);
 
-        let config = ServerConfig::new(prompt).with_log_level("off");
+        let config = NetGetConfig::new(prompt).with_log_level("off");
 
         // All should fail (placeholder), but for the right reason (MQTT detected)
         let result = start_netget_server(config).await;
@@ -86,7 +86,7 @@ async fn test_mqtt_basic_connect() -> E2EResult<()> {
     use rumqttc::{AsyncClient, Event, MqttOptions, Packet};
 
     let config =
-        ServerConfig::new("Start an MQTT broker on port 0. Accept all client connections.")
+        NetGetConfig::new("Start an MQTT broker on port 0. Accept all client connections.")
             .with_log_level("debug")
             .with_mock(|mock| {
                 mock.on_instruction_containing("MQTT broker")
@@ -145,7 +145,7 @@ async fn test_mqtt_publish_subscribe() -> E2EResult<()> {
     use rumqttc::{AsyncClient, MqttOptions, QoS};
     use tokio::sync::mpsc;
 
-    let config = ServerConfig::new(
+    let config = NetGetConfig::new(
         "Start an MQTT broker on port 0. \
          Accept all connections. \
          Allow publishing to 'test/topic' and subscribing to 'test/#' wildcard."
@@ -216,7 +216,7 @@ async fn test_mqtt_publish_subscribe() -> E2EResult<()> {
 async fn test_mqtt_qos_levels() -> E2EResult<()> {
     use rumqttc::{AsyncClient, MqttOptions, QoS};
 
-    let config = ServerConfig::new(
+    let config = NetGetConfig::new(
         "Start an MQTT broker on port 0. \
          Support QoS levels 0, 1, and 2. \
          Accept all connections."
@@ -265,7 +265,7 @@ async fn test_mqtt_retained_messages() -> E2EResult<()> {
     use rumqttc::{AsyncClient, MqttOptions, QoS};
     use tokio::sync::mpsc;
 
-    let config = ServerConfig::new(
+    let config = NetGetConfig::new(
         "Start an MQTT broker on port 0. \
          Support retained messages. \
          When a client subscribes to a topic with a retained message, \
@@ -335,7 +335,7 @@ async fn test_mqtt_wildcard_subscriptions() -> E2EResult<()> {
     use rumqttc::{AsyncClient, MqttOptions, QoS};
     use tokio::sync::mpsc;
 
-    let config = ServerConfig::new(
+    let config = NetGetConfig::new(
         "Start an MQTT broker on port 0. \
          Support wildcard subscriptions with + (single level) and # (multi-level). \
          Allow publishing to any topic under 'devices/'."

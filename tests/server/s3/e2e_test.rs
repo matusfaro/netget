@@ -8,7 +8,8 @@
 
 #[cfg(feature = "s3")]
 mod tests {
-    use crate::server::helpers::{retry, start_netget_server, E2EResult, NetGetConfig};
+    use crate::helpers::retry;
+    use crate::server::helpers::{start_netget_server, E2EResult, NetGetConfig};
     use s3::bucket::Bucket;
     use s3::creds::Credentials;
     use s3::region::Region;

@@ -5,7 +5,7 @@
 //! - Using raw TCP clients to send BGP messages
 //! - Validating BGP responses against RFC 4271 expectations
 
-use crate::server::helpers::{start_netget_server, E2EResult, ServerConfig};
+use crate::server::helpers::{start_netget_server, E2EResult, NetGetConfig};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::{timeout, Duration};
@@ -157,7 +157,7 @@ async fn test_bgp_peering_establishment() -> E2EResult<()> {
          After receiving a KEEPALIVE, send a KEEPALIVE back to complete the peering. \
          Transition to Established state.";
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock: Server startup
@@ -273,7 +273,7 @@ async fn test_bgp_notification_on_error() -> E2EResult<()> {
          If you receive an invalid OPEN message (e.g., wrong version), \
          send a NOTIFICATION message with error code 2 (OPEN Message Error), subcode 1 (Unsupported Version Number).";
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock: Server startup
@@ -371,7 +371,7 @@ async fn test_bgp_keepalive_exchange() -> E2EResult<()> {
          Establish BGP peering normally. After peering is established, \
          respond to KEEPALIVE messages with KEEPALIVE messages.";
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock: Server startup
@@ -480,7 +480,7 @@ async fn test_bgp_graceful_shutdown() -> E2EResult<()> {
          Establish BGP peering normally. If you receive a NOTIFICATION with error code 6 (Cease), \
          acknowledge it by closing the connection gracefully.";
 
-    let config = ServerConfig::new(prompt)
+    let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock: Server startup

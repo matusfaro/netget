@@ -7,7 +7,7 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use super::super::super::helpers::{self, E2EResult, NetGetConfig};
 use std::time::Duration;
 
 #[tokio::test]
@@ -20,7 +20,7 @@ async fn test_mdns_service_advertisement() -> E2EResult<()> {
         with property 'version=1.0'";
 
     // Start the server
-    let server_config = ServerConfig::new(prompt).with_mock(|mock| {
+    let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
         mock.on_instruction_containing("mdns")
             .and_instruction_containing("Advertise service")
             .respond_with_actions(serde_json::json!([
@@ -134,7 +134,7 @@ async fn test_mdns_multiple_services() -> E2EResult<()> {
         2) type '_ftp._tcp.local.', name 'FTP Service', port {AVAILABLE_PORT}";
 
     // Start the server
-    let server_config = ServerConfig::new(prompt).with_mock(|mock| {
+    let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
         mock.on_instruction_containing("mdns")
             .and_instruction_containing("two services")
             .respond_with_actions(serde_json::json!([
@@ -227,7 +227,7 @@ async fn test_mdns_service_with_properties() -> E2EResult<()> {
         with properties: version='2.0', path='/api', secure='true'";
 
     // Start the server
-    let server_config = ServerConfig::new(prompt).with_mock(|mock| {
+    let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
         mock.on_instruction_containing("mdns")
             .and_instruction_containing("properties")
             .respond_with_actions(serde_json::json!([
@@ -314,7 +314,7 @@ async fn test_mdns_custom_service_type() -> E2EResult<()> {
         type '_netget._tcp.local.', name 'Custom NetGet Service', port {AVAILABLE_PORT}";
 
     // Start the server
-    let server_config = ServerConfig::new(prompt).with_mock(|mock| {
+    let server_config = NetGetConfig::new(prompt).with_mock(|mock| {
         mock.on_instruction_containing("mdns")
             .and_instruction_containing("custom service")
             .respond_with_actions(serde_json::json!([

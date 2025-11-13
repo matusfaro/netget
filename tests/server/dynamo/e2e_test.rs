@@ -8,7 +8,8 @@
 
 #[cfg(feature = "dynamo")]
 mod tests {
-    use crate::server::helpers::{retry, start_netget_server, E2EResult, ServerConfig};
+    use crate::helpers::retry;
+    use crate::server::helpers::{start_netget_server, E2EResult, NetGetConfig};
     use reqwest::Client;
     use serde_json::json;
 
@@ -17,7 +18,7 @@ mod tests {
         println!("\n=== Test: DynamoDB GetItem ===");
 
         let prompt = "Start a DynamoDB-compatible server on port 0 that stores user data in memory";
-        let config = ServerConfig::new(prompt)
+        let config = NetGetConfig::new(prompt)
             .with_log_level("off")
             .with_mock(|mock| {
                 mock
@@ -97,7 +98,7 @@ mod tests {
         println!("\n=== Test: DynamoDB PutItem ===");
 
         let prompt = "Start a DynamoDB server on port 0";
-        let config = ServerConfig::new(prompt)
+        let config = NetGetConfig::new(prompt)
             .with_log_level("off")
             .with_mock(|mock| {
                 mock
@@ -178,7 +179,7 @@ mod tests {
         println!("\n=== Test: DynamoDB Query ===");
 
         let prompt = "Start a DynamoDB-compatible database server on port 0";
-        let config = ServerConfig::new(prompt)
+        let config = NetGetConfig::new(prompt)
             .with_log_level("off")
             .with_mock(|mock| {
                 mock
@@ -263,7 +264,7 @@ mod tests {
         println!("\n=== Test: DynamoDB CreateTable ===");
 
         let prompt = "Start a DynamoDB API server on port 0 that can create tables";
-        let config = ServerConfig::new(prompt)
+        let config = NetGetConfig::new(prompt)
             .with_log_level("off")
             .with_mock(|mock| {
                 mock
@@ -346,7 +347,7 @@ mod tests {
         println!("\n=== Test: DynamoDB Multiple Operations ===");
 
         let prompt = "Start a DynamoDB server on port 0 that remembers items across requests";
-        let config = ServerConfig::new(prompt)
+        let config = NetGetConfig::new(prompt)
             .with_log_level("off")
             .with_mock(|mock| {
                 mock
