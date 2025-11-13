@@ -102,7 +102,7 @@ impl NfcServer {
 
         // Set server state to Idle
         app_state
-            .set_server_connection_state(server_id, ServerConnectionState::Idle)
+            .set_server_connection_state(server_id, ConnectionState::Idle)
             .await;
 
         // Call LLM with server started event
