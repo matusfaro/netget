@@ -364,12 +364,13 @@ Test error handling for non-existent repositories."#;
     println!("Requesting: {}", nonexistent_url);
 
     let response = client.get(&nonexistent_url).send().await?;
-    println!("Response status: {}", response.status());
+    let status = response.status();
+    println!("Response status: {}", status);
 
     // Server might return 404 or 500, or might still return capabilities
     // For MVP, we just verify the server responds
     assert!(
-        response.status().as_u16() >= 200 && response.status().as_u16() < 600,
+        status.as_u16() >= 200 && status.as_u16() < 600,
         "Should return valid HTTP response"
     );
 
@@ -377,7 +378,7 @@ Test error handling for non-existent repositories."#;
     println!("Response body: {}", body);
 
     // If it's an error response, verify it contains error information
-    if response.status().is_client_error() || response.status().is_server_error() {
+    if status.is_client_error() || status.is_server_error() {
         println!("  (Correctly returned error status)");
     } else {
         println!("  (Server returned success - acceptable for MVP)");

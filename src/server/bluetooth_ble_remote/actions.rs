@@ -71,7 +71,7 @@ impl Protocol for BluetoothBleRemoteProtocol {
     }
 
     fn stack_name(&self) -> &'static str {
-        "DATALINK"
+        "DATALINK>BLE_REMOTE"
     }
 
     fn keywords(&self) -> Vec<&'static str> {

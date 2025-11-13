@@ -213,7 +213,7 @@ async fn test_peer_piece_request() -> E2EResult<()> {
             .and()
             // Mock: Piece request
             .on_event("peer_request_message")
-            .and_event_data_contains("index", 0)
+            .and_event_data_contains("index", "0")
             .respond_with_actions(json!([
                 {
                     "type": "send_piece",

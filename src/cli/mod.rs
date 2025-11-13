@@ -116,7 +116,8 @@ pub async fn run() -> Result<()> {
         debug!("Getting ollama lock status...");
         let lock_enabled = state.get_ollama_lock_enabled().await;
         debug!("Creating OllamaClient...");
-        let llm = OllamaClient::new_with_options("http://localhost:11434", lock_enabled);
+        let llm = OllamaClient::new_with_options("http://localhost:11434", lock_enabled)
+            .with_mock_config_file(args.mock_config_file.clone());
         debug!("Creating EventHandler...");
         let event_handler = EventHandler::new(state.clone(), llm.clone());
 

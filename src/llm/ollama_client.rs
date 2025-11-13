@@ -281,6 +281,7 @@ impl std::str::FromStr for CommandInterpretation {
 pub struct OllamaClient {
     ollama: Ollama,
     status_tx: Option<mpsc::UnboundedSender<String>>,
+    mock_config_file: Option<std::path::PathBuf>,
 }
 
 impl OllamaClient {
@@ -291,6 +292,7 @@ impl OllamaClient {
         Self {
             ollama,
             status_tx: None,
+            mock_config_file: None,
         }
     }
 
@@ -301,6 +303,7 @@ impl OllamaClient {
         Self {
             ollama,
             status_tx: None,
+            mock_config_file: None,
         }
     }
 
@@ -313,6 +316,12 @@ impl OllamaClient {
     /// Set the status channel for sending trace logs to TUI
     pub fn with_status_tx(mut self, status_tx: mpsc::UnboundedSender<String>) -> Self {
         self.status_tx = Some(status_tx);
+        self
+    }
+
+    /// Set the mock configuration file path (for testing)
+    pub fn with_mock_config_file(mut self, path: Option<std::path::PathBuf>) -> Self {
+        self.mock_config_file = path;
         self
     }
 
@@ -341,11 +350,15 @@ impl OllamaClient {
         format: Option<serde_json::Value>,
     ) -> Result<String> {
         // CHECK FOR MOCK MODE (test environment)
-        if let Ok(mock_config_json) = std::env::var("NETGET_MOCK_CONFIG_JSON") {
+        if let Some(ref mock_file_path) = self.mock_config_file {
+            // Read mock config from file
+            let mock_config_json = tokio::fs::read_to_string(mock_file_path)
+                .await
+                .context("Failed to read mock config file")?;
             return self.handle_mock_request(prompt, &mock_config_json).await;
         }
 
-        // Legacy: Simple mock response (backward compatibility)
+        // Legacy: Simple mock response (backward compatibility for old tests)
         if let Ok(mock_response) = std::env::var("NETGET_TEST_MOCK_LLM_RESPONSE") {
             info!(
                 "🔧 TEST MODE: Using legacy mock LLM response (length: {} chars)",
@@ -491,8 +504,8 @@ impl OllamaClient {
             "🔧 MOCK MODE: Matching against {} rules",
             config.rules.len()
         );
-        debug!("Context: event_type={:?}, instruction='{}'",
-            context.event_type, context.instruction);
+        debug!("Context: event_type={:?}, instruction='{}', event_data={}",
+            context.event_type, context.instruction, context.event_data);
 
         // Find matching rule
         if let Some((rule_idx, response)) = config.find_match(&context).await {
@@ -572,8 +585,10 @@ impl OllamaClient {
             }
         }
 
-        // Try to extract event data (JSON after "Data:" or "Event data:")
-        if let Some(data_start_idx) = prompt.find("Data:").or_else(|| prompt.find("Event data:")) {
+        // Try to extract event data (JSON after "Context data:", "Event data:", or "Data:")
+        if let Some(data_start_idx) = prompt.find("Context data:")
+            .or_else(|| prompt.find("Event data:"))
+            .or_else(|| prompt.find("Data:")) {
             let after_data = &prompt[data_start_idx..];
             // Try to find JSON object
             if let Some(json_start) = after_data.find('{') {

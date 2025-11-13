@@ -120,6 +120,15 @@ pub struct Args {
     )]
     pub load_file: Option<String>,
 
+    /// Path to mock LLM configuration file (for testing)
+    #[clap(
+        long = "mock-config-file",
+        value_name = "FILE",
+        help = "Path to JSON file containing mock LLM responses (used by tests)",
+        hide = true  // Hidden from help output - internal testing flag
+    )]
+    pub mock_config_file: Option<std::path::PathBuf>,
+
     /// Prompt/command to execute (can be specified after --, or as trailing args, or via stdin)
     #[clap(value_name = "PROMPT", num_args = 0..)]
     pub prompt: Vec<String>,

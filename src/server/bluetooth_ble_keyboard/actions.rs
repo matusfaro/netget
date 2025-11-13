@@ -84,7 +84,7 @@ impl Protocol for BluetoothBleKeyboardProtocol {
     }
 
     fn stack_name(&self) -> &'static str {
-        "DATALINK"
+        "DATALINK>BLE_KEYBOARD"
     }
 
     fn keywords(&self) -> Vec<&'static str> {

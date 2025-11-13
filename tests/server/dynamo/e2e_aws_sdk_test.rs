@@ -37,7 +37,34 @@ mod tests {
         println!("\n=== Test: AWS SDK CreateTable ===");
 
         let prompt = "Start a DynamoDB server on port 0 that can create and manage tables";
-        let config = ServerConfig::new(prompt).with_log_level("off");
+        let config = ServerConfig::new(prompt)
+            .with_log_level("off")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup instruction
+                    .on_instruction_containing("DynamoDB")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "DYNAMO",
+                            "instruction": "DynamoDB server that can create and manage tables"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: CreateTable request
+                    .on_event("dynamo_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "dynamo_response",
+                            "status_code": 200,
+                            "body": "{\"TableDescription\":{\"TableName\":\"Users\",\"TableStatus\":\"ACTIVE\"}}"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let server = start_netget_server(config).await?;
         println!(
@@ -84,6 +111,7 @@ mod tests {
             Err(e) => println!("[INFO] CreateTable attempt: {}", e),
         }
 
+        server.verify_mocks().await?;
         server.stop().await?;
         println!("=== Test Complete ===\n");
         Ok(())
@@ -94,7 +122,45 @@ mod tests {
         println!("\n=== Test: AWS SDK PutItem and GetItem ===");
 
         let prompt = "Start a DynamoDB server on port 0 that remembers items stored with PutItem";
-        let config = ServerConfig::new(prompt).with_log_level("off");
+        let config = ServerConfig::new(prompt)
+            .with_log_level("off")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("DynamoDB")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "DYNAMO",
+                            "instruction": "DynamoDB server that remembers items"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: PutItem request
+                    .on_event("dynamo_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "dynamo_response",
+                            "status_code": 200,
+                            "body": "{}"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: GetItem request
+                    .on_event("dynamo_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "dynamo_response",
+                            "status_code": 200,
+                            "body": "{\"Item\":{\"userId\":{\"S\":\"user-123\"},\"name\":{\"S\":\"Alice\"},\"email\":{\"S\":\"alice@example.com\"},\"age\":{\"N\":\"30\"}}}"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let server = start_netget_server(config).await?;
         println!(
@@ -152,6 +218,7 @@ mod tests {
             }
         }
 
+        server.verify_mocks().await?;
         server.stop().await?;
         println!("=== Test Complete ===\n");
         Ok(())
@@ -162,7 +229,45 @@ mod tests {
         println!("\n=== Test: AWS SDK UpdateItem ===");
 
         let prompt = "Start a DynamoDB server on port 0";
-        let config = ServerConfig::new(prompt).with_log_level("off");
+        let config = ServerConfig::new(prompt)
+            .with_log_level("off")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("DynamoDB")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "DYNAMO",
+                            "instruction": "DynamoDB server"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: PutItem request
+                    .on_event("dynamo_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "dynamo_response",
+                            "status_code": 200,
+                            "body": "{}"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: UpdateItem request
+                    .on_event("dynamo_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "dynamo_response",
+                            "status_code": 200,
+                            "body": "{\"Attributes\":{\"price\":{\"N\":\"79.99\"}}}"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let server = start_netget_server(config).await?;
         println!(
@@ -207,6 +312,7 @@ mod tests {
             Err(e) => println!("[INFO] UpdateItem attempt: {}", e),
         }
 
+        server.verify_mocks().await?;
         server.stop().await?;
         println!("=== Test Complete ===\n");
         Ok(())
@@ -217,7 +323,45 @@ mod tests {
         println!("\n=== Test: AWS SDK DeleteItem ===");
 
         let prompt = "Start a DynamoDB server on port 0";
-        let config = ServerConfig::new(prompt).with_log_level("off");
+        let config = ServerConfig::new(prompt)
+            .with_log_level("off")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("DynamoDB")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "DYNAMO",
+                            "instruction": "DynamoDB server"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: PutItem request
+                    .on_event("dynamo_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "dynamo_response",
+                            "status_code": 200,
+                            "body": "{}"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: DeleteItem request
+                    .on_event("dynamo_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "dynamo_response",
+                            "status_code": 200,
+                            "body": "{}"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let server = start_netget_server(config).await?;
         println!(
@@ -263,6 +407,7 @@ mod tests {
             Err(e) => println!("[INFO] DeleteItem attempt: {}", e),
         }
 
+        server.verify_mocks().await?;
         server.stop().await?;
         println!("=== Test Complete ===\n");
         Ok(())
@@ -273,7 +418,45 @@ mod tests {
         println!("\n=== Test: AWS SDK Query ===");
 
         let prompt = "Start a DynamoDB server on port 0 that can query items";
-        let config = ServerConfig::new(prompt).with_log_level("off");
+        let config = ServerConfig::new(prompt)
+            .with_log_level("off")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("DynamoDB")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "DYNAMO",
+                            "instruction": "DynamoDB server that can query items"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: PutItem request
+                    .on_event("dynamo_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "dynamo_response",
+                            "status_code": 200,
+                            "body": "{}"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: Query request
+                    .on_event("dynamo_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "dynamo_response",
+                            "status_code": 200,
+                            "body": "{\"Items\":[{\"customerId\":{\"S\":\"cust-001\"},\"orderDate\":{\"S\":\"2024-01-01\"}}],\"Count\":1}"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let server = start_netget_server(config).await?;
         println!(
@@ -327,6 +510,7 @@ mod tests {
             }
         }
 
+        server.verify_mocks().await?;
         server.stop().await?;
         println!("=== Test Complete ===\n");
         Ok(())
@@ -337,7 +521,45 @@ mod tests {
         println!("\n=== Test: AWS SDK Scan ===");
 
         let prompt = "Start a DynamoDB server on port 0 that supports table scans";
-        let config = ServerConfig::new(prompt).with_log_level("off");
+        let config = ServerConfig::new(prompt)
+            .with_log_level("off")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("DynamoDB")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "DYNAMO",
+                            "instruction": "DynamoDB server that supports table scans"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: PutItem request
+                    .on_event("dynamo_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "dynamo_response",
+                            "status_code": 200,
+                            "body": "{}"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: Scan request
+                    .on_event("dynamo_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "dynamo_response",
+                            "status_code": 200,
+                            "body": "{\"Items\":[{\"itemId\":{\"S\":\"item-001\"},\"category\":{\"S\":\"electronics\"}}],\"Count\":1}"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let server = start_netget_server(config).await?;
         println!(
@@ -385,6 +607,7 @@ mod tests {
             }
         }
 
+        server.verify_mocks().await?;
         server.stop().await?;
         println!("=== Test Complete ===\n");
         Ok(())
@@ -395,7 +618,35 @@ mod tests {
         println!("\n=== Test: AWS SDK BatchWriteItem ===");
 
         let prompt = "Start a DynamoDB server on port 0 that supports batch operations";
-        let config = ServerConfig::new(prompt).with_log_level("off");
+        let config = ServerConfig::new(prompt)
+            .with_log_level("off")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("DynamoDB")
+                    .and_instruction_containing("batch")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "DYNAMO",
+                            "instruction": "DynamoDB server with batch operations"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: BatchWriteItem request
+                    .on_event("dynamo_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "dynamo_response",
+                            "status_code": 200,
+                            "body": "{\"UnprocessedItems\":{}}"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let server = start_netget_server(config).await?;
         println!(
@@ -446,6 +697,9 @@ mod tests {
             Err(e) => println!("[INFO] BatchWriteItem attempt: {}", e),
         }
 
+        // Verify mocks
+        server.verify_mocks().await?;
+
         server.stop().await?;
         println!("=== Test Complete ===\n");
         Ok(())
@@ -456,7 +710,34 @@ mod tests {
         println!("\n=== Test: AWS SDK DescribeTable ===");
 
         let prompt = "Start a DynamoDB server on port 0";
-        let config = ServerConfig::new(prompt).with_log_level("off");
+        let config = ServerConfig::new(prompt)
+            .with_log_level("off")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("DynamoDB")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "DYNAMO",
+                            "instruction": "DynamoDB server"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: DescribeTable request
+                    .on_event("dynamo_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "dynamo_response",
+                            "status_code": 200,
+                            "body": "{\"Table\":{\"TableName\":\"TestTable\",\"TableStatus\":\"ACTIVE\",\"ItemCount\":0}}"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let server = start_netget_server(config).await?;
         println!(
@@ -475,6 +756,7 @@ mod tests {
             Err(e) => println!("[INFO] DescribeTable attempt: {}", e),
         }
 
+        server.verify_mocks().await?;
         server.stop().await?;
         println!("=== Test Complete ===\n");
         Ok(())

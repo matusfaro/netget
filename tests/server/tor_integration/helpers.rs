@@ -128,7 +128,7 @@ impl TorTestNetwork {
                                 "body": consensus_copy
                             }
                         ]))
-                        .min_calls(1)
+                        .expect_calls(1)
                         .and()
                 });
         let directory_server = helpers::start_netget_server(directory_config)

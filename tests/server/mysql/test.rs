@@ -56,7 +56,7 @@ async fn test_mysql_simple_query() -> E2EResult<()> {
                         "rows": [["1000"]]
                     }
                 ]))
-                .min_calls(0)
+                .expect_calls(0)
                 .and()
                 // Mock 4: SELECT 1 query
                 .on_event("mysql_query")
@@ -178,7 +178,7 @@ async fn test_mysql_multi_row_query() -> E2EResult<()> {
                         "rows": [["1000"]]
                     }
                 ]))
-                .min_calls(0)
+                .expect_calls(0)
                 .and()
                 // Mock 4: SELECT * FROM users query
                 .on_event("mysql_query")
@@ -275,7 +275,7 @@ async fn test_mysql_create_table() -> E2EResult<()> {
                         "rows": [["1000"]]
                     }
                 ]))
-                .min_calls(0)
+                .expect_calls(0)
                 .and()
                 // Mock 4: CREATE TABLE query
                 .on_event("mysql_query")

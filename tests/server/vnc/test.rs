@@ -203,13 +203,31 @@ impl VncClient {
 async fn test_vnc_handshake() -> E2EResult<()> {
     println!("\n=== E2E Test: VNC RFB Handshake ===");
 
+    use crate::helpers::NetGetConfig;
+
     // PROMPT: Tell the LLM to start a VNC server
     let prompt =
         "listen on port {AVAILABLE_PORT} via vnc. Accept all connections without authentication. \
         Use 800x600 framebuffer.";
 
+    let config = NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("vnc")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "VNC",
+                        "instruction": "VNC server 800x600 framebuffer"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let mut server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Connect and perform RFB handshake
@@ -239,13 +257,31 @@ async fn test_vnc_handshake() -> E2EResult<()> {
 async fn test_vnc_framebuffer_update() -> E2EResult<()> {
     println!("\n=== E2E Test: VNC Framebuffer Update ===");
 
+    use crate::helpers::NetGetConfig;
+
     // PROMPT: Tell the LLM to start a VNC server with a simple display
     let prompt = "listen on port {AVAILABLE_PORT} via vnc. Accept all connections. \
         Use 640x480 framebuffer. When client requests framebuffer update, \
         send a test pattern.";
 
+    let config = NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("vnc")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "VNC",
+                        "instruction": "VNC server 640x480 framebuffer with test pattern"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let mut server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Connect and request framebuffer update
@@ -303,12 +339,30 @@ async fn test_vnc_framebuffer_update() -> E2EResult<()> {
 async fn test_vnc_input_events() -> E2EResult<()> {
     println!("\n=== E2E Test: VNC Input Events ===");
 
+    use crate::helpers::NetGetConfig;
+
     // PROMPT: Tell the LLM to start a VNC server that accepts input
     let prompt = "listen on port {AVAILABLE_PORT} via vnc. Accept all connections. \
         Log keyboard and mouse events from the client.";
 
+    let config = NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("vnc")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "VNC",
+                        "instruction": "VNC server with input logging"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let mut server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Connect and send input events

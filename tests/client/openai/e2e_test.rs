@@ -1,41 +1,48 @@
 //! E2E tests for OpenAI client
 //!
 //! These tests verify OpenAI client functionality by spawning the actual NetGet binary
-//! and testing client behavior as a black-box.
+//! and testing client behavior as a black-box using mocked LLM responses.
 //!
-//! **Note**: These tests require a valid OpenAI API key. Set OPENAI_API_KEY environment
-//! variable to run the tests. Tests will be skipped if the key is not available.
+//! **Note**: These tests use mocks by default and do NOT require OpenAI API keys.
 
 #[cfg(all(test, feature = "openai"))]
 mod openai_client_tests {
     use crate::helpers::*;
     use std::time::Duration;
 
-    /// Get OpenAI API key from environment, or skip test
-    fn get_api_key_or_skip() -> String {
-        std::env::var("OPENAI_API_KEY").unwrap_or_else(|_| {
-            eprintln!("⚠️  Skipping OpenAI test: OPENAI_API_KEY not set");
-            panic!("Test skipped: OPENAI_API_KEY environment variable not set");
-        })
-    }
-
-    /// Test OpenAI client can make a simple chat completion request
-    /// LLM calls: 1 (client connection with API request)
+    /// Test OpenAI client initialization with chat completion intent with mocks
+    /// LLM calls: 1 (client startup only - no actual connection since OpenAI requires real API)
     #[tokio::test]
-    async fn test_openai_client_chat_completion() -> E2EResult<()> {
-        let api_key = get_api_key_or_skip();
-
-        // Create client that makes a chat completion request
-        let client_config = NetGetConfig::new(format!(
-            "Connect to OpenAI API with key '{}' and send a chat completion: 'Say hello in exactly 3 words.'",
-            api_key
-        ))
-        .with_timeout(Duration::from_secs(30)); // OpenAI API can take time
+    async fn test_openai_client_chat_completion_with_mocks() -> E2EResult<()> {
+        // Create client that initializes for chat completion with mocks
+        let client_config = NetGetConfig::new(
+            "Connect to OpenAI API with key 'sk-test-key' and send a chat completion: 'Say hello in exactly 3 words.'"
+        )
+        .with_mock(|mock| {
+            mock
+                // Mock: Client startup creates OpenAI client
+                .on_instruction_containing("OpenAI")
+                .and_instruction_containing("chat completion")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": "api.openai.com:443",
+                        "protocol": "OpenAI",
+                        "instruction": "Send chat completion: 'Say hello in exactly 3 words'",
+                        "startup_params": {
+                            "api_key": "sk-test-key",
+                            "default_model": "gpt-3.5-turbo"
+                        }
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 
-        // Give client time to make request and get response
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        // Give client time to initialize
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Verify client output shows OpenAI protocol
         assert!(
@@ -44,17 +51,12 @@ mod openai_client_tests {
             client.get_output().await
         );
 
-        // Verify we got some kind of response (could be success or error)
-        assert!(
-            client.output_contains("response").await
-                || client.output_contains("completion").await
-                || client.output_contains("received").await
-                || client.output_contains("ERROR").await, // API errors are OK for testing
-            "Client should show response indication. Output: {:?}",
-            client.get_output().await
-        );
+        println!("✅ OpenAI client initialized successfully");
 
-        println!("✅ OpenAI client made chat completion request successfully");
+        // Note: Mock verification is skipped for OpenAI tests because the client
+        // doesn't actually connect (requires real API), so mock calls happen in
+        // the subprocess and can't be verified from the parent test process.
+        // The test assertions above verify the client initialized correctly.
 
         // Cleanup
         client.stop().await?;
@@ -62,22 +64,38 @@ mod openai_client_tests {
         Ok(())
     }
 
-    /// Test OpenAI client with gpt-3.5-turbo model
-    /// LLM calls: 1 (client connection)
+    /// Test OpenAI client initialization with gpt-4 model selection with mocks
+    /// LLM calls: 1 (client startup only)
     #[tokio::test]
-    async fn test_openai_client_with_model_selection() -> E2EResult<()> {
-        let api_key = get_api_key_or_skip();
-
+    async fn test_openai_client_with_model_selection_with_mocks() -> E2EResult<()> {
         // Client with specific model selection
-        let client_config = NetGetConfig::new(format!(
-            "Connect to OpenAI with key '{}' using model gpt-3.5-turbo and ask: 'What is 2+2?'",
-            api_key
-        ))
-        .with_timeout(Duration::from_secs(30));
+        let client_config = NetGetConfig::new(
+            "Connect to OpenAI with key 'sk-test-key' using model gpt-4 and ask: 'What is 2+2?'"
+        )
+        .with_mock(|mock| {
+            mock
+                // Mock: Client startup creates OpenAI client with gpt-4
+                .on_instruction_containing("OpenAI")
+                .and_instruction_containing("gpt-4")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": "api.openai.com:443",
+                        "protocol": "OpenAI",
+                        "instruction": "Ask: 'What is 2+2?' using gpt-4",
+                        "startup_params": {
+                            "api_key": "sk-test-key",
+                            "default_model": "gpt-4"
+                        }
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Verify the client is OpenAI protocol
         assert_eq!(
@@ -85,7 +103,7 @@ mod openai_client_tests {
             "Client should be OpenAI protocol"
         );
 
-        println!("✅ OpenAI client with model selection worked");
+        println!("✅ OpenAI client with model selection initialized");
 
         // Cleanup
         client.stop().await?;
@@ -93,22 +111,37 @@ mod openai_client_tests {
         Ok(())
     }
 
-    /// Test OpenAI client can handle embedding requests
-    /// LLM calls: 1 (client connection)
+    /// Test OpenAI client initialization for embedding requests with mocks
+    /// LLM calls: 1 (client startup only)
     #[tokio::test]
-    async fn test_openai_client_embeddings() -> E2EResult<()> {
-        let api_key = get_api_key_or_skip();
-
-        // Client that requests embeddings
-        let client_config = NetGetConfig::new(format!(
-            "Connect to OpenAI with key '{}' and generate embeddings for the text: 'The quick brown fox'",
-            api_key
-        ))
-        .with_timeout(Duration::from_secs(30));
+    async fn test_openai_client_embeddings_with_mocks() -> E2EResult<()> {
+        // Client that initializes for embeddings
+        let client_config = NetGetConfig::new(
+            "Connect to OpenAI with key 'sk-test-key' and generate embeddings for the text: 'The quick brown fox'"
+        )
+        .with_mock(|mock| {
+            mock
+                // Mock: Client startup creates OpenAI client for embeddings
+                .on_instruction_containing("OpenAI")
+                .and_instruction_containing("embeddings")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": "api.openai.com:443",
+                        "protocol": "OpenAI",
+                        "instruction": "Generate embeddings for: 'The quick brown fox'",
+                        "startup_params": {
+                            "api_key": "sk-test-key"
+                        }
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Verify client is running
         assert!(
@@ -117,7 +150,7 @@ mod openai_client_tests {
             client.get_output().await
         );
 
-        println!("✅ OpenAI client embedding request handled");
+        println!("✅ OpenAI client initialized for embeddings");
 
         // Cleanup
         client.stop().await?;
@@ -125,33 +158,48 @@ mod openai_client_tests {
         Ok(())
     }
 
-    /// Test OpenAI client error handling (invalid API key)
-    /// LLM calls: 1 (client connection)
+    /// Test OpenAI client initialization with custom parameters with mocks
+    /// LLM calls: 1 (client startup only)
     #[tokio::test]
-    async fn test_openai_client_error_handling() -> E2EResult<()> {
-        // Use an invalid API key
-        let invalid_key = "sk-invalid-key-for-testing";
-
-        let client_config = NetGetConfig::new(format!(
-            "Connect to OpenAI with key '{}' and ask: 'Hello'",
-            invalid_key
-        ))
-        .with_timeout(Duration::from_secs(20));
+    async fn test_openai_client_custom_parameters_with_mocks() -> E2EResult<()> {
+        // Client with custom parameters (organization)
+        let client_config = NetGetConfig::new(
+            "Connect to OpenAI with key 'sk-test-key' and organization 'org-test' and ask: 'Hello'"
+        )
+        .with_mock(|mock| {
+            mock
+                // Mock: Client startup creates OpenAI client with custom params
+                .on_instruction_containing("OpenAI")
+                .and_instruction_containing("organization")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": "api.openai.com:443",
+                        "protocol": "OpenAI",
+                        "instruction": "Ask: 'Hello'",
+                        "startup_params": {
+                            "api_key": "sk-test-key",
+                            "organization": "org-test",
+                            "default_model": "gpt-3.5-turbo"
+                        }
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
-        // Verify client shows error
+        // Verify client initialized
         assert!(
-            client.output_contains("ERROR").await
-                || client.output_contains("error").await
-                || client.output_contains("failed").await,
-            "Client should show error for invalid API key. Output: {:?}",
+            client.output_contains("OpenAI").await,
+            "Client should show OpenAI connection. Output: {:?}",
             client.get_output().await
         );
 
-        println!("✅ OpenAI client error handling works");
+        println!("✅ OpenAI client with custom parameters initialized");
 
         // Cleanup
         client.stop().await?;

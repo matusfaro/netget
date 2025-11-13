@@ -12,7 +12,7 @@
 
 #[cfg(all(test, feature = "isis"))]
 mod e2e_isis {
-    use crate::helpers::{start_netget, NetGetConfig, E2EResult};
+    use crate::helpers::{start_netget_server, NetGetConfig, E2EResult};
     use std::time::Duration;
 
     /// Test IS-IS server startup with interface configuration
@@ -49,14 +49,14 @@ mod e2e_isis {
                     .and()
             });
 
-        let mut instance = start_netget(config).await?;
+        let mut instance = start_netget_server(config).await?;
 
         // Wait for server to be ready
         tokio::time::sleep(Duration::from_secs(2)).await;
 
         // Verify server was started
-        assert_eq!(instance.servers.len(), 1, "Should have 1 server");
-        assert_eq!(instance.servers[0].stack, "IS-IS", "Should be IS-IS stack");
+        // Server started successfully
+        assert_eq!(instance.stack, "IS-IS", "Should be IS-IS stack");
 
         println!("  [TEST] ✓ IS-IS server started successfully");
 
@@ -119,7 +119,7 @@ mod e2e_isis {
                     .and()
             });
 
-        let mut instance = start_netget(config).await?;
+        let mut instance = start_netget_server(config).await?;
 
         // Wait for server to be ready
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -188,7 +188,7 @@ mod e2e_isis {
                     .and()
             });
 
-        let mut instance = start_netget(config).await?;
+        let mut instance = start_netget_server(config).await?;
 
         tokio::time::sleep(Duration::from_secs(2)).await;
 

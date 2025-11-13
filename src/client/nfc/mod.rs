@@ -100,7 +100,7 @@ impl NfcClient {
 
         // Create client state
         #[cfg(feature = "nfc-client")]
-        let client_state = Arc::new(Mutex::new(NfcClientState {
+        let _client_state = Arc::new(Mutex::new(NfcClientState {
             ctx: ctx.clone(),
             reader_name: selected_reader.clone(),
             card: None,

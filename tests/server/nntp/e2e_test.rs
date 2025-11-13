@@ -5,6 +5,8 @@
 
 #![cfg(all(test, feature = "nntp"))]
 
+use crate::helpers::{start_netget_server, NetGetConfig, E2EResult};
+
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::time::Duration;
@@ -31,13 +33,10 @@ fn read_multiline_response(reader: &mut BufReader<&TcpStream>) -> std::io::Resul
 }
 
 #[tokio::test]
-async fn test_nntp_basic_newsgroups() {
+async fn test_nntp_basic_newsgroups() -> E2EResult<()> {
     // Start NetGet with NNTP server
-    let temp_dir = tempfile::tempdir().unwrap();
-    let port = tests::helpers::find_available_port();
-
     let prompt = format!(
-        "listen on port {} via nntp\n\
+        "listen on port {{AVAILABLE_PORT}} via nntp\n\
          Send greeting: \"200 NetGet NNTP Test Server Ready\"\n\
          Support 3 newsgroups:\n\
          - comp.lang.rust (50 articles, numbers 1-50)\n\
@@ -51,22 +50,16 @@ async fn test_nntp_basic_newsgroups() {
          - Code: 220\n\
          - Headers: Subject: Test Article 1, From: test@example.com, Date: Mon, 1 Jan 2024 00:00:00 +0000\n\
          - Body: This is test article number 1.\n\
-         When client sends QUIT, send \"205 Goodbye\" and close connection",
-        port
+         When client sends QUIT, send \"205 Goodbye\" and close connection"
     );
 
-    let mut child = tests::helpers::spawn_netget_with_prompt(
-        temp_dir.path(),
-        &prompt,
-        Some(Duration::from_secs(30)),
-    )
-    .await;
+    let server = start_netget_server(NetGetConfig::new(&prompt)).await?;
 
     // Wait for server to start
     tokio::time::sleep(Duration::from_secs(3)).await;
 
     // Connect to NNTP server
-    let stream = TcpStream::connect(format!("127.0.0.1:{}", port)).unwrap();
+    let stream = TcpStream::connect(format!("127.0.0.1:{}", server.port)).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
         .unwrap();
@@ -167,17 +160,14 @@ async fn test_nntp_basic_newsgroups() {
     );
 
     // Cleanup
-    child.kill().await.ok();
-    temp_dir.close().ok();
+    server.stop().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_nntp_article_overview() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let port = tests::helpers::find_available_port();
-
+async fn test_nntp_article_overview() -> E2EResult<()> {
     let prompt = format!(
-        "listen on port {} via nntp\n\
+        "listen on port {{AVAILABLE_PORT}} via nntp\n\
          Send greeting: \"200 NetGet NNTP Ready\"\n\
          Support newsgroup: comp.test\n\
          When client sends LIST, show: comp.test 5 1 y\n\
@@ -187,20 +177,14 @@ async fn test_nntp_article_overview() {
          - Articles 1-5 with subjects \"Article 1\" through \"Article 5\"\n\
          - From: test@example.com for all\n\
          - Include message_id, bytes, lines\n\
-         When client sends QUIT, send \"205 Goodbye\" and close",
-        port
+         When client sends QUIT, send \"205 Goodbye\" and close"
     );
 
-    let mut child = tests::helpers::spawn_netget_with_prompt(
-        temp_dir.path(),
-        &prompt,
-        Some(Duration::from_secs(30)),
-    )
-    .await;
+    let server = start_netget_server(NetGetConfig::new(&prompt)).await?;
 
     tokio::time::sleep(Duration::from_secs(3)).await;
 
-    let stream = TcpStream::connect(format!("127.0.0.1:{}", port)).unwrap();
+    let stream = TcpStream::connect(format!("127.0.0.1:{}", server.port)).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
         .unwrap();
@@ -246,6 +230,6 @@ async fn test_nntp_article_overview() {
     stream_write.flush().unwrap();
     let _quit_response = read_response_line(&mut reader).unwrap();
 
-    child.kill().await.ok();
-    temp_dir.close().ok();
+    server.stop().await?;
+    Ok(())
 }

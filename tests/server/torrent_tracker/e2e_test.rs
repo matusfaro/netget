@@ -107,18 +107,21 @@ async fn test_tracker_announce_and_scrape() -> E2EResult<()> {
 
     // Parse bencode response
     let value: serde_bencode::value::Value = serde_bencode::from_bytes(&body)?;
-    let dict = value.as_dict().expect("Response should be a dictionary");
+    let dict = match value { serde_bencode::value::Value::Dict(d) => d, _ => panic!("Expected Dict") };
 
     // Verify interval
     let interval = dict
-        .get(b"interval".as_ref())
-        .and_then(|v| v.as_int())
+        .get(b"interval" as &[u8])
+        .and_then(|v| match v {
+            serde_bencode::value::Value::Int(i) => Some(i),
+            _ => None,
+        })
         .expect("Missing interval");
-    assert_eq!(interval, 1800, "Interval should be 1800");
+    assert_eq!(*interval, 1800, "Interval should be 1800");
 
     // Verify peers exist
     assert!(
-        dict.contains_key(b"peers".as_ref()),
+        dict.contains_key::<[u8]>(b"peers".as_ref()),
         "Response should contain peers"
     );
 
@@ -149,11 +152,11 @@ async fn test_tracker_announce_and_scrape() -> E2EResult<()> {
 
     // Parse bencode response
     let value: serde_bencode::value::Value = serde_bencode::from_bytes(&body)?;
-    let dict = value.as_dict().expect("Response should be a dictionary");
+    let dict = match value { serde_bencode::value::Value::Dict(d) => d, _ => panic!("Expected Dict") };
 
     // Verify files dictionary exists
     assert!(
-        dict.contains_key(b"files".as_ref()),
+        dict.contains_key::<[u8]>(b"files".as_ref()),
         "Response should contain files"
     );
 
@@ -227,11 +230,11 @@ async fn test_tracker_error_response() -> E2EResult<()> {
 
     let body = response.bytes().await?;
     let value: serde_bencode::value::Value = serde_bencode::from_bytes(&body)?;
-    let dict = value.as_dict().expect("Response should be a dictionary");
+    let dict = match value { serde_bencode::value::Value::Dict(d) => d, _ => panic!("Expected Dict") };
 
     // Verify error response
     assert!(
-        dict.contains_key(b"failure reason".as_ref()),
+        dict.contains_key(b"failure reason" as &[u8]),
         "Response should contain failure reason"
     );
 

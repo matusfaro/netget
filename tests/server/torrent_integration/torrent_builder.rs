@@ -101,21 +101,28 @@ impl TorrentInfo {
     pub fn parse(torrent_bytes: &[u8]) -> Result<Self> {
         let value: serde_bencode::value::Value = serde_bencode::from_bytes(torrent_bytes)?;
 
-        let torrent_dict = value
-            .as_dict()
-            .ok_or_else(|| anyhow::anyhow!("Torrent is not a dictionary"))?;
+        let torrent_dict = match value {
+            serde_bencode::value::Value::Dict(d) => d,
+            _ => return Err(anyhow::anyhow!("Torrent is not a dictionary")),
+        };
 
         // Extract announce
         let announce = torrent_dict
-            .get(b"announce".as_ref())
-            .and_then(|v| v.as_bytes())
+            .get(b"announce" as &[u8])
+            .and_then(|v| match v {
+                serde_bencode::value::Value::Bytes(b) => Some(b),
+                _ => None,
+            })
             .and_then(|b| String::from_utf8(b.to_vec()).ok())
             .ok_or_else(|| anyhow::anyhow!("Missing announce"))?;
 
         // Extract info dictionary
         let info_dict = torrent_dict
-            .get(b"info".as_ref())
-            .and_then(|v| v.as_dict())
+            .get(b"info" as &[u8])
+            .and_then(|v| match v {
+                serde_bencode::value::Value::Dict(d) => Some(d),
+                _ => None,
+            })
             .ok_or_else(|| anyhow::anyhow!("Missing info"))?;
 
         // Calculate info_hash
@@ -126,16 +133,22 @@ impl TorrentInfo {
         let info_hash = hex::encode(hasher.finalize());
 
         // Extract piece length
-        let piece_length = info_dict
-            .get(b"piece length".as_ref())
-            .and_then(|v| v.as_int())
+        let piece_length = *info_dict
+            .get(b"piece length" as &[u8])
+            .and_then(|v| match v {
+                serde_bencode::value::Value::Int(i) => Some(i),
+                _ => None,
+            })
             .ok_or_else(|| anyhow::anyhow!("Missing piece length"))?
             as usize;
 
         // Extract pieces
         let pieces_bytes = info_dict
-            .get(b"pieces".as_ref())
-            .and_then(|v| v.as_bytes())
+            .get(b"pieces" as &[u8])
+            .and_then(|v| match v {
+                serde_bencode::value::Value::Bytes(b) => Some(b),
+                _ => None,
+            })
             .ok_or_else(|| anyhow::anyhow!("Missing pieces"))?;
 
         let pieces: Vec<Vec<u8>> = pieces_bytes
@@ -145,15 +158,21 @@ impl TorrentInfo {
 
         // Extract name
         let name = info_dict
-            .get(b"name".as_ref())
-            .and_then(|v| v.as_bytes())
+            .get(b"name" as &[u8])
+            .and_then(|v| match v {
+                serde_bencode::value::Value::Bytes(b) => Some(b),
+                _ => None,
+            })
             .and_then(|b| String::from_utf8(b.to_vec()).ok())
             .ok_or_else(|| anyhow::anyhow!("Missing name"))?;
 
         // Extract length
-        let length = info_dict
-            .get(b"length".as_ref())
-            .and_then(|v| v.as_int())
+        let length = *info_dict
+            .get(b"length" as &[u8])
+            .and_then(|v| match v {
+                serde_bencode::value::Value::Int(i) => Some(i),
+                _ => None,
+            })
             .ok_or_else(|| anyhow::anyhow!("Missing length"))? as usize;
 
         Ok(TorrentInfo {

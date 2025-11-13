@@ -157,7 +157,47 @@ async fn test_bgp_peering_establishment() -> E2EResult<()> {
          After receiving a KEEPALIVE, send a KEEPALIVE back to complete the peering. \
          Transition to Established state.";
 
-    let server = start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock: Server startup
+                .on_instruction_containing("bgp")
+                .and_instruction_containing("AS 65001")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "BGP",
+                        "instruction": "AS 65001, router ID 192.168.1.1, respond to OPEN and KEEPALIVE"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock: BGP OPEN received
+                .on_event("bgp_open_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_bgp_open",
+                        "version": 4,
+                        "my_as": 65001,
+                        "hold_time": 180,
+                        "router_id": "192.168.1.1"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock: BGP KEEPALIVE received
+                .on_event("bgp_keepalive_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_bgp_keepalive"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = start_netget_server(config).await?;
 
     // Wait a bit for server to be ready
     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -216,6 +256,9 @@ async fn test_bgp_peering_establishment() -> E2EResult<()> {
     );
     println!("  [TEST] ✓ BGP peering established successfully");
 
+    // Verify mocks
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("  [TEST] ✓ Test completed successfully\n");
 
@@ -230,7 +273,38 @@ async fn test_bgp_notification_on_error() -> E2EResult<()> {
          If you receive an invalid OPEN message (e.g., wrong version), \
          send a NOTIFICATION message with error code 2 (OPEN Message Error), subcode 1 (Unsupported Version Number).";
 
-    let server = start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock: Server startup
+                .on_instruction_containing("bgp")
+                .and_instruction_containing("AS 65001")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "BGP",
+                        "instruction": "AS 65001, send NOTIFICATION on invalid OPEN"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock: Invalid BGP OPEN received (LLM may or may not send NOTIFICATION)
+                .on_event("bgp_open_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_bgp_notification",
+                        "error_code": 2,
+                        "error_subcode": 1,
+                        "data": []
+                    }
+                ]))
+                .min_calls(0)  // May not be called if LLM accepts invalid version
+                .max_calls(1)
+                .and()
+        });
+
+    let server = start_netget_server(config).await?;
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     println!("  [TEST] Connecting to BGP server");
@@ -280,6 +354,9 @@ async fn test_bgp_notification_on_error() -> E2EResult<()> {
         }
     }
 
+    // Verify mocks
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("  [TEST] ✓ Test completed successfully\n");
 
@@ -294,7 +371,48 @@ async fn test_bgp_keepalive_exchange() -> E2EResult<()> {
          Establish BGP peering normally. After peering is established, \
          respond to KEEPALIVE messages with KEEPALIVE messages.";
 
-    let server = start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock: Server startup
+                .on_instruction_containing("bgp")
+                .and_instruction_containing("AS 65001")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "BGP",
+                        "instruction": "AS 65001, establish peering and respond to KEEPALIVE"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock: BGP OPEN received
+                .on_event("bgp_open_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_bgp_open",
+                        "version": 4,
+                        "my_as": 65001,
+                        "hold_time": 180,
+                        "router_id": "192.168.1.1"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock: BGP KEEPALIVE received (multiple times)
+                .on_event("bgp_keepalive_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_bgp_keepalive"
+                    }
+                ]))
+                .min_calls(1)
+                .max_calls(3)
+                .and()
+        });
+
+    let server = start_netget_server(config).await?;
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     println!("  [TEST] Connecting and establishing BGP peering");
@@ -345,6 +463,9 @@ async fn test_bgp_keepalive_exchange() -> E2EResult<()> {
         }
     }
 
+    // Verify mocks
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("  [TEST] ✓ Test completed successfully\n");
 
@@ -359,7 +480,57 @@ async fn test_bgp_graceful_shutdown() -> E2EResult<()> {
          Establish BGP peering normally. If you receive a NOTIFICATION with error code 6 (Cease), \
          acknowledge it by closing the connection gracefully.";
 
-    let server = start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock: Server startup
+                .on_instruction_containing("bgp")
+                .and_instruction_containing("AS 65001")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "BGP",
+                        "instruction": "AS 65001, establish peering and handle Cease gracefully"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock: BGP OPEN received
+                .on_event("bgp_open_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_bgp_open",
+                        "version": 4,
+                        "my_as": 65001,
+                        "hold_time": 180,
+                        "router_id": "192.168.1.1"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock: BGP KEEPALIVE received
+                .on_event("bgp_keepalive_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_bgp_keepalive"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock: BGP NOTIFICATION received (Cease)
+                .on_event("bgp_notification_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "close_connection"
+                    }
+                ]))
+                .min_calls(0)  // May not be called if connection closes first
+                .max_calls(1)
+                .and()
+        });
+
+    let server = start_netget_server(config).await?;
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     println!("  [TEST] Establishing BGP peering");
@@ -402,6 +573,9 @@ async fn test_bgp_graceful_shutdown() -> E2EResult<()> {
             println!("  [TEST] ! Received unexpected message type: {}", msg_type);
         }
     }
+
+    // Verify mocks
+    server.verify_mocks().await?;
 
     server.stop().await?;
     println!("  [TEST] ✓ Test completed successfully\n");

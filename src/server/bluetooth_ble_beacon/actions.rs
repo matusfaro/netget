@@ -65,7 +65,7 @@ impl Protocol for BluetoothBleBeaconProtocol {
     }
 
     fn stack_name(&self) -> &'static str {
-        "DATALINK"
+        "DATALINK>BLE_BEACON"
     }
 
     fn keywords(&self) -> Vec<&'static str> {

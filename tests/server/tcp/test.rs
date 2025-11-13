@@ -39,8 +39,9 @@ async fn test_ftp_greeting() -> E2EResult<()> {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: TCP connection received event (send greeting when client sends CONNECT)
-                    .on_event("tcp_connection_received")
+                    // Mock 2: TCP data received event (send greeting when client sends CONNECT)
+                    .on_event("tcp_data_received")
+                    .and_event_data_contains("data", "CONNECT")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_tcp_data",
@@ -97,8 +98,35 @@ async fn test_ftp_user_command() -> E2EResult<()> {
     // PROMPT: Tell the LLM to respond to USER command
     let prompt = "listen on port {AVAILABLE_PORT} via ftp. When you receive 'USER' command, respond with '331 Password required\\r\\n'";
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: User command interpretation (start server)
+                    .on_instruction_containing("ftp")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "TCP",
+                            "instruction": "FTP server that responds to USER with 331 password required"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: TCP data received event (send 331 response when USER command received)
+                    .on_event("tcp_data_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_tcp_data",
+                            "data": "3333312050617373776f72642072657175697265640d0a" // "331 Password required\r\n" in hex
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Send USER command and verify response
@@ -130,6 +158,9 @@ async fn test_ftp_user_command() -> E2EResult<()> {
         Err(_) => return Err("USER response timeout".into()),
     }
 
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())
@@ -142,8 +173,35 @@ async fn test_ftp_pwd_command() -> E2EResult<()> {
     // PROMPT: Tell the LLM to respond to PWD command
     let prompt = "listen on port {AVAILABLE_PORT} via ftp. When you receive 'PWD' command, respond with '257 \"/home/user\"\\r\\n'";
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: User command interpretation (start server)
+                    .on_instruction_containing("ftp")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "TCP",
+                            "instruction": "FTP server that responds to PWD with 257 current directory"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: TCP data received event (send 257 response when PWD command received)
+                    .on_event("tcp_data_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_tcp_data",
+                            "data": "323537202220222f686f6d652f7573657222220d0a" // "257 \"/home/user\"\r\n" in hex
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Send PWD command and verify response
@@ -175,6 +233,9 @@ async fn test_ftp_pwd_command() -> E2EResult<()> {
         Err(_) => return Err("PWD response timeout".into()),
     }
 
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())
@@ -187,8 +248,35 @@ async fn test_simple_echo() -> E2EResult<()> {
     // PROMPT: Tell the LLM to echo back with ACK prefix
     let prompt = "listen on port {AVAILABLE_PORT} via tcp. When you receive any data, reply with 'ACK: ' followed by the received data";
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: User command interpretation (start server)
+                    .on_instruction_containing("tcp")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "TCP",
+                            "instruction": "TCP echo server that prefixes ACK: to received data"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: TCP data received event (echo with ACK prefix)
+                    .on_event("tcp_data_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_tcp_data",
+                            "data": "41434b3a2048656c6c6f2c204c4c4d21" // "ACK: Hello, LLM!" in hex
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Send data and verify echo response
@@ -228,6 +316,9 @@ async fn test_simple_echo() -> E2EResult<()> {
         Err(_) => return Err("Response timeout".into()),
     }
 
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())
@@ -240,8 +331,35 @@ async fn test_custom_response() -> E2EResult<()> {
     // PROMPT: Tell the LLM to respond to PING with PONG
     let prompt = "listen on port {AVAILABLE_PORT} via tcp. When you receive 'PING', respond with 'PONG\\r\\n'";
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: User command interpretation (start server)
+                    .on_instruction_containing("tcp")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "TCP",
+                            "instruction": "TCP server that responds to PING with PONG"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: TCP data received event (send PONG when PING received)
+                    .on_event("tcp_data_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_tcp_data",
+                            "data": "504f4e470d0a" // "PONG\r\n" in hex
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Verify PING/PONG
@@ -271,6 +389,9 @@ async fn test_custom_response() -> E2EResult<()> {
         Ok(Err(e)) => return Err(format!("Read error: {}", e).into()),
         Err(_) => return Err("Response timeout".into()),
     }
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
 
     server.stop().await?;
     println!("=== Test passed ===\n");

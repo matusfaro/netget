@@ -87,7 +87,7 @@ async fn start_test_https_server() -> E2EResult<(u16, tokio::task::JoinHandle<()
         .distinguished_name
         .push(rcgen::DnType::CommonName, "localhost");
     params.subject_alt_names = vec![
-        rcgen::SanType::DnsName(rcgen::Ia5String::try_from("localhost".to_string())?),
+        rcgen::SanType::DnsName(rcgen::string::Ia5String::try_from("localhost").unwrap()),
         rcgen::SanType::IpAddress(std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1))),
     ];
 
@@ -148,7 +148,35 @@ async fn test_proxy_http_passthrough() -> E2EResult<()> {
     // Start proxy server with pass-through configuration
     let prompt = "listen on port {AVAILABLE_PORT} using proxy stack. Pass all HTTP requests through unchanged to their destination";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("proxy stack")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "Proxy",
+                            "instruction": "Pass all HTTP requests through unchanged"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: HTTP request received
+                    .on_event("proxy_http_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "proxy_forward_request",
+                            "modify_headers": {},
+                            "modify_body": null
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("Proxy server started on port {}", server.port);
 
     assert_eq!(server.stack, "Proxy", "Expected Proxy server");
@@ -181,6 +209,7 @@ async fn test_proxy_http_passthrough() -> E2EResult<()> {
     assert!(body.contains("Test Server Root"));
 
     println!("✓ Request successfully proxied");
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())
@@ -197,7 +226,35 @@ async fn test_proxy_http_block() -> E2EResult<()> {
     // Start proxy server with blocking configuration
     let prompt = "listen on port {AVAILABLE_PORT} using proxy stack. Block all HTTP requests with status 403 and body 'Access Denied by Proxy'";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("proxy stack")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "Proxy",
+                            "instruction": "Block all HTTP requests with status 403"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: HTTP request received - block it
+                    .on_event("proxy_http_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "proxy_block_request",
+                            "status_code": 403,
+                            "body": "Access Denied by Proxy"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("Proxy server started on port {}", server.port);
 
     // Configure HTTP client to use proxy
@@ -220,6 +277,7 @@ async fn test_proxy_http_block() -> E2EResult<()> {
     );
 
     println!("✓ Request successfully blocked by proxy");
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())
@@ -236,7 +294,38 @@ async fn test_proxy_modify_request_headers() -> E2EResult<()> {
     // Start proxy server with header modification
     let prompt = "listen on port {AVAILABLE_PORT} using proxy stack. For all HTTP requests, add header 'X-Proxy-Modified: NetGet' and remove 'User-Agent' header before forwarding";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("proxy stack")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "Proxy",
+                            "instruction": "Add X-Proxy-Modified header and remove User-Agent"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: HTTP request received - modify headers
+                    .on_event("proxy_http_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "proxy_forward_request",
+                            "modify_headers": {
+                                "X-Proxy-Modified": "NetGet",
+                                "User-Agent": null
+                            },
+                            "modify_body": null
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("Proxy server started on port {}", server.port);
 
     // Configure HTTP client to use proxy
@@ -258,6 +347,7 @@ async fn test_proxy_modify_request_headers() -> E2EResult<()> {
     // Note: We can't directly verify the headers received by the target server
     // from the client response, but we verified the proxy processed the request
     println!("✓ Request processed with header modifications");
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())
@@ -274,7 +364,35 @@ async fn test_proxy_modify_request_body() -> E2EResult<()> {
     // Start proxy server in simple pass-through mode for POST requests
     let prompt = r#"listen on port {AVAILABLE_PORT} using proxy stack. Pass all HTTP requests through unchanged to their destination."#;
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("proxy stack")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "Proxy",
+                            "instruction": "Pass all HTTP requests through unchanged"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: HTTP POST request received
+                    .on_event("proxy_http_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "proxy_forward_request",
+                            "modify_headers": {},
+                            "modify_body": null
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("Proxy server started on port {}", server.port);
 
     // Configure HTTP client to use proxy
@@ -294,6 +412,7 @@ async fn test_proxy_modify_request_body() -> E2EResult<()> {
     assert_eq!(response.status(), 201);
 
     println!("✓ POST request successfully proxied");
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())
@@ -310,7 +429,46 @@ async fn test_proxy_filter_by_path() -> E2EResult<()> {
     // Start proxy server with path-based filtering
     let prompt = "listen on port {AVAILABLE_PORT} using proxy stack. Block only requests to /json with status 403. Pass all other requests through unchanged";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("proxy stack")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "Proxy",
+                            "instruction": "Block /json with 403, pass others through"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: First request to / - pass through
+                    .on_event("proxy_http_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "proxy_forward_request",
+                            "modify_headers": {},
+                            "modify_body": null
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: Second request to /json - block
+                    .on_event("proxy_http_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "proxy_block_request",
+                            "status_code": 403,
+                            "body": "Forbidden"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("Proxy server started on port {}", server.port);
 
     // Configure HTTP client to use proxy
@@ -330,6 +488,7 @@ async fn test_proxy_filter_by_path() -> E2EResult<()> {
     assert_eq!(response.status(), 403);
     println!("✓ /json request blocked");
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())
@@ -346,7 +505,33 @@ async fn test_proxy_https_passthrough() -> E2EResult<()> {
     // Start proxy server in pass-through mode (no certificate)
     let prompt = "listen on port {AVAILABLE_PORT} using proxy stack with no certificate (pass-through mode). Allow all HTTPS connections";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("proxy stack")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "Proxy",
+                            "instruction": "Pass-through mode, allow all HTTPS"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: HTTPS CONNECT request received
+                    .on_event("proxy_https_connect_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "proxy_allow_connect"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!(
         "Proxy server started on port {} (pass-through mode)",
         server.port
@@ -369,6 +554,7 @@ async fn test_proxy_https_passthrough() -> E2EResult<()> {
     assert!(body.contains("HTTPS Test Server"));
 
     println!("✓ HTTPS request proxied successfully through pass-through mode");
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())
@@ -385,7 +571,34 @@ async fn test_proxy_https_block_by_sni() -> E2EResult<()> {
     // Start proxy server with SNI-based blocking
     let prompt = "listen on port {AVAILABLE_PORT} using proxy stack with no certificate. Block HTTPS connections to 127.0.0.1 with reason 'Blocked by policy'";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("proxy stack")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "Proxy",
+                            "instruction": "Block HTTPS to 127.0.0.1"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: HTTPS CONNECT request received - block it
+                    .on_event("proxy_https_connect_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "proxy_block_connect",
+                            "reason": "Blocked by policy"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!(
         "Proxy server started on port {} (SNI blocking mode)",
         server.port
@@ -420,6 +633,7 @@ async fn test_proxy_https_block_by_sni() -> E2EResult<()> {
         }
     }
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())
@@ -436,7 +650,36 @@ async fn test_proxy_url_rewrite() -> E2EResult<()> {
     // Start proxy server with URL rewriting
     let prompt = "listen on port {AVAILABLE_PORT} using proxy stack. Rewrite all requests to /api/* to just / before forwarding";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("proxy stack")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "Proxy",
+                            "instruction": "Rewrite /api/* to /"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: HTTP request received - rewrite URL
+                    .on_event("proxy_http_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "proxy_forward_request",
+                            "modify_url": "/",
+                            "modify_headers": {},
+                            "modify_body": null
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("Proxy server started on port {}", server.port);
 
     // Configure HTTP client to use proxy
@@ -454,6 +697,7 @@ async fn test_proxy_url_rewrite() -> E2EResult<()> {
     assert!(body.contains("Test Server Root"));
 
     println!("✓ URL successfully rewritten");
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())

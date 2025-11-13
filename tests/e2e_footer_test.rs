@@ -11,10 +11,9 @@
 //!
 //! These tests ensure the fix remains effective.
 
-#[path = "server/helpers.rs"]
 mod helpers;
 
-use helpers::{E2EResult, ServerConfig};
+use helpers::{start_netget_server, E2EResult, NetGetConfig};
 use tokio::net::TcpStream;
 use tokio::time::{sleep, Duration};
 
@@ -32,12 +31,28 @@ async fn test_footer_updates_cleanly_on_server_start() -> E2EResult<()> {
     println!("\n=== E2E Test: Footer Updates Cleanly on Server Start ===");
 
     // Start a TCP server (simpler and more reliable than HTTP for this test)
-    let port = helpers::get_available_port().await?;
-    let prompt = format!("listen on port {} via tcp", port);
+    let prompt = "listen on port {AVAILABLE_PORT} via tcp";
 
-    // Start the server
-    let server =
-        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("info")).await?;
+    // Start the server with mock
+    let config = NetGetConfig::new(prompt)
+        .with_log_level("info")
+        .with_mock(|mock| {
+            mock
+                // Mock server startup
+                .on_instruction_containing("tcp")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "TCP",
+                        "instruction": "TCP server for footer test"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let mut server = start_netget_server(config).await?;
     println!("TCP server started on port {}", server.port);
 
     // Give the server time to fully initialize and update UI
@@ -89,6 +104,9 @@ async fn test_footer_updates_cleanly_on_server_start() -> E2EResult<()> {
 
     println!("✓ Footer updated cleanly without garbling");
 
+    // Verify mock expectations
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -102,10 +120,25 @@ async fn test_footer_handles_multiple_server_startups() -> E2EResult<()> {
     println!("\n=== E2E Test: Footer Handles Multiple Server Startups ===");
 
     // Start first server
-    let port1 = helpers::get_available_port().await?;
-    let prompt1 = format!("listen on port {} via tcp", port1);
-    let server1 =
-        helpers::start_netget_server(ServerConfig::new(prompt1).with_log_level("info")).await?;
+    let prompt1 = "listen on port {AVAILABLE_PORT} via tcp";
+    let config1 = NetGetConfig::new(prompt1)
+        .with_log_level("info")
+        .with_mock(|mock| {
+            mock
+                // Mock server startup
+                .on_instruction_containing("tcp")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "TCP",
+                        "instruction": "TCP server 1 for footer test"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+    let mut server1 = start_netget_server(config1).await?;
     println!("Server 1 started on port {}", server1.port);
 
     // Verify first server works
@@ -121,13 +154,31 @@ async fn test_footer_handles_multiple_server_startups() -> E2EResult<()> {
         .count();
     println!("Server 1 output: {} startup-related lines", startup_count1);
 
+    // Verify mock expectations for server 1
+    server1.verify_mocks().await?;
+
     server1.stop().await?;
 
     // Start second server (tests that stopping/starting doesn't break footer)
-    let port2 = helpers::get_available_port().await?;
-    let prompt2 = format!("listen on port {} via tcp", port2);
-    let server2 =
-        helpers::start_netget_server(ServerConfig::new(prompt2).with_log_level("info")).await?;
+    let prompt2 = "listen on port {AVAILABLE_PORT} via tcp";
+    let config2 = NetGetConfig::new(prompt2)
+        .with_log_level("info")
+        .with_mock(|mock| {
+            mock
+                // Mock server startup
+                .on_instruction_containing("tcp")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "TCP",
+                        "instruction": "TCP server 2 for footer test"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+    let mut server2 = start_netget_server(config2).await?;
     println!("Server 2 started on port {}", server2.port);
 
     // Verify second server works
@@ -148,6 +199,9 @@ async fn test_footer_handles_multiple_server_startups() -> E2EResult<()> {
 
     println!("✓ Multiple server startups handled cleanly");
 
+    // Verify mock expectations for server 2
+    server2.verify_mocks().await?;
+
     server2.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -167,11 +221,10 @@ async fn test_footer_handles_multiple_server_startups() -> E2EResult<()> {
 async fn test_server_output_spacing() -> E2EResult<()> {
     println!("\n=== E2E Test: Server Output Spacing ===");
 
-    let port = helpers::get_available_port().await?;
-    let prompt = format!("listen on port {} via tcp", port);
+    let prompt = "listen on port {AVAILABLE_PORT} via tcp";
 
     let server =
-        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("info")).await?;
+        start_netget_server(NetGetConfig::new(prompt).with_log_level("info")).await?;
     println!("TCP server started on port {}", server.port);
 
     // Give server time to print all startup messages

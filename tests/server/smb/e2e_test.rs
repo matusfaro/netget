@@ -118,7 +118,7 @@ async fn test_smb_negotiate() -> E2EResult<()> {
                  Accept all guest connections without password. \
                  Provide a virtual filesystem with /documents directory containing welcome.txt";
 
-    let config = helpers::NetGetConfig::new(prompt)
+    let config = crate::helpers::NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock: Server startup
@@ -191,7 +191,7 @@ async fn test_smb_session_setup() -> E2EResult<()> {
     let prompt = "Start an SMB file server on port 8446. \
                  Allow guest authentication without credentials.";
 
-    let config = helpers::NetGetConfig::new(prompt)
+    let config = crate::helpers::NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock: Server startup
@@ -274,7 +274,7 @@ async fn test_smb_concurrent_connections() -> E2EResult<()> {
     let prompt = "Start an SMB file server on port 8447. \
                  Handle multiple concurrent client connections.";
 
-    let config = helpers::NetGetConfig::new(prompt)
+    let config = crate::helpers::NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 // Mock: Server startup
@@ -359,7 +359,7 @@ async fn test_smb_server_responsiveness() -> E2EResult<()> {
     let prompt = "Start an SMB file server on port 8448. \
                  Respond to all SMB2 requests with appropriate messages.";
 
-    let config = helpers::NetGetConfig::new(prompt)
+    let config = crate::helpers::NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 .on_instruction_containing("SMB file server")
@@ -444,7 +444,7 @@ async fn test_smb_correct_stack() -> E2EResult<()> {
 
     let prompt = "Start an SMB file server on port 8449 via smb.";
 
-    let config = helpers::NetGetConfig::new(prompt)
+    let config = crate::helpers::NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 .on_instruction_containing("SMB file server")
@@ -489,7 +489,7 @@ async fn test_smb_auth_llm_controlled() -> E2EResult<()> {
                  Allow user 'alice' by responding with smb_auth_success. \
                  For all other users, respond with smb_auth_deny.";
 
-    let config = helpers::NetGetConfig::new(prompt)
+    let config = crate::helpers::NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 .on_instruction_containing("SMB file server")
@@ -574,7 +574,7 @@ async fn test_smb_connection_tracking() -> E2EResult<()> {
 
     let prompt = "Start an SMB file server on port 8451 via smb.";
 
-    let config = helpers::NetGetConfig::new(prompt)
+    let config = crate::helpers::NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
                 .on_instruction_containing("SMB file server")

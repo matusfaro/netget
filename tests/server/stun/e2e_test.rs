@@ -5,7 +5,7 @@
 
 #![cfg(feature = "stun")]
 
-use crate::helpers::{E2EResult, NetGetConfig};
+use crate::helpers::{start_netget_server, E2EResult, NetGetConfig};
 use std::net::{SocketAddr, UdpSocket};
 use std::time::Duration;
 
@@ -44,11 +44,10 @@ async fn test_stun_basic_binding_request() -> E2EResult<()> {
                 .and()
         });
 
-    let mut test_state = crate::helpers::start_netget(config).await?;
+    let mut test_state = start_netget_server(config).await?;
 
     // Extract server port
-    assert!(!test_state.servers.is_empty(), "Expected at least one server");
-    let port = test_state.servers[0].port;
+    let port = test_state.port;
 
     // Wait for server to be ready
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -163,11 +162,10 @@ async fn test_stun_multiple_clients() -> E2EResult<()> {
                 .and()
         });
 
-    let mut test_state = crate::helpers::start_netget(config).await?;
+    let mut test_state = start_netget_server(config).await?;
 
     // Extract server port
-    assert!(!test_state.servers.is_empty(), "Expected at least one server");
-    let port = test_state.servers[0].port;
+    let port = test_state.port;
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -222,10 +220,25 @@ async fn test_stun_multiple_clients() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_stun_xor_mapped_address() -> E2EResult<()> {
-    let config = ServerConfig::new("Start a STUN server on port 0 using XOR-MAPPED-ADDRESS")
-        .with_log_level("off");
+    let config = NetGetConfig::new("Start a STUN server on port 0 using XOR-MAPPED-ADDRESS")
+        .with_log_level("off")
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("STUN server")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "open_server", "port": 0, "base_stack": "STUN", "instruction": "STUN server"}
+                ]))
+                .expect_calls(1)
+                .and()
+                .on_event("stun_binding_request")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "send_stun_binding_response", "xor_mapped": true}
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
-    let test_state = start_netget_server(config).await?;
+    let mut test_state = start_netget_server(config).await?;
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -282,18 +295,28 @@ async fn test_stun_xor_mapped_address() -> E2EResult<()> {
         Err(e) => panic!("Failed to receive response: {}", e),
     }
 
+    test_state.verify_mocks().await?;
     test_state.stop().await?;
     Ok(())
 }
 
 #[tokio::test]
 async fn test_stun_invalid_magic_cookie() -> E2EResult<()> {
-    let config = ServerConfig::new(
+    let config = NetGetConfig::new(
         "Start a STUN server on port 0 that validates magic cookie and rejects invalid packets",
     )
-    .with_log_level("off");
+    .with_log_level("off")
+    .with_mock(|mock| {
+        mock
+            .on_instruction_containing("STUN server")
+            .respond_with_actions(serde_json::json!([
+                {"type": "open_server", "port": 0, "base_stack": "STUN", "instruction": "STUN server"}
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
-    let test_state = start_netget_server(config).await?;
+    let mut test_state = start_netget_server(config).await?;
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -344,16 +367,26 @@ async fn test_stun_invalid_magic_cookie() -> E2EResult<()> {
         }
     }
 
+    test_state.verify_mocks().await?;
     test_state.stop().await?;
     Ok(())
 }
 
 #[tokio::test]
 async fn test_stun_malformed_short_packet() -> E2EResult<()> {
-    let config = ServerConfig::new("Start a STUN server on port 0 that validates packet length")
-        .with_log_level("off");
+    let config = NetGetConfig::new("Start a STUN server on port 0 that validates packet length")
+        .with_log_level("off")
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("STUN server")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "open_server", "port": 0, "base_stack": "STUN", "instruction": "STUN server"}
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
-    let test_state = start_netget_server(config).await?;
+    let mut test_state = start_netget_server(config).await?;
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -399,6 +432,7 @@ async fn test_stun_malformed_short_packet() -> E2EResult<()> {
         }
     }
 
+    test_state.verify_mocks().await?;
     test_state.stop().await?;
     Ok(())
 }
@@ -406,10 +440,25 @@ async fn test_stun_malformed_short_packet() -> E2EResult<()> {
 #[tokio::test]
 async fn test_stun_request_with_attributes() -> E2EResult<()> {
     let config =
-        ServerConfig::new("Start a STUN server on port 0 that handles requests with attributes")
-            .with_log_level("off");
+        NetGetConfig::new("Start a STUN server on port 0 that handles requests with attributes")
+            .with_log_level("off")
+            .with_mock(|mock| {
+                mock
+                    .on_instruction_containing("STUN server")
+                    .respond_with_actions(serde_json::json!([
+                        {"type": "open_server", "port": 0, "base_stack": "STUN", "instruction": "STUN server"}
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    .on_event("stun_binding_request")
+                    .respond_with_actions(serde_json::json!([
+                        {"type": "send_stun_binding_response"}
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
-    let test_state = start_netget_server(config).await?;
+    let mut test_state = start_netget_server(config).await?;
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -448,15 +497,32 @@ async fn test_stun_request_with_attributes() -> E2EResult<()> {
         }
     }
 
+    test_state.verify_mocks().await?;
     test_state.stop().await?;
     Ok(())
 }
 
 #[tokio::test]
 async fn test_stun_rapid_requests() -> E2EResult<()> {
-    let config = ServerConfig::new("Start a STUN server on port 0").with_log_level("off");
+    let config = NetGetConfig::new("Start a STUN server on port 0")
+        .with_log_level("off")
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("STUN server")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "open_server", "port": 0, "base_stack": "STUN", "instruction": "STUN server"}
+                ]))
+                .expect_calls(1)
+                .and()
+                .on_event("stun_binding_request")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "send_stun_binding_response"}
+                ]))
+                .expect_calls(5)
+                .and()
+        });
 
-    let test_state = start_netget_server(config).await?;
+    let mut test_state = start_netget_server(config).await?;
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -520,6 +586,7 @@ async fn test_stun_rapid_requests() -> E2EResult<()> {
         "Should receive at least one response"
     );
 
+    test_state.verify_mocks().await?;
     test_state.stop().await?;
     Ok(())
 }

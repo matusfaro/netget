@@ -326,8 +326,48 @@ async fn test_socks5_with_authentication() -> E2EResult<()> {
         IMPORTANT: Use startup_params with auth_methods set to [\"username_password\"]. \
         Accept username 'testuser' with password 'testpass'. Allow all connections after successful authentication.";
 
-    // Start the SOCKS5 server
-    let server = start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the SOCKS5 server with mocks
+    let server = start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("SOCKS5 proxy")
+                    .and_instruction_containing("username/password authentication")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "SOCKS5",
+                            "instruction": "Accept username 'testuser' with password 'testpass'. Allow all connections after successful authentication",
+                            "startup_params": {
+                                "auth_methods": ["username_password"]
+                            }
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Authentication attempt
+                    .on_event("socks5_auth")
+                    .and_event_data_contains("username", "testuser")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "allow_auth"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: CONNECT request
+                    .on_event("socks5_connect")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "allow_connect"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("SOCKS5 server started on port {}", server.port);
 
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -344,6 +384,7 @@ async fn test_socks5_with_authentication() -> E2EResult<()> {
 
     if !auth_success {
         println!("✗ Authentication failed");
+        http_handle.abort();
         server.stop().await?;
         return Err("SOCKS5 authentication failed".into());
     }
@@ -360,6 +401,9 @@ async fn test_socks5_with_authentication() -> E2EResult<()> {
         println!("✓ CONNECT successful");
     }
 
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     // Cleanup
     http_handle.abort();
     server.stop().await?;
@@ -375,8 +419,49 @@ async fn test_socks5_connection_rejection() -> E2EResult<()> {
     let prompt = "Start a SOCKS5 proxy server on port {AVAILABLE_PORT}. Deny any connection attempts to port 9999. \
         Allow all other connections.";
 
-    // Start the SOCKS5 server
-    let server = start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the SOCKS5 server with mocks
+    let server = start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("SOCKS5 proxy")
+                    .and_instruction_containing("Deny any connection attempts to port 9999")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "SOCKS5",
+                            "instruction": "Deny any connection attempts to port 9999. Allow all other connections",
+                            "startup_params": {
+                                "auth_methods": ["no_auth"]
+                            }
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Handshake
+                    .on_event("socks5_handshake")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "wait_for_more"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: CONNECT to blocked port 9999
+                    .on_event("socks5_connect")
+                    .and_event_data_contains("port", 9999)
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "deny_connect",
+                            "reason": "Connection to port 9999 not allowed"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("SOCKS5 server started on port {}", server.port);
 
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -402,6 +487,9 @@ async fn test_socks5_connection_rejection() -> E2EResult<()> {
     }
     println!("✓ Connection correctly denied");
 
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -419,8 +507,48 @@ async fn test_socks5_domain_name() -> E2EResult<()> {
     let prompt = "Start a SOCKS5 proxy server on port {AVAILABLE_PORT} that accepts domain names in CONNECT requests. \
         Allow connections to localhost.";
 
-    // Start the SOCKS5 server
-    let server = start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the SOCKS5 server with mocks
+    let server = start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("SOCKS5 proxy")
+                    .and_instruction_containing("domain names")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "SOCKS5",
+                            "instruction": "Accept domain names in CONNECT requests. Allow connections to localhost",
+                            "startup_params": {
+                                "auth_methods": ["no_auth"]
+                            }
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Handshake
+                    .on_event("socks5_handshake")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "wait_for_more"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: CONNECT with domain name
+                    .on_event("socks5_connect")
+                    .and_event_data_contains("target", "localhost")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "allow_connect"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("SOCKS5 server started on port {}", server.port);
 
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -445,6 +573,9 @@ async fn test_socks5_domain_name() -> E2EResult<()> {
     }
     println!("✓ CONNECT with domain name successful");
 
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     // Cleanup
     http_handle.abort();
     server.stop().await?;
@@ -466,8 +597,57 @@ async fn test_socks5_mitm_inspection() -> E2EResult<()> {
         When HTTP data flows through, forward it unchanged to the target. \
         Allow all connections to localhost.";
 
-    // Start the SOCKS5 server
-    let server = start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the SOCKS5 server with mocks
+    let server = start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("SOCKS5 proxy")
+                    .and_instruction_containing("MITM inspection")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "SOCKS5",
+                            "instruction": "When HTTP data flows through, forward it unchanged to the target. Allow all connections to localhost",
+                            "startup_params": {
+                                "auth_methods": ["no_auth"],
+                                "mitm_by_default": true
+                            }
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Handshake
+                    .on_event("socks5_handshake")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "wait_for_more"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: CONNECT request
+                    .on_event("socks5_connect")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "allow_connect"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 4: Data inspection (forward unchanged)
+                    .on_event("socks5_data_from_client")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "forward_data"
+                        }
+                    ]))
+                    .expect_calls_at_least(1)
+                    .and()
+            })
+    ).await?;
     println!("SOCKS5 server started on port {}", server.port);
 
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -550,6 +730,9 @@ async fn test_socks5_mitm_inspection() -> E2EResult<()> {
 
     println!("✓ Received valid HTTP response through MITM proxy");
     println!("✓ MITM inspection successful");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
 
     // Cleanup
     http_handle.abort();

@@ -115,6 +115,7 @@ mod redis_client_tests {
     /// Test Redis client connection and command execution (original test without mocks)
     /// LLM calls: 2 (server startup, client connection)
     #[tokio::test]
+    #[ignore]
     async fn test_redis_client_connect_and_command() -> E2EResult<()> {
         // Start a Redis server listening on an available port
         let server_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via Redis. Accept PING commands and respond with PONG.",);
@@ -239,6 +240,7 @@ mod redis_client_tests {
     /// Test Redis client can be controlled via LLM instructions (original test without mocks)
     /// LLM calls: 2 (server startup, client connection)
     #[tokio::test]
+    #[ignore]
     async fn test_redis_client_llm_controlled_commands() -> E2EResult<()> {
         // Start a simple Redis server
         let server_config =

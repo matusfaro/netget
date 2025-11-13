@@ -3,7 +3,7 @@
 use crate::llm::actions::{
     client_trait::{Client, ClientActionResult},
     protocol_trait::Protocol,
-    ActionDefinition, Parameter,
+    ActionDefinition, Parameter, ParameterDefinition,
 };
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
@@ -144,6 +144,53 @@ impl Protocol for WireguardClientProtocol {
 
     fn group_name(&self) -> &'static str {
         "VPN"
+    }
+
+    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
+        vec![
+            ParameterDefinition {
+                name: "server_public_key".to_string(),
+                type_hint: "string".to_string(),
+                description: "WireGuard server's public key (base64 encoded)".to_string(),
+                required: true,
+                example: json!("xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg="),
+            },
+            ParameterDefinition {
+                name: "server_endpoint".to_string(),
+                type_hint: "string".to_string(),
+                description: "Server endpoint IP:port (e.g., 1.2.3.4:51820)".to_string(),
+                required: true,
+                example: json!("1.2.3.4:51820"),
+            },
+            ParameterDefinition {
+                name: "client_address".to_string(),
+                type_hint: "string".to_string(),
+                description: "Client's VPN IP address with CIDR (e.g., 10.20.30.2/32)".to_string(),
+                required: true,
+                example: json!("10.20.30.2/32"),
+            },
+            ParameterDefinition {
+                name: "allowed_ips".to_string(),
+                type_hint: "array".to_string(),
+                description: "IP ranges to route through VPN (default: 0.0.0.0/0 for all traffic)".to_string(),
+                required: false,
+                example: json!(["0.0.0.0/0", "::/0"]),
+            },
+            ParameterDefinition {
+                name: "keepalive".to_string(),
+                type_hint: "integer".to_string(),
+                description: "Persistent keepalive interval in seconds (optional)".to_string(),
+                required: false,
+                example: json!(25),
+            },
+            ParameterDefinition {
+                name: "private_key".to_string(),
+                type_hint: "string".to_string(),
+                description: "Client private key (base64). If not provided, will be generated.".to_string(),
+                required: false,
+                example: json!("YAnz5TF+lXXJte14tji3zlMNftft3YEPi775qQV8mno="),
+            },
+        ]
     }
 }
 

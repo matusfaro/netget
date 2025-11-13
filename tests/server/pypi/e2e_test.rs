@@ -59,7 +59,35 @@ Any other package requests:
 Use scripting mode to handle all requests without LLM calls after initial setup.
 "#,
     )
-    .with_log_level("off");
+    .with_log_level("off")
+    .with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_instruction_containing("PyPI")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "PyPI",
+                    "instruction": "Serve hello-world and example-pkg packages"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2-6: HTTP requests (use on_any to match all HTTP requests)
+            .on_event("http_request_received")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_http_response",
+                    "status_code": 200,
+                    "headers": {"Content-Type": "text/html"},
+                    "body": "<!DOCTYPE html><html><body><a href=\"hello-world/\">hello-world</a><br><a href=\"example-pkg/\">example-pkg</a></body></html>"
+                }
+            ]))
+            .min_calls(1)
+            .max_calls(10)
+            .and()
+    });
 
     let test_state = start_netget_server(config).await?;
 
@@ -200,6 +228,8 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
 
     println!("\n✓✓✓ All PyPI E2E tests passed!");
 
+    test_state.verify_mocks().await?;
+    test_state.stop().await?;
     Ok(())
 }
 
@@ -222,7 +252,34 @@ Return: <!DOCTYPE html><html><body><a href="../../packages/t/test-pkg/test_pkg-0
 Use scripting mode for zero LLM calls after setup.
 "#,
     )
-    .with_log_level("off");
+    .with_log_level("off")
+    .with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_instruction_containing("PyPI")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "PyPI",
+                    "instruction": "Serve test-pkg package"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: HTTP request
+            .on_event("http_request_received")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_http_response",
+                    "status_code": 200,
+                    "headers": {"Content-Type": "text/html"},
+                    "body": "<!DOCTYPE html><html><body><a href=\"test-pkg/\">test-pkg</a></body></html>"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let test_state = start_netget_server(config).await?;
     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -246,5 +303,7 @@ Use scripting mode for zero LLM calls after setup.
     );
     println!("✓ Minimal PyPI server works correctly");
 
+    test_state.verify_mocks().await?;
+    test_state.stop().await?;
     Ok(())
 }

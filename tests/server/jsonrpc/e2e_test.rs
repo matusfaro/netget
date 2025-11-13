@@ -255,7 +255,7 @@ async fn test_jsonrpc_batch_request() -> E2EResult<()> {
                     // First batch item: id=1, params=["first"]
                     .on_event("jsonrpc_method_call")
                     .and_event_data_contains("method", "echo")
-                    .and_event_data_contains("id", 1)
+                    .and_event_data_contains("id", "1")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "jsonrpc_success",
@@ -268,7 +268,7 @@ async fn test_jsonrpc_batch_request() -> E2EResult<()> {
                     // Second batch item: id=2, params=["second"]
                     .on_event("jsonrpc_method_call")
                     .and_event_data_contains("method", "echo")
-                    .and_event_data_contains("id", 2)
+                    .and_event_data_contains("id", "2")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "jsonrpc_success",
@@ -281,7 +281,7 @@ async fn test_jsonrpc_batch_request() -> E2EResult<()> {
                     // Third batch item: id=3, params=["third"]
                     .on_event("jsonrpc_method_call")
                     .and_event_data_contains("method", "echo")
-                    .and_event_data_contains("id", 3)
+                    .and_event_data_contains("id", "3")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "jsonrpc_success",

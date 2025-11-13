@@ -31,7 +31,7 @@ impl Protocol for BluetoothBleFileTransferProtocol {
         vec![]
     }
     fn stack_name(&self) -> &'static str {
-        "DATALINK"
+        "DATALINK>BLE_FILE_TRANSFER"
     }
     fn keywords(&self) -> Vec<&'static str> {
         vec!["bluetooth", "file_transfer"]

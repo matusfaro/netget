@@ -39,7 +39,50 @@ mod e2e_imap_client {
                      Allow LOGIN for username 'alice' with password 'secret123'. \
                      Greet with: * OK IMAP4rev1 NetGet Server Ready";
 
-        let server = start_netget_server(ServerConfig::new(prompt)).await?;
+        let server_config = ServerConfig::new(prompt).with_mock(|mock| {
+            mock
+                // Mock: Server startup
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("imap")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "imap",
+                        "instruction": "Allow LOGIN for alice/secret123"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock: Login success event
+                .on_event("imap_command_received")
+                .with_param("command", "LOGIN")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "tag": "A001",
+                        "status": "OK",
+                        "message": "LOGIN completed"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock: Logout event
+                .on_event("imap_command_received")
+                .with_param("command", "LOGOUT")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "tag": "A002",
+                        "status": "OK",
+                        "message": "LOGOUT completed"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+        let mut server = start_netget_server(server_config).await?;
         println!("  [TEST] Server started on port {}", server.port);
 
         // Connect using async-imap client
@@ -60,6 +103,7 @@ mod e2e_imap_client {
             .map_err(|e| format!("Logout failed: {}", e))?;
         println!("  [TEST] ✓ Logout successful");
 
+        server.verify_mocks().await?;
         server.stop().await?;
         println!("  [TEST] ✓ Test completed successfully\n");
 
@@ -74,7 +118,33 @@ mod e2e_imap_client {
                      Only allow LOGIN for username 'alice' with password 'secret123'. \
                      Deny all other credentials.";
 
-        let server = start_netget_server(ServerConfig::new(prompt)).await?;
+        let server_config = ServerConfig::new(prompt).with_mock(|mock| {
+            mock.on_instruction_containing("imap")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "imap",
+                        "instruction": "Only allow alice/secret123"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                .on_event("imap_command_received")
+                .with_param("command", "LOGIN")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "tag": "A001",
+                        "status": "NO",
+                        "message": "Authentication failed"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+        let mut server = start_netget_server(server_config).await?;
         println!("  [TEST] Server started on port {}", server.port);
 
         // Connect using async-imap client
@@ -94,6 +164,7 @@ mod e2e_imap_client {
             }
         }
 
+        server.verify_mocks().await?;
         server.stop().await?;
         println!("  [TEST] ✓ Test completed successfully\n");
 
@@ -108,7 +179,37 @@ mod e2e_imap_client {
                      Allow LOGIN for any user. \
                      When listing mailboxes, return: INBOX, Sent, Drafts, Trash.";
 
-        let server = start_netget_server(ServerConfig::new(prompt)).await?;
+        let server_config = ServerConfig::new(prompt).with_mock(|mock| {
+            mock.on_instruction_containing("imap")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "open_server", "port": 0, "base_stack": "imap", "instruction": "Allow LOGIN, list mailboxes"}
+                ]))
+                .expect_calls(1)
+                .and()
+                .on_event("imap_command_received")
+                .with_param("command", "LOGIN")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "send_imap_response", "tag": "A001", "status": "OK", "message": "LOGIN completed"}
+                ]))
+                .expect_calls(1)
+                .and()
+                .on_event("imap_command_received")
+                .with_param("command", "LIST")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "send_imap_list", "mailboxes": ["INBOX", "Sent", "Drafts", "Trash"]}
+                ]))
+                .expect_calls(1)
+                .and()
+                .on_event("imap_command_received")
+                .with_param("command", "LOGOUT")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "send_imap_response", "tag": "A003", "status": "OK", "message": "LOGOUT"}
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+        let mut server = start_netget_server(server_config).await?;
         println!("  [TEST] Server started on port {}", server.port);
 
         // Connect and login
@@ -142,6 +243,7 @@ mod e2e_imap_client {
         println!("  [TEST] ✓ LIST command successful");
 
         session.logout().await?;
+        server.verify_mocks().await?;
         server.stop().await?;
         println!("  [TEST] ✓ Test completed successfully\n");
 
@@ -157,7 +259,21 @@ mod e2e_imap_client {
                      INBOX has 5 messages, 2 are recent. \
                      First unseen message is #3.";
 
-        let server = start_netget_server(ServerConfig::new(prompt)).await?;
+        let server_config = ServerConfig::new(prompt).with_mock(|mock| {
+            mock.on_instruction_containing("imap").respond_with_actions(serde_json::json!([
+                {"type": "open_server", "port": 0, "base_stack": "imap", "instruction": "INBOX has 5 messages"}
+            ])).expect_calls(1).and()
+            .on_event("imap_command_received").with_param("command", "LOGIN").respond_with_actions(serde_json::json!([
+                {"type": "send_imap_response", "tag": "A001", "status": "OK", "message": "LOGIN OK"}
+            ])).expect_calls(1).and()
+            .on_event("imap_command_received").with_param("command", "SELECT").respond_with_actions(serde_json::json!([
+                {"type": "send_imap_select", "exists": 5, "recent": 2, "unseen": 3}
+            ])).expect_calls(1).and()
+            .on_event("imap_command_received").with_param("command", "LOGOUT").respond_with_actions(serde_json::json!([
+                {"type": "send_imap_response", "tag": "A003", "status": "OK", "message": "LOGOUT"}
+            ])).expect_calls(1).and()
+        });
+        let mut server = start_netget_server(server_config).await?;
         println!("  [TEST] Server started on port {}", server.port);
 
         // Connect and login
@@ -180,6 +296,7 @@ mod e2e_imap_client {
         println!("  [TEST] ✓ SELECT command successful");
 
         session.logout().await?;
+        server.verify_mocks().await?;
         server.stop().await?;
         println!("  [TEST] ✓ Test completed successfully\n");
 

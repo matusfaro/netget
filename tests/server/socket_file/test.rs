@@ -113,8 +113,40 @@ async fn test_socket_ping_pong() -> E2EResult<()> {
     // PROMPT: Tell the LLM to respond to PING with PONG
     let prompt = "Create socket file at /tmp/netget-test-ping.sock. When you receive 'PING', respond with 'PONG\\n'";
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("socket file")
+                    .and_instruction_containing("netget-test-ping.sock")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "SocketFile",
+                            "instruction": "When you receive 'PING', respond with 'PONG\\n'",
+                            "startup_params": {
+                                "socket_path": "./tmp/netget-test-ping.sock"
+                            }
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: PING received
+                    .on_event("socket_data_received")
+                    .and_event_data_contains("data", "50494e47") // "PING" in hex
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_socket_data",
+                            "data": "504f4e470a" // "PONG\n" in hex
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("Server started with socket file");
 
     // Wait a bit for socket file to be created
@@ -148,6 +180,9 @@ async fn test_socket_ping_pong() -> E2EResult<()> {
         Err(_) => return Err("Response timeout".into()),
     }
 
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     server.stop().await?;
 
     // Cleanup socket file
@@ -164,8 +199,40 @@ async fn test_socket_line_protocol() -> E2EResult<()> {
     // PROMPT: Tell the LLM to respond to line-based commands
     let prompt = "Create socket file at /tmp/netget-test-line.sock. When you receive a line ending with \\n, respond with 'OK: <line>\\n'";
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("socket file")
+                    .and_instruction_containing("netget-test-line.sock")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "SocketFile",
+                            "instruction": "When you receive a line ending with \\n, respond with 'OK: <line>\\n'",
+                            "startup_params": {
+                                "socket_path": "./tmp/netget-test-line.sock"
+                            }
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Line received
+                    .on_event("socket_data_received")
+                    .and_event_data_contains("data", "54455354") // "TEST" in hex (partial match)
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_socket_data",
+                            "data": "4f4b3a2054455354 20434f4d4d414e440a" // "OK: TEST COMMAND\n" in hex
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("Server started with socket file");
 
     // Wait a bit for socket file to be created
@@ -205,6 +272,9 @@ async fn test_socket_line_protocol() -> E2EResult<()> {
         Ok(Err(e)) => return Err(format!("Read error: {}", e).into()),
         Err(_) => return Err("Response timeout".into()),
     }
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
 
     server.stop().await?;
 

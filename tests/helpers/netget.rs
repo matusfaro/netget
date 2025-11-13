@@ -218,7 +218,8 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
     let use_ollama = should_use_ollama();
     let has_mocks = config.mock_config.is_some();
 
-    if use_ollama {
+    // Write mock config to temp file (if in mock mode)
+    let mock_config_file = if use_ollama {
         // Real mode: Use Ollama
         if has_mocks {
             println!("⚠️  --use-ollama: Ignoring configured mocks");
@@ -228,18 +229,24 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
             return Err("--use-ollama requires Ollama, but Ollama is not available at http://localhost:11434".into());
         }
         println!("🤖 Using real Ollama");
-        // Clear any mock environment variables
-        std::env::remove_var("NETGET_MOCK_CONFIG_JSON");
+        None
     } else {
         // Mock mode (default): Use mocks
         if !has_mocks {
             return Err("Mock mode (default) requires mocks to be configured via .with_mock()\nUse --use-ollama flag to use real Ollama instead".into());
         }
         println!("🔧 Using mock LLM responses");
-        // Set mock environment variable
-        let config_json = serde_json::to_string(&config.mock_config)?;
-        std::env::set_var("NETGET_MOCK_CONFIG_JSON", config_json);
-    }
+
+        // Write mock config to a temporary file
+        use std::io::Write;
+        let mock_json = serde_json::to_string(&config.mock_config)?;
+        let mut temp_file = tempfile::NamedTempFile::new()?;
+        temp_file.write_all(mock_json.as_bytes())?;
+        temp_file.flush()?;
+
+        // Keep the file alive by converting to path (file will be deleted when test ends)
+        Some(temp_file.into_temp_path())
+    };
 
     // Get the path to the binary
     let binary_path = get_netget_binary_path()?;
@@ -280,6 +287,12 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
         cmd.arg("--ollama-lock");
     }
 
+    // Add --mock-config-file if using mocks
+    if let Some(ref mock_file_path) = mock_config_file {
+        cmd.arg("--mock-config-file")
+            .arg(mock_file_path.as_os_str());
+    }
+
     // Add the prompt as a single argument (for non-interactive mode)
     // The binary will receive this as a single command-line argument
     cmd.arg(&processed_prompt);
@@ -288,11 +301,6 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
     cmd.stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-
-    // Pass mock config environment variable if set
-    if let Ok(mock_config_json) = std::env::var("NETGET_MOCK_CONFIG_JSON") {
-        cmd.env("NETGET_MOCK_CONFIG_JSON", mock_config_json);
-    }
 
     // Debug: print the command being executed
     println!("[DEBUG] Executing: {:?}", cmd);
@@ -394,7 +402,8 @@ fn parse_server_startup(line: &str) -> Option<(String, String, u16)> {
         }
     }
 
-    if !server_id.is_empty() && !stack.is_empty() && port != 0 {
+    // Allow port 0 (server will bind to an available port)
+    if !server_id.is_empty() && !stack.is_empty() {
         Some((server_id, stack, port))
     } else {
         None
@@ -542,7 +551,7 @@ async fn wait_for_netget_startup_with_capture(
                 }
             }
 
-            // Parse server listening confirmation
+            // Parse server listening confirmation and update port
             if line.contains("listening on") {
                 // Extract port from "listening on ADDR:PORT"
                 if let Some(addr_start) = line.find("on ") {
@@ -553,7 +562,21 @@ async fn wait_for_netget_startup_with_capture(
                             .take_while(|c| c.is_ascii_digit())
                             .collect();
                         if let Ok(port) = port_str.parse::<u16>() {
+                            println!(
+                                "[DEBUG] Parsed listening confirmation: port={}",
+                                port
+                            );
                             server_confirmations.insert(port.to_string());
+
+                            // Update the most recent server with port 0
+                            // Find the last server that has port 0 (requested ephemeral port)
+                            if let Some(server) = servers.iter_mut().rev().find(|s| s.port == 0) {
+                                println!(
+                                    "[DEBUG] Updating server #{} port from 0 to {}",
+                                    server.id, port
+                                );
+                                server.port = port;
+                            }
                         }
                     }
                 }

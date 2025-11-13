@@ -30,10 +30,62 @@ mod ollama_client_tests {
         }
     }
 
-    /// Test Ollama client can list models
+    /// Test Ollama client can list models with mocks
     /// LLM calls: 1 (client connection with list models action)
     #[tokio::test]
     async fn test_ollama_client_list_models() -> E2EResult<()> {
+        // Create client that lists available models with mocks
+        let client_config = NetGetConfig::new(
+            "Connect to Ollama at http://localhost:11434 and list all available models",
+        )
+        .with_mock(|mock| {
+            mock
+                // Mock: Client startup
+                .on_instruction_containing("Ollama")
+                .and_instruction_containing("list")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": "localhost:11434",
+                        "protocol": "Ollama",
+                        "instruction": "List all available models",
+                        "startup_params": {
+                            "base_url": "http://localhost:11434"
+                        }
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+        let mut client = start_netget_client(client_config).await?;
+
+        // Give client time to initialize
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Verify client output shows Ollama protocol
+        assert!(
+            client.output_contains("Ollama").await || client.output_contains("ollama").await,
+            "Client should show Ollama protocol. Output: {:?}",
+            client.get_output().await
+        );
+
+        println!("✅ Ollama client initialized successfully");
+
+        // Verify mocks
+        client.verify_mocks().await?;
+
+        // Cleanup
+        client.stop().await?;
+
+        Ok(())
+    }
+
+    /// Test Ollama client can list models (real Ollama server required)
+    /// LLM calls: 1 (client connection with list models action)
+    #[tokio::test]
+    #[ignore]
+    async fn test_ollama_client_list_models_real() -> E2EResult<()> {
         require_ollama().await;
 
         // Create client that lists available models
@@ -71,10 +123,64 @@ mod ollama_client_tests {
         Ok(())
     }
 
-    /// Test Ollama client can generate text
+    /// Test Ollama client can generate text with mocks
     /// LLM calls: 1 (client connection with generate request)
     #[tokio::test]
     async fn test_ollama_client_generate() -> E2EResult<()> {
+        // Create client that generates text with mocks
+        let client_config = NetGetConfig::new(
+            "Connect to Ollama at http://localhost:11434 and generate text: \
+            'Say hello in exactly 2 words' using model qwen2.5-coder:0.5b",
+        )
+        .with_mock(|mock| {
+            mock
+                // Mock: Client startup
+                .on_instruction_containing("Ollama")
+                .and_instruction_containing("generate")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": "localhost:11434",
+                        "protocol": "Ollama",
+                        "instruction": "Generate text: 'Say hello in exactly 2 words' using qwen2.5-coder:0.5b",
+                        "startup_params": {
+                            "base_url": "http://localhost:11434",
+                            "model": "qwen2.5-coder:0.5b"
+                        }
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+        let mut client = start_netget_client(client_config).await?;
+
+        // Give client time to initialize
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Verify client shows Ollama protocol
+        assert!(
+            client.output_contains("Ollama").await,
+            "Client should show Ollama protocol. Output: {:?}",
+            client.get_output().await
+        );
+
+        println!("✅ Ollama client initialized for text generation");
+
+        // Verify mocks
+        client.verify_mocks().await?;
+
+        // Cleanup
+        client.stop().await?;
+
+        Ok(())
+    }
+
+    /// Test Ollama client can generate text (real Ollama server required)
+    /// LLM calls: 1 (client connection with generate request)
+    #[tokio::test]
+    #[ignore]
+    async fn test_ollama_client_generate_real() -> E2EResult<()> {
         require_ollama().await;
 
         // Create client that generates text
@@ -112,10 +218,63 @@ mod ollama_client_tests {
         Ok(())
     }
 
-    /// Test Ollama client chat completion
+    /// Test Ollama client chat completion with mocks
     /// LLM calls: 1 (client connection with chat request)
     #[tokio::test]
     async fn test_ollama_client_chat() -> E2EResult<()> {
+        // Create client that sends chat request with mocks
+        let client_config = NetGetConfig::new(
+            "Connect to Ollama at http://localhost:11434 and send a chat message: \
+            'What is 2+2?' using model qwen2.5-coder:0.5b",
+        )
+        .with_mock(|mock| {
+            mock
+                // Mock: Client startup
+                .on_instruction_containing("Ollama")
+                .and_instruction_containing("chat")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": "localhost:11434",
+                        "protocol": "Ollama",
+                        "instruction": "Send chat message: 'What is 2+2?' using qwen2.5-coder:0.5b",
+                        "startup_params": {
+                            "base_url": "http://localhost:11434",
+                            "model": "qwen2.5-coder:0.5b"
+                        }
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+        let mut client = start_netget_client(client_config).await?;
+
+        // Give client time to initialize
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Verify client is Ollama protocol
+        assert_eq!(
+            client.protocol, "Ollama",
+            "Client should be Ollama protocol"
+        );
+
+        println!("✅ Ollama client initialized for chat");
+
+        // Verify mocks
+        client.verify_mocks().await?;
+
+        // Cleanup
+        client.stop().await?;
+
+        Ok(())
+    }
+
+    /// Test Ollama client chat completion (real Ollama server required)
+    /// LLM calls: 1 (client connection with chat request)
+    #[tokio::test]
+    #[ignore]
+    async fn test_ollama_client_chat_real() -> E2EResult<()> {
         require_ollama().await;
 
         // Create client that sends chat request
@@ -152,10 +311,62 @@ mod ollama_client_tests {
         Ok(())
     }
 
-    /// Test Ollama client with custom endpoint
+    /// Test Ollama client with custom endpoint with mocks
     /// LLM calls: 1 (client connection)
     #[tokio::test]
     async fn test_ollama_client_custom_endpoint() -> E2EResult<()> {
+        // Test with explicit endpoint with mocks
+        let client_config =
+            NetGetConfig::new("Connect to Ollama API at http://localhost:11434 and list models")
+            .with_mock(|mock| {
+                mock
+                    // Mock: Client startup with custom endpoint
+                    .on_instruction_containing("Ollama")
+                    .and_instruction_containing("localhost:11434")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_client",
+                            "remote_addr": "localhost:11434",
+                            "protocol": "Ollama",
+                            "instruction": "List models",
+                            "startup_params": {
+                                "base_url": "http://localhost:11434"
+                            }
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
+
+        let mut client = start_netget_client(client_config).await?;
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Verify client initialized
+        assert!(
+            client.output_contains("localhost:11434").await
+                || client.output_contains("11434").await
+                || client.output_contains("Ollama").await,
+            "Client should show connection to custom endpoint. Output: {:?}",
+            client.get_output().await
+        );
+
+        println!("✅ Ollama client with custom endpoint initialized");
+
+        // Verify mocks
+        client.verify_mocks().await?;
+
+        // Cleanup
+        client.stop().await?;
+
+        Ok(())
+    }
+
+    /// Test Ollama client with custom endpoint (real Ollama server required)
+    /// LLM calls: 1 (client connection)
+    #[tokio::test]
+    #[ignore]
+    async fn test_ollama_client_custom_endpoint_real() -> E2EResult<()> {
         require_ollama().await;
 
         // Test with explicit endpoint
@@ -183,10 +394,55 @@ mod ollama_client_tests {
         Ok(())
     }
 
-    /// Test Ollama client error handling (invalid server)
+    /// Test Ollama client error handling (invalid server) with mocks
     /// LLM calls: 1 (client connection attempt)
     #[tokio::test]
     async fn test_ollama_client_error_handling() -> E2EResult<()> {
+        // Use an invalid endpoint with mocks
+        let client_config =
+            NetGetConfig::new("Connect to Ollama at http://localhost:99999 and list models")
+            .with_mock(|mock| {
+                mock
+                    // Mock: Client startup (will fail to connect)
+                    .on_instruction_containing("Ollama")
+                    .and_instruction_containing("99999")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_client",
+                            "remote_addr": "localhost:99999",
+                            "protocol": "Ollama",
+                            "instruction": "List models",
+                            "startup_params": {
+                                "base_url": "http://localhost:99999"
+                            }
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
+
+        let mut client = start_netget_client(client_config).await?;
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Verify client attempted connection (may show error)
+        // Note: Error handling happens at protocol level, mock just tests instruction parsing
+        println!("✅ Ollama client error handling test completed");
+
+        // Verify mocks
+        client.verify_mocks().await?;
+
+        // Cleanup
+        client.stop().await?;
+
+        Ok(())
+    }
+
+    /// Test Ollama client error handling (invalid server) - no mock needed
+    /// LLM calls: 1 (client connection attempt)
+    #[tokio::test]
+    #[ignore]
+    async fn test_ollama_client_error_handling_real() -> E2EResult<()> {
         // Use an invalid endpoint
         let client_config =
             NetGetConfig::new("Connect to Ollama at http://localhost:99999 and list models");

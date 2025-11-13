@@ -115,23 +115,74 @@ mod tcp_client_tests {
         Ok(())
     }
 
-    /// Test TCP client can be controlled via prompts
-    /// LLM calls: 2 (client startup)
+    /// Test TCP client can be controlled via prompts with mocks
+    /// LLM calls: 4 (server startup, client startup, connection, data received)
     #[tokio::test]
     async fn test_tcp_client_command_via_prompt() -> E2EResult<()> {
-        // Start a simple TCP server
+        // Start a simple TCP server with mocks
         let server_config =
-            NetGetConfig::new("Listen on port {AVAILABLE_PORT} via TCP. Log all incoming data.");
+            NetGetConfig::new("Listen on port {AVAILABLE_PORT} via TCP. Log all incoming data.")
+            .with_mock(|mock| {
+                mock
+                    // Mock: Server startup
+                    .on_instruction_containing("TCP")
+                    .and_instruction_containing("Log")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "TCP",
+                            "instruction": "Log all data"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock: Server receives data
+                    .on_event("tcp_data_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "wait_for_more"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let mut server = start_netget_server(server_config).await?;
 
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-        // Client that sends specific data based on LLM instruction
+        // Client that sends specific data based on LLM instruction with mocks
         let client_config = NetGetConfig::new(format!(
             "Connect to 127.0.0.1:{} via TCP and send the string 'TEST_DATA' then disconnect.",
             server.port
-        ));
+        ))
+        .with_mock(|mock| {
+            mock
+                // Mock: Client startup
+                .on_instruction_containing("TCP")
+                .and_instruction_containing("TEST_DATA")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": format!("127.0.0.1:{}", server.port),
+                        "protocol": "TCP",
+                        "instruction": "Send TEST_DATA then disconnect"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock: Client connected
+                .on_event("tcp_connected")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_tcp_data",
+                        "data": "544553545f44415441" // "TEST_DATA" in hex
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 
@@ -141,6 +192,10 @@ mod tcp_client_tests {
         assert_eq!(client.protocol, "TCP", "Client should be TCP protocol");
 
         println!("✅ TCP client responded to LLM instruction");
+
+        // Verify mocks
+        server.verify_mocks().await?;
+        client.verify_mocks().await?;
 
         // Cleanup
         server.stop().await?;

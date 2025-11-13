@@ -9,31 +9,79 @@ mod telnet_client_tests {
     use crate::helpers::*;
     use std::time::Duration;
 
-    /// Test Telnet client connection to a Telnet server
-    /// LLM calls: 2 (server startup, client connection)
+    /// Test Telnet client connection to a Telnet server with mocks
+    /// LLM calls: 4 (server startup, client startup, connection, data received)
     #[tokio::test]
     async fn test_telnet_client_connect_to_server() -> E2EResult<()> {
-        // Start a Telnet server listening on an available port
-        // Using a simple Telnet-like server (TCP server with option negotiation)
+        // Start a Telnet server with mocks
         let server_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via Telnet. When client connects, send 'Welcome!\r\n' prompt."
-        );
+        )
+        .with_mock(|mock| {
+            mock
+                // Mock: Server startup
+                .on_instruction_containing("Telnet")
+                .and_instruction_containing("Welcome")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "Telnet",
+                        "instruction": "Send welcome prompt on connection"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock: Client connected event
+                .on_event("telnet_connection_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_text",
+                        "text": "Welcome!\r\n"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut server = start_netget_server(server_config).await?;
 
-        // Give server time to start
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-        // Now start a Telnet client that connects to this server
+        // Start Telnet client with mocks
         let client_config = NetGetConfig::new(format!(
             "Connect to 127.0.0.1:{} via Telnet. Wait for welcome message.",
             server.port
-        ));
+        ))
+        .with_mock(|mock| {
+            mock
+                // Mock: Client startup
+                .on_instruction_containing("Telnet")
+                .and_instruction_containing("127.0.0.1")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": format!("127.0.0.1:{}", server.port),
+                        "protocol": "Telnet",
+                        "instruction": "Wait for welcome message"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock: Connection established
+                .on_event("telnet_connected")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 
-        // Give client time to connect and negotiate
-        tokio::time::sleep(Duration::from_millis(1000)).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Verify client output shows connection
         assert!(
@@ -44,6 +92,10 @@ mod telnet_client_tests {
 
         println!("✅ Telnet client connected to server successfully");
 
+        // Verify mocks
+        server.verify_mocks().await?;
+        client.verify_mocks().await?;
+
         // Cleanup
         server.stop().await?;
         client.stop().await?;
@@ -51,28 +103,80 @@ mod telnet_client_tests {
         Ok(())
     }
 
-    /// Test Telnet client can send commands
-    /// LLM calls: 2 (client startup with command)
+    /// Test Telnet client can send commands with mocks
+    /// LLM calls: 4 (server startup, client startup, command sent, echo received)
     #[tokio::test]
     async fn test_telnet_client_send_command() -> E2EResult<()> {
-        // Start a Telnet server that echoes commands
+        // Start a Telnet server that echoes commands with mocks
         let server_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via Telnet. Echo back any text received.",
-        );
+        )
+        .with_mock(|mock| {
+            mock
+                // Mock: Server startup
+                .on_instruction_containing("Telnet")
+                .and_instruction_containing("Echo")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "Telnet",
+                        "instruction": "Echo all text"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock: Text received from client
+                .on_event("telnet_data_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_text",
+                        "text": "hello\r\n"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut server = start_netget_server(server_config).await?;
 
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-        // Client that sends a command
+        // Client that sends a command with mocks
         let client_config = NetGetConfig::new(format!(
             "Connect to 127.0.0.1:{} via Telnet and send the command 'hello'.",
             server.port
-        ));
+        ))
+        .with_mock(|mock| {
+            mock
+                // Mock: Client startup
+                .on_instruction_containing("Telnet")
+                .and_instruction_containing("hello")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": format!("127.0.0.1:{}", server.port),
+                        "protocol": "Telnet",
+                        "instruction": "Send command 'hello'"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock: Connected event
+                .on_event("telnet_connected")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_command",
+                        "command": "hello"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 
-        tokio::time::sleep(Duration::from_millis(1000)).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Verify the client protocol is Telnet
         assert_eq!(
@@ -82,6 +186,10 @@ mod telnet_client_tests {
 
         println!("✅ Telnet client sent command successfully");
 
+        // Verify mocks
+        server.verify_mocks().await?;
+        client.verify_mocks().await?;
+
         // Cleanup
         server.stop().await?;
         client.stop().await?;
@@ -89,28 +197,60 @@ mod telnet_client_tests {
         Ok(())
     }
 
-    /// Test Telnet client can handle option negotiation
-    /// LLM calls: 2 (server with negotiation, client response)
+    /// Test Telnet client can handle option negotiation with mocks
+    /// LLM calls: 2 (server startup, client startup)
     #[tokio::test]
     async fn test_telnet_client_option_negotiation() -> E2EResult<()> {
-        // Start a Telnet server that negotiates options
+        // Start a Telnet server that negotiates options with mocks
         let server_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via Telnet. Send WILL ECHO and DO TERMINAL_TYPE options."
-        );
+        )
+        .with_mock(|mock| {
+            mock
+                // Mock: Server startup
+                .on_instruction_containing("Telnet")
+                .and_instruction_containing("WILL ECHO")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "Telnet",
+                        "instruction": "Send WILL ECHO and DO TERMINAL_TYPE on connection"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut server = start_netget_server(server_config).await?;
 
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-        // Client that responds to negotiation
+        // Client that responds to negotiation with mocks
         let client_config = NetGetConfig::new(format!(
             "Connect to 127.0.0.1:{} via Telnet. Handle option negotiation automatically.",
             server.port
-        ));
+        ))
+        .with_mock(|mock| {
+            mock
+                // Mock: Client startup
+                .on_instruction_containing("Telnet")
+                .and_instruction_containing("negotiation")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": format!("127.0.0.1:{}", server.port),
+                        "protocol": "Telnet",
+                        "instruction": "Handle option negotiation automatically"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 
-        tokio::time::sleep(Duration::from_millis(1000)).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Verify client connected (negotiation happens automatically)
         assert!(
@@ -120,6 +260,10 @@ mod telnet_client_tests {
         );
 
         println!("✅ Telnet client handled option negotiation");
+
+        // Verify mocks
+        server.verify_mocks().await?;
+        client.verify_mocks().await?;
 
         // Cleanup
         server.stop().await?;

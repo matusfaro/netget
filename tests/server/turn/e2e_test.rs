@@ -324,9 +324,24 @@ async fn test_turn_create_permission() -> E2EResult<()> {
 async fn test_turn_multiple_allocations() -> E2EResult<()> {
     let config =
         ServerConfig::new("Start a TURN relay server on port 0 supporting multiple allocations")
-            .with_log_level("off");
+            .with_log_level("off")
+            .with_mock(|mock| {
+                mock
+                    .on_instruction_containing("TURN relay server")
+                    .respond_with_actions(serde_json::json!([
+                        {"type": "open_server", "port": 0, "base_stack": "TURN", "instruction": "TURN relay server"}
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    .on_event("turn_allocate_request")
+                    .respond_with_actions(serde_json::json!([
+                        {"type": "turn_allocate_success", "relay_address": "127.0.0.1:50000"}
+                    ]))
+                    .expect_calls(3)
+                    .and()
+            });
 
-    let test_state = start_netget_server(config).await?;
+    let mut test_state = start_netget_server(config).await?;
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -374,9 +389,24 @@ async fn test_turn_multiple_allocations() -> E2EResult<()> {
 #[tokio::test]
 async fn test_turn_error_insufficient_capacity() -> E2EResult<()> {
     let config = ServerConfig::new("Start a TURN relay server on port 0 that rejects allocations with error 508 Insufficient Capacity")
-        .with_log_level("off");
+        .with_log_level("off")
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("TURN relay server")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "open_server", "port": 0, "base_stack": "TURN", "instruction": "TURN relay server"}
+                ]))
+                .expect_calls(1)
+                .and()
+                .on_event("turn_allocate_request")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "turn_error", "error_code": 508, "error_message": "Insufficient Capacity"}
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
-    let test_state = start_netget_server(config).await?;
+    let mut test_state = start_netget_server(config).await?;
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -430,9 +460,18 @@ async fn test_turn_error_insufficient_capacity() -> E2EResult<()> {
 #[tokio::test]
 async fn test_turn_invalid_magic_cookie() -> E2EResult<()> {
     let config = ServerConfig::new("Start a TURN relay server on port 0 that validates packets")
-        .with_log_level("off");
+        .with_log_level("off")
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("TURN relay server")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "open_server", "port": 0, "base_stack": "TURN", "instruction": "TURN relay server"}
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
-    let test_state = start_netget_server(config).await?;
+    let mut test_state = start_netget_server(config).await?;
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -491,9 +530,24 @@ async fn test_turn_invalid_magic_cookie() -> E2EResult<()> {
 #[tokio::test]
 async fn test_turn_refresh_without_allocation() -> E2EResult<()> {
     let config = ServerConfig::new("Start a TURN relay server on port 0 that tracks allocations and rejects refresh without allocation")
-        .with_log_level("off");
+        .with_log_level("off")
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("TURN relay server")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "open_server", "port": 0, "base_stack": "TURN", "instruction": "TURN relay server"}
+                ]))
+                .expect_calls(1)
+                .and()
+                .on_event("turn_refresh_request")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "turn_refresh_success"}
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
-    let test_state = start_netget_server(config).await?;
+    let mut test_state = start_netget_server(config).await?;
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -564,46 +618,6 @@ async fn test_turn_permission_without_allocation() -> E2EResult<()> {
             .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "TURN", "instruction": "TURN relay server"}]))
             .expect_calls(1)
             .and()
-            .on_event("turn_allocate_request")
-            .respond_with_actions(serde_json::json!([{"type": "turn_allocate_success"}]))
-            .expect_calls(3)
-            .and()
-    })
-    .with_mock(|mock| {
-        mock
-            .on_instruction_containing("TURN")
-            .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "TURN", "instruction": "TURN relay server"}]))
-            .expect_calls(1)
-            .and()
-            .on_event("turn_allocate_request")
-            .respond_with_actions(serde_json::json!([{"type": "turn_allocate_success"}]))
-            .expect_calls(1)
-            .and()
-    })
-    .with_mock(|mock| {
-        mock
-            .on_instruction_containing("TURN")
-            .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "TURN", "instruction": "TURN relay server"}]))
-            .expect_calls(1)
-            .and()
-    })
-    .with_mock(|mock| {
-        mock
-            .on_instruction_containing("TURN")
-            .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "TURN", "instruction": "TURN relay server"}]))
-            .expect_calls(1)
-            .and()
-            .on_event("turn_refresh_request")
-            .respond_with_actions(serde_json::json!([{"type": "turn_refresh_success"}]))
-            .expect_calls(1)
-            .and()
-    })
-    .with_mock(|mock| {
-        mock
-            .on_instruction_containing("TURN")
-            .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "TURN", "instruction": "TURN relay server"}]))
-            .expect_calls(1)
-            .and()
             .on_event("turn_create_permission_request")
             .respond_with_actions(serde_json::json!([{"type": "turn_create_permission_success"}]))
             .expect_calls(1)
@@ -611,7 +625,7 @@ async fn test_turn_permission_without_allocation() -> E2EResult<()> {
     })
     .with_log_level("off");
 
-    let test_state = start_netget_server(config).await?;
+    let mut test_state = start_netget_server(config).await?;
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -774,9 +788,25 @@ async fn test_turn_short_lifetime_allocation() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_turn_allocate_with_lifetime_attribute() -> E2EResult<()> {
-    let config = ServerConfig::new("Start a TURN relay server on port 0").with_log_level("off");
+    let config = ServerConfig::new("Start a TURN relay server on port 0")
+        .with_log_level("off")
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("TURN relay server")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "open_server", "port": 0, "base_stack": "TURN", "instruction": "TURN relay server"}
+                ]))
+                .expect_calls(1)
+                .and()
+                .on_event("turn_allocate_request")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "turn_allocate_success", "lifetime": 300}
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
-    let test_state = start_netget_server(config).await?;
+    let mut test_state = start_netget_server(config).await?;
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 

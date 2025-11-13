@@ -596,6 +596,8 @@ rsa = { version = "0.9", optional = true, features = ["sha2"] }  # RSA cryptogra
 tokio-test = "0.4"
 # For e2e test setup/teardown
 ctor = "0.2"
+# For creating temporary mock config files
+tempfile = "3.13"
 
 # Terminal snapshot testing
 pty-process = "0.5"

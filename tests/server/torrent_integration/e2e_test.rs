@@ -141,27 +141,37 @@ mod tests {
 
         // Parse bencode response
         let value: serde_bencode::value::Value = serde_bencode::from_bytes(&body)?;
-        let dict = value
-            .as_dict()
-            .ok_or_else(|| anyhow::anyhow!("Response is not a dictionary"))?;
+        let dict = match value {
+            serde_bencode::value::Value::Dict(d) => d,
+            _ => return Err(anyhow::anyhow!("Response is not a dictionary").into()),
+        };
 
         // Check for failure reason
-        if let Some(failure) = dict.get(b"failure reason".as_ref()) {
-            if let Some(bytes) = failure.as_bytes() {
+        if let Some(failure) = dict.get(b"failure reason" as &[u8]) {
+            if let Some(bytes) = match failure {
+                serde_bencode::value::Value::Bytes(b) => Some(b),
+                _ => None,
+            } {
                 let reason = String::from_utf8_lossy(bytes);
                 anyhow::bail!("Tracker error: {}", reason);
             }
         }
 
         // Extract interval
-        if let Some(interval) = dict.get(b"interval".as_ref()).and_then(|v| v.as_int()) {
+        if let Some(interval) = dict.get(b"interval" as &[u8]).and_then(|v| match v {
+            serde_bencode::value::Value::Int(i) => Some(i),
+            _ => None,
+        }) {
             println!("  Interval: {} seconds", interval);
         }
 
         // Extract peers (compact or dictionary format)
         let mut peers = Vec::new();
-        if let Some(peers_value) = dict.get(b"peers".as_ref()) {
-            if let Some(peers_bytes) = peers_value.as_bytes() {
+        if let Some(peers_value) = dict.get(b"peers" as &[u8]) {
+            if let Some(peers_bytes) = match peers_value {
+                serde_bencode::value::Value::Bytes(b) => Some(b),
+                _ => None,
+            } {
                 // Compact format: 6 bytes per peer (4 IP + 2 port)
                 for chunk in peers_bytes.chunks(6) {
                     if chunk.len() == 6 {
@@ -170,18 +180,30 @@ mod tests {
                         peers.push((ip, port));
                     }
                 }
-            } else if let Some(peers_list) = peers_value.as_list() {
+            } else if let Some(peers_list) = match peers_value {
+                serde_bencode::value::Value::List(l) => Some(l),
+                _ => None,
+            } {
                 // Dictionary format
                 for peer_value in peers_list {
-                    if let Some(peer_dict) = peer_value.as_dict() {
+                    if let Some(peer_dict) = match peer_value {
+                        serde_bencode::value::Value::Dict(d) => Some(d),
+                        _ => None,
+                    } {
                         let ip = peer_dict
-                            .get(b"ip".as_ref())
-                            .and_then(|v| v.as_bytes())
+                            .get(b"ip" as &[u8])
+                            .and_then(|v| match v {
+                                serde_bencode::value::Value::Bytes(b) => Some(b),
+                                _ => None,
+                            })
                             .and_then(|b| String::from_utf8(b.to_vec()).ok());
-                        let port = peer_dict.get(b"port".as_ref()).and_then(|v| v.as_int());
+                        let port = peer_dict.get(b"port" as &[u8]).and_then(|v| match v {
+                            serde_bencode::value::Value::Int(i) => Some(i),
+                            _ => None,
+                        });
 
                         if let (Some(ip), Some(port)) = (ip, port) {
-                            peers.push((ip, port as u16));
+                            peers.push((ip, *port as u16));
                         }
                     }
                 }
@@ -237,12 +259,16 @@ mod tests {
 
         // Parse response
         let response: serde_bencode::value::Value = serde_bencode::from_bytes(&buf[..n])?;
-        let dict = response
-            .as_dict()
-            .ok_or_else(|| anyhow::anyhow!("Response is not a dictionary"))?;
+        let dict = match response {
+            serde_bencode::value::Value::Dict(d) => d,
+            _ => return Err(anyhow::anyhow!("Response is not a dictionary").into()),
+        };
 
         // Verify response type
-        if let Some(y) = dict.get(b"y".as_ref()).and_then(|v| v.as_bytes()) {
+        if let Some(y) = dict.get(b"y" as &[u8]).and_then(|v| match v {
+            serde_bencode::value::Value::Bytes(b) => Some(b),
+            _ => None,
+        }) {
             if y == b"r" {
                 println!("  Response type: 'r' (success)");
             } else if y == b"e" {
@@ -251,7 +277,10 @@ mod tests {
         }
 
         // Verify transaction ID
-        if let Some(t) = dict.get(b"t".as_ref()).and_then(|v| v.as_bytes()) {
+        if let Some(t) = dict.get(b"t" as &[u8]).and_then(|v| match v {
+            serde_bencode::value::Value::Bytes(b) => Some(b),
+            _ => None,
+        }) {
             if t == b"aa" {
                 println!("  Transaction ID matches: 'aa'");
             } else {

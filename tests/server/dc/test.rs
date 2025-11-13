@@ -349,10 +349,8 @@ async fn test_dc_chat() -> E2EResult<()> {
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     // Clear any pending data
-    stream.set_nonblocking(true).ok();
     let mut discard = [0u8; 1024];
     while stream.try_read(&mut discard).is_ok() {}
-    stream.set_nonblocking(false).ok();
 
     // Send chat message
     println!("Sending: <testuser> Hello hub!|");
@@ -470,10 +468,8 @@ async fn test_dc_search() -> E2EResult<()> {
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     // Clear any pending data
-    stream.set_nonblocking(true).ok();
     let mut discard = [0u8; 1024];
     while stream.try_read(&mut discard).is_ok() {}
-    stream.set_nonblocking(false).ok();
 
     // Send search command
     println!("Sending: $Search Hub:testuser F?F?0?1?test|");

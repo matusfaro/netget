@@ -28,8 +28,49 @@ The task should use the schedule_task action with:
 Initialize the heartbeat counter to 0 when the server starts."#;
 
     // Start the server
-    let server =
-        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("debug")).await?;
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_log_level("debug")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("http")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "HTTP",
+                            "instruction": "HTTP server with heartbeat counter",
+                            "scheduled_tasks": [
+                                {
+                                    "task_id": "heartbeat_counter",
+                                    "recurring": true,
+                                    "interval_secs": 2,
+                                    "instruction": "Increment the internal heartbeat counter by 1"
+                                }
+                            ]
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: GET /heartbeat request
+                    .on_event("http_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "http_response",
+                            "status_code": 200,
+                            "body": "Heartbeat count: 3"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: Recurring task executions (allow multiple)
+                    .on_instruction_containing("heartbeat counter")
+                    .respond_with_actions(serde_json::json!([]))
+                    .expect_calls_at_least(1)
+                    .and()
+            })
+    ).await?;
     println!("HTTP server started on port {}", server.port);
 
     // Verify it's actually an HTTP server
@@ -75,6 +116,7 @@ Initialize the heartbeat counter to 0 when the server starts."#;
 
     println!("✓ Recurring task executed and counter incremented");
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())
@@ -99,8 +141,60 @@ The task should use the schedule_task action with:
 Initialize the ready flag to false when the server starts."#;
 
     // Start the server
-    let server =
-        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("debug")).await?;
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_log_level("debug")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("http")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "HTTP",
+                            "instruction": "HTTP server with ready flag",
+                            "scheduled_tasks": [
+                                {
+                                    "task_id": "set_ready_flag",
+                                    "recurring": false,
+                                    "delay_secs": 3,
+                                    "instruction": "Set the internal ready flag to true"
+                                }
+                            ]
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: GET /status before task (initializing)
+                    .on_event("http_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "http_response",
+                            "status_code": 200,
+                            "body": "initializing"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: One-shot task execution
+                    .on_instruction_containing("ready flag")
+                    .respond_with_actions(serde_json::json!([]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 4: GET /status after task (ready)
+                    .on_event("http_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "http_response",
+                            "status_code": 200,
+                            "body": "ready"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("HTTP server started on port {}", server.port);
 
     // Verify it's actually an HTTP server
@@ -146,6 +240,7 @@ Initialize the ready flag to false when the server starts."#;
 
     println!("✓ One-shot task executed and flag was set");
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())
@@ -170,8 +265,82 @@ Use the open_server action with the scheduled_tasks parameter to define these ta
 Initialize metrics counter to 0 and initialized flag to false."#;
 
     // Start the server
-    let server =
-        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("debug")).await?;
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_log_level("debug")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup with scheduled tasks
+                    .on_instruction_containing("http")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "HTTP",
+                            "instruction": "HTTP server with metrics and initialized flags",
+                            "scheduled_tasks": [
+                                {
+                                    "task_id": "update_metrics",
+                                    "recurring": true,
+                                    "interval_secs": 2,
+                                    "instruction": "Increment metrics counter"
+                                },
+                                {
+                                    "task_id": "delayed_init",
+                                    "recurring": false,
+                                    "delay_secs": 3,
+                                    "instruction": "Set initialized flag to true"
+                                }
+                            ]
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: GET /initialized before delay
+                    .on_event("http_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "http_response",
+                            "status_code": 200,
+                            "body": "no"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: Recurring metrics task (multiple executions)
+                    .on_instruction_containing("metrics")
+                    .respond_with_actions(serde_json::json!([]))
+                    .expect_calls_at_least(1)
+                    .and()
+                    // Mock 4: One-shot init task
+                    .on_instruction_containing("initialized")
+                    .respond_with_actions(serde_json::json!([]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 5: GET /metrics after tasks
+                    .on_event("http_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "http_response",
+                            "status_code": 200,
+                            "body": "Metrics: 2"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 6: GET /initialized after delay
+                    .on_event("http_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "http_response",
+                            "status_code": 200,
+                            "body": "yes"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("HTTP server started on port {}", server.port);
 
     // Verify it's actually an HTTP server
@@ -236,6 +405,7 @@ Initialize metrics counter to 0 and initialized flag to false."#;
 
     println!("✓ Server-attached tasks executed successfully");
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())

@@ -333,6 +333,9 @@ async fn test_nfs_server_stop() -> E2EResult<()> {
     let stream = tokio::net::TcpStream::connect(&addr).await?;
     println!("✓ Connection established");
 
+    // Verify mock expectations BEFORE stopping server
+    server.verify_mocks().await?;
+
     // Stop server
     server.stop().await?;
     println!("✓ Server stopped gracefully");
@@ -348,9 +351,6 @@ async fn test_nfs_server_stop() -> E2EResult<()> {
             println!("✓ Port released after server stop");
         }
     }
-
-    // Verify mock expectations
-    server.verify_mocks().await?;
 
     drop(stream);
     println!("=== Test passed ===\n");

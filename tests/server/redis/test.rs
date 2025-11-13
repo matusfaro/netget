@@ -21,7 +21,45 @@ async fn test_redis_ping() -> E2EResult<()> {
         For SET commands, use redis_simple_string value='OK'.";
 
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("Redis")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "Redis",
+                            "instruction": "Redis server with PING/CLIENT/GET/SET"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: CLIENT command (redis client initialization)
+                    .on_event("redis_command_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "redis_simple_string",
+                            "value": "OK"
+                        }
+                    ]))
+                    .min_calls(0)
+                    .max_calls(5)
+                    .and()
+                    // Mock 3: PING command
+                    .on_event("redis_command_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "redis_simple_string",
+                            "value": "PONG"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Connect and execute PING using redis client
@@ -73,6 +111,8 @@ async fn test_redis_ping() -> E2EResult<()> {
     assert_eq!(pong, "PONG", "Expected PING to return PONG");
 
     println!("✓ Redis PING test passed\n");
+    server.verify_mocks().await?;
+    server.stop().await?;
     Ok(())
 }
 
@@ -84,7 +124,24 @@ async fn test_redis_get_set() -> E2EResult<()> {
         For SET commands, use redis_simple_string value='OK'. \
         For GET key commands, use redis_bulk_string value='test_value'.";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    .on_instruction_containing("Redis")
+                    .respond_with_actions(serde_json::json!([
+                        {"type": "open_server", "port": 0, "base_stack": "Redis", "instruction": "Redis with GET/SET"}
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    .on_event("redis_command_received")
+                    .respond_with_actions(serde_json::json!([{"type": "redis_simple_string", "value": "OK"}]))
+                    .min_calls(1).max_calls(5).and()
+                    .on_event("redis_command_received")
+                    .respond_with_actions(serde_json::json!([{"type": "redis_bulk_string", "value": "test_value"}]))
+                    .expect_calls(1).and()
+            })
+    ).await?;
     println!("Server started on port {}", server.port);
 
     println!("Connecting to Redis server...");
@@ -106,6 +163,8 @@ async fn test_redis_get_set() -> E2EResult<()> {
     assert_eq!(value, "test_value", "Expected GET to return test_value");
 
     println!("✓ Redis GET/SET test passed\n");
+    server.verify_mocks().await?;
+    server.stop().await?;
     Ok(())
 }
 
@@ -117,7 +176,16 @@ async fn test_redis_integer_response() -> E2EResult<()> {
         For INCR commands, use redis_integer value=42. \
         For DEL commands, use redis_integer value=1.";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock.on_instruction_containing("Redis").respond_with_actions(serde_json::json!([
+                    {"type": "open_server", "port": 0, "base_stack": "Redis", "instruction": "Redis with INCR"}
+                ])).expect_calls(1).and()
+                .on_event("redis_command_received").respond_with_actions(serde_json::json!([{"type": "redis_simple_string", "value": "OK"}])).min_calls(0).max_calls(5).and()
+                .on_event("redis_command_received").respond_with_actions(serde_json::json!([{"type": "redis_integer", "value": 42}])).expect_calls(1).and()
+            })
+    ).await?;
     println!("Server started on port {}", server.port);
 
     println!("Connecting to Redis server...");
@@ -133,6 +201,8 @@ async fn test_redis_integer_response() -> E2EResult<()> {
     assert_eq!(result, 42, "Expected INCR to return 42");
 
     println!("✓ Redis integer response test passed\n");
+    server.verify_mocks().await?;
+    server.stop().await?;
     Ok(())
 }
 
@@ -144,7 +214,16 @@ async fn test_redis_array_response() -> E2EResult<()> {
         For MGET commands, use redis_array values=['value1','value2','value3']. \
         For KEYS commands, use redis_array values=['key1','key2','key3'].";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock.on_instruction_containing("Redis").respond_with_actions(serde_json::json!([
+                    {"type": "open_server", "port": 0, "base_stack": "Redis", "instruction": "Redis with KEYS"}
+                ])).expect_calls(1).and()
+                .on_event("redis_command_received").respond_with_actions(serde_json::json!([{"type": "redis_simple_string", "value": "OK"}])).min_calls(0).max_calls(5).and()
+                .on_event("redis_command_received").respond_with_actions(serde_json::json!([{"type": "redis_array", "values": ["key1", "key2", "key3"]}])).expect_calls(1).and()
+            })
+    ).await?;
     println!("Server started on port {}", server.port);
 
     println!("Connecting to Redis server...");
@@ -163,6 +242,8 @@ async fn test_redis_array_response() -> E2EResult<()> {
     assert!(!keys.is_empty(), "Expected at least one key");
 
     println!("✓ Redis array response test passed\n");
+    server.verify_mocks().await?;
+    server.stop().await?;
     Ok(())
 }
 
@@ -174,7 +255,16 @@ async fn test_redis_null_response() -> E2EResult<()> {
         For GET nonexistent commands, use redis_null. \
         For other GET commands, use redis_bulk_string value='exists'.";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock.on_instruction_containing("Redis").respond_with_actions(serde_json::json!([
+                    {"type": "open_server", "port": 0, "base_stack": "Redis", "instruction": "Redis with null"}
+                ])).expect_calls(1).and()
+                .on_event("redis_command_received").respond_with_actions(serde_json::json!([{"type": "redis_simple_string", "value": "OK"}])).min_calls(0).max_calls(5).and()
+                .on_event("redis_command_received").respond_with_actions(serde_json::json!([{"type": "redis_null"}])).expect_calls(1).and()
+            })
+    ).await?;
     println!("Server started on port {}", server.port);
 
     println!("Connecting to Redis server...");
@@ -190,6 +280,8 @@ async fn test_redis_null_response() -> E2EResult<()> {
     assert_eq!(value, None, "Expected GET nonexistent to return None");
 
     println!("✓ Redis null response test passed\n");
+    server.verify_mocks().await?;
+    server.stop().await?;
     Ok(())
 }
 
@@ -201,7 +293,16 @@ async fn test_redis_error_response() -> E2EResult<()> {
         For commands containing 'INVALID', use redis_error message='ERR unknown command'. \
         For other commands, use redis_simple_string value='OK'.";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock.on_instruction_containing("Redis").respond_with_actions(serde_json::json!([
+                    {"type": "open_server", "port": 0, "base_stack": "Redis", "instruction": "Redis with errors"}
+                ])).expect_calls(1).and()
+                .on_event("redis_command_received").respond_with_actions(serde_json::json!([{"type": "redis_simple_string", "value": "OK"}])).min_calls(0).max_calls(5).and()
+                .on_event("redis_command_received").respond_with_actions(serde_json::json!([{"type": "redis_error", "message": "ERR unknown command"}])).expect_calls(1).and()
+            })
+    ).await?;
     println!("Server started on port {}", server.port);
 
     println!("Connecting to Redis server...");
@@ -231,5 +332,7 @@ async fn test_redis_error_response() -> E2EResult<()> {
     }
 
     println!("✓ Redis error response test passed\n");
+    server.verify_mocks().await?;
+    server.stop().await?;
     Ok(())
 }

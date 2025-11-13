@@ -31,7 +31,7 @@ impl Protocol for BluetoothBleProximityProtocol {
         vec![]
     }
     fn stack_name(&self) -> &'static str {
-        "DATALINK"
+        "DATALINK>BLE_PROXIMITY"
     }
     fn keywords(&self) -> Vec<&'static str> {
         vec!["bluetooth", "proximity"]

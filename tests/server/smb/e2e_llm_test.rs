@@ -117,7 +117,20 @@ async fn test_smb_llm_allows_guest_auth() -> E2EResult<()> {
     let prompt = "Start an SMB file server on port 0 via smb. \
                  Allow all authentication attempts.";
 
-    let server = start_netget_server(ServerConfig::new_no_scripts(prompt)).await?;
+    let server = start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock.on_instruction_containing("SMB").respond_with_actions(serde_json::json!([
+                    {"type": "open_server", "port": 0, "base_stack": "SMB", "instruction": "Allow all auth"}
+                ])).expect_calls(1).and()
+                .on_event("smb_negotiate_received").respond_with_actions(serde_json::json!([
+                    {"type": "smb_negotiate_response", "dialect": "SMB 2.1"}
+                ])).expect_calls(1).and()
+                .on_event("smb_session_setup_received").respond_with_actions(serde_json::json!([
+                    {"type": "smb_auth_success"}
+                ])).expect_calls(1).and()
+            })
+    ).await?;
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     let addr = format!("127.0.0.1:{}", server.port);
@@ -169,6 +182,7 @@ async fn test_smb_llm_allows_guest_auth() -> E2EResult<()> {
         println!("  [TEST] ✓ Server logged authentication event");
     }
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("  [TEST] ✓ Test completed successfully\n");
 
@@ -184,7 +198,20 @@ async fn test_smb_llm_denies_user() -> E2EResult<()> {
                  Only allow authentication for user 'alice'. \
                  Deny 'guest' and all other users.";
 
-    let server = start_netget_server(ServerConfig::new_no_scripts(prompt)).await?;
+    let server = start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock.on_instruction_containing("SMB").respond_with_actions(serde_json::json!([
+                    {"type": "open_server", "port": 0, "base_stack": "SMB", "instruction": "Allow alice only"}
+                ])).expect_calls(1).and()
+                .on_event("smb_negotiate_received").respond_with_actions(serde_json::json!([
+                    {"type": "smb_negotiate_response", "dialect": "SMB 2.1"}
+                ])).expect_calls(1).and()
+                .on_event("smb_session_setup_received").respond_with_actions(serde_json::json!([
+                    {"type": "smb_auth_denied", "status": 0xC0000016}
+                ])).expect_calls(1).and()
+            })
+    ).await?;
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     let addr = format!("127.0.0.1:{}", server.port);
@@ -236,6 +263,7 @@ async fn test_smb_llm_denies_user() -> E2EResult<()> {
         println!("  [TEST] ✓ Server logged authentication decision");
     }
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("  [TEST] ✓ Test completed successfully\n");
 
@@ -252,7 +280,25 @@ async fn test_smb_llm_file_creation() -> E2EResult<()> {
                  Allow files in /documents/. \
                  Deny files in /restricted/.";
 
-    let server = start_netget_server(ServerConfig::new_no_scripts(prompt)).await?;
+    let server = start_netget_server(
+        ServerConfig::new_no_scripts(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("SMB file server")
+                    .and_instruction_containing("Allow all authentication")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "SMB",
+                            "instruction": "Allow all authentication. Allow files in /documents/. Deny files in /restricted/."
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     // Check that LLM received file creation events
@@ -273,6 +319,9 @@ async fn test_smb_llm_file_creation() -> E2EResult<()> {
     // Verify LLM would control file creation (we set up the scenario)
     println!("  [TEST] ✓ Server configured with LLM-controlled file policies");
 
+    // Verify mock expectations
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("  [TEST] ✓ Test completed successfully\n");
 
@@ -288,7 +337,25 @@ async fn test_smb_llm_file_content() -> E2EResult<()> {
                  Allow all authentication. \
                  Provide file /welcome.txt with content 'Hello from NetGet SMB!'.";
 
-    let server = start_netget_server(ServerConfig::new_no_scripts(prompt)).await?;
+    let server = start_netget_server(
+        ServerConfig::new_no_scripts(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("SMB file server")
+                    .and_instruction_containing("Provide file /welcome.txt")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "SMB",
+                            "instruction": "Allow all authentication. Provide file /welcome.txt with content 'Hello from NetGet SMB!'."
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     // Verify server started with correct configuration
@@ -303,6 +370,9 @@ async fn test_smb_llm_file_content() -> E2EResult<()> {
     // The LLM would provide file content when a client sends READ request
     println!("  [TEST] ✓ LLM configured to provide 'welcome.txt' content");
     println!("  [TEST] ✓ LLM will respond with smb_read_file action on READ requests");
+
+    // Verify mock expectations
+    server.verify_mocks().await?;
 
     server.stop().await?;
     println!("  [TEST] ✓ Test completed successfully\n");
@@ -319,7 +389,14 @@ async fn test_smb_llm_directory_listing() -> E2EResult<()> {
                  Allow all authentication. \
                  Provide directory /documents/ with files: readme.txt, notes.txt, report.pdf.";
 
-    let server = start_netget_server(ServerConfig::new_no_scripts(prompt)).await?;
+    let server = start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock.on_instruction_containing("SMB").respond_with_actions(serde_json::json!([
+                    {"type": "open_server", "port": 0, "base_stack": "SMB", "instruction": "Directory listing"}
+                ])).expect_calls(1).and()
+            })
+    ).await?;
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     // Verify LLM integration is working
@@ -342,6 +419,7 @@ async fn test_smb_llm_directory_listing() -> E2EResult<()> {
         println!("  [TEST] ✓ LLM ready to serve directory listings");
     }
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("  [TEST] ✓ Test completed successfully\n");
 
@@ -356,7 +434,17 @@ async fn test_smb_llm_connection_tracking() -> E2EResult<()> {
     let prompt = "Start an SMB file server on port 0 via smb. \
                  Track all connections.";
 
-    let server = start_netget_server(ServerConfig::new_no_scripts(prompt)).await?;
+    let server = start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock.on_instruction_containing("SMB").respond_with_actions(serde_json::json!([
+                    {"type": "open_server", "port": 0, "base_stack": "SMB", "instruction": "Track connections"}
+                ])).expect_calls(1).and()
+                .on_event("smb_negotiate_received").respond_with_actions(serde_json::json!([
+                    {"type": "smb_negotiate_response", "dialect": "SMB 2.1"}
+                ])).expect_calls(1).and()
+            })
+    ).await?;
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     let addr = format!("127.0.0.1:{}", server.port);
@@ -394,6 +482,7 @@ async fn test_smb_llm_connection_tracking() -> E2EResult<()> {
 
     println!("  [TEST] ✓ Connection lifecycle managed by LLM");
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("  [TEST] ✓ Test completed successfully\n");
 
@@ -408,7 +497,25 @@ async fn test_smb_llm_receives_events() -> E2EResult<()> {
     let prompt = "Start an SMB file server on port 0 via smb. \
                  Allow all authentication and file operations.";
 
-    let server = start_netget_server(ServerConfig::new_no_scripts(prompt)).await?;
+    let server = start_netget_server(
+        ServerConfig::new_no_scripts(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("SMB file server")
+                    .and_instruction_containing("Allow all authentication and file operations")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "SMB",
+                            "instruction": "Allow all authentication and file operations."
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     // Verify server is ready to process LLM events
@@ -420,6 +527,9 @@ async fn test_smb_llm_receives_events() -> E2EResult<()> {
 
     // The LLM will receive events when actual SMB operations occur
     // This test verifies the setup is correct
+
+    // Verify mock expectations
+    server.verify_mocks().await?;
 
     server.stop().await?;
     println!("  [TEST] ✓ Test completed successfully\n");

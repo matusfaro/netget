@@ -141,12 +141,18 @@ async fn test_dht_queries() -> E2EResult<()> {
         println!("[Ping] Received response ({} bytes)", n);
 
         let response: serde_bencode::value::Value = serde_bencode::from_bytes(&buf[..n])?;
-        let dict = response.as_dict().expect("Response should be dictionary");
+        let dict = match response {
+            serde_bencode::value::Value::Dict(d) => d,
+            _ => panic!("Response should be dictionary"),
+        };
 
         // Verify response type
         assert_eq!(
-            dict.get(b"y".as_ref())
-                .and_then(|v| v.as_bytes())
+            dict.get(b"y" as &[u8])
+                .and_then(|v| match v {
+                    serde_bencode::value::Value::Bytes(b) => Some(b),
+                    _ => None,
+                })
                 .map(|b| b.as_slice()),
             Some(b"r".as_ref()),
             "Response type should be 'r'"
@@ -196,12 +202,18 @@ async fn test_dht_queries() -> E2EResult<()> {
         println!("[FindNode] Received response ({} bytes)", n);
 
         let response: serde_bencode::value::Value = serde_bencode::from_bytes(&buf[..n])?;
-        let dict = response.as_dict().expect("Response should be dictionary");
+        let dict = match response {
+            serde_bencode::value::Value::Dict(d) => d,
+            _ => panic!("Response should be dictionary"),
+        };
 
         // Verify response type
         assert_eq!(
-            dict.get(b"y".as_ref())
-                .and_then(|v| v.as_bytes())
+            dict.get(b"y" as &[u8])
+                .and_then(|v| match v {
+                    serde_bencode::value::Value::Bytes(b) => Some(b),
+                    _ => None,
+                })
                 .map(|b| b.as_slice()),
             Some(b"r".as_ref()),
             "Response type should be 'r'"
@@ -209,12 +221,15 @@ async fn test_dht_queries() -> E2EResult<()> {
 
         // Verify nodes field exists (compact format)
         let r_dict = dict
-            .get(b"r".as_ref())
-            .and_then(|v| v.as_dict())
+            .get(b"r" as &[u8])
+            .and_then(|v| match v {
+                serde_bencode::value::Value::Dict(d) => Some(d),
+                _ => None,
+            })
             .expect("Response should have 'r' dict");
 
         assert!(
-            r_dict.contains_key(b"nodes".as_ref()),
+            r_dict.contains_key::<[u8]>(b"nodes".as_ref()),
             "Response should contain nodes"
         );
 
@@ -262,12 +277,18 @@ async fn test_dht_queries() -> E2EResult<()> {
         println!("[GetPeers] Received response ({} bytes)", n);
 
         let response: serde_bencode::value::Value = serde_bencode::from_bytes(&buf[..n])?;
-        let dict = response.as_dict().expect("Response should be dictionary");
+        let dict = match response {
+            serde_bencode::value::Value::Dict(d) => d,
+            _ => panic!("Response should be dictionary"),
+        };
 
         // Verify response type
         assert_eq!(
-            dict.get(b"y".as_ref())
-                .and_then(|v| v.as_bytes())
+            dict.get(b"y" as &[u8])
+                .and_then(|v| match v {
+                    serde_bencode::value::Value::Bytes(b) => Some(b),
+                    _ => None,
+                })
                 .map(|b| b.as_slice()),
             Some(b"r".as_ref()),
             "Response type should be 'r'"
@@ -275,12 +296,15 @@ async fn test_dht_queries() -> E2EResult<()> {
 
         // Verify token exists
         let r_dict = dict
-            .get(b"r".as_ref())
-            .and_then(|v| v.as_dict())
+            .get(b"r" as &[u8])
+            .and_then(|v| match v {
+                serde_bencode::value::Value::Dict(d) => Some(d),
+                _ => None,
+            })
             .expect("Response should have 'r' dict");
 
         assert!(
-            r_dict.contains_key(b"token".as_ref()),
+            r_dict.contains_key::<[u8]>(b"token".as_ref()),
             "Response should contain token"
         );
 

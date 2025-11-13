@@ -6,8 +6,7 @@
 
 #[cfg(all(test, feature = "webrtc"))]
 mod tests {
-    use netget::cli::server_startup::start_server;
-    use netget::events::EventType;
+    use netget::protocol::EventType;
     use netget::llm::ollama_client::OllamaClient;
     use netget::state::app_state::AppState;
     use std::sync::Arc;
@@ -23,24 +22,22 @@ mod tests {
         let (status_tx, mut status_rx) = mpsc::unbounded_channel();
 
         // Create LLM client
-        let llm_client = OllamaClient::new(
-            "http://localhost:11434".to_string(),
-            "qwen3-coder:30b".to_string(),
-            true, // ollama_lock
-        );
+        let llm_client = OllamaClient::new("http://localhost:11434");
 
         // Test instruction
         let instruction = "Connect to WebRTC peer and send hello message";
 
+        // Create WebRTC client instance
+        use netget::state::{ClientId, ClientInstance};
+        let client = ClientInstance::new(
+            ClientId::new(0), // Temporary ID, add_client will assign real ID
+            "peer".to_string(),
+            "WebRTC".to_string(),
+            instruction.to_string(),
+        );
+
         // Open WebRTC client
-        let client_id = app_state
-            .add_client(
-                "WebRTC".to_string(),
-                "peer".to_string(),
-                instruction.to_string(),
-                None,
-            )
-            .await;
+        let client_id = app_state.add_client(client).await;
 
         println!("Created WebRTC client #{}", client_id.as_u32());
 
@@ -89,7 +86,6 @@ mod tests {
         let has_offer = app_state
             .with_client_mut(client_id, |c| c.get_protocol_field("sdp_offer").is_some())
             .await
-            .flatten()
             .unwrap_or(false);
 
         assert!(has_offer, "SDP offer should be generated");
@@ -107,17 +103,19 @@ mod tests {
     /// Test WebRTC client state management
     #[tokio::test]
     async fn test_webrtc_client_state() {
+        use netget::state::{ClientId, ClientInstance};
         let app_state = Arc::new(AppState::new());
 
+        // Create WebRTC client instance
+        let client = ClientInstance::new(
+            ClientId::new(0), // Temporary ID, add_client will assign real ID
+            "test-peer".to_string(),
+            "WebRTC".to_string(),
+            "Test instruction".to_string(),
+        );
+
         // Add client
-        let client_id = app_state
-            .add_client(
-                "WebRTC".to_string(),
-                "test-peer".to_string(),
-                "Test instruction".to_string(),
-                None,
-            )
-            .await;
+        let client_id = app_state.add_client(client).await;
 
         // Verify client exists
         let client = app_state.get_client(client_id).await;

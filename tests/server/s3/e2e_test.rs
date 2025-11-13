@@ -104,7 +104,7 @@ When clients:
                     // Mock 5: HeadObject hello.txt
                     .on_event("s3_request")
                     .and_event_data_contains("operation", "HeadObject")
-                    .and_event_data_contains("key": "hello.txt")
+                    .and_event_data_contains("key", "hello.txt")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_http_response",

@@ -5,7 +5,7 @@
 
 #![cfg(feature = "syslog")]
 
-use crate::helpers::{E2EResult, NetGetConfig};
+use crate::helpers::{start_netget_server, E2EResult, NetGetConfig};
 use std::net::{SocketAddr, UdpSocket};
 use std::time::Duration;
 
@@ -42,11 +42,10 @@ async fn test_syslog_comprehensive() -> E2EResult<()> {
                 .and()
         });
 
-    let mut test_state = crate::helpers::start_netget(config).await?;
+    let mut test_state = start_netget_server(config).await?;
 
     // Extract server port
-    assert!(!test_state.servers.is_empty(), "Expected at least one server");
-    let port = test_state.servers[0].port;
+    let port = test_state.port;
 
     // Wait for server to be ready
     tokio::time::sleep(Duration::from_secs(2)).await;

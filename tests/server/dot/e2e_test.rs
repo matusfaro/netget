@@ -182,11 +182,10 @@ async fn test_dot_server() -> E2EResult<()> {
                 .and()
         });
 
-    let mut server = crate::helpers::start_netget(server_config).await?;
+    let mut server = crate::helpers::start_netget_server(server_config).await?;
 
     // Extract server port
-    assert!(!server.servers.is_empty(), "Expected at least one server");
-    let port = server.servers[0].port;
+    let port = server.port;
     println!("DoT server started on port {}", port);
 
     // Wait for server to fully initialize

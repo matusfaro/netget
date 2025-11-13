@@ -18,7 +18,33 @@ async fn test_http_simple_get() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via http stack. For any GET request, return status 200 with body: <h1>Hello World</h1>";
 
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    .on_instruction_containing("http")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "HTTP",
+                            "instruction": "HTTP server"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    .on_event("http_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "http_response",
+                            "status_code": 200,
+                            "body": "<h1>Hello World</h1>"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!(
         "Server started: {} stack on port {}",
         server.stack, server.port
@@ -42,6 +68,7 @@ async fn test_http_simple_get() -> E2EResult<()> {
     assert!(body.contains("Hello World"));
 
     println!("✓ Response validated");
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())
@@ -55,7 +82,34 @@ async fn test_http_json_api() -> E2EResult<()> {
     let prompt = r#"listen on port {AVAILABLE_PORT} via http stack. For any POST to /api/data, return status 201 with Content-Type: application/json and body: {"status": "created", "id": 123}"#;
 
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    .on_instruction_containing("http")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "HTTP",
+                            "instruction": "HTTP JSON API server"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    .on_event("http_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "http_response",
+                            "status_code": 201,
+                            "headers": {"Content-Type": "application/json"},
+                            "body": "{\"status\": \"created\", \"id\": 123}"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Make POST request
@@ -82,6 +136,7 @@ async fn test_http_json_api() -> E2EResult<()> {
     assert_eq!(json["id"], 123);
 
     println!("✓ JSON response validated");
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())
@@ -95,7 +150,56 @@ async fn test_http_routing() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via http stack. For GET /home return 'Welcome Home'. For GET /about return 'About Us'. For other paths return 404 with 'Not Found'";
 
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    .on_instruction_containing("http")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "HTTP",
+                            "instruction": "HTTP routing server"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // GET /home
+                    .on_event("http_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "http_response",
+                            "status_code": 200,
+                            "body": "Welcome Home"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // GET /about
+                    .on_event("http_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "http_response",
+                            "status_code": 200,
+                            "body": "About Us"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // GET /unknown
+                    .on_event("http_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "http_response",
+                            "status_code": 404,
+                            "body": "Not Found"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("Server started on port {}", server.port);
 
     let client = reqwest::Client::new();
@@ -130,6 +234,7 @@ async fn test_http_routing() -> E2EResult<()> {
     assert!(body.contains("Not Found") || body.contains("not found"));
     println!("✓ 404 response works");
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())
@@ -143,7 +248,37 @@ async fn test_http_headers() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via http stack. For GET /api return status 200 with headers: X-API-Version: 1.0, X-Custom: test-value, and body: API Response";
 
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    .on_instruction_containing("http")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "HTTP",
+                            "instruction": "HTTP server with custom headers"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    .on_event("http_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "http_response",
+                            "status_code": 200,
+                            "headers": {
+                                "X-API-Version": "1.0",
+                                "X-Custom": "test-value"
+                            },
+                            "body": "API Response"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Check headers
@@ -167,6 +302,7 @@ async fn test_http_headers() -> E2EResult<()> {
     assert!(body.contains("API Response") || body.contains("API"));
 
     println!("✓ Custom headers validated");
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())
@@ -180,7 +316,67 @@ async fn test_http_methods() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via http stack. For GET return 'GET Response'. For POST return 'POST Response'. For PUT return 'PUT Response'. For DELETE return 'DELETE Response'";
 
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    .on_instruction_containing("http")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "HTTP",
+                            "instruction": "HTTP server with method routing"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // GET
+                    .on_event("http_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "http_response",
+                            "status_code": 200,
+                            "body": "GET Response"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // POST
+                    .on_event("http_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "http_response",
+                            "status_code": 200,
+                            "body": "POST Response"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // PUT
+                    .on_event("http_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "http_response",
+                            "status_code": 200,
+                            "body": "PUT Response"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // DELETE
+                    .on_event("http_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "http_response",
+                            "status_code": 200,
+                            "body": "DELETE Response"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("Server started on port {}", server.port);
 
     let client = reqwest::Client::new();
@@ -214,6 +410,7 @@ async fn test_http_methods() -> E2EResult<()> {
     assert!(body.contains("DELETE"));
     println!("✓ DELETE method works");
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())
@@ -227,7 +424,57 @@ async fn test_http_error_responses() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via http stack. For GET /forbidden return 403 with 'Access Denied'. For GET /error return 500 with 'Server Error'. For GET /redirect return 301 with Location header: /home";
 
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    .on_instruction_containing("http")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "HTTP",
+                            "instruction": "HTTP server with error responses"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // GET /forbidden
+                    .on_event("http_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "http_response",
+                            "status_code": 403,
+                            "body": "Access Denied"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // GET /error
+                    .on_event("http_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "http_response",
+                            "status_code": 500,
+                            "body": "Server Error"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // GET /redirect
+                    .on_event("http_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "http_response",
+                            "status_code": 301,
+                            "headers": {"Location": "/home"},
+                            "body": ""
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("Server started on port {}", server.port);
 
     // Don't follow redirects for this test
@@ -268,6 +515,7 @@ async fn test_http_error_responses() -> E2EResult<()> {
     assert_eq!(location, Some("/home"));
     println!("✓ 301 redirect works");
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())
@@ -281,7 +529,38 @@ async fn test_http_simple_get_with_logging() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via http stack. For any GET request, return status 200 with body: <h1>Hello World</h1>. Also, log all access logs to a file named 'access_logs'";
 
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    .on_instruction_containing("http")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "HTTP",
+                            "instruction": "HTTP server with logging"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    .on_event("http_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "http_response",
+                            "status_code": 200,
+                            "body": "<h1>Hello World</h1>"
+                        },
+                        {
+                            "type": "write_file",
+                            "filename": "access_logs",
+                            "content": "GET / 200\n"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!(
         "Server started: {} stack on port {}",
         server.stack, server.port
@@ -355,6 +634,7 @@ async fn test_http_simple_get_with_logging() -> E2EResult<()> {
         );
     }
 
+    server.verify_mocks().await?;
     println!("=== Test passed ===\n");
     Ok(())
 }

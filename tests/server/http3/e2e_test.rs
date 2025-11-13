@@ -62,7 +62,7 @@ async fn test_http3_echo() -> E2EResult<()> {
     client_crypto.alpn_protocols = vec![b"h3".to_vec()];
 
     let client_config = quinn::ClientConfig::new(Arc::new(
-        quinn::crypto::rustls::Http3ClientConfig::try_from(client_crypto)
+        quinn::crypto::rustls::QuicClientConfig::try_from(client_crypto)
             .expect("Failed to create HTTP3 client config"),
     ));
 
@@ -71,14 +71,15 @@ async fn test_http3_echo() -> E2EResult<()> {
     endpoint.set_default_client_config(client_config);
 
     // Connect to HTTP3 server
+    let connecting = endpoint.connect(format!("127.0.0.1:{}", port).parse().unwrap(), "localhost")
+        .expect("Failed to start connection");
+
     let connection = timeout(
         Duration::from_secs(10),
-        endpoint.connect(format!("127.0.0.1:{}", port).parse().unwrap(), "localhost"),
+        connecting,
     )
     .await
     .expect("Connection timeout")
-    .expect("Failed to connect")
-    .await
     .expect("Failed to complete connection");
 
     // Open bidirectional stream
@@ -170,7 +171,7 @@ async fn test_http3_custom_response() -> E2EResult<()> {
     client_crypto.alpn_protocols = vec![b"h3".to_vec()];
 
     let client_config = quinn::ClientConfig::new(Arc::new(
-        quinn::crypto::rustls::Http3ClientConfig::try_from(client_crypto)
+        quinn::crypto::rustls::QuicClientConfig::try_from(client_crypto)
             .expect("Failed to create HTTP3 client config"),
     ));
 
@@ -179,14 +180,15 @@ async fn test_http3_custom_response() -> E2EResult<()> {
     endpoint.set_default_client_config(client_config);
 
     // Connect to HTTP3 server
+    let connecting = endpoint.connect(format!("127.0.0.1:{}", port).parse().unwrap(), "localhost")
+        .expect("Failed to start connection");
+
     let connection = timeout(
         Duration::from_secs(10),
-        endpoint.connect(format!("127.0.0.1:{}", port).parse().unwrap(), "localhost"),
+        connecting,
     )
     .await
     .expect("Connection timeout")
-    .expect("Failed to connect")
-    .await
     .expect("Failed to complete connection");
 
     // Open bidirectional stream
@@ -275,7 +277,7 @@ async fn test_http3_multiple_streams() -> E2EResult<()> {
     client_crypto.alpn_protocols = vec![b"h3".to_vec()];
 
     let client_config = quinn::ClientConfig::new(Arc::new(
-        quinn::crypto::rustls::Http3ClientConfig::try_from(client_crypto)
+        quinn::crypto::rustls::QuicClientConfig::try_from(client_crypto)
             .expect("Failed to create HTTP3 client config"),
     ));
 
@@ -284,14 +286,15 @@ async fn test_http3_multiple_streams() -> E2EResult<()> {
     endpoint.set_default_client_config(client_config);
 
     // Connect to HTTP3 server
+    let connecting = endpoint.connect(format!("127.0.0.1:{}", port).parse().unwrap(), "localhost")
+        .expect("Failed to start connection");
+
     let connection = timeout(
         Duration::from_secs(10),
-        endpoint.connect(format!("127.0.0.1:{}", port).parse().unwrap(), "localhost"),
+        connecting,
     )
     .await
     .expect("Connection timeout")
-    .expect("Failed to connect")
-    .await
     .expect("Failed to complete connection");
 
     // Open 3 streams concurrently
@@ -335,6 +338,7 @@ async fn test_http3_multiple_streams() -> E2EResult<()> {
 }
 
 /// Certificate verifier that skips all verification (for self-signed certs)
+#[derive(Debug)]
 struct SkipServerVerification;
 
 impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {

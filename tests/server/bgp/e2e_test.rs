@@ -545,7 +545,7 @@ mod e2e_bgp {
                     .and()
                     // Mock 4: NOTIFICATION (Cease) received - close connection gracefully
                     .on_event("bgp_notification_received")
-                    .and_event_data_contains("error_code", 6)
+                    .and_event_data_contains("error_code", "6")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "disconnect"

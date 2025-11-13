@@ -112,7 +112,7 @@ impl ZookeeperServer {
     async fn handle_connection(
         stream: TcpStream,
         server: Arc<ZookeeperServer>,
-        status_tx: mpsc::UnboundedSender<String>,
+        _status_tx: mpsc::UnboundedSender<String>,
         connection_id: ConnectionId,
         app_state: Arc<AppState>,
         server_id: Option<crate::state::ServerId>,

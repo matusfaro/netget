@@ -543,6 +543,16 @@ impl ServerRegistry {
             return Some(stack);
         }
 
+        // Priority 2.5: Check SMTP before general loop (avoid hash order collisions)
+        if let Some(stack) = self.match_protocol_by_any_keyword(&input_lower, "SMTP") {
+            return Some(stack);
+        }
+
+        // Priority 2.7: Check SNMP before SSH-Agent (avoid "agent" substring match)
+        if let Some(stack) = self.match_protocol_by_any_keyword(&input_lower, "SNMP") {
+            return Some(stack);
+        }
+
         // Priority 3: Check PostgreSQL before MySQL (avoid "sql" substring)
         if let Some(stack) = self.match_protocol_by_any_keyword(&input_lower, "PostgreSQL") {
             return Some(stack);

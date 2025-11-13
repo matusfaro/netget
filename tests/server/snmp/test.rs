@@ -160,8 +160,44 @@ async fn test_snmp_get_next() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via snmp. Support GETNEXT requests. \
         When queried with 1.3.6.1.2.1.1, return the next OID 1.3.6.1.2.1.1.1.0 with value 'NetGet SNMP'";
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup (user command)
+                    .on_instruction_containing("listen on port")
+                    .and_instruction_containing("snmp")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "SNMP",
+                            "instruction": "Support GETNEXT requests. When queried with 1.3.6.1.2.1.1, return the next OID 1.3.6.1.2.1.1.1.0 with value 'NetGet SNMP'"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: SNMP GETNEXT
+                    .on_event("snmp_getnext")
+                    .and_event_data_contains("oid", "1.3.6.1.2.1.1")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_snmp_response",
+                            "request_id": 0,
+                            "varbinds": [
+                                {
+                                    "oid": "1.3.6.1.2.1.1.1.0",
+                                    "value_type": "string",
+                                    "value": "NetGet SNMP"
+                                }
+                            ]
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("Server started on port {}", server.port);
 
     // Wait longer for SNMP server to fully initialize (needs LLM call to set up)
@@ -190,6 +226,9 @@ async fn test_snmp_get_next() -> E2EResult<()> {
         }
     }
 
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -207,8 +246,74 @@ async fn test_snmp_interface_stats() -> E2EResult<()> {
         1.3.6.1.2.1.2.2.1.5.1 = 1000000000 (ifSpeed: 1 Gbps), \
         1.3.6.1.2.1.2.2.1.8.1 = 1 (ifOperStatus: up)";
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("snmp")
+                    .and_instruction_containing("interface statistics")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "SNMP",
+                            "instruction": "Provide interface statistics for queries"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: ifIndex query
+                    .on_event("snmp_get")
+                    .and_event_data_contains("oid", "1.3.6.1.2.1.2.2.1.1.1")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_snmp_response",
+                            "request_id": 0,
+                            "varbinds": [{"oid": "1.3.6.1.2.1.2.2.1.1.1", "value_type": "integer", "value": 1}]
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: ifDescr query
+                    .on_event("snmp_get")
+                    .and_event_data_contains("oid", "1.3.6.1.2.1.2.2.1.2.1")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_snmp_response",
+                            "request_id": 0,
+                            "varbinds": [{"oid": "1.3.6.1.2.1.2.2.1.2.1", "value_type": "string", "value": "eth0"}]
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 4: ifSpeed query
+                    .on_event("snmp_get")
+                    .and_event_data_contains("oid", "1.3.6.1.2.1.2.2.1.5.1")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_snmp_response",
+                            "request_id": 0,
+                            "varbinds": [{"oid": "1.3.6.1.2.1.2.2.1.5.1", "value_type": "gauge", "value": 1000000000}]
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 5: ifOperStatus query
+                    .on_event("snmp_get")
+                    .and_event_data_contains("oid", "1.3.6.1.2.1.2.2.1.8.1")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_snmp_response",
+                            "request_id": 0,
+                            "varbinds": [{"oid": "1.3.6.1.2.1.2.2.1.8.1", "value_type": "integer", "value": 1}]
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("Server started on port {}", server.port);
 
     // Wait longer for SNMP server to fully initialize (needs LLM call to set up)
@@ -244,6 +349,9 @@ async fn test_snmp_interface_stats() -> E2EResult<()> {
         }
     }
 
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -259,8 +367,62 @@ async fn test_snmp_custom_mib() -> E2EResult<()> {
         1.3.6.1.4.1.99999.1.2.0 = 42 (counter), \
         1.3.6.1.4.1.99999.1.3.0 = 'active' (status)";
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("snmp")
+                    .and_instruction_containing("custom enterprise OID")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "SNMP",
+                            "instruction": "Support custom enterprise OID tree 1.3.6.1.4.1.99999"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Application Name query
+                    .on_event("snmp_get")
+                    .and_event_data_contains("oid", "1.3.6.1.4.1.99999.1.1.0")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_snmp_response",
+                            "request_id": 0,
+                            "varbinds": [{"oid": "1.3.6.1.4.1.99999.1.1.0", "value_type": "string", "value": "Custom Application v1.0"}]
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: Counter query
+                    .on_event("snmp_get")
+                    .and_event_data_contains("oid", "1.3.6.1.4.1.99999.1.2.0")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_snmp_response",
+                            "request_id": 0,
+                            "varbinds": [{"oid": "1.3.6.1.4.1.99999.1.2.0", "value_type": "counter", "value": 42}]
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 4: Status query
+                    .on_event("snmp_get")
+                    .and_event_data_contains("oid", "1.3.6.1.4.1.99999.1.3.0")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_snmp_response",
+                            "request_id": 0,
+                            "varbinds": [{"oid": "1.3.6.1.4.1.99999.1.3.0", "value_type": "string", "value": "active"}]
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("Server started on port {}", server.port);
 
     // Wait longer for SNMP server to fully initialize (needs LLM call to set up)
@@ -294,6 +456,9 @@ async fn test_snmp_custom_mib() -> E2EResult<()> {
             }
         }
     }
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
 
     server.stop().await?;
     println!("=== Test completed ===\n");
