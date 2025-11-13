@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 default = ["all-protocols"]
-tcp = ["async-trait"]
+tcp = []
 socket_file = []  # Unix domain socket server & client for IPC (Unix/Linux/macOS only, gated with #[cfg(unix)]), no extra deps
 http = ["dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]
 http2 = ["dep:h2", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]
@@ -45,23 +45,23 @@ whois = []  # WHOIS uses only TCP, no extra deps
 snmp = ["rasn-snmp", "rasn", "rasn-smi", "dep:snmp"]
 igmp = []  # IGMP multicast group management, no extra deps
 syslog = ["syslog_loose"]
-ssh = ["russh", "russh-keys", "russh-sftp", "async-trait", "dep:ssh2"]
-ssh-agent = ["async-trait", "dep:ssh-agent-lib", "dep:tempfile"]  # SSH Key Agent protocol (server and client for key management)
+ssh = ["russh", "russh-keys", "russh-sftp", "dep:ssh2"]
+ssh-agent = ["dep:ssh-agent-lib", "dep:tempfile"]  # SSH Key Agent protocol (server and client for key management)
 svn = []  # SVN (Subversion) uses only TCP, no extra deps
 irc = ["dep:irc"]  # IRC client support
 xmpp = ["dep:tokio-xmpp", "dep:xmpp-parsers"]  # XMPP/Jabber instant messaging client
 telnet = ["nectar"]
-smtp = ["rust-smtp-server", "dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:lettre"]
+smtp = ["rust-smtp-server", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen", "dep:lettre"]
 mdns = ["mdns-sd"]
-mysql = ["dep:opensrv-mysql", "async-trait", "dep:mysql_async"]
+mysql = ["dep:opensrv-mysql", "dep:mysql_async"]
 ipp = ["dep:ipp"]
-postgresql = ["dep:pgwire", "async-trait", "dep:tokio-postgres"]
+postgresql = ["dep:pgwire", "dep:tokio-postgres"]
 redis = ["dep:redis-protocol", "dep:redis"]
 rss = ["dep:rss"]  # RSS feed server and client (RSS 2.0 XML generation and parsing)
 proxy = ["http-mitm-proxy", "dep:rcgen", "tokio-native-tls", "native-tls"]
 http_proxy = ["http-mitm-proxy", "dep:rcgen", "tokio-native-tls", "native-tls"]  # HTTP proxy (alternate name)
 webdav = ["dav-server", "dep:reqwest_dav"]
-nfs = ["nfsserve", "dep:nfs3_client", "dep:nfs3_types", "async-trait"]
+nfs = ["nfsserve", "dep:nfs3_client", "dep:nfs3_types"]
 cassandra = ["dep:cassandra-protocol", "tcp", "dep:scylla"]
 smb = ["smb-msg"]
 stun = ["dep:webrtc-stun", "dep:stunclient"]
@@ -71,7 +71,7 @@ webrtc = ["dep:webrtc"]  # WebRTC client for peer-to-peer data channels (no medi
 sip = []  # SIP uses only UDP, no extra deps (manual protocol implementation)
 ldap = ["dep:ldap3_proto", "rasn", "dep:ldap3"]
 imap = ["imap-codec", "dep:async-imap", "dep:async-native-tls"]  # IMAP uses imap-codec for protocol parsing
-pop3 = ["dep:rustls", "dep:tokio-rustls", "dep:webpki-roots", "dep:rcgen"]  # POP3 email retrieval (manual implementation with TLS support)
+pop3 = ["dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:webpki-roots", "dep:rcgen"]  # POP3 email retrieval (manual implementation with TLS support)
 nntp = []  # NNTP (Network News Transfer Protocol) for Usenet, uses only TCP, no extra deps
 mqtt = ["dep:rumqttd", "dep:rumqttc"]  # MQTT broker and client for IoT messaging
 amqp = ["dep:lapin"]  # AMQP broker and client for RabbitMQ compatibility
@@ -97,14 +97,14 @@ ospf = []  # OSPF routing protocol (IP protocol 89, raw sockets, requires root/C
 isis = []  # IS-IS routing protocol (Intermediate System to Intermediate System)
 rip = []  # RIP (Routing Information Protocol) v2 - distance-vector routing
 bitcoin = ["dep:bitcoin"]  # Bitcoin P2P protocol server (LLM-controlled, not a real full node)
-mcp = ["dep:axum", "dep:tower-http", "async-trait"]  # Model Context Protocol (JSON-RPC 2.0 over HTTP/SSE)
-grpc = ["dep:tonic", "dep:prost", "dep:prost-reflect", "dep:prost-types", "dep:tonic-reflection", "dep:tower", "dep:tempfile", "async-trait"]  # gRPC server with dynamic schema support
+mcp = ["dep:axum", "dep:tower-http"]  # Model Context Protocol (JSON-RPC 2.0 over HTTP/SSE)
+grpc = ["dep:tonic", "dep:prost", "dep:prost-reflect", "dep:prost-types", "dep:tonic-reflection", "dep:tower", "dep:tempfile"]  # gRPC server with dynamic schema support
 etcd = ["grpc", "dep:etcd-client"]  # etcd v3 key-value store server (KV service via gRPC)
 zookeeper = ["dep:zookeeper-async"]  # ZooKeeper distributed coordination server and client with binary protocol support
 xmlrpc = ["quick-xml", "dep:xmlrpc"]  # XML-RPC server and client with LLM-controlled method execution
 tor = ["dep:tor-netdoc", "dep:tor-cert", "dep:tor-cell", "dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:ed25519-dalek", "dep:x25519-dalek", "dep:sha2", "dep:aes", "dep:ctr", "dep:hmac", "dep:hkdf", "dep:arti-client", "dep:tor-rtcompat"]  # Tor directory mirror and OR protocol relay (Guard/Middle/Exit) with cell handling
-vnc = ["async-trait"]  # VNC server and client with custom RFB protocol implementation
-openapi = ["dep:openapi-rs", "dep:matchit", "async-trait"]  # OpenAPI 3.1 server with runtime request validation and route matching
+vnc = []  # VNC server and client with custom RFB protocol implementation
+openapi = ["dep:openapi-rs", "dep:matchit"]  # OpenAPI 3.1 server with runtime request validation and route matching
 openid = []  # OpenID Connect authentication provider with LLM-controlled token generation
 usb-common = ["dep:usbip"]  # Common USB/IP functionality for USB device protocols
 usb-keyboard = ["usb-common"]  # USB HID Keyboard virtual device
@@ -123,7 +123,7 @@ http3 = ["dep:quinn", "dep:rustls", "dep:rustls-pemfile", "dep:rcgen", "dep:h3",
 torrent-tracker = ["dep:serde_bencode"]  # BitTorrent Tracker (HTTP-based peer discovery with announce/scrape)
 torrent-dht = ["dep:serde_bencode"]  # BitTorrent DHT (Kademlia-based distributed peer discovery)
 torrent-peer = ["dep:serde_bencode"]  # BitTorrent Peer Wire Protocol (peer-to-peer data transfer)
-tls = ["dep:rustls", "dep:tokio-rustls", "dep:rcgen"]  # TLS server for custom protocols on top of encrypted transport
+tls = ["dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]  # TLS server for custom protocols on top of encrypted transport
 all-protocols = [
     "tcp",
     "socket_file",
@@ -345,7 +345,7 @@ syslog_loose = { version = "0.22", optional = true }
 russh = { version = "0.45", optional = true }
 russh-keys = { version = "0.45", optional = true }
 russh-sftp = { version = "2.1", optional = true }
-async-trait = { version = "0.1", optional = true }
+async-trait = "0.1"
 
 # SSH Agent protocol (key management server and client)
 ssh-agent-lib = { version = "0.5", optional = true }
