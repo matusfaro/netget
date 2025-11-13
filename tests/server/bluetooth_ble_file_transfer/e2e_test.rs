@@ -1,0 +1,54 @@
+//! End-to-end Bluetooth LE File Transfer Service tests for NetGet
+
+#![cfg(all(test, feature = "bluetooth-ble-file-transfer"))]
+
+use crate::helpers::{self, E2EResult, NetGetConfig};
+use std::time::Duration;
+
+#[tokio::test]
+async fn test_file_transfer_service_startup() -> E2EResult<()> {
+    println!("\n=== E2E Test: File Transfer Service Startup ===");
+
+    let prompt = "Act as a BLE file transfer service. Create a custom service for file transfer with characteristics for file name, size, data chunks, and control. Advertise as 'NetGet-FileTransfer'.";
+
+    let mut server = helpers::start_netget_server(
+        NetGetConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    .on_instruction_containing("file transfer")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "BluetoothBLE",
+                            "instruction": "Create file transfer service",
+                            "startup_params": {
+                                "device_name": "NetGet-FileTransfer",
+                                "services": [
+                                    {
+                                        "uuid": "f0001000-0451-4000-b000-000000000000",
+                                        "characteristics": [
+                                            {
+                                                "uuid": "f0001001-0451-4000-b000-000000000000",
+                                                "properties": ["read", "write"],
+                                                "value": "00"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
+
+    println!("✓ File transfer service started");
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    server.verify_mocks().await?;
+    server.stop().await?;
+    println!("=== Test passed ===\n");
+    Ok(())
+}

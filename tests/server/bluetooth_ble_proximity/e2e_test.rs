@@ -1,0 +1,54 @@
+//! End-to-end Bluetooth LE Proximity Service tests for NetGet
+
+#![cfg(all(test, feature = "bluetooth-ble-proximity"))]
+
+use crate::helpers::{self, E2EResult, NetGetConfig};
+use std::time::Duration;
+
+#[tokio::test]
+async fn test_proximity_service_startup() -> E2EResult<()> {
+    println!("\n=== E2E Test: Proximity Service Startup ===");
+
+    let prompt = "Act as a BLE proximity sensor. Create the Proximity Service (UUID: 00001802-0000-1000-8000-00805f9b34fb) with Link Loss and Immediate Alert. Advertise as 'NetGet-Proximity'.";
+
+    let mut server = helpers::start_netget_server(
+        NetGetConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    .on_instruction_containing("proximity")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "BluetoothBLE",
+                            "instruction": "Create proximity service",
+                            "startup_params": {
+                                "device_name": "NetGet-Proximity",
+                                "services": [
+                                    {
+                                        "uuid": "00001802-0000-1000-8000-00805f9b34fb",
+                                        "characteristics": [
+                                            {
+                                                "uuid": "00002a06-0000-1000-8000-00805f9b34fb",
+                                                "properties": ["write"],
+                                                "value": "00"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
+
+    println!("✓ Proximity service started");
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    server.verify_mocks().await?;
+    server.stop().await?;
+    println!("=== Test passed ===\n");
+    Ok(())
+}

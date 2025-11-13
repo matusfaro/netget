@@ -1,0 +1,135 @@
+//! End-to-end Bluetooth LE Heart Rate Service tests for NetGet
+//!
+//! These tests spawn the actual NetGet binary with BLE GATT Heart Rate Service prompts
+//! and validate basic server functionality.
+
+#![cfg(all(test, feature = "bluetooth-ble-heart-rate"))]
+
+use crate::helpers::{self, E2EResult, NetGetConfig};
+use std::time::Duration;
+
+/// Test heart rate service startup
+/// LLM calls: 1 (server startup)
+#[tokio::test]
+async fn test_heart_rate_service_startup() -> E2EResult<()> {
+    println!("\n=== E2E Test: Heart Rate Service Startup ===");
+
+    // PROMPT: Create a BLE heart rate monitor
+    let prompt = "Act as a BLE heart rate monitor. Create the Heart Rate Service (UUID: 0000180d-0000-1000-8000-00805f9b34fb) with Heart Rate Measurement characteristic (UUID: 00002a37-0000-1000-8000-00805f9b34fb) that supports read and notify. Set initial BPM to 72 (hex: 0048). Start advertising as 'NetGet-HeartRate'.";
+
+    // Start the server with mocks
+    let mut server = helpers::start_netget_server(
+        NetGetConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("heart rate monitor")
+                    .and_instruction_containing("Heart Rate Service")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "BluetoothBLE",
+                            "instruction": "Create Heart Rate Service. Set initial BPM to 72",
+                            "startup_params": {
+                                "device_name": "NetGet-HeartRate",
+                                "services": [
+                                    {
+                                        "uuid": "0000180d-0000-1000-8000-00805f9b34fb",
+                                        "characteristics": [
+                                            {
+                                                "uuid": "00002a37-0000-1000-8000-00805f9b34fb",
+                                                "properties": ["read", "notify"],
+                                                "value": "0048"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
+
+    println!("✓ Heart rate service started");
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    println!("✓ Server running without errors");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
+    server.stop().await?;
+    println!("=== Test passed ===\n");
+    Ok(())
+}
+
+/// Test heart rate updates
+/// LLM calls: 2 (server startup, rate update)
+#[tokio::test]
+async fn test_heart_rate_updates() -> E2EResult<()> {
+    println!("\n=== E2E Test: Heart Rate Updates ===");
+
+    // PROMPT: Create heart rate monitor with dynamic updates
+    let prompt = "Act as a BLE heart rate monitor. Start with 72 BPM, then simulate exercise by increasing to 120 BPM after 2 seconds. Advertise as 'NetGet-HR-Dynamic'.";
+
+    // Start the server with mocks
+    let mut server = helpers::start_netget_server(
+        NetGetConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("heart rate monitor")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "BluetoothBLE",
+                            "instruction": "Create Heart Rate Service with dynamic updates",
+                            "startup_params": {
+                                "device_name": "NetGet-HR-Dynamic",
+                                "services": [
+                                    {
+                                        "uuid": "0000180d-0000-1000-8000-00805f9b34fb",
+                                        "characteristics": [
+                                            {
+                                                "uuid": "00002a37-0000-1000-8000-00805f9b34fb",
+                                                "properties": ["read", "notify"],
+                                                "value": "0048"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Heart rate notification (if triggered)
+                    .on_event("ble_notification_request")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_ble_notification",
+                            "characteristic_uuid": "00002a37-0000-1000-8000-00805f9b34fb",
+                            "value": "0078"
+                        }
+                    ]))
+                    .expect_at_most(1)
+                    .and()
+            })
+    ).await?;
+
+    println!("✓ Heart rate service started with dynamic updates");
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    println!("✓ Server handled heart rate changes");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
+    server.stop().await?;
+    println!("=== Test passed ===\n");
+    Ok(())
+}

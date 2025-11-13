@@ -15,7 +15,7 @@
 
 #![cfg(all(test, feature = "bluetooth-ble"))]
 
-use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use super::super::super::helpers::{self, E2EResult, NetGetConfig};
 use std::time::Duration;
 
 #[cfg(feature = "bluetooth-ble")]
@@ -90,7 +90,7 @@ async fn test_bluetooth_heart_rate_server() -> E2EResult<()> {
     // Start the server with mocks
     println!("Starting NetGet BLE server...");
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup (user command)
@@ -255,7 +255,7 @@ async fn test_bluetooth_battery_service() -> E2EResult<()> {
     // Start the server with mocks
     println!("Starting NetGet BLE server...");
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup (user command)
@@ -401,7 +401,7 @@ async fn test_bluetooth_ble_startup() -> E2EResult<()> {
     // Start server with mocks
     println!("Starting NetGet BLE server...");
     let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
+        NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup (user command)
