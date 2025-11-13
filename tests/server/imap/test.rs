@@ -58,7 +58,35 @@ async fn test_imap_greeting() -> E2EResult<()> {
     let prompt =
         "listen on port {AVAILABLE_PORT} via imap. Send greeting: * OK IMAP4rev1 Server Ready";
 
-    let server = start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("imap")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "IMAP",
+                        "instruction": "Send greeting: * OK IMAP4rev1 Server Ready"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Connection accepted
+                .on_event("imap_connection_accepted")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "response": "* OK IMAP4rev1 Server Ready"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = start_netget_server(config).await?;
 
     // Wait for server to start
     wait_for_server_startup(&server, Duration::from_secs(10), "IMAP").await?;
@@ -84,6 +112,7 @@ async fn test_imap_greeting() -> E2EResult<()> {
         greeting
     );
 
+    server.verify_mocks().await?;
     server.stop().await?;
     Ok(())
 }
@@ -92,7 +121,46 @@ async fn test_imap_greeting() -> E2EResult<()> {
 async fn test_imap_capability() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via imap. Support IMAP4rev1, IDLE, NAMESPACE capabilities.";
 
-    let server = start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("imap")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "IMAP",
+                        "instruction": "Support IMAP4rev1, IDLE, NAMESPACE capabilities"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Connection greeting
+                .on_event("imap_connection_accepted")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "response": "* OK [CAPABILITY IMAP4rev1 IDLE NAMESPACE] Server Ready"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: CAPABILITY command response
+                .on_event("imap_command_received")
+                .and_event_data_contains("command", "CAPABILITY")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "response": "* CAPABILITY IMAP4rev1 IDLE NAMESPACE\r\nA001 OK CAPABILITY completed"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = start_netget_server(config).await?;
     wait_for_server_startup(&server, Duration::from_secs(10), "IMAP").await?;
 
     let mut client = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
@@ -132,6 +200,7 @@ async fn test_imap_capability() -> E2EResult<()> {
         ok_line
     );
 
+    server.verify_mocks().await?;
     server.stop().await?;
     Ok(())
 }
@@ -140,7 +209,46 @@ async fn test_imap_capability() -> E2EResult<()> {
 async fn test_imap_login() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via imap. Allow LOGIN for username 'testuser' with password 'testpass'. Any other credentials should fail.";
 
-    let server = start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("imap")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "IMAP",
+                        "instruction": "Allow LOGIN for testuser/testpass"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Connection greeting
+                .on_event("imap_connection_accepted")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "response": "* OK IMAP4rev1 Server Ready"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: LOGIN command response
+                .on_event("imap_command_received")
+                .and_event_data_contains("command", "LOGIN")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "response": "A001 OK LOGIN completed"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = start_netget_server(config).await?;
     wait_for_server_startup(&server, Duration::from_secs(10), "IMAP").await?;
 
     let mut client = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
@@ -161,6 +269,7 @@ async fn test_imap_login() -> E2EResult<()> {
         ok_line
     );
 
+    server.verify_mocks().await?;
     server.stop().await?;
     Ok(())
 }
@@ -169,7 +278,46 @@ async fn test_imap_login() -> E2EResult<()> {
 async fn test_imap_login_failure() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via imap. Allow LOGIN for username 'testuser' with password 'testpass'. Reject invalid credentials with 'A001 NO Invalid credentials'.";
 
-    let server = start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("imap")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "IMAP",
+                        "instruction": "Allow LOGIN testuser/testpass, reject others"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Connection greeting
+                .on_event("imap_connection_accepted")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "response": "* OK IMAP4rev1 Server Ready"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: LOGIN failure response
+                .on_event("imap_command_received")
+                .and_event_data_contains("command", "LOGIN")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "response": "A001 NO Invalid credentials"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = start_netget_server(config).await?;
     wait_for_server_startup(&server, Duration::from_secs(10), "IMAP").await?;
 
     let mut client = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
@@ -187,6 +335,7 @@ async fn test_imap_login_failure() -> E2EResult<()> {
         response_line
     );
 
+    server.verify_mocks().await?;
     server.stop().await?;
     Ok(())
 }
@@ -197,7 +346,57 @@ async fn test_imap_select_mailbox() -> E2EResult<()> {
          INBOX has 5 messages, 2 recent. After SELECT INBOX, respond with: \
          * 5 EXISTS\r\n* 2 RECENT\r\n* FLAGS (\\Seen \\Answered \\Flagged \\Deleted \\Draft)\r\nA002 OK [READ-WRITE] SELECT completed";
 
-    let server = start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("imap")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "IMAP",
+                        "instruction": "Allow LOGIN alice/secret, INBOX has 5 messages 2 recent"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Connection greeting
+                .on_event("imap_connection_accepted")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "response": "* OK IMAP4rev1 Server Ready"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: LOGIN command
+                .on_event("imap_command_received")
+                .and_event_data_contains("command", "LOGIN")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "response": "A001 OK LOGIN completed"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 4: SELECT command
+                .on_event("imap_command_received")
+                .and_event_data_contains("command", "SELECT")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "response": "* 5 EXISTS\r\n* 2 RECENT\r\n* FLAGS (\\Seen \\Answered \\Flagged \\Deleted \\Draft)\r\nA002 OK [READ-WRITE] SELECT completed"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = start_netget_server(config).await?;
     wait_for_server_startup(&server, Duration::from_secs(10), "IMAP").await?;
 
     let mut client = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
@@ -233,6 +432,7 @@ async fn test_imap_select_mailbox() -> E2EResult<()> {
         ok_line
     );
 
+    server.verify_mocks().await?;
     server.stop().await?;
     Ok(())
 }
@@ -244,7 +444,57 @@ async fn test_imap_list_mailboxes() -> E2EResult<()> {
          After LIST \"\" \"*\", respond with: \
          * LIST () \"/\" \"INBOX\"\r\n* LIST () \"/\" \"Sent\"\r\n* LIST () \"/\" \"Drafts\"\r\nA003 OK LIST completed";
 
-    let server = start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("imap")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "IMAP",
+                        "instruction": "Allow LOGIN alice, Mailboxes: INBOX, Sent, Drafts"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Connection greeting
+                .on_event("imap_connection_accepted")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "response": "* OK IMAP4rev1 Server Ready"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: LOGIN command
+                .on_event("imap_command_received")
+                .and_event_data_contains("command", "LOGIN")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "response": "A001 OK LOGIN completed"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 4: LIST command
+                .on_event("imap_command_received")
+                .and_event_data_contains("command", "LIST")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "response": "* LIST () \"/\" \"INBOX\"\r\n* LIST () \"/\" \"Sent\"\r\n* LIST () \"/\" \"Drafts\"\r\nA003 OK LIST completed"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = start_netget_server(config).await?;
     wait_for_server_startup(&server, Duration::from_secs(10), "IMAP").await?;
 
     let mut client = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
@@ -288,6 +538,7 @@ async fn test_imap_list_mailboxes() -> E2EResult<()> {
         ok_line
     );
 
+    server.verify_mocks().await?;
     server.stop().await?;
     Ok(())
 }
@@ -299,7 +550,68 @@ async fn test_imap_fetch_message() -> E2EResult<()> {
          After FETCH 1 (FLAGS BODY[]), respond with: \
          * 1 FETCH (FLAGS (\\Seen) BODY[] {{50}}\r\nFrom: test@example.com\r\nSubject: Test\r\n\r\nHello)\r\nA004 OK FETCH completed";
 
-    let server = start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("imap")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "IMAP",
+                        "instruction": "Allow LOGIN alice, INBOX has 1 message"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Connection greeting
+                .on_event("imap_connection_accepted")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "response": "* OK IMAP4rev1 Server Ready"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: LOGIN command
+                .on_event("imap_command_received")
+                .and_event_data_contains("command", "LOGIN")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "response": "A001 OK LOGIN completed"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 4: SELECT command
+                .on_event("imap_command_received")
+                .and_event_data_contains("command", "SELECT")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "response": "* 1 EXISTS\r\nA002 OK [READ-WRITE] SELECT completed"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 5: FETCH command
+                .on_event("imap_command_received")
+                .and_event_data_contains("command", "FETCH")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "response": "* 1 FETCH (FLAGS (\\Seen) BODY[] {50}\r\nFrom: test@example.com\r\nSubject: Test\r\n\r\nHello)\r\nA004 OK FETCH completed"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = start_netget_server(config).await?;
     wait_for_server_startup(&server, Duration::from_secs(10), "IMAP").await?;
 
     let mut client = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
@@ -336,6 +648,7 @@ async fn test_imap_fetch_message() -> E2EResult<()> {
         ok_line
     );
 
+    server.verify_mocks().await?;
     server.stop().await?;
     Ok(())
 }
@@ -347,7 +660,68 @@ async fn test_imap_search() -> E2EResult<()> {
          After SEARCH ALL, respond with: \
          * SEARCH 1 2 3 4 5\r\nA005 OK SEARCH completed";
 
-    let server = start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("imap")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "IMAP",
+                        "instruction": "Allow LOGIN alice, INBOX has 5 messages"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Connection greeting
+                .on_event("imap_connection_accepted")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "response": "* OK IMAP4rev1 Server Ready"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: LOGIN command
+                .on_event("imap_command_received")
+                .and_event_data_contains("command", "LOGIN")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "response": "A001 OK LOGIN completed"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 4: SELECT command
+                .on_event("imap_command_received")
+                .and_event_data_contains("command", "SELECT")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "response": "* 5 EXISTS\r\nA002 OK [READ-WRITE] SELECT completed"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 5: SEARCH command
+                .on_event("imap_command_received")
+                .and_event_data_contains("command", "SEARCH")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "response": "* SEARCH 1 2 3 4 5\r\nA005 OK SEARCH completed"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = start_netget_server(config).await?;
     wait_for_server_startup(&server, Duration::from_secs(10), "IMAP").await?;
 
     let mut client = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
@@ -384,6 +758,7 @@ async fn test_imap_search() -> E2EResult<()> {
         ok_line
     );
 
+    server.verify_mocks().await?;
     server.stop().await?;
     Ok(())
 }
@@ -394,7 +769,46 @@ async fn test_imap_logout() -> E2EResult<()> {
          After LOGOUT, respond with: \
          * BYE IMAP4rev1 Server logging out\r\nA001 OK LOGOUT completed";
 
-    let server = start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("imap")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "IMAP",
+                        "instruction": "Handle LOGOUT with BYE message"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Connection greeting
+                .on_event("imap_connection_accepted")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "response": "* OK IMAP4rev1 Server Ready"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: LOGOUT command
+                .on_event("imap_command_received")
+                .and_event_data_contains("command", "LOGOUT")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "response": "* BYE IMAP4rev1 Server logging out\r\nA001 OK LOGOUT completed"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = start_netget_server(config).await?;
     wait_for_server_startup(&server, Duration::from_secs(10), "IMAP").await?;
 
     let mut client = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
@@ -419,6 +833,7 @@ async fn test_imap_logout() -> E2EResult<()> {
         ok_line
     );
 
+    server.verify_mocks().await?;
     server.stop().await?;
     Ok(())
 }
@@ -428,7 +843,57 @@ async fn test_imap_noop() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via imap. Allow LOGIN for 'alice'. \
          NOOP command should respond with A003 OK NOOP completed";
 
-    let server = start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("imap")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "IMAP",
+                        "instruction": "Allow LOGIN alice, handle NOOP"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Connection greeting
+                .on_event("imap_connection_accepted")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "response": "* OK IMAP4rev1 Server Ready"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: LOGIN command
+                .on_event("imap_command_received")
+                .and_event_data_contains("command", "LOGIN")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "response": "A001 OK LOGIN completed"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 4: NOOP command
+                .on_event("imap_command_received")
+                .and_event_data_contains("command", "NOOP")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "response": "A003 OK NOOP completed"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = start_netget_server(config).await?;
     wait_for_server_startup(&server, Duration::from_secs(10), "IMAP").await?;
 
     let mut client = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
@@ -452,6 +917,7 @@ async fn test_imap_noop() -> E2EResult<()> {
         ok_line
     );
 
+    server.verify_mocks().await?;
     server.stop().await?;
     Ok(())
 }
@@ -462,7 +928,57 @@ async fn test_imap_status() -> E2EResult<()> {
          After STATUS INBOX (MESSAGES RECENT), respond with: \
          * STATUS \"INBOX\" (MESSAGES 5 RECENT 2)\r\nA004 OK STATUS completed";
 
-    let server = start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("imap")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "IMAP",
+                        "instruction": "Allow LOGIN alice, INBOX has 5 messages 2 recent"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Connection greeting
+                .on_event("imap_connection_accepted")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "response": "* OK IMAP4rev1 Server Ready"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: LOGIN command
+                .on_event("imap_command_received")
+                .and_event_data_contains("command", "LOGIN")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "response": "A001 OK LOGIN completed"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 4: STATUS command
+                .on_event("imap_command_received")
+                .and_event_data_contains("command", "STATUS")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "response": "* STATUS \"INBOX\" (MESSAGES 5 RECENT 2)\r\nA004 OK STATUS completed"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = start_netget_server(config).await?;
     wait_for_server_startup(&server, Duration::from_secs(10), "IMAP").await?;
 
     let mut client = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
@@ -499,6 +1015,7 @@ async fn test_imap_status() -> E2EResult<()> {
         ok_line
     );
 
+    server.verify_mocks().await?;
     server.stop().await?;
     Ok(())
 }

@@ -19,8 +19,41 @@ async fn test_telnet_echo() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via telnet. Echo back any text you receive, line by line. \
         Add '> ' prompt after each echo.";
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let config = ServerConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_instruction_containing("telnet")
+            .and_instruction_containing("Echo back")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "TCP",
+                    "protocol": "Telnet",
+                    "instruction": "Echo server - respond with received message"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Echo received message
+            .on_event("telnet_message_received")
+            .and_event_data_contains("message", "Hello")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_telnet_line",
+                    "line": "Hello Telnet Server"
+                },
+                {
+                    "type": "send_telnet_prompt",
+                    "prompt": "> "
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
+
+    let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Connect via raw TCP (Telnet protocol)
@@ -65,6 +98,9 @@ async fn test_telnet_echo() -> E2EResult<()> {
         }
     }
 
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -78,8 +114,41 @@ async fn test_telnet_prompt() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via telnet. Send a welcome message 'Welcome to NetGet Telnet' \
         when clients connect, then show a '$ ' prompt. Echo commands back with 'You said: ' prefix.";
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let config = ServerConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_instruction_containing("telnet")
+            .and_instruction_containing("Welcome to NetGet Telnet")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "TCP",
+                    "protocol": "Telnet",
+                    "instruction": "Interactive prompt server"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Respond to help command
+            .on_event("telnet_message_received")
+            .and_event_data_contains("message", "help")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_telnet_line",
+                    "line": "You said: help"
+                },
+                {
+                    "type": "send_telnet_prompt",
+                    "prompt": "$ "
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
+
+    let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Connect and verify welcome + prompt
@@ -117,6 +186,9 @@ async fn test_telnet_prompt() -> E2EResult<()> {
         println!("Note: No response received from Telnet server");
     }
 
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -130,8 +202,59 @@ async fn test_telnet_multiple_lines() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via telnet. For each line received, respond with 'Line N: <content>' \
         where N is the line number starting from 1.";
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let config = ServerConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_instruction_containing("telnet")
+            .and_instruction_containing("Line N")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "TCP",
+                    "protocol": "Telnet",
+                    "instruction": "Multi-line handler with line numbers"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: First line
+            .on_event("telnet_message_received")
+            .and_event_data_contains("message", "First line")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_telnet_line",
+                    "line": "Line 1: First line"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 3: Second line
+            .on_event("telnet_message_received")
+            .and_event_data_contains("message", "Second line")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_telnet_line",
+                    "line": "Line 2: Second line"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 4: Third line
+            .on_event("telnet_message_received")
+            .and_event_data_contains("message", "Third line")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_telnet_line",
+                    "line": "Line 3: Third line"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
+
+    let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Send multiple lines
@@ -164,6 +287,9 @@ async fn test_telnet_multiple_lines() -> E2EResult<()> {
 
     println!("✓ Multiple line handling tested");
 
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -177,8 +303,37 @@ async fn test_telnet_concurrent_connections() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via telnet. Handle multiple concurrent clients. \
         Echo each message back with the client's message.";
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let config = ServerConfig::new(prompt).with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_instruction_containing("telnet")
+            .and_instruction_containing("concurrent clients")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "TCP",
+                    "protocol": "Telnet",
+                    "instruction": "Handle concurrent clients and echo messages"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2-4: Echo messages from 3 concurrent clients
+            .on_event("telnet_message_received")
+            .and_event_data_contains("message", "Client")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_telnet_line",
+                    "line": "Echo: Client message"
+                }
+            ]))
+            .expect_calls(3)
+            .and()
+    });
+
+    let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Connect multiple clients concurrently
@@ -226,6 +381,9 @@ async fn test_telnet_concurrent_connections() -> E2EResult<()> {
     }
 
     println!("✓ {} / 3 concurrent clients succeeded", success_count);
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
 
     server.stop().await?;
     println!("=== Test completed ===\n");

@@ -16,12 +16,20 @@ use std::time::Duration;
 /// Test that MQTT broker starts successfully
 #[tokio::test]
 async fn test_mqtt_broker_starts() -> E2EResult<()> {
-    let config = ServerConfig::new("Start an MQTT broker on port 0").with_log_level("off");
+    let config = ServerConfig::new("Start an MQTT broker on port 0")
+        .with_log_level("off")
+        .with_mock(|mock| {
+            mock.on_instruction_containing("MQTT broker")
+                .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "MQTT", "instruction": "MQTT broker"}]))
+                .expect_calls(1)
+                .and()
+        });
 
     let test_state = start_netget_server(config).await?;
 
     println!("✓ MQTT broker started on port {}", test_state.port);
 
+    test_state.verify_mocks().await?;
     test_state.stop().await?;
     Ok(())
 }
@@ -79,7 +87,14 @@ async fn test_mqtt_basic_connect() -> E2EResult<()> {
 
     let config =
         ServerConfig::new("Start an MQTT broker on port 0. Accept all client connections.")
-            .with_log_level("debug");
+            .with_log_level("debug")
+            .with_mock(|mock| {
+                mock.on_instruction_containing("MQTT broker")
+                    .and_instruction_containing("Accept all client connections")
+                    .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "MQTT", "instruction": "MQTT broker accepting connections"}]))
+                    .expect_calls(1)
+                    .and()
+            });
 
     let test_state = start_netget_server(config).await?;
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -117,6 +132,7 @@ async fn test_mqtt_basic_connect() -> E2EResult<()> {
 
     println!("✓ MQTT client connected successfully");
 
+    test_state.verify_mocks().await?;
     test_state.stop().await?;
     Ok(())
 }

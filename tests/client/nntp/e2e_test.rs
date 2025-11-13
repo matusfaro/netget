@@ -15,7 +15,42 @@ mod nntp_client_tests {
         // Start an NNTP server listening on an available port
         let server_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via NNTP. Respond to LIST commands with a test newsgroup 'test.misc'.",
-        );
+        )
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("Listen on port")
+                .and_instruction_containing("NNTP")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "NNTP",
+                        "instruction": "NNTP server - respond to LIST commands"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: LIST command received
+                .on_event("nntp_command_received")
+                .and_event_data_contains("command", "LIST")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_nntp_response",
+                        "code": 215,
+                        "message": "Newsgroups in form \"group high low status\""
+                    },
+                    {
+                        "type": "send_nntp_line",
+                        "line": "test.misc 100 1 y"
+                    },
+                    {
+                        "type": "send_nntp_terminator"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -26,7 +61,42 @@ mod nntp_client_tests {
         let client_config = NetGetConfig::new(format!(
             "Connect to 127.0.0.1:{} via NNTP. Send LIST command to get available newsgroups.",
             server.port
-        ));
+        ))
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Client startup
+                .on_instruction_containing("Connect to")
+                .and_instruction_containing("NNTP")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": format!("127.0.0.1:{}", server.port),
+                        "protocol": "NNTP",
+                        "instruction": "Send LIST command"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Connected - send LIST
+                .on_event("nntp_connected")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_nntp_command",
+                        "command": "LIST"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: LIST response received
+                .on_event("nntp_response_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_at_most(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 
@@ -42,6 +112,10 @@ mod nntp_client_tests {
 
         println!("✅ NNTP client connected and executed LIST command successfully");
 
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+        client.verify_mocks().await?;
+
         // Cleanup
         server.stop().await?;
         client.stop().await?;
@@ -56,7 +130,35 @@ mod nntp_client_tests {
         // Start an NNTP server
         let server_config = NetGetConfig::new(
             "Listen on port {} via NNTP. Respond to GROUP commands. For group 'comp.lang.rust', respond with '211 10 1 10 comp.lang.rust'.",
-        );
+        )
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("Listen on port")
+                .and_instruction_containing("NNTP")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "NNTP",
+                        "instruction": "NNTP server - respond to GROUP commands"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: GROUP command received
+                .on_event("nntp_command_received")
+                .and_event_data_contains("command", "GROUP")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_nntp_response",
+                        "code": 211,
+                        "message": "10 1 10 comp.lang.rust"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -66,7 +168,42 @@ mod nntp_client_tests {
         let client_config = NetGetConfig::new(format!(
             "Connect to 127.0.0.1:{} via NNTP. Select the newsgroup 'comp.lang.rust' using GROUP command.",
             server.port
-        ));
+        ))
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Client startup
+                .on_instruction_containing("Connect to")
+                .and_instruction_containing("NNTP")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": format!("127.0.0.1:{}", server.port),
+                        "protocol": "NNTP",
+                        "instruction": "Select newsgroup comp.lang.rust"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Connected - send GROUP command
+                .on_event("nntp_connected")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_nntp_command",
+                        "command": "GROUP comp.lang.rust"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: GROUP response received
+                .on_event("nntp_response_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_at_most(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 
@@ -84,6 +221,10 @@ mod nntp_client_tests {
 
         println!("✅ NNTP client selected newsgroup successfully");
 
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+        client.verify_mocks().await?;
+
         // Cleanup
         server.stop().await?;
         client.stop().await?;
@@ -98,7 +239,54 @@ mod nntp_client_tests {
         // Start an NNTP server
         let server_config = NetGetConfig::new(
             "Listen on port {} via NNTP. Respond to ARTICLE commands with a test article containing headers and body.",
-        );
+        )
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("Listen on port")
+                .and_instruction_containing("NNTP")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "NNTP",
+                        "instruction": "NNTP server - respond to ARTICLE commands"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: ARTICLE command received
+                .on_event("nntp_command_received")
+                .and_event_data_contains("command", "ARTICLE")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_nntp_response",
+                        "code": 220,
+                        "message": "Article follows"
+                    },
+                    {
+                        "type": "send_nntp_line",
+                        "line": "Subject: Test Article"
+                    },
+                    {
+                        "type": "send_nntp_line",
+                        "line": "From: test@example.com"
+                    },
+                    {
+                        "type": "send_nntp_line",
+                        "line": ""
+                    },
+                    {
+                        "type": "send_nntp_line",
+                        "line": "This is the article body."
+                    },
+                    {
+                        "type": "send_nntp_terminator"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -108,7 +296,42 @@ mod nntp_client_tests {
         let client_config = NetGetConfig::new(format!(
             "Connect to 127.0.0.1:{} via NNTP. Retrieve article 1 using ARTICLE command.",
             server.port
-        ));
+        ))
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Client startup
+                .on_instruction_containing("Connect to")
+                .and_instruction_containing("NNTP")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": format!("127.0.0.1:{}", server.port),
+                        "protocol": "NNTP",
+                        "instruction": "Retrieve article 1"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Connected - send ARTICLE command
+                .on_event("nntp_connected")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_nntp_command",
+                        "command": "ARTICLE 1"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: ARTICLE response received
+                .on_event("nntp_response_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_at_most(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 
@@ -118,6 +341,10 @@ mod nntp_client_tests {
         assert_eq!(client.protocol, "NNTP", "Client should be NNTP protocol");
 
         println!("✅ NNTP client retrieved article successfully");
+
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+        client.verify_mocks().await?;
 
         // Cleanup
         server.stop().await?;

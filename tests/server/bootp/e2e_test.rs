@@ -1,21 +1,18 @@
 //! BOOTP E2E tests
 //!
-//! Tests BOOTP server with real UDP client.
-//! Requires Ollama running with default model.
+//! Tests BOOTP server with mock LLM responses.
 
 #![cfg(all(test, feature = "bootp"))]
 
-use std::net::{Ipv4Addr, SocketAddr};
+use crate::helpers::*;
+use std::net::Ipv4Addr;
 use std::time::Duration;
 use tokio::net::UdpSocket;
 
-mod helpers;
-use helpers::test_helpers::*;
-
-/// Test basic BOOTP request/reply flow
+/// Test basic BOOTP request/reply flow with mocks
+/// LLM calls: 2 (server startup, bootp request received)
 #[tokio::test]
-#[ignore] // Run with: cargo test --features bootp --test e2e_test -- --ignored
-async fn test_bootp_basic_flow() {
+async fn test_bootp_basic_flow() -> E2EResult<()> {
     let instruction = r#"
 BOOTP server that assigns IP addresses from 192.168.1.100 onwards.
 When receiving BOOTREQUEST:
@@ -25,19 +22,42 @@ When receiving BOOTREQUEST:
   - Server hostname: "bootserver"
 "#;
 
-    let server_result = start_server_with_instruction(
-        "bootp",
-        "{AVAILABLE_PORT}",
-        instruction,
-        ServerStartConfig::default(),
-    )
-    .await;
+    // Start BOOTP server with mocks
+    let server_config = NetGetConfig::new(format!("Listen on port {{AVAILABLE_PORT}} via BOOTP. {}", instruction))
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup (user command)
+                .on_instruction_containing("Listen on port")
+                .and_instruction_containing("BOOTP")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "BOOTP",
+                        "instruction": instruction
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: BOOTP request received (bootp_request event)
+                .on_event("bootp_request")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_bootp_reply",
+                        "assigned_ip": "192.168.1.100",
+                        "server_ip": "192.168.1.1",
+                        "boot_file": "boot/pxeboot.n12",
+                        "server_hostname": "bootserver"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
-    assert!(server_result.is_ok(), "Failed to start BOOTP server");
-    let server_addr = server_result.unwrap();
+    let mut server = start_netget_server(server_config).await?;
 
     // Give server time to initialize
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Create BOOTP BOOTREQUEST packet manually
     // BOOTP packet structure (RFC 951):
@@ -109,8 +129,10 @@ When receiving BOOTREQUEST:
     bootrequest[240..300].copy_from_slice(&[0; 60]);
 
     // Send BOOTREQUEST
-    let client = UdpSocket::bind("0.0.0.0:0").await.unwrap();
-    client.send_to(&bootrequest, server_addr).await.unwrap();
+    let client = UdpSocket::bind("0.0.0.0:0").await?;
+    client
+        .send_to(&bootrequest, format!("127.0.0.1:{}", server.port))
+        .await?;
 
     // Wait for BOOTREPLY
     let mut response_buf = vec![0u8; 1500];
@@ -118,7 +140,7 @@ When receiving BOOTREQUEST:
         tokio::time::timeout(Duration::from_secs(10), client.recv_from(&mut response_buf)).await;
 
     assert!(timeout.is_ok(), "BOOTP response timeout");
-    let (response_len, _) = timeout.unwrap().unwrap();
+    let (response_len, _) = timeout??;
 
     // Verify BOOTREPLY structure
     assert!(response_len >= 236, "Response too short");
@@ -154,12 +176,20 @@ When receiving BOOTREQUEST:
     );
 
     println!("✓ BOOTP basic request/reply flow successful");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
+    // Cleanup
+    server.stop().await?;
+
+    Ok(())
 }
 
-/// Test BOOTP with boot file configuration
+/// Test BOOTP with boot file configuration with mocks
+/// LLM calls: 2 (server startup, bootp request received)
 #[tokio::test]
-#[ignore]
-async fn test_bootp_boot_file() {
+async fn test_bootp_boot_file() -> E2EResult<()> {
     let instruction = r#"
 BOOTP server for PXE boot.
 When receiving BOOTREQUEST:
@@ -169,18 +199,41 @@ When receiving BOOTREQUEST:
   - Server hostname: "netboot.example.com"
 "#;
 
-    let server_result = start_server_with_instruction(
-        "bootp",
-        "{AVAILABLE_PORT}",
-        instruction,
-        ServerStartConfig::default(),
-    )
-    .await;
+    // Start BOOTP server with mocks
+    let server_config = NetGetConfig::new(format!("Listen on port {{AVAILABLE_PORT}} via BOOTP. {}", instruction))
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup (user command)
+                .on_instruction_containing("Listen on port")
+                .and_instruction_containing("BOOTP")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "BOOTP",
+                        "instruction": instruction
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: BOOTP request received (bootp_request event)
+                .on_event("bootp_request")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_bootp_reply",
+                        "assigned_ip": "10.0.0.100",
+                        "server_ip": "10.0.0.1",
+                        "boot_file": "tftp/netboot.img",
+                        "server_hostname": "netboot.example.com"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
-    assert!(server_result.is_ok(), "Failed to start BOOTP server");
-    let server_addr = server_result.unwrap();
+    let mut server = start_netget_server(server_config).await?;
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Create BOOTREQUEST
     let mut bootrequest = vec![0u8; 300];
@@ -193,8 +246,10 @@ When receiving BOOTREQUEST:
     bootrequest[236..240].copy_from_slice(&[99, 130, 83, 99]); // Magic cookie
 
     // Send request
-    let client = UdpSocket::bind("0.0.0.0:0").await.unwrap();
-    client.send_to(&bootrequest, server_addr).await.unwrap();
+    let client = UdpSocket::bind("0.0.0.0:0").await?;
+    client
+        .send_to(&bootrequest, format!("127.0.0.1:{}", server.port))
+        .await?;
 
     // Wait for response
     let mut response_buf = vec![0u8; 1500];
@@ -202,7 +257,7 @@ When receiving BOOTREQUEST:
         tokio::time::timeout(Duration::from_secs(10), client.recv_from(&mut response_buf)).await;
 
     assert!(timeout.is_ok(), "BOOTP response timeout");
-    let (response_len, _) = timeout.unwrap().unwrap();
+    let (response_len, _) = timeout??;
 
     assert!(response_len >= 236, "Response too short");
 
@@ -243,12 +298,20 @@ When receiving BOOTREQUEST:
     );
 
     println!("✓ BOOTP boot file configuration successful");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
+    // Cleanup
+    server.stop().await?;
+
+    Ok(())
 }
 
-/// Test BOOTP static MAC-based assignment
+/// Test BOOTP static MAC-based assignment with mocks
+/// LLM calls: 2 (server startup, bootp request received)
 #[tokio::test]
-#[ignore]
-async fn test_bootp_static_assignment() {
+async fn test_bootp_static_assignment() -> E2EResult<()> {
     let instruction = r#"
 BOOTP server with static MAC-to-IP mappings.
 When receiving BOOTREQUEST:
@@ -258,18 +321,41 @@ When receiving BOOTREQUEST:
 Use server IP 192.168.1.1 for all responses.
 "#;
 
-    let server_result = start_server_with_instruction(
-        "bootp",
-        "{AVAILABLE_PORT}",
-        instruction,
-        ServerStartConfig::default(),
-    )
-    .await;
+    // Start BOOTP server with mocks
+    let server_config = NetGetConfig::new(format!("Listen on port {{AVAILABLE_PORT}} via BOOTP. {}", instruction))
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup (user command)
+                .on_instruction_containing("Listen on port")
+                .and_instruction_containing("BOOTP")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "BOOTP",
+                        "instruction": instruction
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: BOOTP request received (bootp_request event) for specific MAC
+                .on_event("bootp_request")
+                .and_event_data_contains("client_mac", "00:11:22:33:44:55")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_bootp_reply",
+                        "assigned_ip": "192.168.1.50",
+                        "server_ip": "192.168.1.1",
+                        "boot_file": "linux/vmlinuz"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
-    assert!(server_result.is_ok(), "Failed to start BOOTP server");
-    let server_addr = server_result.unwrap();
+    let mut server = start_netget_server(server_config).await?;
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Test first static mapping (00:11:22:33:44:55 → 192.168.1.50)
     let mut bootrequest1 = vec![0u8; 300];
@@ -281,15 +367,17 @@ Use server IP 192.168.1.1 for all responses.
     bootrequest1[28..34].copy_from_slice(&[0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
     bootrequest1[236..240].copy_from_slice(&[99, 130, 83, 99]);
 
-    let client = UdpSocket::bind("0.0.0.0:0").await.unwrap();
-    client.send_to(&bootrequest1, server_addr).await.unwrap();
+    let client = UdpSocket::bind("0.0.0.0:0").await?;
+    client
+        .send_to(&bootrequest1, format!("127.0.0.1:{}", server.port))
+        .await?;
 
     let mut response_buf = vec![0u8; 1500];
     let timeout =
         tokio::time::timeout(Duration::from_secs(10), client.recv_from(&mut response_buf)).await;
 
     assert!(timeout.is_ok(), "BOOTP response timeout");
-    let (response_len, _) = timeout.unwrap().unwrap();
+    let (response_len, _) = timeout??;
 
     assert!(response_len >= 236, "Response too short");
 
@@ -306,4 +394,12 @@ Use server IP 192.168.1.1 for all responses.
     );
 
     println!("✓ BOOTP static MAC-based assignment successful");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
+    // Cleanup
+    server.stop().await?;
+
+    Ok(())
 }

@@ -118,7 +118,25 @@ async fn test_smb_negotiate() -> E2EResult<()> {
                  Accept all guest connections without password. \
                  Provide a virtual filesystem with /documents directory containing welcome.txt";
 
-    let server = start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = helpers::NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock: Server startup
+                .on_instruction_containing("SMB file server")
+                .and_instruction_containing("guest")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "SMB",
+                        "instruction": prompt
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = start_netget_server(config).await?;
 
     // Wait for server to be ready
     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -158,6 +176,7 @@ async fn test_smb_negotiate() -> E2EResult<()> {
 
     println!("  [TEST] ✓ SMB2 Negotiate successful");
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("  [TEST] ✓ Test completed successfully\n");
 
@@ -172,7 +191,25 @@ async fn test_smb_session_setup() -> E2EResult<()> {
     let prompt = "Start an SMB file server on port 8446. \
                  Allow guest authentication without credentials.";
 
-    let server = start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = helpers::NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock: Server startup
+                .on_instruction_containing("SMB file server")
+                .and_instruction_containing("guest authentication")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "SMB",
+                        "instruction": prompt
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = start_netget_server(config).await?;
 
     tokio::time::sleep(Duration::from_secs(2)).await;
 
@@ -222,6 +259,7 @@ async fn test_smb_session_setup() -> E2EResult<()> {
 
     println!("  [TEST] ✓ SMB2 Session Setup successful");
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("  [TEST] ✓ Test completed successfully\n");
 
@@ -236,7 +274,25 @@ async fn test_smb_concurrent_connections() -> E2EResult<()> {
     let prompt = "Start an SMB file server on port 8447. \
                  Handle multiple concurrent client connections.";
 
-    let server = start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = helpers::NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock: Server startup
+                .on_instruction_containing("SMB file server")
+                .and_instruction_containing("concurrent")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "SMB",
+                        "instruction": prompt
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = start_netget_server(config).await?;
 
     tokio::time::sleep(Duration::from_secs(2)).await;
 
@@ -288,6 +344,7 @@ async fn test_smb_concurrent_connections() -> E2EResult<()> {
 
     println!("  [TEST] ✓ Multiple concurrent connections successful");
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("  [TEST] ✓ Test completed successfully\n");
 
@@ -302,7 +359,23 @@ async fn test_smb_server_responsiveness() -> E2EResult<()> {
     let prompt = "Start an SMB file server on port 8448. \
                  Respond to all SMB2 requests with appropriate messages.";
 
-    let server = start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = helpers::NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("SMB file server")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "SMB",
+                        "instruction": prompt
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = start_netget_server(config).await?;
 
     tokio::time::sleep(Duration::from_secs(2)).await;
 
@@ -357,6 +430,7 @@ async fn test_smb_server_responsiveness() -> E2EResult<()> {
 
     println!("  [TEST] ✓ Server is responsive to SMB traffic");
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("  [TEST] ✓ Test completed successfully\n");
 
@@ -370,7 +444,24 @@ async fn test_smb_correct_stack() -> E2EResult<()> {
 
     let prompt = "Start an SMB file server on port 8449 via smb.";
 
-    let server = start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = helpers::NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("SMB file server")
+                .and_instruction_containing("via smb")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "SMB",
+                        "instruction": prompt
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = start_netget_server(config).await?;
 
     // Verify the server started with SMB stack
     assert!(
@@ -381,6 +472,7 @@ async fn test_smb_correct_stack() -> E2EResult<()> {
 
     println!("  [TEST] ✓ Server started with {} stack", server.stack);
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("  [TEST] ✓ Test completed successfully\n");
 
@@ -397,7 +489,24 @@ async fn test_smb_auth_llm_controlled() -> E2EResult<()> {
                  Allow user 'alice' by responding with smb_auth_success. \
                  For all other users, respond with smb_auth_deny.";
 
-    let server = start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = helpers::NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("SMB file server")
+                .and_instruction_containing("alice")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "SMB",
+                        "instruction": prompt
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = start_netget_server(config).await?;
 
     tokio::time::sleep(Duration::from_secs(2)).await;
 
@@ -451,6 +560,7 @@ async fn test_smb_auth_llm_controlled() -> E2EResult<()> {
 
     println!("  [TEST] ✓ Authentication flow completed");
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("  [TEST] ✓ Test completed successfully\n");
 
@@ -464,7 +574,24 @@ async fn test_smb_connection_tracking() -> E2EResult<()> {
 
     let prompt = "Start an SMB file server on port 8451 via smb.";
 
-    let server = start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = helpers::NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("SMB file server")
+                .and_instruction_containing("via smb")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "SMB",
+                        "instruction": prompt
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = start_netget_server(config).await?;
 
     tokio::time::sleep(Duration::from_secs(2)).await;
 
@@ -504,6 +631,7 @@ async fn test_smb_connection_tracking() -> E2EResult<()> {
 
     println!("  [TEST] ✓ Connection lifecycle completed");
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("  [TEST] ✓ Test completed successfully\n");
 

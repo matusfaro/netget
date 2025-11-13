@@ -18,15 +18,49 @@ use std::str::FromStr;
 async fn test_dns_a_record_query() -> E2EResult<()> {
     println!("\n=== E2E Test: DNS A Record Query ===");
 
-    // PROMPT: Tell the LLM to act as a DNS server
+    // PROMPT: Tell the LLM to act as a DNS server with mocks
     let prompt = "listen on port {AVAILABLE_PORT} via dns. Respond to all A record queries for example.com with IP address 93.184.216.34";
 
-    // Start the server with debug logging
-    let server =
-        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("debug")).await?;
+    let server_config = ServerConfig::new(prompt)
+        .with_log_level("debug")
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup (user command)
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("dns")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "DNS",
+                        "instruction": "Respond to all A record queries for example.com with IP address 93.184.216.34"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: DNS query received (dns_query event)
+                .on_event("dns_query")
+                .and_event_data_contains("domain", "example.com")
+                .and_event_data_contains("query_type", "A")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_dns_a_response",
+                        "query_id": 0, // Will be replaced by actual query_id from event
+                        "domain": "example.com",
+                        "ip": "93.184.216.34",
+                        "ttl": 300
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    // Start the server
+    let server = helpers::start_netget_server(server_config).await?;
     println!("DNS server started on port {}", server.port);
 
-    // Wait for DNS server to fully initialize (needs LLM call)
+    // Wait for DNS server to fully initialize
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     // VALIDATION: Use hickory-client to query DNS
     println!("Querying example.com A record...");
@@ -59,6 +93,9 @@ async fn test_dns_a_record_query() -> E2EResult<()> {
         answers.len()
     );
 
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -71,10 +108,61 @@ async fn test_dns_multiple_records() -> E2EResult<()> {
     // PROMPT: Tell the LLM to handle multiple record types
     let prompt = "listen on port {AVAILABLE_PORT} via dns. For example.com A records return 1.2.3.4. For mail.example.com A records return 5.6.7.8";
 
+    let server_config = ServerConfig::new(prompt)
+        .with_log_level("debug")
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup (user command)
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("dns")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "DNS",
+                        "instruction": "For example.com A records return 1.2.3.4. For mail.example.com A records return 5.6.7.8"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Query for example.com
+                .on_event("dns_query")
+                .and_event_data_contains("domain", "example.com")
+                .and_event_data_contains("query_type", "A")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_dns_a_response",
+                        "query_id": 0,
+                        "domain": "example.com",
+                        "ip": "1.2.3.4",
+                        "ttl": 300
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: Query for mail.example.com
+                .on_event("dns_query")
+                .and_event_data_contains("domain", "mail.example.com")
+                .and_event_data_contains("query_type", "A")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_dns_a_response",
+                        "query_id": 0,
+                        "domain": "mail.example.com",
+                        "ip": "5.6.7.8",
+                        "ttl": 300
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
     // Start the server
-    let server =
-        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("debug")).await?;
+    let server = helpers::start_netget_server(server_config).await?;
     println!("DNS server started on port {}", server.port);
+
+    // Wait for server to initialize
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     // VALIDATION: Query multiple domains
     let address: SocketAddr = format!("127.0.0.1:{}", server.port).parse()?;
@@ -108,6 +196,9 @@ async fn test_dns_multiple_records() -> E2EResult<()> {
         response2.answers().len()
     );
 
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -120,10 +211,46 @@ async fn test_dns_txt_record() -> E2EResult<()> {
     // PROMPT: Tell the LLM to handle TXT records
     let prompt = "listen on port {AVAILABLE_PORT} via dns. For TXT record queries on example.com, return 'v=spf1 include:_spf.example.com ~all'";
 
+    let server_config = ServerConfig::new(prompt)
+        .with_log_level("debug")
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup (user command)
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("dns")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "DNS",
+                        "instruction": "For TXT record queries on example.com, return 'v=spf1 include:_spf.example.com ~all'"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Query for TXT record
+                .on_event("dns_query")
+                .and_event_data_contains("domain", "example.com")
+                .and_event_data_contains("query_type", "TXT")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_dns_txt_response",
+                        "query_id": 0,
+                        "domain": "example.com",
+                        "text": "v=spf1 include:_spf.example.com ~all",
+                        "ttl": 300
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
     // Start the server
-    let server =
-        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("debug")).await?;
+    let server = helpers::start_netget_server(server_config).await?;
     println!("DNS server started on port {}", server.port);
+
+    // Wait for server to initialize
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     // VALIDATION: Query TXT record
     let address: SocketAddr = format!("127.0.0.1:{}", server.port).parse()?;
@@ -145,6 +272,9 @@ async fn test_dns_txt_record() -> E2EResult<()> {
 
     println!("✓ DNS TXT record query succeeded");
 
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -157,10 +287,44 @@ async fn test_dns_nxdomain() -> E2EResult<()> {
     // PROMPT: Tell the LLM to return NXDOMAIN for unknown domains
     let prompt = "listen on port {AVAILABLE_PORT} via dns. Only respond with A records for known.example.com (1.2.3.4). For all other domains, return NXDOMAIN";
 
+    let server_config = ServerConfig::new(prompt)
+        .with_log_level("debug")
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup (user command)
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("dns")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "DNS",
+                        "instruction": "Only respond with A records for known.example.com (1.2.3.4). For all other domains, return NXDOMAIN"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Query for unknown domain - return NXDOMAIN
+                .on_event("dns_query")
+                .and_event_data_contains("domain", "unknown.example.com")
+                .and_event_data_contains("query_type", "A")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_dns_nxdomain",
+                        "query_id": 0,
+                        "domain": "unknown.example.com"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
     // Start the server
-    let server =
-        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("debug")).await?;
+    let server = helpers::start_netget_server(server_config).await?;
     println!("DNS server started on port {}", server.port);
+
+    // Wait for server to initialize
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     // VALIDATION: Query an unknown domain
     let address: SocketAddr = format!("127.0.0.1:{}", server.port).parse()?;
@@ -185,6 +349,9 @@ async fn test_dns_nxdomain() -> E2EResult<()> {
             println!("  ✓ DNS server indicated domain not found");
         }
     }
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
 
     server.stop().await?;
     println!("=== Test completed ===\n");

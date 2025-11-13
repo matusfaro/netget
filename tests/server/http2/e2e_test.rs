@@ -21,9 +21,82 @@ For GET /api/status, return 200 with JSON: {"status": "ok", "protocol": "HTTP/2"
 For any other path, return 404 with body: "Not Found"
 Set Content-Type header appropriately (text/plain for /, application/json for /api/*)."#;
 
-    // Start the server
-    let server =
-        helpers::start_netget_server(ServerConfig::new_no_scripts(prompt.to_string())).await?;
+    // Start the server with mocks
+    let server_config = helpers::NetGetConfig::new(prompt.to_string())
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("HTTP/2 server")
+                .and_instruction_containing("port")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "HTTP2",
+                        "instruction": "Handle GET requests for /, /api/users, /api/status with JSON responses"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: GET / request
+                .on_event("http_request_received")
+                .and_event_data_contains("path", "/")
+                .and_event_data_contains("method", "GET")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_response",
+                        "status": 200,
+                        "headers": {"Content-Type": "text/plain"},
+                        "body": "Welcome to HTTP/2"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: GET /api/users request
+                .on_event("http_request_received")
+                .and_event_data_contains("path", "/api/users")
+                .and_event_data_contains("method", "GET")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_response",
+                        "status": 200,
+                        "headers": {"Content-Type": "application/json"},
+                        "body": "{\"users\": [\"Alice\", \"Bob\"]}"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 4: GET /api/status request
+                .on_event("http_request_received")
+                .and_event_data_contains("path", "/api/status")
+                .and_event_data_contains("method", "GET")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_response",
+                        "status": 200,
+                        "headers": {"Content-Type": "application/json"},
+                        "body": "{\"status\": \"ok\", \"protocol\": \"HTTP/2\"}"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 5: GET /nonexistent request (404)
+                .on_event("http_request_received")
+                .and_event_data_contains("path", "/nonexistent")
+                .and_event_data_contains("method", "GET")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_response",
+                        "status": 404,
+                        "headers": {"Content-Type": "text/plain"},
+                        "body": "Not Found"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let mut server = helpers::start_netget_server(server_config).await?;
     println!(
         "Server started: {} stack on port {}",
         server.stack, server.port
@@ -119,6 +192,9 @@ Set Content-Type header appropriately (text/plain for /, application/json for /a
     assert!(body.contains("Not Found"), "Expected 'Not Found' message");
     println!("✓ GET /nonexistent returned 404");
 
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     // Stop the server
     server.stop().await?;
     println!("✓ All tests passed!");
@@ -136,9 +212,54 @@ For POST /echo, return 200 with JSON containing the request body and method.
 For POST /api/users, parse the JSON body and return 201 with a success message including the name from the request.
 Set Content-Type: application/json for all responses."#;
 
-    // Start the server
-    let server =
-        helpers::start_netget_server(ServerConfig::new_no_scripts(prompt.to_string())).await?;
+    // Start the server with mocks
+    let server_config = helpers::NetGetConfig::new(prompt.to_string())
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("HTTP/2 server")
+                .and_instruction_containing("port")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "HTTP2",
+                        "instruction": "Handle POST requests for /echo and /api/users"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: POST /echo request
+                .on_event("http_request_received")
+                .and_event_data_contains("path", "/echo")
+                .and_event_data_contains("method", "POST")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_response",
+                        "status": 200,
+                        "headers": {"Content-Type": "application/json"},
+                        "body": "{\"body\": \"Hello HTTP/2\", \"method\": \"POST\"}"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: POST /api/users request
+                .on_event("http_request_received")
+                .and_event_data_contains("path", "/api/users")
+                .and_event_data_contains("method", "POST")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_response",
+                        "status": 201,
+                        "headers": {"Content-Type": "application/json"},
+                        "body": "{\"success\": true, \"message\": \"User Charlie created successfully\"}"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let mut server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
 
     // Give server time to initialize
@@ -200,6 +321,9 @@ Set Content-Type: application/json for all responses."#;
     );
     println!("✓ POST /api/users returned 201 with success message");
 
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     // Stop the server
     server.stop().await?;
     println!("✓ All tests passed!");
@@ -216,9 +340,40 @@ async fn test_http2_multiplexing() -> E2EResult<()> {
 For GET /data, return 200 with JSON: {"data": "test", "timestamp": "2025-01-01T00:00:00Z"}
 Set Content-Type: application/json."#;
 
-    // Start the server
-    let server =
-        helpers::start_netget_server(ServerConfig::new_no_scripts(prompt.to_string())).await?;
+    // Start the server with mocks
+    let server_config = helpers::NetGetConfig::new(prompt.to_string())
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("HTTP/2 server")
+                .and_instruction_containing("port")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "HTTP2",
+                        "instruction": "Handle GET /data with JSON response"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2-4: Three concurrent GET /data requests
+                .on_event("http_request_received")
+                .and_event_data_contains("path", "/data")
+                .and_event_data_contains("method", "GET")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_response",
+                        "status": 200,
+                        "headers": {"Content-Type": "application/json"},
+                        "body": "{\"data\": \"test\", \"timestamp\": \"2025-01-01T00:00:00Z\"}"
+                    }
+                ]))
+                .expect_calls(3)  // Expecting 3 concurrent requests
+                .and()
+        });
+
+    let mut server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
 
     // Give server time to initialize
@@ -252,6 +407,9 @@ Set Content-Type: application/json."#;
     assert_eq!(resp3.version(), reqwest::Version::HTTP_2);
 
     println!("✓ All 3 concurrent requests succeeded via HTTP/2 multiplexing");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
 
     // Stop the server
     server.stop().await?;

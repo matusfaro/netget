@@ -18,9 +18,63 @@ async fn test_snmp_basic_get() -> E2EResult<()> {
     // PROMPT: Tell the LLM to act as an SNMP agent
     let prompt = "listen on port {AVAILABLE_PORT} via snmp. For OID 1.3.6.1.2.1.1.1.0 (sysDescr) return 'NetGet SNMP Server v1.0'. For OID 1.3.6.1.2.1.1.5.0 (sysName) return 'netget.local'";
 
-    // Start the server with debug logging (trace causes broken pipe due to huge prompt output)
-    let server =
-        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("debug")).await?;
+    // Start the server with debug logging and mocks
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_log_level("debug")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup (user command)
+                    .on_instruction_containing("listen on port")
+                    .and_instruction_containing("snmp")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "SNMP",
+                            "instruction": "For OID 1.3.6.1.2.1.1.1.0 (sysDescr) return 'NetGet SNMP Server v1.0'. For OID 1.3.6.1.2.1.1.5.0 (sysName) return 'netget.local'"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: SNMP GET for sysDescr (1.3.6.1.2.1.1.1.0)
+                    .on_event("snmp_get")
+                    .and_event_data_contains("oid", "1.3.6.1.2.1.1.1.0")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_snmp_response",
+                            "request_id": 0,
+                            "varbinds": [
+                                {
+                                    "oid": "1.3.6.1.2.1.1.1.0",
+                                    "value_type": "string",
+                                    "value": "NetGet SNMP Server v1.0"
+                                }
+                            ]
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: SNMP GET for sysName (1.3.6.1.2.1.1.5.0)
+                    .on_event("snmp_get")
+                    .and_event_data_contains("oid", "1.3.6.1.2.1.1.5.0")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_snmp_response",
+                            "request_id": 0,
+                            "varbinds": [
+                                {
+                                    "oid": "1.3.6.1.2.1.1.5.0",
+                                    "value_type": "string",
+                                    "value": "netget.local"
+                                }
+                            ]
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("Server started on port {}", server.port);
 
     // Wait longer for SNMP server to fully initialize (needs LLM call to set up)
@@ -89,6 +143,9 @@ async fn test_snmp_basic_get() -> E2EResult<()> {
     let response_str2 = String::from_utf8_lossy(&output2.stdout);
     println!("sysName response: {}", response_str2);
     println!("✓ sysName query succeeded");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
 
     server.stop().await?;
     println!("=== Test completed ===\n");

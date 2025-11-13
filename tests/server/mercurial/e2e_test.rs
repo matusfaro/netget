@@ -11,7 +11,7 @@ use super::super::helpers::{self, E2EResult, ServerConfig};
 async fn test_mercurial_capabilities() -> E2EResult<()> {
     println!("\n=== E2E Test: Mercurial Capabilities ===");
 
-    // Create a prompt for a simple Mercurial repository
+    // Create a prompt for a simple Mercurial repository with mocks
     let prompt = r#"listen on port {AVAILABLE_PORT} via mercurial.
 
 Create virtual repository 'test-repo' with default branch.
@@ -29,8 +29,27 @@ Return the following capabilities (one per line):
 
 Always respond quickly with these standard capabilities."#;
 
-    // Start server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start server with mocks
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock: Server startup (user command)
+                    .on_instruction_containing("listen on port")
+                    .and_instruction_containing("mercurial")
+                    .and_instruction_containing("capabilities")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "Mercurial",
+                            "instruction": "Mercurial server with capabilities"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
 
     let port = server.port;
     println!("Mercurial server started on port {}", port);
@@ -70,6 +89,10 @@ Always respond quickly with these standard capabilities."#;
     );
 
     println!("✓ Capabilities test passed");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     Ok(())
 }
 
@@ -87,7 +110,16 @@ Return one head node ID (40-character hex string):
 
 This represents the tip of the default branch."#;
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock.on_instruction_containing("listen on port")
+                    .and_instruction_containing("mercurial")
+                    .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "Mercurial", "instruction": "Mercurial server with heads"}]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
 
     let port = server.port;
     println!("Mercurial server started on port {}", port);
@@ -124,6 +156,7 @@ This represents the tip of the default branch."#;
     }
 
     println!("✓ Heads test passed");
+    server.verify_mocks().await?;
     Ok(())
 }
 
@@ -144,7 +177,16 @@ stable abc123def456789012345678901234567890abcd
 
 Each line represents one branch with its head node IDs."#;
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock.on_instruction_containing("listen on port")
+                    .and_instruction_containing("mercurial")
+                    .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "Mercurial", "instruction": "Mercurial server with branchmap"}]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
 
     let port = server.port;
     println!("Mercurial server started on port {}", port);
@@ -195,6 +237,7 @@ Each line represents one branch with its head node IDs."#;
     }
 
     println!("✓ Branchmap test passed");
+    server.verify_mocks().await?;
     Ok(())
 }
 
@@ -215,7 +258,16 @@ develop\tabc123def456789012345678901234567890abcd
 
 Each line is tab-separated: bookmark name, then node ID."#;
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock.on_instruction_containing("listen on port")
+                    .and_instruction_containing("mercurial")
+                    .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "Mercurial", "instruction": "Mercurial server with listkeys"}]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
 
     let port = server.port;
     println!("Mercurial server started on port {}", port);
@@ -266,6 +318,7 @@ Each line is tab-separated: bookmark name, then node ID."#;
     }
 
     println!("✓ Listkeys test passed");
+    server.verify_mocks().await?;
     Ok(())
 }
 
@@ -285,7 +338,16 @@ Return HTTP 404 error with message "Repository not found".
 
 Test error handling for non-existent repositories."#;
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock.on_instruction_containing("listen on port")
+                    .and_instruction_containing("mercurial")
+                    .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "Mercurial", "instruction": "Mercurial server with error handling"}]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
 
     let port = server.port;
     println!("Mercurial server started on port {}", port);
@@ -322,5 +384,6 @@ Test error handling for non-existent repositories."#;
     }
 
     println!("✓ Error handling test passed");
+    server.verify_mocks().await?;
     Ok(())
 }

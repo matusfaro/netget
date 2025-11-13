@@ -76,14 +76,32 @@ async fn test_ssh_banner() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_ssh_version_exchange() -> E2EResult<()> {
-    println!("\n=== E2E Test: SSH Version Exchange ===");
+    println!("\n=== E2E Test: SSH Version Exchange with Mocks ===");
+
+    use crate::helpers::NetGetConfig;
 
     // PROMPT: Tell the LLM to handle SSH version exchange
-    let prompt = "listen on port {AVAILABLE_PORT} via ssh. Implement SSH-2.0 protocol. \
-        Send banner 'SSH-2.0-NetGet_OpenSSH_8.0' and accept client version strings";
+    let prompt = "listen on port {AVAILABLE_PORT} via ssh. Implement SSH-2.0 protocol.";
+
+    let config = NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock: Server startup
+                .on_instruction_containing("ssh")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "SSH",
+                        "instruction": "SSH server with version exchange"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let mut server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Perform SSH version exchange using ssh2
@@ -125,6 +143,9 @@ async fn test_ssh_version_exchange() -> E2EResult<()> {
         }
     }
 
+    // Verify mock expectations
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -132,14 +153,43 @@ async fn test_ssh_version_exchange() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_ssh_connection_attempt() -> E2EResult<()> {
-    println!("\n=== E2E Test: SSH Connection Attempt ===");
+    println!("\n=== E2E Test: SSH Connection Attempt with Mocks ===");
+
+    use crate::helpers::NetGetConfig;
 
     // PROMPT: Tell the LLM to accept SSH connections
-    let prompt = "listen on port {AVAILABLE_PORT} via ssh. Accept SSH connections. \
-        Send banner SSH-2.0-NetGet. Handle version exchange and key exchange init";
+    let prompt = "listen on port {AVAILABLE_PORT} via ssh. Accept SSH connections.";
+
+    let config = NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("ssh")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "SSH",
+                        "instruction": "SSH server accepting connections"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Authentication attempt
+                .on_event("ssh_auth")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "ssh_auth_decision",
+                        "allowed": false,
+                        "message": "Authentication denied for testing"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let mut server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Try to establish SSH connection
@@ -180,6 +230,9 @@ async fn test_ssh_connection_attempt() -> E2EResult<()> {
             println!("Note: Connection failed: {}", e);
         }
     }
+
+    // Verify mock expectations
+    server.verify_mocks().await?;
 
     server.stop().await?;
     println!("=== Test completed ===\n");
@@ -241,13 +294,36 @@ async fn test_ssh_multiple_connections() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_ssh_python_auth_script() -> E2EResult<()> {
-    println!("\n=== E2E Test: SSH with Python Auth Script ===");
+    println!("\n=== E2E Test: SSH with Python Auth Script and Mocks ===");
+
+    use crate::helpers::NetGetConfig;
 
     // PROMPT: Simple prompt asking for SSH auth via script
-    let prompt = "listen on port {AVAILABLE_PORT} via ssh. Allow user 'alice' and deny all other users. Handle authentication via script.";
+    let prompt = "listen on port {AVAILABLE_PORT} via ssh. Allow user 'alice' and deny all other users.";
+
+    let config = NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock: Server startup (LLM would generate script here)
+                .on_instruction_containing("ssh")
+                .and_instruction_containing("alice")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "SSH",
+                        "instruction": "SSH server with alice authentication",
+                        "script_inline": "import json,sys\nd=json.load(sys.stdin)\nif d['event']['username']=='alice':print(json.dumps({'actions':[{'type':'ssh_auth_decision','allowed':True}]}))\nelse:print(json.dumps({'actions':[{'type':'ssh_auth_decision','allowed':False}]}))",
+                        "script_handles": ["ssh_auth"]
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Note: Authentication events will be handled by script (no LLM calls)
+        });
 
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let mut server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // IMPORTANT: After server startup, we expect to see script configuration in the LLM response
@@ -362,6 +438,9 @@ async fn test_ssh_python_auth_script() -> E2EResult<()> {
     );
 
     println!("  ✓ Verified: Script handled authentication (no LLM calls for auth events)");
+
+    // Verify mock expectations
+    server.verify_mocks().await?;
 
     server.stop().await?;
     println!("\n=== Test completed ===\n");

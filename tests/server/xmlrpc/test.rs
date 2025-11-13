@@ -78,7 +78,37 @@ async fn test_xmlrpc_simple_method() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via xmlrpc stack. Implement method 'add' that takes two integers and returns their sum.";
 
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup (user command)
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("xmlrpc")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "XML-RPC",
+                        "instruction": "Implement add method"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Method call received (xmlrpc_method_call event)
+                .on_event("xmlrpc_method_call")
+                .and_event_data_contains("method_name", "add")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "xmlrpc_success_response",
+                        "value_type": "int",
+                        "value": 8
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(config).await?;
     println!(
         "Server started: {} stack on port {}",
         server.stack, server.port
@@ -118,6 +148,10 @@ async fn test_xmlrpc_simple_method() -> E2EResult<()> {
     assert!(result.contains("8"), "Expected sum of 8, got: {}", result);
 
     println!("✓ XML-RPC method call validated");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())
@@ -131,7 +165,33 @@ async fn test_xmlrpc_introspection_list_methods() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via xmlrpc stack. Implement these methods: add, subtract, multiply. Also support system.listMethods introspection.";
 
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("xmlrpc")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "XML-RPC",
+                        "instruction": "Implement add, subtract, multiply methods with introspection"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                .on_event("xmlrpc_method_call")
+                .and_event_data_contains("method_name", "system.listMethods")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "xmlrpc_list_methods_response",
+                        "methods": ["add", "subtract", "multiply", "system.listMethods"]
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Call system.listMethods
@@ -157,6 +217,7 @@ async fn test_xmlrpc_introspection_list_methods() -> E2EResult<()> {
     assert!(response_xml.contains("add") || response_xml.contains("system.listMethods"));
 
     println!("✓ Introspection validated");
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())
@@ -170,7 +231,34 @@ async fn test_xmlrpc_fault_response() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via xmlrpc stack. Implement method 'greet'. For unknown methods, return fault code -32601 with message 'Method not found'.";
 
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("xmlrpc")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "XML-RPC",
+                        "instruction": "Implement greet method, fault for unknown"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                .on_event("xmlrpc_method_call")
+                .and_event_data_contains("method_name", "nonExistentMethod")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "xmlrpc_fault_response",
+                        "fault_code": -32601,
+                        "fault_string": "Method not found"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Call non-existent method
@@ -201,6 +289,7 @@ async fn test_xmlrpc_fault_response() -> E2EResult<()> {
     );
 
     println!("✓ Fault response validated");
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())
@@ -214,7 +303,20 @@ async fn test_xmlrpc_string_parameter() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via xmlrpc stack. Implement method 'greet' that takes a name (string) and returns 'Hello, [name]!'.";
 
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("xmlrpc")
+                .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "XML-RPC", "instruction": "Greet method"}]))
+                .expect_calls(1)
+                .and()
+                .on_event("xmlrpc_method_call")
+                .and_event_data_contains("method_name", "greet")
+                .respond_with_actions(serde_json::json!([{"type": "xmlrpc_success_response", "value_type": "string", "value": "Hello, Alice!"}]))
+                .expect_calls(1)
+                .and()
+        });
+    let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Call greet method
@@ -247,6 +349,7 @@ async fn test_xmlrpc_string_parameter() -> E2EResult<()> {
     );
 
     println!("✓ String parameter validated");
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())
@@ -260,7 +363,20 @@ async fn test_xmlrpc_boolean_parameter() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via xmlrpc stack. Implement method 'toggle' that takes a boolean and returns the opposite.";
 
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("xmlrpc")
+                .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "XML-RPC", "instruction": "Toggle method"}]))
+                .expect_calls(1)
+                .and()
+                .on_event("xmlrpc_method_call")
+                .and_event_data_contains("method_name", "toggle")
+                .respond_with_actions(serde_json::json!([{"type": "xmlrpc_success_response", "value_type": "boolean", "value": 0}]))
+                .expect_calls(1)
+                .and()
+        });
+    let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Call toggle method with true (1)
@@ -291,6 +407,7 @@ async fn test_xmlrpc_boolean_parameter() -> E2EResult<()> {
     );
 
     println!("✓ Boolean parameter validated");
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())
@@ -304,7 +421,20 @@ async fn test_xmlrpc_multiple_parameters() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via xmlrpc stack. Implement method 'concat' that takes two strings and returns them concatenated with a space between.";
 
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("xmlrpc")
+                .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "XML-RPC", "instruction": "Concat method"}]))
+                .expect_calls(1)
+                .and()
+                .on_event("xmlrpc_method_call")
+                .and_event_data_contains("method_name", "concat")
+                .respond_with_actions(serde_json::json!([{"type": "xmlrpc_success_response", "value_type": "string", "value": "Hello World"}]))
+                .expect_calls(1)
+                .and()
+        });
+    let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Call concat method
@@ -337,6 +467,7 @@ async fn test_xmlrpc_multiple_parameters() -> E2EResult<()> {
     );
 
     println!("✓ Multiple parameters validated");
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())
@@ -349,8 +480,16 @@ async fn test_xmlrpc_non_post_request() -> E2EResult<()> {
     // PROMPT: Standard XML-RPC server
     let prompt = "listen on port {AVAILABLE_PORT} via xmlrpc stack. Implement method 'test'.";
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server (GET request won't trigger LLM, only server startup)
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("xmlrpc")
+                .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "XML-RPC", "instruction": "Test method"}]))
+                .expect_calls(1)
+                .and()
+        });
+    let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Try GET request (XML-RPC requires POST)
@@ -372,6 +511,7 @@ async fn test_xmlrpc_non_post_request() -> E2EResult<()> {
     );
 
     println!("✓ Non-POST rejection validated");
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())

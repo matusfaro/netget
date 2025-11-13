@@ -104,9 +104,59 @@ async fn test_tls_echo_server() -> E2EResult<()> {
     // Create a prompt for a simple echo server over TLS
     let prompt = r#"listen on port {AVAILABLE_PORT} via tls. When client connects, send "Welcome to secure echo server\n". Echo back any received data."#;
 
-    // Start server (LLM will parse the prompt and create the script)
-    let server =
-        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("info")).await?;
+    // Start server with mocks
+    let config = ServerConfig::new(prompt)
+        .with_log_level("info")
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("tls")
+                .and_instruction_containing("Welcome to secure echo server")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "TCP",
+                        "protocol": "TLS",
+                        "instruction": "Send welcome message on connect, echo received data",
+                        "send_first": true
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2-4: Send welcome message on connection (3 connections)
+                .on_event("tls_connection_opened")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_tls_data",
+                        "data": "Welcome to secure echo server\n"
+                    }
+                ]))
+                .expect_calls(3)
+                .and()
+                // Mock 5-6: Echo received data (2 connections send data)
+                .on_event("tls_data_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_tls_data",
+                        "data": "Hello, TLS!\n"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                .on_event("tls_data_received")
+                .and_event_data_contains("data", "Testing")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_tls_data",
+                        "data": "Testing 123\n"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(config).await?;
 
     println!("TLS server started on port {}", server.port);
 
@@ -155,6 +205,9 @@ async fn test_tls_echo_server() -> E2EResult<()> {
 
     println!("\n=== All TLS tests passed! ===");
 
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     Ok(())
 }
 
@@ -168,9 +221,61 @@ async fn test_tls_http_like_server() -> E2EResult<()> {
 - For GET /api: return "HTTP/1.1 200 OK\r\n\r\n{\"status\":\"ok\"}"
 - For anything else: return "HTTP/1.1 404 Not Found\r\n\r\n""#;
 
-    // Start server
-    let server =
-        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("info")).await?;
+    // Start server with mocks
+    let config = ServerConfig::new(prompt)
+        .with_log_level("info")
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("tls")
+                .and_instruction_containing("HTTP server")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "TCP",
+                        "protocol": "TLS",
+                        "instruction": "HTTP-like server with routing"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: GET / request
+                .on_event("tls_data_received")
+                .and_event_data_contains("data", "GET /")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_tls_data",
+                        "data": "HTTP/1.1 200 OK\r\n\r\nWelcome"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: GET /api request
+                .on_event("tls_data_received")
+                .and_event_data_contains("data", "GET /api")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_tls_data",
+                        "data": "HTTP/1.1 200 OK\r\n\r\n{\"status\":\"ok\"}"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 4: GET /unknown request
+                .on_event("tls_data_received")
+                .and_event_data_contains("data", "GET /unknown")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_tls_data",
+                        "data": "HTTP/1.1 404 Not Found\r\n\r\n"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(config).await?;
 
     println!("TLS HTTP-like server started on port {}", server.port);
 
@@ -218,6 +323,9 @@ async fn test_tls_http_like_server() -> E2EResult<()> {
     println!("✓ Got 404 response");
 
     println!("\n=== All TLS HTTP-like tests passed! ===");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
 
     Ok(())
 }

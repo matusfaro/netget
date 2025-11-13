@@ -19,8 +19,39 @@ async fn test_socket_echo() -> E2EResult<()> {
     // PROMPT: Tell the LLM to echo back with ACK prefix
     let prompt = "Create socket file at /tmp/netget-test-echo.sock. When you receive any data, reply with 'ACK: ' followed by the received data";
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup (user command)
+                    .on_instruction_containing("socket file")
+                    .and_instruction_containing("netget-test-echo.sock")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "SocketFile",
+                            "instruction": "When you receive any data, reply with 'ACK: ' followed by the received data",
+                            "startup_params": {
+                                "socket_path": "./tmp/netget-test-echo.sock"
+                            }
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Data received on socket
+                    .on_event("socket_data_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_socket_data",
+                            "data": "41434b3a2048656c6c6f2c20536f636b657421" // "ACK: Hello, Socket!" in hex
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("Server started with socket file");
 
     // Wait a bit for socket file to be created
@@ -62,6 +93,9 @@ async fn test_socket_echo() -> E2EResult<()> {
         Ok(Err(e)) => return Err(format!("Read error: {}", e).into()),
         Err(_) => return Err("Response timeout".into()),
     }
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
 
     server.stop().await?;
 

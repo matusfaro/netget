@@ -5,20 +5,46 @@
 
 #![cfg(all(test, feature = "http3"))]
 
+use super::super::helpers::{self, E2EResult, NetGetConfig};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
 
-mod helpers {}
-use helpers::{spawn_test_server, TestServerHandle};
-
 /// Test HTTP3 echo server - send data and receive it back
 #[tokio::test]
-async fn test_http3_echo() {
+async fn test_http3_echo() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via http3. When you receive data on any stream, echo it back exactly as received.";
 
-    let handle = spawn_test_server(prompt).await;
-    let port = handle.port;
+    let server_config = NetGetConfig::new(prompt.to_string())
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("http3")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "HTTP3",
+                        "instruction": "Echo back data received on streams"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Server receives stream data
+                .on_event("http3_stream_data_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http3_data",
+                        "data": "48656c6c6f2c20485454502f3321"  // "Hello, HTTP/3!" in hex
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let mut server = helpers::start_netget_server(server_config).await?;
+    let port = server.port;
 
     // Configure HTTP3 client to skip certificate validation (self-signed cert)
     let mut roots = rustls::RootCertStore::empty();
@@ -81,16 +107,53 @@ async fn test_http3_echo() {
     connection.close(0u32.into(), b"done");
     endpoint.wait_idle().await;
 
-    handle.stop().await;
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
+    server.stop().await?;
+
+    Ok(())
 }
 
 /// Test HTTP3 custom response - send command and receive specific response
 #[tokio::test]
-async fn test_http3_custom_response() {
+async fn test_http3_custom_response() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via http3. When you receive 'PING' on a stream, respond with 'PONG' and close the stream.";
 
-    let handle = spawn_test_server(prompt).await;
-    let port = handle.port;
+    let server_config = NetGetConfig::new(prompt.to_string())
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("http3")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "HTTP3",
+                        "instruction": "Respond to PING with PONG"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Server receives PING
+                .on_event("http3_stream_data_received")
+                .and_event_data_contains("data", "PING")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http3_data",
+                        "data": "504f4e47"  // "PONG" in hex
+                    },
+                    {
+                        "type": "close_stream"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let mut server = helpers::start_netget_server(server_config).await?;
+    let port = server.port;
 
     // Configure HTTP3 client (same as above)
     let mut roots = rustls::RootCertStore::empty();
@@ -153,16 +216,49 @@ async fn test_http3_custom_response() {
     connection.close(0u32.into(), b"done");
     endpoint.wait_idle().await;
 
-    handle.stop().await;
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
+    server.stop().await?;
+
+    Ok(())
 }
 
 /// Test HTTP3 multiple streams - verify stream multiplexing
 #[tokio::test]
-async fn test_http3_multiple_streams() {
+async fn test_http3_multiple_streams() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via http3. Echo back all data received on each stream. Handle multiple streams concurrently.";
 
-    let handle = spawn_test_server(prompt).await;
-    let port = handle.port;
+    let server_config = NetGetConfig::new(prompt.to_string())
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("http3")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "HTTP3",
+                        "instruction": "Echo back all data on multiple streams"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2-4: Three stream data received events (echo back Stream 0, Stream 1, Stream 2)
+                .on_event("http3_stream_data_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http3_data",
+                        "data": "Stream"  // Will echo back the stream data
+                    }
+                ]))
+                .expect_calls(3)  // Expecting 3 streams
+                .and()
+        });
+
+    let mut server = helpers::start_netget_server(server_config).await?;
+    let port = server.port;
 
     // Configure HTTP3 client
     let mut roots = rustls::RootCertStore::empty();
@@ -230,7 +326,12 @@ async fn test_http3_multiple_streams() {
     connection.close(0u32.into(), b"done");
     endpoint.wait_idle().await;
 
-    handle.stop().await;
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
+    server.stop().await?;
+
+    Ok(())
 }
 
 /// Certificate verifier that skips all verification (for self-signed certs)

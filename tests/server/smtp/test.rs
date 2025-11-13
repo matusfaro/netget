@@ -20,8 +20,26 @@ async fn test_smtp_greeting() -> E2EResult<()> {
         "listen on port {AVAILABLE_PORT} via smtp. When a client connects, send SMTP greeting: \
         '220 mail.example.com ESMTP Service Ready'";
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let config = helpers::NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("smtp")
+                .and_instruction_containing("greeting")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "SMTP",
+                        "instruction": prompt
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Connect and expect 220 greeting
@@ -57,6 +75,7 @@ async fn test_smtp_greeting() -> E2EResult<()> {
         }
     }
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -70,8 +89,26 @@ async fn test_smtp_ehlo() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via smtp. Send greeting '220 mail.test ESMTP'. \
         When client sends EHLO, respond with '250-mail.test' followed by '250 8BITMIME'";
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let config = helpers::NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("smtp")
+                .and_instruction_containing("EHLO")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "SMTP",
+                        "instruction": prompt
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Send EHLO and verify response
@@ -119,6 +156,7 @@ async fn test_smtp_ehlo() -> E2EResult<()> {
         println!("Note: Did not receive 250 response to EHLO");
     }
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -137,8 +175,26 @@ async fn test_smtp_mail_transaction() -> E2EResult<()> {
         5) Respond to DATA with '354 Start mail input' \
         6) After mail data ending with '.', respond with '250 Message accepted'";
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let config = helpers::NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("smtp")
+                .and_instruction_containing("transaction")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "SMTP",
+                        "instruction": prompt
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Perform full SMTP transaction
@@ -212,6 +268,7 @@ async fn test_smtp_mail_transaction() -> E2EResult<()> {
 
     println!("✓ SMTP transaction flow tested");
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -225,8 +282,26 @@ async fn test_smtp_quit() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via smtp. Send greeting '220 mail.test'. \
         When client sends QUIT, respond with '221 Bye' and close connection";
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let config = helpers::NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("smtp")
+                .and_instruction_containing("QUIT")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "SMTP",
+                        "instruction": prompt
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Send QUIT and verify response
@@ -264,6 +339,7 @@ async fn test_smtp_quit() -> E2EResult<()> {
         }
     }
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -277,8 +353,26 @@ async fn test_smtp_error_handling() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via smtp. Send greeting '220 mail.test'. \
         When you receive invalid commands, respond with '500 Command not recognized'";
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let config = helpers::NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("smtp")
+                .and_instruction_containing("invalid")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "SMTP",
+                        "instruction": prompt
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Send invalid command
@@ -316,6 +410,7 @@ async fn test_smtp_error_handling() -> E2EResult<()> {
         }
     }
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())

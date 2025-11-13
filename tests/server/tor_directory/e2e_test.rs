@@ -6,6 +6,7 @@
 #![cfg(feature = "tor_directory")]
 
 use crate::server::helpers::{self, E2EResult, ServerConfig};
+use serde_json::json;
 use std::time::Duration;
 
 #[tokio::test]
@@ -18,7 +19,40 @@ async fn test_tor_directory_consensus_request() -> E2EResult<()> {
         with network-status-version 3 and a few fake relays. When clients request any other path, \
         return a 404 error.";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("TOR Directory")
+                .respond_with_actions(json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "HTTP",
+                        "protocol": "TOR_DIRECTORY",
+                        "instruction": "Tor directory mirror serving consensus documents"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Consensus request
+                .on_event("http_request_received")
+                .and_event_data_contains("path", "/tor/status-vote/current/consensus")
+                .respond_with_actions(json!([
+                    {
+                        "type": "http_response",
+                        "status_code": 200,
+                        "headers": {
+                            "Content-Type": "text/plain"
+                        },
+                        "body": "network-status-version 3\nvalid-after 2024-01-01 00:00:00\nfresh-until 2024-01-01 01:00:00\nr relay1 AAA BBB 1.2.3.4 9001 0 0\nr relay2 CCC DDD 5.6.7.8 9001 0 0\n"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // Wait for server to be ready
@@ -70,6 +104,11 @@ async fn test_tor_directory_consensus_request() -> E2EResult<()> {
     );
 
     println!("✓ Tor Directory Consensus request test completed\n");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+    server.stop().await?;
+
     Ok(())
 }
 
@@ -80,7 +119,40 @@ async fn test_tor_directory_404_error() -> E2EResult<()> {
     let prompt = "Open TOR Directory on port {AVAILABLE_PORT}. This is a Tor directory mirror. \
         When clients request unknown paths, return a 404 Not Found error.";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("TOR Directory")
+                .respond_with_actions(json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "HTTP",
+                        "protocol": "TOR_DIRECTORY",
+                        "instruction": "Tor directory mirror with 404 error handling"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: 404 error for unknown path
+                .on_event("http_request_received")
+                .and_event_data_contains("path", "/tor/invalid/path")
+                .respond_with_actions(json!([
+                    {
+                        "type": "http_response",
+                        "status_code": 404,
+                        "headers": {
+                            "Content-Type": "text/plain"
+                        },
+                        "body": "Not Found"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // Wait for server to be ready
@@ -120,6 +192,11 @@ async fn test_tor_directory_404_error() -> E2EResult<()> {
     );
 
     println!("✓ Tor Directory 404 Error test completed\n");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+    server.stop().await?;
+
     Ok(())
 }
 
@@ -131,7 +208,40 @@ async fn test_tor_directory_microdescriptors() -> E2EResult<()> {
         When clients request /tor/micro/d/<hash>, return a simple microdescriptor with \
         onion-key and ntor-onion-key fields.";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("TOR Directory")
+                .respond_with_actions(json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "HTTP",
+                        "protocol": "TOR_DIRECTORY",
+                        "instruction": "Tor directory mirror serving microdescriptors"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Microdescriptor request
+                .on_event("http_request_received")
+                .and_event_data_contains("path", "/tor/micro/d/")
+                .respond_with_actions(json!([
+                    {
+                        "type": "http_response",
+                        "status_code": 200,
+                        "headers": {
+                            "Content-Type": "text/plain"
+                        },
+                        "body": "onion-key\n-----BEGIN RSA PUBLIC KEY-----\nMIGJAoGBAM... (test key)\n-----END RSA PUBLIC KEY-----\nntor-onion-key base64data\n"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // Wait for server to be ready
@@ -180,5 +290,10 @@ async fn test_tor_directory_microdescriptors() -> E2EResult<()> {
     );
 
     println!("✓ Tor Directory Microdescriptors test completed\n");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+    server.stop().await?;
+
     Ok(())
 }

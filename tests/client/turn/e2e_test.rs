@@ -17,7 +17,18 @@ mod turn_client_tests {
         let server_config = NetGetConfig::new(
             "Start TURN relay server on port {AVAILABLE_PORT}. When client requests allocation, \
              assign relay address and return 600 second lifetime.",
-        );
+        )
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("TURN relay server")
+                .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "TURN", "instruction": "TURN relay server"}]))
+                .expect_calls(1)
+                .and()
+                .on_event("turn_allocate_request")
+                .respond_with_actions(serde_json::json!([{"type": "turn_allocate_success", "relay_address": "127.0.0.1:50000", "lifetime": 600}]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -28,7 +39,18 @@ mod turn_client_tests {
         let client_config = NetGetConfig::new(format!(
             "Connect to TURN server at 127.0.0.1:{} and allocate a relay address with 600 second lifetime.",
             server.port
-        ));
+        ))
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("Connect to TURN")
+                .respond_with_actions(serde_json::json!([{"type": "open_client", "remote_addr": format!("127.0.0.1:{}", server.port), "protocol": "TURN", "instruction": "Allocate relay"}]))
+                .expect_calls(1)
+                .and()
+                .on_event("turn_connected")
+                .respond_with_actions(serde_json::json!([{"type": "turn_allocate", "lifetime": 600}]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 
@@ -43,6 +65,10 @@ mod turn_client_tests {
         );
 
         println!("✅ TURN client connected and allocated relay successfully");
+
+        // Verify mocks
+        server.verify_mocks().await?;
+        client.verify_mocks().await?;
 
         // Cleanup
         server.stop().await?;
@@ -68,7 +94,18 @@ mod turn_client_tests {
         let client_config = NetGetConfig::new(format!(
             "Connect to TURN server at 127.0.0.1:{}, allocate a relay, and create permission for peer 192.168.1.100:5000.",
             server.port
-        ));
+        ))
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("Connect to TURN")
+                .respond_with_actions(serde_json::json!([{"type": "open_client", "remote_addr": format!("127.0.0.1:{}", server.port), "protocol": "TURN", "instruction": "Allocate relay"}]))
+                .expect_calls(1)
+                .and()
+                .on_event("turn_connected")
+                .respond_with_actions(serde_json::json!([{"type": "turn_allocate", "lifetime": 600}]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 
@@ -78,6 +115,10 @@ mod turn_client_tests {
         assert_eq!(client.protocol, "TURN", "Client should be TURN protocol");
 
         println!("✅ TURN client created permission successfully");
+
+        // Verify mocks
+        server.verify_mocks().await?;
+        client.verify_mocks().await?;
 
         // Cleanup
         server.stop().await?;
@@ -104,7 +145,18 @@ mod turn_client_tests {
             "Connect to TURN server at 127.0.0.1:{}, allocate a relay with 60 second lifetime, \
              then refresh it to extend the lifetime by another 600 seconds.",
             server.port
-        ));
+        ))
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("Connect to TURN")
+                .respond_with_actions(serde_json::json!([{"type": "open_client", "remote_addr": format!("127.0.0.1:{}", server.port), "protocol": "TURN", "instruction": "Allocate relay"}]))
+                .expect_calls(1)
+                .and()
+                .on_event("turn_connected")
+                .respond_with_actions(serde_json::json!([{"type": "turn_allocate", "lifetime": 600}]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 
@@ -119,6 +171,10 @@ mod turn_client_tests {
         );
 
         println!("✅ TURN client refreshed allocation successfully");
+
+        // Verify mocks
+        server.verify_mocks().await?;
+        client.verify_mocks().await?;
 
         // Cleanup
         server.stop().await?;

@@ -2,103 +2,222 @@
 
 ## Test Strategy
 
-Black-box testing using the `zookeeper-async` Rust client to connect to the NetGet ZooKeeper server and verify LLM-controlled responses.
+Black-box testing using manually constructed ZooKeeper binary protocol messages to verify LLM-controlled responses.
+
+## Tests Implemented
+
+### 1. test_zookeeper_get_data
+**Purpose**: Verify getData operation returns correct data
+**LLM Calls**: 2 (server startup + getData request)
+**Flow**:
+1. Start ZooKeeper server with mock
+2. Connect via TCP
+3. Send binary getData request for /config/database
+4. Verify response: xid=1, zxid=100, error_code=0
+
+**Mock Configuration**:
+- Event: `zookeeper_request` with operation="getData", path="/config/database"
+- Action: `zookeeper_response` with xid=1, zxid=100, error_code=0, data_hex=<postgres url>
+
+### 2. test_zookeeper_get_children
+**Purpose**: Verify getChildren operation returns child list
+**LLM Calls**: 2 (server startup + getChildren request)
+**Flow**:
+1. Start ZooKeeper server with mock
+2. Connect via TCP
+3. Send binary getChildren request for /services
+4. Verify response: xid=2, zxid=200, error_code=0
+
+**Mock Configuration**:
+- Event: `zookeeper_request` with operation="getChildren", path="/services"
+- Action: `zookeeper_response` with xid=2, zxid=200, error_code=0, data_hex=<array of children>
+
+### 3. test_zookeeper_error_response
+**Purpose**: Verify error responses for nonexistent nodes
+**LLM Calls**: 2 (server startup + getData request)
+**Flow**:
+1. Start ZooKeeper server with mock
+2. Connect via TCP
+3. Send binary getData request for /nonexistent
+4. Verify response: xid=3, zxid=300, error_code=-101 (NONODE)
+
+**Mock Configuration**:
+- Event: `zookeeper_request` with operation="getData", path="/nonexistent"
+- Action: `zookeeper_response` with xid=3, zxid=300, error_code=-101
 
 ## LLM Call Budget
 
-Target: **< 10 LLM calls**
-
-- Test 1: Connect and getData (2 LLM calls: connection, getData)
-- Test 2: Create and verify (2 LLM calls: create, getData)
-- Test 3: getChildren (1 LLM call)
-
-Total: ~5 LLM calls
+**Total LLM Calls**: 6 (3 tests × 2 calls each)
+**Budget Compliance**: ✓ Under 10 calls
 
 ## Test Infrastructure
 
-### Client Library
+### Binary Protocol Construction
 
-**zookeeper-async v0.7**: Modern async ZooKeeper client
-- Binary protocol support
-- Session management
-- Operation support: create, delete, getData, setData, getChildren
+Tests manually build ZooKeeper binary protocol messages:
 
-### Test Execution
+**Request Format**:
+```
+[4 bytes length][4 bytes xid][4 bytes op_type][variable data]
+```
+
+**Response Format**:
+```
+[4 bytes length][4 bytes xid][8 bytes zxid][4 bytes error_code][variable data]
+```
+
+**Operation Types**:
+- 4: getData
+- 8: getChildren
+- Others: create (1), delete (2), setData (5), etc.
+
+### Helper Functions
+
+- `build_get_data_request(xid, path)` - Constructs getData request
+- `build_get_children_request(xid, path)` - Constructs getChildren request
+- `parse_response_header(data)` - Parses response header (length, xid, zxid, error_code)
+
+## Mock Pattern
+
+All tests follow this pattern:
 
 ```rust
-use zookeeper_async::ZooKeeper;
-
-#[tokio::test]
-async fn test_zookeeper_server_basic() {
-    // 1. Start ZooKeeper server with instruction
-    // 2. Connect using zookeeper-async client
-    // 3. Perform operations (getData, create, getChildren)
-    // 4. Verify responses match LLM instruction
-}
+let config = NetGetConfig::new(prompt)
+    .with_mock(|mock| {
+        mock
+            // Mock server startup
+            .on_instruction_containing("ZooKeeper")
+            .respond_with_actions(json!([{
+                "type": "open_server",
+                "port": 0,
+                "base_stack": "ZooKeeper",
+                "instruction": "..."
+            }]))
+            .expect_calls(1)
+            .and()
+            // Mock ZooKeeper request
+            .on_event("zookeeper_request")
+            .and_event_data_contains("operation", "getData")
+            .and_event_data_contains("path", "/config/database")
+            .respond_with_actions(json!([{
+                "type": "zookeeper_response",
+                "xid": 1,
+                "zxid": 100,
+                "error_code": 0,
+                "data_hex": "..."
+            }]))
+            .expect_calls(1)
+            .and()
+    });
 ```
 
 ## Expected Runtime
 
-- **Cold start**: 10-15 seconds (server spawn + LLM calls)
-- **Warm start**: 5-8 seconds (cached LLM responses)
+- **Mock mode** (default): < 2 seconds per test
+- **Real Ollama mode**: 5-10 seconds per test
 
-## Known Issues
+## Running Tests
 
-1. **Binary Protocol Complexity**: ZooKeeper's Jute serialization requires careful parsing
-2. **Session Management**: Session timeout handling may cause test flakiness
-3. **Simplified Protocol**: Only basic operations supported (no watches, transactions, ACLs)
+### Mock Mode (Default, No Ollama Required)
+```bash
+# Run all ZooKeeper tests
+./test-e2e.sh zookeeper
 
-## Test Scenarios
-
-### Scenario 1: Basic getData Operation
-
-```
-Instruction: "Act as a ZooKeeper server. When clients read /test, return 'hello world'."
-
-Test Steps:
-1. Connect to server
-2. Call getData("/test")
-3. Verify response is "hello world"
+# With cargo directly
+cargo test --features zookeeper --test server::zookeeper::e2e_test
 ```
 
-### Scenario 2: Create and Verify
+### Real Ollama Mode (Optional Validation)
+```bash
+# Requires Ollama running with qwen3-coder:30b
+./test-e2e.sh --use-ollama zookeeper
 
-```
-Instruction: "Act as a ZooKeeper server. Allow creating znodes and return success."
-
-Test Steps:
-1. Connect to server
-2. Create znode at /newnode with data "test data"
-3. Call getData("/newnode") to verify
-4. Verify response matches "test data"
+# With cargo
+cargo test --features zookeeper -- --use-ollama
 ```
 
-### Scenario 3: getChildren Operation
-
+### Build First (Recommended)
+```bash
+./cargo-isolated.sh build --release --features zookeeper
 ```
-Instruction: "Act as a ZooKeeper server. /services has three children: web, api, db."
 
-Test Steps:
-1. Connect to server
-2. Call getChildren("/services")
-3. Verify response contains ["web", "api", "db"]
-```
+## Known Limitations
+
+### 1. Binary Protocol Complexity
+**Issue**: ZooKeeper uses Jute serialization which is complex
+**Impact**: Tests use simplified binary format for basic operations only
+**Workaround**: Tests cover common operations (getData, getChildren, errors)
+
+### 2. No Real Client Library
+**Note**: Tests don't use zookeeper-async or similar client library
+**Reason**: Simplifies testing - direct binary protocol control
+**Impact**: Tests verify protocol basics but not complex client interactions
+
+### 3. Simplified Data Encoding
+**Issue**: data_hex field bypasses Jute serialization
+**Impact**: LLM provides hex-encoded data directly
+**Workaround**: Works well for simple string data, sufficient for testing
+
+## Test Reliability
+
+**Timeouts**:
+- Server initialization: 500ms
+- Response wait: 5 seconds
+- Total per test: ~2 seconds (mock mode), ~10 seconds (real Ollama)
+
+**Failure Modes**:
+- LLM doesn't understand ZooKeeper protocol → Bad response format
+- LLM returns wrong error codes → Assertion failures
+- Binary protocol parsing issues → Response header parse fails
+
+**Retry Logic**: None. Tests fail fast on errors.
+
+## Privacy & Offline
+
+All tests:
+- ✓ Use localhost only (127.0.0.1)
+- ✓ No external connections
+- ✓ Work completely offline
+- ✓ No network access required (mock mode)
 
 ## Debugging
 
-If tests fail:
+### Enable Trace Logging
+```bash
+RUST_LOG=trace ./cargo-isolated.sh test --features zookeeper -- --nocapture
+```
 
-1. Check `netget.log` for ZooKeeper server logs
-2. Verify binary protocol parsing (check hex dumps)
-3. Ensure xid/zxid/error_code are correctly formatted
-4. Check for session timeout issues
-5. Verify length-prefixed message format
+### Inspect Binary Packets
+```rust
+println!("Request hex: {}", hex::encode(&request));
+println!("Response hex: {}", hex::encode(&buffer[..n]));
+```
 
-## Test Optimization
+### Common Issues
 
-To minimize LLM calls:
+**No response**:
+- LLM didn't understand request format
+- Check server logs for parsing errors
 
-1. **Single Connection**: Reuse connection across operations
-2. **Instruction Clarity**: Provide complete instruction upfront to avoid follow-up queries
-3. **No Watchers**: Avoid watch mechanism (not implemented)
-4. **Simple Operations**: Stick to basic create/get/delete operations
+**Wrong response format**:
+- Response header size < 20 bytes
+- Binary protocol mismatch
+
+**Timeout**:
+- LLM took too long to respond
+- Increase timeout in test
+
+## Future Enhancements
+
+1. **Create Operation**: Test znode creation
+2. **Delete Operation**: Test znode deletion
+3. **SetData Operation**: Test data updates
+4. **Watch Mechanism**: Test watches (when implemented)
+5. **Session Management**: Test connection lifecycle
+6. **ACL Operations**: Test access control (when implemented)
+
+## References
+
+- ZooKeeper Protocol: https://zookeeper.apache.org/doc/current/zookeeperProgrammers.html
+- Jute Serialization: https://zookeeper.apache.org/doc/current/jute.html
+- Implementation: `src/server/zookeeper/CLAUDE.md`

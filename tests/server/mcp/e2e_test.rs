@@ -81,7 +81,49 @@ async fn test_mcp_initialize() -> E2EResult<()> {
         - capabilities: resources with subscribe support, tools, and prompts \
         - serverInfo: name=netget-mcp, version=0.1.0";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server_config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("MCP")
+                .and_instruction_containing("port")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "MCP",
+                        "instruction": "MCP server with resources, tools, and prompts capabilities"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Initialize request
+                .on_event("mcp_initialize")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_jsonrpc_response",
+                        "id": 1,
+                        "result": {
+                            "protocolVersion": "2024-11-05",
+                            "capabilities": {
+                                "resources": {
+                                    "subscribe": true
+                                },
+                                "tools": {},
+                                "prompts": {}
+                            },
+                            "serverInfo": {
+                                "name": "netget-mcp",
+                                "version": "0.1.0"
+                            }
+                        }
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
 
     // Wait for server to be ready
@@ -153,6 +195,10 @@ async fn test_mcp_initialize() -> E2EResult<()> {
         }
 
         println!("✓ MCP Initialize test completed\n");
+
+        // Verify mocks
+        server.verify_mocks().await?;
+
         Ok(())
     } else {
         println!("✗ No result in response: {:?}", response.get("error"));
@@ -166,7 +212,25 @@ async fn test_mcp_ping() -> E2EResult<()> {
 
     let prompt = "Listen on port {AVAILABLE_PORT} via MCP. You are an MCP server.";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server_config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock: Server startup
+                .on_instruction_containing("MCP")
+                .and_instruction_containing("port")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "MCP",
+                        "instruction": "MCP server that responds to ping"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
 
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -186,6 +250,10 @@ async fn test_mcp_ping() -> E2EResult<()> {
     if response.get("result").is_some() {
         println!("✓ Ping successful");
         println!("✓ MCP Ping test completed\n");
+
+        // Verify mocks
+        server.verify_mocks().await?;
+
         Ok(())
     } else {
         println!("✗ Ping failed: {:?}", response.get("error"));
@@ -203,7 +271,49 @@ async fn test_mcp_resources_list() -> E2EResult<()> {
         - uri: file:///example.txt, name: Example File, description: A sample text file \
         - uri: file:///data.json, name: Data File, description: JSON data file";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server_config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("MCP")
+                .and_instruction_containing("port")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "MCP",
+                        "instruction": "MCP server with resources capability"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Resources list request
+                .on_event("mcp_resources_list")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_jsonrpc_response",
+                        "id": 3,
+                        "result": {
+                            "resources": [
+                                {
+                                    "uri": "file:///example.txt",
+                                    "name": "Example File",
+                                    "description": "A sample text file"
+                                },
+                                {
+                                    "uri": "file:///data.json",
+                                    "name": "Data File",
+                                    "description": "JSON data file"
+                                }
+                            ]
+                        }
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
 
     tokio::time::sleep(Duration::from_secs(1)).await;
@@ -233,6 +343,10 @@ async fn test_mcp_resources_list() -> E2EResult<()> {
             }
         }
         println!("✓ MCP Resources List test completed\n");
+
+        // Verify mocks
+        server.verify_mocks().await?;
+
         Ok(())
     } else {
         println!("✗ Resources list failed: {:?}", response.get("error"));
@@ -249,7 +363,44 @@ async fn test_mcp_resources_read() -> E2EResult<()> {
         When a client reads resource 'file:///example.txt', \
         return contents with uri and text: 'Hello from NetGet MCP server!'";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server_config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("MCP")
+                .and_instruction_containing("port")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "MCP",
+                        "instruction": "MCP server with resource read capability"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Resource read request
+                .on_event("mcp_resources_read")
+                .and_event_data_contains("uri", "file:///example.txt")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_jsonrpc_response",
+                        "id": 4,
+                        "result": {
+                            "contents": [
+                                {
+                                    "uri": "file:///example.txt",
+                                    "text": "Hello from NetGet MCP server!"
+                                }
+                            ]
+                        }
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
 
     tokio::time::sleep(Duration::from_secs(1)).await;
@@ -284,11 +435,19 @@ async fn test_mcp_resources_read() -> E2EResult<()> {
             }
         }
         println!("✓ MCP Resources Read test completed\n");
+
+        // Verify mocks
+        server.verify_mocks().await?;
+
         Ok(())
     } else {
         println!("Resource read error: {:?}", response.get("error"));
         // Resource not found is acceptable for this test
         println!("✓ MCP Resources Read test completed (resource not found is expected)\n");
+
+        // Verify mocks
+        server.verify_mocks().await?;
+
         Ok(())
     }
 }
@@ -302,7 +461,63 @@ async fn test_mcp_tools_list() -> E2EResult<()> {
         - name: calculate, description: Perform calculations, inputSchema with 'expression' string parameter \
         - name: search, description: Search files, inputSchema with 'query' string parameter";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server_config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("MCP")
+                .and_instruction_containing("port")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "MCP",
+                        "instruction": "MCP server with tools capability"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Tools list request
+                .on_event("mcp_tools_list")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_jsonrpc_response",
+                        "id": 5,
+                        "result": {
+                            "tools": [
+                                {
+                                    "name": "calculate",
+                                    "description": "Perform calculations",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "expression": {
+                                                "type": "string"
+                                            }
+                                        }
+                                    }
+                                },
+                                {
+                                    "name": "search",
+                                    "description": "Search files",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "query": {
+                                                "type": "string"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
 
     tokio::time::sleep(Duration::from_secs(1)).await;
@@ -332,6 +547,10 @@ async fn test_mcp_tools_list() -> E2EResult<()> {
             }
         }
         println!("✓ MCP Tools List test completed\n");
+
+        // Verify mocks
+        server.verify_mocks().await?;
+
         Ok(())
     } else {
         println!("✗ Tools list failed: {:?}", response.get("error"));
@@ -348,7 +567,44 @@ async fn test_mcp_tools_call() -> E2EResult<()> {
         When a client calls tool 'calculate' with expression '2+2', \
         return content with type text and text '4'";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server_config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("MCP")
+                .and_instruction_containing("port")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "MCP",
+                        "instruction": "MCP server with tools call capability"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Tool call request
+                .on_event("mcp_tools_call")
+                .and_event_data_contains("name", "calculate")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_jsonrpc_response",
+                        "id": 6,
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "4"
+                                }
+                            ]
+                        }
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
 
     tokio::time::sleep(Duration::from_secs(1)).await;
@@ -386,11 +642,19 @@ async fn test_mcp_tools_call() -> E2EResult<()> {
             }
         }
         println!("✓ MCP Tools Call test completed\n");
+
+        // Verify mocks
+        server.verify_mocks().await?;
+
         Ok(())
     } else {
         println!("Tool call error: {:?}", response.get("error"));
         // Tool execution error is acceptable for this test
         println!("✓ MCP Tools Call test completed (execution error is expected)\n");
+
+        // Verify mocks
+        server.verify_mocks().await?;
+
         Ok(())
     }
 }
@@ -404,7 +668,47 @@ async fn test_mcp_prompts_list() -> E2EResult<()> {
         - name: code-review, description: Review code for quality and bugs \
         - name: summarize, description: Summarize text content";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server_config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("MCP")
+                .and_instruction_containing("port")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "MCP",
+                        "instruction": "MCP server with prompts capability"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Prompts list request
+                .on_event("mcp_prompts_list")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_jsonrpc_response",
+                        "id": 7,
+                        "result": {
+                            "prompts": [
+                                {
+                                    "name": "code-review",
+                                    "description": "Review code for quality and bugs"
+                                },
+                                {
+                                    "name": "summarize",
+                                    "description": "Summarize text content"
+                                }
+                            ]
+                        }
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
 
     tokio::time::sleep(Duration::from_secs(1)).await;
@@ -434,6 +738,10 @@ async fn test_mcp_prompts_list() -> E2EResult<()> {
             }
         }
         println!("✓ MCP Prompts List test completed\n");
+
+        // Verify mocks
+        server.verify_mocks().await?;
+
         Ok(())
     } else {
         println!("✗ Prompts list failed: {:?}", response.get("error"));
@@ -450,7 +758,47 @@ async fn test_mcp_prompts_get() -> E2EResult<()> {
         When a client gets prompt 'code-review', \
         return messages with role 'user' and content with type 'text' and text 'Review this code'";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server_config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("MCP")
+                .and_instruction_containing("port")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "MCP",
+                        "instruction": "MCP server with prompt get capability"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Prompt get request
+                .on_event("mcp_prompts_get")
+                .and_event_data_contains("name", "code-review")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_jsonrpc_response",
+                        "id": 8,
+                        "result": {
+                            "messages": [
+                                {
+                                    "role": "user",
+                                    "content": {
+                                        "type": "text",
+                                        "text": "Review this code"
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
 
     tokio::time::sleep(Duration::from_secs(1)).await;
@@ -485,11 +833,19 @@ async fn test_mcp_prompts_get() -> E2EResult<()> {
             }
         }
         println!("✓ MCP Prompts Get test completed\n");
+
+        // Verify mocks
+        server.verify_mocks().await?;
+
         Ok(())
     } else {
         println!("Prompt get error: {:?}", response.get("error"));
         // Prompt not found is acceptable for this test
         println!("✓ MCP Prompts Get test completed (prompt not found is expected)\n");
+
+        // Verify mocks
+        server.verify_mocks().await?;
+
         Ok(())
     }
 }
@@ -500,7 +856,25 @@ async fn test_mcp_error_handling() -> E2EResult<()> {
 
     let prompt = "Listen on port {AVAILABLE_PORT} via MCP. You are an MCP server.";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server_config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock: Server startup
+                .on_instruction_containing("MCP")
+                .and_instruction_containing("port")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "MCP",
+                        "instruction": "MCP server for error handling test"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
 
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -531,6 +905,10 @@ async fn test_mcp_error_handling() -> E2EResult<()> {
         );
 
         println!("✓ MCP Error Handling test completed\n");
+
+        // Verify mocks
+        server.verify_mocks().await?;
+
         Ok(())
     } else {
         println!("✗ Expected error response, got result");

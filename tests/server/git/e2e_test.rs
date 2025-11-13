@@ -62,8 +62,26 @@ When clients request pack file (/git-upload-pack):
 Note: For this MVP, you can provide a simplified pack that allows git clone to succeed.
 If you are unsure about pack format, provide minimal pack data and we will test protocol flow."#;
 
-    // Start server without scripting (pure LLM mode)
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start server with mocks
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup (user command)
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("git")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "Git",
+                        "instruction": "Git Smart HTTP server for test-repo with main branch"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(config).await?;
 
     let port = server.port;
     println!("Git server started on port {}", port);
@@ -126,6 +144,9 @@ If you are unsure about pack format, provide minimal pack data and we will test 
         }
     }
 
+    // Verify mocks
+    server.verify_mocks().await?;
+
     println!("\n✓ Git protocol flow validated");
     Ok(())
 }
@@ -143,7 +164,25 @@ When client requests /simple-repo/info/refs?service=git-upload-pack:
 - Return refs/tags/v1.0 with SHA: fedcba9876543210fedcba9876543210fedcba98
 - Include capabilities: multi_ack, side-band-64k"#;
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("git")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "Git",
+                        "instruction": "Git server for simple-repo with main branch and v1.0 tag"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(config).await?;
 
     let port = server.port;
     println!("Git server started on port {}", port);
@@ -199,6 +238,9 @@ When client requests /simple-repo/info/refs?service=git-upload-pack:
         println!("✓ Main branch reference found");
     }
 
+    // Verify mocks
+    server.verify_mocks().await?;
+
     println!("\n✓ Info/refs endpoint validated");
     Ok(())
 }
@@ -215,7 +257,25 @@ When client requests info/refs for any other repository name:
 - Return error with 404 status code
 - Message: "Repository not found""#;
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("git")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "Git",
+                        "instruction": "Git server with only 'existing-repo' repository"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(config).await?;
 
     let port = server.port;
     println!("Git server started on port {}", port);
@@ -248,6 +308,9 @@ When client requests info/refs for any other repository name:
         println!("✓ Appropriate error message");
     }
 
+    // Verify mocks
+    server.verify_mocks().await?;
+
     println!("\n✓ Repository not found handling validated");
     Ok(())
 }
@@ -271,7 +334,25 @@ Create two repositories:
 When client requests info/refs for 'frontend', return frontend branches.
 When client requests info/refs for 'backend', return backend branches."#;
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("git")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "Git",
+                        "instruction": "Git server with frontend and backend repositories"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(config).await?;
 
     let port = server.port;
     println!("Git server started on port {}", port);
@@ -312,6 +393,9 @@ When client requests info/refs for 'backend', return backend branches."#;
         "Frontend and backend should return different refs"
     );
 
+    // Verify mocks
+    server.verify_mocks().await?;
+
     println!("\n✓ Multiple repositories validated");
     Ok(())
 }
@@ -343,7 +427,25 @@ Script should return:
   }]
 }"#;
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("git")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "Git",
+                        "instruction": "Git server with Python scripting for scripted-repo"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(config).await?;
 
     let port = server.port;
     println!("Git server with scripting started on port {}", port);
@@ -376,6 +478,9 @@ Script should return:
             elapsed
         );
     }
+
+    // Verify mocks
+    server.verify_mocks().await?;
 
     println!("\n✓ Scripting mode validated - all responses < 100ms");
     Ok(())

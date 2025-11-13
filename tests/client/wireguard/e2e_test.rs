@@ -6,56 +6,283 @@
 //! - Query connection status
 //! - Disconnect gracefully
 //!
-//! **Requirements**:
-//! - Root/CAP_NET_ADMIN privileges (Linux/FreeBSD/Windows)
-//! - WireGuard server running (can use netget WireGuard server)
-//! - Valid server public key and endpoint
-//!
-//! **LLM Call Budget**: < 5 calls
-//! **Expected Runtime**: ~20-30 seconds
+//! **Test Strategy**: Use mocks to simulate VPN operations without requiring root privileges
+//! **LLM Call Budget**: < 10 calls total
+//! **Expected Runtime**: ~10-15 seconds
 
 #[cfg(all(test, feature = "wireguard"))]
 mod tests {
-    use netget::llm::OllamaClient;
-    use netget::state::app_state::AppState;
-    use std::sync::Arc;
-    use tokio::sync::mpsc;
+    use crate::helpers::*;
+    use std::time::Duration;
 
-    /// Test basic WireGuard client connectivity
-    ///
-    /// This test is disabled by default because it requires:
-    /// 1. Root privileges
-    /// 2. A running WireGuard server
-    /// 3. Valid server configuration
-    ///
-    /// To run manually:
-    /// ```bash
-    /// # Start WireGuard server first (in another terminal, as root)
-    /// sudo ./cargo-isolated.sh run --no-default-features --features wireguard
-    /// # In netget: "Start a WireGuard VPN server on port 51820"
-    /// # Note the server public key
-    ///
-    /// # Then run client test (as root)
-    /// sudo ./cargo-isolated.sh test --no-default-features --features wireguard client::wireguard::e2e_test::tests::test_wireguard_client_connectivity -- --ignored
-    /// ```
+    /// Test WireGuard client connection to server
+    /// LLM calls: 4 (server startup, client startup, connected event, status query)
     #[tokio::test]
-    #[ignore] // Requires root and running server
-    async fn test_wireguard_client_connectivity() {
-        // This test would require:
-        // 1. Starting a WireGuard server
-        // 2. Getting server's public key
-        // 3. Connecting client with proper configuration
-        // 4. Verifying handshake success
-        // 5. Querying status
-        // 6. Disconnecting
+    async fn test_wireguard_client_connect() -> E2EResult<()> {
+        // Start a WireGuard VPN server with mocks
+        let server_config = NetGetConfig::new("Start a WireGuard VPN server on port {AVAILABLE_PORT}. Assign clients to 10.20.30.0/24 network.")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("WireGuard")
+                    .and_instruction_containing("VPN server")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "WIREGUARD",
+                            "instruction": "VPN server for 10.20.30.0/24 network"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Client connects (peer added)
+                    .on_event("wireguard_peer_added")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "authorize_peer",
+                            "allowed_ips": ["10.20.30.2/32"]
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
-        // Example skeleton (not functional without actual server):
-        let _app_state = Arc::new(AppState::new("test_model".to_string()));
-        let _ollama_client = OllamaClient::new("http://localhost:11434");
-        let (_status_tx, _status_rx) = mpsc::unbounded_channel();
+        let mut server = start_netget_server(server_config).await?;
 
-        // TODO: Implement full E2E test when test infrastructure supports it
-        // For now, this serves as documentation of what the test should do
+        // Give server time to start and generate keys
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        // Start WireGuard client with mocks
+        let client_config = NetGetConfig::new(format!(
+            "Connect to WireGuard VPN at 127.0.0.1:{} with client address 10.20.30.2/32",
+            server.port
+        ))
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Client startup
+                    .on_instruction_containing("Connect to")
+                    .and_instruction_containing("WireGuard")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_client",
+                            "remote_addr": format!("127.0.0.1:{}", server.port),
+                            "protocol": "wireguard",
+                            "instruction": "Connect to VPN",
+                            "startup_params": {
+                                "server_endpoint": format!("127.0.0.1:{}", server.port),
+                                "client_address": "10.20.30.2/32",
+                                "server_public_key": "placeholder_key"
+                            }
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Connection established (wireguard_connected event)
+                    .on_event("wireguard_connected")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "wait_for_more"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
+
+        let mut client = start_netget_client(client_config).await?;
+
+        // Give client time to connect
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        // Verify client shows WireGuard protocol
+        assert_eq!(client.protocol, "wireguard", "Client should be wireguard protocol");
+
+        println!("✅ WireGuard client connected successfully");
+
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+        client.verify_mocks().await?;
+
+        // Cleanup
+        server.stop().await?;
+        client.stop().await?;
+
+        Ok(())
+    }
+
+    /// Test WireGuard client status query
+    /// LLM calls: 4 (server startup, client startup, connected event, status query response)
+    #[tokio::test]
+    async fn test_wireguard_client_status_query() -> E2EResult<()> {
+        // Start a WireGuard server with mocks
+        let server_config = NetGetConfig::new("Start a WireGuard VPN server on port {AVAILABLE_PORT}")
+            .with_mock(|mock| {
+                mock
+                    .on_instruction_containing("WireGuard")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "WIREGUARD",
+                            "instruction": "VPN server"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
+
+        let mut server = start_netget_server(server_config).await?;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        // Start client with mocks
+        let client_config = NetGetConfig::new(format!(
+            "Connect to WireGuard VPN at 127.0.0.1:{} with address 10.20.30.3/32",
+            server.port
+        ))
+            .with_mock(|mock| {
+                mock
+                    .on_instruction_containing("Connect to")
+                    .and_instruction_containing("WireGuard")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_client",
+                            "remote_addr": format!("127.0.0.1:{}", server.port),
+                            "protocol": "wireguard",
+                            "instruction": "Connect to VPN",
+                            "startup_params": {
+                                "server_endpoint": format!("127.0.0.1:{}", server.port),
+                                "client_address": "10.20.30.3/32"
+                            }
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    .on_event("wireguard_connected")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "wait_for_more"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
+
+        let mut client = start_netget_client(client_config).await?;
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        // Verify output contains connection information
+        let output = client.get_output().await;
+        assert!(
+            output.contains("wireguard") || output.contains("VPN") || output.contains("connected"),
+            "Client output should show connection info. Output: {:?}",
+            output
+        );
+
+        println!("✅ WireGuard client status query successful");
+
+        server.verify_mocks().await?;
+        client.verify_mocks().await?;
+
+        server.stop().await?;
+        client.stop().await?;
+
+        Ok(())
+    }
+
+    /// Test WireGuard client disconnect
+    /// LLM calls: 5 (server startup, client startup, connected event, disconnect action, disconnected event)
+    #[tokio::test]
+    async fn test_wireguard_client_disconnect() -> E2EResult<()> {
+        // Start server with mocks
+        let server_config = NetGetConfig::new("Start a WireGuard VPN server on port {AVAILABLE_PORT}")
+            .with_mock(|mock| {
+                mock
+                    .on_instruction_containing("WireGuard")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "WIREGUARD",
+                            "instruction": "VPN server"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    .on_event("wireguard_peer_removed")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "log_event",
+                            "message": "Peer disconnected"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
+
+        let mut server = start_netget_server(server_config).await?;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        // Start client with disconnect mocks
+        let client_config = NetGetConfig::new(format!(
+            "Connect to WireGuard VPN at 127.0.0.1:{} then disconnect after connecting",
+            server.port
+        ))
+            .with_mock(|mock| {
+                mock
+                    .on_instruction_containing("Connect to")
+                    .and_instruction_containing("WireGuard")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_client",
+                            "remote_addr": format!("127.0.0.1:{}", server.port),
+                            "protocol": "wireguard",
+                            "instruction": "Connect then disconnect",
+                            "startup_params": {
+                                "server_endpoint": format!("127.0.0.1:{}", server.port),
+                                "client_address": "10.20.30.4/32"
+                            }
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    .on_event("wireguard_connected")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "disconnect"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    .on_event("wireguard_disconnected")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "wait_for_more"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
+
+        let mut client = start_netget_client(client_config).await?;
+        tokio::time::sleep(Duration::from_secs(4)).await;
+
+        // Verify disconnect occurred
+        let output = client.get_output().await;
+        assert!(
+            output.contains("disconnect") || output.contains("closed"),
+            "Client should show disconnection. Output: {:?}",
+            output
+        );
+
+        println!("✅ WireGuard client disconnect successful");
+
+        server.verify_mocks().await?;
+        client.verify_mocks().await?;
+
+        server.stop().await?;
+        client.stop().await?;
+
+        Ok(())
     }
 
     /// Test that verifies WireGuard client parameter parsing

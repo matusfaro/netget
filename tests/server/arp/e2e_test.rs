@@ -79,7 +79,7 @@ async fn test_arp_responder() -> E2EResult<()> {
 
     println!("✓ Using interface: {}", interface);
 
-    // Single comprehensive server with scripting for ARP responses
+    // Single comprehensive server with mocks for ARP responses
     let config = ServerConfig::new(format!(
         r#"listen on interface {} via arp
 
@@ -88,12 +88,65 @@ You are an ARP responder. When you receive ARP requests:
 1. For IP 192.168.1.100: Respond with MAC address aa:bb:cc:dd:ee:ff
 2. For IP 192.168.1.101: Respond with MAC address 11:22:33:44:55:66
 3. For any other IP: Ignore (no response)
-
-Use scripting mode to handle all ARP requests without LLM calls after initial setup.
 "#,
         interface
     ))
-    .with_log_level("debug");
+    .with_log_level("debug")
+    .with_mock(|mock| {
+        mock
+            // Mock 1: Server startup (user command)
+            .on_instruction_containing("listen on interface")
+            .and_instruction_containing("arp")
+            .and_instruction_containing("ARP responder")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "interface": interface,
+                    "base_stack": "ARP",
+                    "instruction": "Respond to ARP requests per the mapping rules"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: ARP request for 192.168.1.100 (should respond)
+            .on_event("arp_request_received")
+            .and_event_data_contains("target_ip", "192.168.1.100")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_arp_reply",
+                    "sender_mac": "aa:bb:cc:dd:ee:ff",
+                    "sender_ip": "192.168.1.100",
+                    "target_mac": "de:ad:be:ef:00:01",
+                    "target_ip": "192.168.1.50"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 3: ARP request for 192.168.1.101 (should respond)
+            .on_event("arp_request_received")
+            .and_event_data_contains("target_ip", "192.168.1.101")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_arp_reply",
+                    "sender_mac": "11:22:33:44:55:66",
+                    "sender_ip": "192.168.1.101",
+                    "target_mac": "de:ad:be:ef:00:01",
+                    "target_ip": "192.168.1.50"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 4: ARP request for 192.168.1.200 (should ignore)
+            .on_event("arp_request_received")
+            .and_event_data_contains("target_ip", "192.168.1.200")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "ignore_arp"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let test_state = start_netget_server(config).await?;
 
@@ -282,5 +335,9 @@ Use scripting mode to handle all ARP requests without LLM calls after initial se
     }
 
     println!("\n✓ All ARP tests passed");
+
+    // Verify mock expectations were met
+    test_state.verify_mocks().await?;
+
     Ok(())
 }

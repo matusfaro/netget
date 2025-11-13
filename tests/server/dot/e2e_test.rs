@@ -1,11 +1,11 @@
 //! End-to-end DNS-over-TLS (DoT) tests for NetGet
 //!
-//! This test spawns a single NetGet DoT server with a Python script
+//! This test spawns a single NetGet DoT server with mocks
 //! and validates multiple query types against the same server instance.
 
 #![cfg(feature = "dot")]
 
-use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use crate::helpers::{E2EResult, NetGetConfig};
 use hickory_proto::op::{Message as DnsMessage, Query};
 use hickory_proto::rr::{Name, RecordType};
 use rustls::{ClientConfig, RootCertStore};
@@ -118,24 +118,83 @@ impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
 
 #[tokio::test]
 async fn test_dot_server() -> E2EResult<()> {
-    println!("\n=== E2E Test: DNS-over-TLS Server with Script ===");
+    println!("\n=== E2E Test: DNS-over-TLS Server with Mocks ===");
 
-    // Create a prompt with a simple Python script
-    // Keep it short to avoid LLM confusion with long prompts
-    let prompt = r#"listen on port {AVAILABLE_PORT} via dot. Respond to all A record queries for example.com with IP 93.184.216.34 and TTL 300."#;
+    // Create a DoT server with mocks
+    let server_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via DoT. Respond to all A record queries for example.com with IP 93.184.216.34 and TTL 300.")
+        .with_log_level("info")
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup (user command)
+                .on_instruction_containing("Listen on port")
+                .and_instruction_containing("DoT")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "DoT",
+                        "instruction": "Respond to all A record queries for example.com with IP 93.184.216.34 and TTL 300"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: First DNS query - example.com
+                .on_event("dot_query")
+                .and_event_data_contains("domain", "example.com")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_dns_a_response",
+                        "query_id": 1,
+                        "domain": "example.com",
+                        "ip": "93.184.216.34",
+                        "ttl": 300
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: Second DNS query - test.com (returns same response for all)
+                .on_event("dot_query")
+                .and_event_data_contains("domain", "test.com")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_dns_a_response",
+                        "query_id": 1,
+                        "domain": "test.com",
+                        "ip": "93.184.216.34",
+                        "ttl": 300
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 4: Third DNS query - foo.example.com
+                .on_event("dot_query")
+                .and_event_data_contains("domain", "foo.example.com")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_dns_a_response",
+                        "query_id": 1,
+                        "domain": "foo.example.com",
+                        "ip": "93.184.216.34",
+                        "ttl": 300
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
-    // Start server (LLM will parse the prompt and create the script)
-    let server =
-        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("info")).await?;
+    let mut server = crate::helpers::start_netget(server_config).await?;
 
-    println!("DoT server started on port {}", server.port);
+    // Extract server port
+    assert!(!server.servers.is_empty(), "Expected at least one server");
+    let port = server.servers[0].port;
+    println!("DoT server started on port {}", port);
 
     // Wait for server to fully initialize
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 
-    // Test multiple queries against the same server (script returns same response for all)
+    // Test multiple queries against the same server
     println!("\n[Test 1] First query - example.com A record...");
-    let response1 = query_dot(server.port, "example.com.", RecordType::A).await?;
+    let response1 = query_dot(port, "example.com.", RecordType::A).await?;
     assert!(
         !response1.answers().is_empty(),
         "Expected answer for example.com A"
@@ -143,19 +202,25 @@ async fn test_dot_server() -> E2EResult<()> {
     println!("✓ Got response: {:?}", response1.answers()[0]);
 
     println!("\n[Test 2] Second query - testing TLS connection reuse...");
-    let response2 = query_dot(server.port, "test.com.", RecordType::A).await?;
+    let response2 = query_dot(port, "test.com.", RecordType::A).await?;
     assert!(
         !response2.answers().is_empty(),
-        "Expected answer (script returns same for all)"
+        "Expected answer for test.com A"
     );
     println!("✓ Got response: {:?}", response2.answers()[0]);
 
     println!("\n[Test 3] Third query - different domain...");
-    let response3 = query_dot(server.port, "foo.example.com.", RecordType::A).await?;
-    assert!(!response3.answers().is_empty(), "Expected answer");
+    let response3 = query_dot(port, "foo.example.com.", RecordType::A).await?;
+    assert!(!response3.answers().is_empty(), "Expected answer for foo.example.com A");
     println!("✓ Got response: {:?}", response3.answers()[0]);
 
     println!("\n=== All DoT tests passed! ===");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
+    // Cleanup
+    server.stop().await?;
 
     Ok(())
 }

@@ -103,10 +103,43 @@ mod e2e_igmp {
 When you receive a general membership query (group address 0.0.0.0), respond with a
 membership report for 239.255.255.250."#;
 
-        let server = start_netget_server(ServerConfig::new_no_scripts(prompt)).await?;
+        let config = ServerConfig::new_no_scripts(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup (user command)
+                    .on_instruction_containing("Start IGMP server")
+                    .and_instruction_containing("239.255.255.250")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "IGMP",
+                            "instruction": "Join group 239.255.255.250 and respond to queries"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: General query received (igmp_query_received event)
+                    .on_event("igmp_query_received")
+                    .and_event_data_contains("group_address", "0.0.0.0")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "join_group",
+                            "group_address": "239.255.255.250"
+                        },
+                        {
+                            "type": "send_membership_report",
+                            "group_address": "239.255.255.250"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
+
+        let server = start_netget_server(config).await?;
 
         // Wait for server to initialize
-        sleep(Duration::from_secs(3)).await;
+        sleep(Duration::from_millis(500)).await;
 
         // Create UDP socket to send IGMP packets
         let socket = UdpSocket::bind("127.0.0.1:0")?;
@@ -149,6 +182,9 @@ membership report for 239.255.255.250."#;
             }
         }
 
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+
         server.stop().await?;
         println!("  [TEST] ✓ Test completed successfully\n");
 
@@ -164,10 +200,50 @@ membership report for 239.255.255.250."#;
 When you receive a group-specific query for a group you're a member of, respond with
 a membership report for that group. Ignore queries for groups you haven't joined."#;
 
-        let server = start_netget_server(ServerConfig::new_no_scripts(prompt)).await?;
+        let config = ServerConfig::new_no_scripts(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup (user command)
+                    .on_instruction_containing("Start IGMP server")
+                    .and_instruction_containing("224.0.1.1")
+                    .and_instruction_containing("239.1.2.3")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "IGMP",
+                            "instruction": "Join groups 224.0.1.1 and 239.1.2.3"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Group-specific query for joined group (224.0.1.1)
+                    .on_event("igmp_query_received")
+                    .and_event_data_contains("group_address", "224.0.1.1")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_membership_report",
+                            "group_address": "224.0.1.1"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: Group-specific query for non-joined group (225.0.0.1)
+                    .on_event("igmp_query_received")
+                    .and_event_data_contains("group_address", "225.0.0.1")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "ignore_message"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
+
+        let server = start_netget_server(config).await?;
 
         // Wait for server to initialize
-        sleep(Duration::from_secs(3)).await;
+        sleep(Duration::from_millis(500)).await;
 
         // Create UDP socket
         let socket = UdpSocket::bind("127.0.0.1:0")?;
@@ -212,6 +288,9 @@ a membership report for that group. Ignore queries for groups you haven't joined
             }
         }
 
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+
         server.stop().await?;
         println!("  [TEST] ✓ Test completed successfully\n");
 
@@ -227,10 +306,38 @@ a membership report for that group. Ignore queries for groups you haven't joined
 When you receive a membership report from another host for a group you're in,
 you can suppress your own report (this is optional per IGMP spec)."#;
 
-        let server = start_netget_server(ServerConfig::new_no_scripts(prompt)).await?;
+        let config = ServerConfig::new_no_scripts(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup (user command)
+                    .on_instruction_containing("Start IGMP server")
+                    .and_instruction_containing("224.1.1.1")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "IGMP",
+                            "instruction": "Join group 224.1.1.1"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Peer report received (igmp_report_received event)
+                    .on_event("igmp_report_received")
+                    .and_event_data_contains("group_address", "224.1.1.1")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "ignore_message"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
+
+        let server = start_netget_server(config).await?;
 
         // Wait for server to initialize
-        sleep(Duration::from_secs(3)).await;
+        sleep(Duration::from_millis(500)).await;
 
         // Create UDP socket
         let socket = UdpSocket::bind("127.0.0.1:0")?;
@@ -249,6 +356,9 @@ you can suppress your own report (this is optional per IGMP spec)."#;
         // Server should process it (no crash, accepts the packet)
         println!("  [TEST] ✓ Server accepted peer report");
 
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+
         server.stop().await?;
         println!("  [TEST] ✓ Test completed successfully\n");
 
@@ -265,10 +375,44 @@ you can suppress your own report (this is optional per IGMP spec)."#;
 2. When you receive a general query, respond with reports for all joined groups
 3. Track which groups you've joined and respond appropriately to group-specific queries"#;
 
-        let server = start_netget_server(ServerConfig::new_no_scripts(prompt)).await?;
+        let config = ServerConfig::new_no_scripts(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup (user command)
+                    .on_instruction_containing("Start IGMP server")
+                    .and_instruction_containing("224.0.0.251")
+                    .and_instruction_containing("239.255.255.250")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "IGMP",
+                            "instruction": "Join mDNS and SSDP multicast groups"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: General query received
+                    .on_event("igmp_query_received")
+                    .and_event_data_contains("group_address", "0.0.0.0")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_membership_report",
+                            "group_address": "224.0.0.251"
+                        },
+                        {
+                            "type": "send_membership_report",
+                            "group_address": "239.255.255.250"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
+
+        let server = start_netget_server(config).await?;
 
         // Wait for server to initialize and join groups
-        sleep(Duration::from_secs(3)).await;
+        sleep(Duration::from_millis(500)).await;
 
         // Create UDP socket
         let socket = UdpSocket::bind("127.0.0.1:0")?;
@@ -313,6 +457,9 @@ you can suppress your own report (this is optional per IGMP spec)."#;
             "Should receive at least 1 membership report"
         );
         println!("  [TEST] ✓ Received {} report(s) total", reports_received);
+
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
 
         server.stop().await?;
         println!("  [TEST] ✓ Test completed successfully\n");

@@ -10,6 +10,7 @@
 #[cfg(all(test, feature = "tor"))]
 mod tests {
     use super::super::super::helpers::{self, E2EResult, ServerConfig};
+    use serde_json::json;
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::{TcpListener, TcpStream};
@@ -74,7 +75,23 @@ mod tests {
     /// Start NetGet Tor relay server
     async fn start_netget_relay() -> E2EResult<(u16, helpers::NetGetServer)> {
         let prompt = "listen on port {AVAILABLE_PORT} via tor-relay. Handle TLS connections and Tor cells. Allow exit connections to localhost for testing.";
-        let config = ServerConfig::new_no_scripts(prompt).with_log_level("info");
+        let config = ServerConfig::new_no_scripts(prompt)
+            .with_log_level("info")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("tor-relay")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "TorRelay",
+                            "instruction": "Tor exit relay allowing localhost connections"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let server = helpers::start_netget_server(config).await?;
 
@@ -166,6 +183,9 @@ mod tests {
         println!("   - Cell encryption/decryption");
         println!("   - RELAY cell multiplexing");
         println!("   These are verified in unit tests of the relay implementation.");
+
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
 
         // Cleanup
         server.stop().await?;

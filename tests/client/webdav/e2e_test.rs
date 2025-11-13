@@ -9,27 +9,94 @@ mod webdav_client_tests {
     use std::time::Duration;
 
     /// Test WebDAV client making a PROPFIND request
-    /// LLM calls: 2 (server startup, client connection)
+    /// LLM calls: 5 (server startup, server request, client startup, client connected, client response)
     #[tokio::test]
     async fn test_webdav_client_propfind() -> E2EResult<()> {
-        // Start a WebDAV server listening on an available port
-        let server_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via WebDAV. Respond to PROPFIND requests with a simple directory listing.");
+        // Start a WebDAV server listening on an available port with mocks
+        let server_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via WebDAV. Respond to PROPFIND requests with a simple directory listing.")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("Listen on port")
+                    .and_instruction_containing("WebDAV")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "WebDAV",
+                            "instruction": "Respond to PROPFIND with directory listing"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Server receives PROPFIND request
+                    .on_event("http_request_received")
+                    .and_event_data_contains("method", "PROPFIND")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_http_response",
+                            "status": 207,
+                            "headers": {"Content-Type": "application/xml"},
+                            "body": "<?xml version=\"1.0\"?><D:multistatus xmlns:D=\"DAV:\"><D:response><D:href>/</D:href><D:propstat><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let mut server = start_netget_server(server_config).await?;
 
         // Give server time to start
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-        // Now start a WebDAV client that makes a PROPFIND request
+        // Now start a WebDAV client that makes a PROPFIND request with mocks
         let client_config = NetGetConfig::new(format!(
             "Connect to http://127.0.0.1:{} via WebDAV. Send a PROPFIND request to / to list directory contents.",
             server.port
-        ));
+        ))
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Client startup
+                    .on_instruction_containing("Connect to")
+                    .and_instruction_containing("WebDAV")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_client",
+                            "remote_addr": format!("http://127.0.0.1:{}", server.port),
+                            "protocol": "WebDAV",
+                            "instruction": "Send PROPFIND to / to list contents"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Client connected
+                    .on_event("http_connected")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_http_request",
+                            "method": "PROPFIND",
+                            "path": "/",
+                            "headers": {"Depth": "1"},
+                            "body": ""
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: Client receives multistatus response
+                    .on_event("http_response_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "wait_for_more"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let mut client = start_netget_client(client_config).await?;
 
         // Give client time to make request
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
 
         // Verify client output shows connection/response
         assert!(
@@ -42,6 +109,10 @@ mod webdav_client_tests {
 
         println!("✅ WebDAV client made PROPFIND request successfully");
 
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+        client.verify_mocks().await?;
+
         // Cleanup
         server.stop().await?;
         client.stop().await?;
@@ -50,27 +121,95 @@ mod webdav_client_tests {
     }
 
     /// Test WebDAV client can perform LLM-controlled operations
-    /// LLM calls: 2 (server startup, client connection)
+    /// LLM calls: 5 (server startup, server request, client startup, client connected, client response)
     #[tokio::test]
     async fn test_webdav_client_llm_controlled() -> E2EResult<()> {
-        // Start a simple WebDAV server
+        // Start a simple WebDAV server with mocks
         let server_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via WebDAV. Log all incoming WebDAV requests.",
-        );
+        )
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("Listen on port")
+                    .and_instruction_containing("WebDAV")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "WebDAV",
+                            "instruction": "Log all incoming requests"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Server receives PROPFIND
+                    .on_event("http_request_received")
+                    .and_event_data_contains("method", "PROPFIND")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_http_response",
+                            "status": 207,
+                            "headers": {"Content-Type": "application/xml"},
+                            "body": "<?xml version=\"1.0\"?><D:multistatus xmlns:D=\"DAV:\"></D:multistatus>"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let mut server = start_netget_server(server_config).await?;
 
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-        // Client that performs WebDAV operations based on LLM instruction
+        // Client that performs WebDAV operations based on LLM instruction with mocks
         let client_config = NetGetConfig::new(format!(
             "Connect to http://127.0.0.1:{} via WebDAV and list the root directory using PROPFIND.",
             server.port
-        ));
+        ))
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Client startup
+                    .on_instruction_containing("Connect to")
+                    .and_instruction_containing("WebDAV")
+                    .and_instruction_containing("PROPFIND")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_client",
+                            "remote_addr": format!("http://127.0.0.1:{}", server.port),
+                            "protocol": "WebDAV",
+                            "instruction": "List root directory with PROPFIND"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Client connected - send PROPFIND
+                    .on_event("http_connected")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_http_request",
+                            "method": "PROPFIND",
+                            "path": "/",
+                            "headers": {"Depth": "1"},
+                            "body": ""
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: Client receives response
+                    .on_event("http_response_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "wait_for_more"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let mut client = start_netget_client(client_config).await?;
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
 
         // Verify the client is WebDAV protocol
         assert_eq!(
@@ -79,6 +218,10 @@ mod webdav_client_tests {
         );
 
         println!("✅ WebDAV client responded to LLM instruction");
+
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+        client.verify_mocks().await?;
 
         // Cleanup
         server.stop().await?;

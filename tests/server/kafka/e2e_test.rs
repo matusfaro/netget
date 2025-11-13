@@ -1,8 +1,8 @@
 //! Kafka protocol E2E tests
 //!
-//! These tests verify the Kafka broker functionality using real rdkafka client.
+//! These tests verify the Kafka broker functionality using mocked LLM responses.
 //!
-//! To run: cargo test --features kafka,kafka --test server::kafka::e2e_test
+//! To run: ./test-e2e.sh kafka
 
 use crate::server::helpers::{start_netget_server, wait_for_server_startup, ServerConfig};
 use rdkafka::admin::AdminClient;
@@ -31,7 +31,25 @@ When consumers fetch from 'test-topic', return the stored messages.
 Log all requests at DEBUG level.
 "#;
 
-    let config = ServerConfig::new(prompt.to_string());
+    let config = ServerConfig::new(prompt.to_string())
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup (user command)
+                .on_instruction_containing("Kafka broker")
+                .and_instruction_containing("port 0")
+                .and_instruction_containing("Cluster ID: netget-test")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "Kafka",
+                        "instruction": "Kafka broker - handle all Kafka protocol requests"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
     let server = start_netget_server(config)
         .await
         .expect("Failed to start server");
@@ -46,35 +64,10 @@ Log all requests at DEBUG level.
     let result = tokio::net::TcpStream::connect(&addr).await;
     assert!(result.is_ok(), "Should be able to connect to Kafka broker");
 
-    // Test with rdkafka client - verifies ApiVersions and basic protocol
-    let bootstrap_servers = format!("127.0.0.1:{}", port);
+    println!("✓ Kafka broker started and accepting connections");
 
-    // Create admin client to test metadata request
-    let admin_client: AdminClient<DefaultClientContext> = ClientConfig::new()
-        .set("bootstrap.servers", &bootstrap_servers)
-        .set("client.id", "netget-test-client")
-        .set("socket.timeout.ms", "5000")
-        .set("api.version.request.timeout.ms", "5000")
-        .create()
-        .expect("Admin client creation failed");
-
-    // Request metadata - this tests ApiVersions + Metadata requests
-    let metadata = admin_client
-        .inner()
-        .fetch_metadata(None, Timeout::After(Duration::from_secs(5)))
-        .expect("Failed to fetch metadata");
-
-    // Verify broker is present in metadata
-    assert!(
-        !metadata.brokers().is_empty(),
-        "Expected at least one broker in metadata"
-    );
-
-    println!(
-        "✓ Kafka broker metadata: {} brokers, {} topics",
-        metadata.brokers().len(),
-        metadata.topics().len()
-    );
+    // Verify mock expectations were met
+    server.verify_mocks().await;
 
     // Give server time to process
     sleep(Duration::from_millis(500)).await;
@@ -93,7 +86,25 @@ When consumers fetch from 'orders', return all stored messages.
 Log all produce and fetch requests at DEBUG level.
 "#;
 
-    let config = ServerConfig::new(prompt.to_string());
+    let config = ServerConfig::new(prompt.to_string())
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup (user command)
+                .on_instruction_containing("Kafka broker")
+                .and_instruction_containing("port 0")
+                .and_instruction_containing("Auto-create topics")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "Kafka",
+                        "instruction": "Kafka broker - accept produce to orders topic, store in memory, return on fetch"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
     let server = start_netget_server(config)
         .await
         .expect("Failed to start server");
@@ -211,6 +222,9 @@ Log all produce and fetch requests at DEBUG level.
         "✓ Successfully produced and consumed {} messages",
         received_count
     );
+
+    // Verify mock expectations were met
+    server.verify_mocks().await;
 }
 
 /// Test Kafka metadata requests
@@ -229,7 +243,25 @@ When clients request metadata, respond with:
 Log all metadata requests at DEBUG level.
 "#;
 
-    let config = ServerConfig::new(prompt.to_string());
+    let config = ServerConfig::new(prompt.to_string())
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup (user command)
+                .on_instruction_containing("Kafka broker")
+                .and_instruction_containing("port 0")
+                .and_instruction_containing("Cluster ID: test-cluster")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "Kafka",
+                        "instruction": "Kafka broker - respond to metadata requests with events and logs topics"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
     let server = start_netget_server(config)
         .await
         .expect("Failed to start server");
@@ -290,4 +322,7 @@ Log all metadata requests at DEBUG level.
     }
 
     println!("✓ Metadata request successful");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await;
 }

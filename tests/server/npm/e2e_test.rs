@@ -5,7 +5,7 @@
 
 #![cfg(all(test, feature = "npm"))]
 
-use crate::server::helpers::{self, E2EResult, ServerConfig};
+use crate::server::helpers::{self, E2EResult, NetGetConfig};
 use serde_json::{json, Value};
 use std::fs;
 use std::process::Command;
@@ -33,7 +33,48 @@ When a client requests package metadata for "express", return this JSON:
 
 For any other package, return a 404 error with: {"error": "Package not found"}"#;
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("Open NPM registry")
+                .and_instruction_containing("port")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "HTTP",
+                        "instruction": "NPM registry - serve package metadata"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: HTTP request for express package
+                .on_event("http_request_received")
+                .and_event_data_contains("path", "/express")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_response",
+                        "status_code": 200,
+                        "headers": {"Content-Type": "application/json"},
+                        "body": json!({
+                            "name": "express",
+                            "version": "4.18.2",
+                            "description": "Fast, unopinionated, minimalist web framework",
+                            "main": "index.js",
+                            "keywords": ["framework", "web", "http"],
+                            "license": "MIT",
+                            "dist": {
+                                "tarball": "http://localhost:0/express/-/express-4.18.2.tgz"
+                            }
+                        }).to_string()
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let mut server = helpers::start_netget_server(config).await?;
     println!("NPM registry started on port {}", server.port);
 
     // Wait for server to be ready
@@ -95,6 +136,10 @@ For any other package, return a 404 error with: {"error": "Package not found"}"#
     );
 
     println!("✓ NPM Package Metadata test completed\n");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     Ok(())
 }
 
@@ -105,7 +150,37 @@ async fn test_npm_package_not_found() -> E2EResult<()> {
     let prompt = r#"Open NPM registry on port {AVAILABLE_PORT}.
 When a client requests any package, return a 404 error with JSON: {"error": "Package not found"}"#;
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("Open NPM registry")
+                .and_instruction_containing("port")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "HTTP",
+                        "instruction": "NPM registry - return 404 for all packages"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: HTTP request for non-existent package
+                .on_event("http_request_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_response",
+                        "status_code": 404,
+                        "headers": {"Content-Type": "application/json"},
+                        "body": json!({"error": "Package not found"}).to_string()
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let mut server = helpers::start_netget_server(config).await?;
     println!("NPM registry started on port {}", server.port);
 
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -146,6 +221,10 @@ When a client requests any package, return a 404 error with JSON: {"error": "Pac
     );
 
     println!("✓ NPM Package Not Found test completed\n");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     Ok(())
 }
 
@@ -229,7 +308,58 @@ For any other package, return 404 error."#,
         tarball_base64
     );
 
-    let server = helpers::start_netget_server(ServerConfig::new(&prompt)).await?;
+    let config = NetGetConfig::new(&prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("Open NPM registry")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "HTTP",
+                        "instruction": "NPM registry - serve package and tarball"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Package metadata request
+                .on_event("http_request_received")
+                .and_event_data_contains("path", "/netget-test-pkg")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_response",
+                        "status_code": 200,
+                        "headers": {"Content-Type": "application/json"},
+                        "body": json!({
+                            "name": "netget-test-pkg",
+                            "version": "1.0.0",
+                            "description": "Test package for NetGet NPM registry",
+                            "main": "index.js",
+                            "dist": {
+                                "tarball": format!("http://127.0.0.1:0/netget-test-pkg/-/netget-test-pkg-1.0.0.tgz")
+                            }
+                        }).to_string()
+                    }
+                ]))
+                .expect_at_most(1)
+                .and()
+                // Mock 3: Tarball download request
+                .on_event("http_request_received")
+                .and_event_data_contains("path", ".tgz")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_response",
+                        "status_code": 200,
+                        "headers": {"Content-Type": "application/octet-stream"},
+                        "body": tarball_base64.clone()
+                    }
+                ]))
+                .expect_at_most(1)
+                .and()
+        });
+
+    let mut server = helpers::start_netget_server(config).await?;
     println!("NPM registry started on port {}", server.port);
 
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -329,6 +459,10 @@ For any other package, return 404 error."#,
     }
 
     println!("✓ NPM with Real CLI test completed\n");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     Ok(())
 }
 
@@ -364,7 +498,59 @@ When a client requests search at /-/v1/search?text=express, return:
 
 For any other search query, return empty results: {"objects": [], "total": 0}"#;
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("Open NPM registry")
+                .and_instruction_containing("port")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "HTTP",
+                        "instruction": "NPM registry - handle search requests"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Search request
+                .on_event("http_request_received")
+                .and_event_data_contains("path", "/search")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_response",
+                        "status_code": 200,
+                        "headers": {"Content-Type": "application/json"},
+                        "body": json!({
+                            "objects": [
+                                {
+                                    "package": {
+                                        "name": "express",
+                                        "version": "4.18.2",
+                                        "description": "Fast, unopinionated, minimalist web framework",
+                                        "keywords": ["framework", "web", "http"]
+                                    },
+                                    "score": {
+                                        "final": 0.95,
+                                        "detail": {
+                                            "quality": 0.9,
+                                            "popularity": 0.98,
+                                            "maintenance": 0.97
+                                        }
+                                    }
+                                }
+                            ],
+                            "total": 1,
+                            "time": "Mon Jan 01 2024 00:00:00 GMT+0000"
+                        }).to_string()
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let mut server = helpers::start_netget_server(config).await?;
     println!("NPM registry started on port {}", server.port);
 
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -422,5 +608,9 @@ For any other search query, return empty results: {"objects": [], "total": 0}"#;
     );
 
     println!("✓ NPM Search test completed\n");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     Ok(())
 }

@@ -5,15 +5,50 @@
 
 #![cfg(feature = "stun")]
 
-use crate::server::helpers::*;
+use crate::helpers::{E2EResult, NetGetConfig};
 use std::net::{SocketAddr, UdpSocket};
 use std::time::Duration;
 
 #[tokio::test]
 async fn test_stun_basic_binding_request() -> E2EResult<()> {
-    let config = ServerConfig::new("Start a STUN server on port 0").with_log_level("off");
+    println!("\n=== E2E Test: STUN Basic Binding Request with Mocks ===");
 
-    let test_state = start_netget_server(config).await?;
+    let config = NetGetConfig::new("Start a STUN server on port {AVAILABLE_PORT}")
+        .with_log_level("info")
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup (user command)
+                .on_instruction_containing("Start a STUN server")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "STUN",
+                        "instruction": "STUN server for NAT traversal"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: STUN binding request received
+                .on_event("stun_binding_request")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_stun_binding_response",
+                        "transaction_id": "0102030405060708090a0b0c",
+                        "client_address": "127.0.0.1",
+                        "client_port": 54321,
+                        "xor_mapped": true
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let mut test_state = crate::helpers::start_netget(config).await?;
+
+    // Extract server port
+    assert!(!test_state.servers.is_empty(), "Expected at least one server");
+    let port = test_state.servers[0].port;
 
     // Wait for server to be ready
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -24,7 +59,7 @@ async fn test_stun_basic_binding_request() -> E2EResult<()> {
         .set_read_timeout(Some(Duration::from_secs(5)))
         .expect("Failed to set read timeout");
 
-    let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
+    let server_addr: SocketAddr = format!("127.0.0.1:{}", port)
         .parse()
         .expect("Failed to parse server address");
 
@@ -83,6 +118,11 @@ async fn test_stun_basic_binding_request() -> E2EResult<()> {
         }
     }
 
+    println!("\n=== All STUN tests passed! ===");
+
+    // Verify mock expectations were met
+    test_state.verify_mocks().await?;
+
     // Cleanup
     test_state.stop().await?;
     Ok(())
@@ -90,15 +130,48 @@ async fn test_stun_basic_binding_request() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_stun_multiple_clients() -> E2EResult<()> {
-    let config =
-        ServerConfig::new("Start a STUN server on port 0 that returns the client's public address")
-            .with_log_level("off");
+    println!("\n=== E2E Test: STUN Multiple Clients with Mocks ===");
 
-    let test_state = start_netget_server(config).await?;
+    let config = NetGetConfig::new("Start a STUN server on port {AVAILABLE_PORT} that returns the client's public address")
+        .with_log_level("info")
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("Start a STUN server")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "STUN",
+                        "instruction": "Return client's public address"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2-4: Multiple STUN binding requests (one per client)
+                .on_event("stun_binding_request")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_stun_binding_response",
+                        "transaction_id": "000000000000000000000000",
+                        "client_address": "127.0.0.1",
+                        "client_port": 54321,
+                        "xor_mapped": true
+                    }
+                ]))
+                .expect_calls(3)  // Expect 3 binding requests from 3 clients
+                .and()
+        });
+
+    let mut test_state = crate::helpers::start_netget(config).await?;
+
+    // Extract server port
+    assert!(!test_state.servers.is_empty(), "Expected at least one server");
+    let port = test_state.servers[0].port;
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
+    let server_addr: SocketAddr = format!("127.0.0.1:{}", port)
         .parse()
         .expect("Failed to parse server address");
 
@@ -139,6 +212,10 @@ async fn test_stun_multiple_clients() -> E2EResult<()> {
 
     println!("✓ Multiple concurrent clients successful");
 
+    // Verify mock expectations
+    test_state.verify_mocks().await?;
+
+    // Cleanup
     test_state.stop().await?;
     Ok(())
 }

@@ -7,7 +7,7 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use super::super::super::helpers::{self, E2EResult, NetGetConfig};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
@@ -20,8 +20,36 @@ async fn test_pop3_greeting() -> E2EResult<()> {
         "listen on port {AVAILABLE_PORT} via pop3. When a client connects, send POP3 greeting: \
         '+OK POP3 server ready'";
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let config = NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock: Server startup
+                .on_instruction_containing("pop3")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "TCP",
+                        "application_protocol": "POP3",
+                        "instruction": "Send POP3 greeting when client connects"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock: Client connects
+                .on_event("tcp_connection_accepted")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_tcp_data",
+                        "data": hex::encode(b"+OK POP3 server ready\r\n")
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let mut server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Connect and expect +OK greeting
@@ -57,6 +85,9 @@ async fn test_pop3_greeting() -> E2EResult<()> {
         }
     }
 
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -71,8 +102,58 @@ async fn test_pop3_authentication() -> E2EResult<()> {
         When client sends USER command, respond with '+OK user accepted'. \
         When client sends PASS command, respond with '+OK logged in'";
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let config = NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("pop3")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "TCP",
+                        "application_protocol": "POP3",
+                        "instruction": "Handle USER and PASS commands"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Client connects - send greeting
+                .on_event("tcp_connection_accepted")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_tcp_data",
+                        "data": hex::encode(b"+OK POP3 ready\r\n")
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: USER command received
+                .on_event("tcp_data_received")
+                .and_event_data_contains("data_utf8", "USER alice")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_tcp_data",
+                        "data": hex::encode(b"+OK user accepted\r\n")
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 4: PASS command received
+                .on_event("tcp_data_received")
+                .and_event_data_contains("data_utf8", "PASS secret")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_tcp_data",
+                        "data": hex::encode(b"+OK logged in\r\n")
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let mut server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Send USER and PASS, verify responses
@@ -131,6 +212,9 @@ async fn test_pop3_authentication() -> E2EResult<()> {
         Err(_) => panic!("No response to PASS (timeout)"),
     }
 
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -145,8 +229,57 @@ async fn test_pop3_stat() -> E2EResult<()> {
         Accept USER and PASS with '+OK'. \
         When client sends STAT, respond with '+OK 3 1024' (3 messages, 1024 bytes total)";
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let config = NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("pop3")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "TCP",
+                        "application_protocol": "POP3",
+                        "instruction": "Handle USER, PASS, and STAT commands"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Client connects - send greeting
+                .on_event("tcp_connection_accepted")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_tcp_data",
+                        "data": hex::encode(b"+OK POP3 ready\r\n")
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3-4: USER and PASS commands
+                .on_event("tcp_data_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_tcp_data",
+                        "data": hex::encode(b"+OK\r\n")
+                    }
+                ]))
+                .expect_calls(2)
+                .and()
+                // Mock 5: STAT command received
+                .on_event("tcp_data_received")
+                .and_event_data_contains("data_utf8", "STAT")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_tcp_data",
+                        "data": hex::encode(b"+OK 3 1024\r\n")
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let mut server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Authenticate and send STAT
@@ -196,6 +329,9 @@ async fn test_pop3_stat() -> E2EResult<()> {
         Err(_) => panic!("No response to STAT (timeout)"),
     }
 
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -209,8 +345,50 @@ async fn test_pop3_quit() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via pop3. Send greeting '+OK POP3 ready'. \
         When client sends QUIT, respond with '+OK goodbye' and close connection";
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let config = NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("pop3")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "TCP",
+                        "application_protocol": "POP3",
+                        "instruction": "Handle QUIT command"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Client connects - send greeting
+                .on_event("tcp_connection_accepted")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_tcp_data",
+                        "data": hex::encode(b"+OK POP3 ready\r\n")
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: QUIT command received
+                .on_event("tcp_data_received")
+                .and_event_data_contains("data_utf8", "QUIT")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_tcp_data",
+                        "data": hex::encode(b"+OK goodbye\r\n")
+                    },
+                    {
+                        "type": "disconnect"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let mut server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Send QUIT and verify response
@@ -248,6 +426,9 @@ async fn test_pop3_quit() -> E2EResult<()> {
         Ok(Err(e)) => panic!("Read error after QUIT: {}", e),
         Err(_) => panic!("No response to QUIT (timeout)"),
     }
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
 
     server.stop().await?;
     println!("=== Test completed ===\n");

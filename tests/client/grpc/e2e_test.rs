@@ -28,25 +28,95 @@ mod grpc_client_tests {
     const CALCULATOR_SCHEMA: &str = "CpUCCg9jYWxjdWxhdG9yLnByb3RvEgpjYWxjdWxhdG9yIikKCkFkZFJlcXVlc3QSCwoDYRgBIAEoBVIBYRILCgNiGAIgASgFUgFiIiIKC0FkZFJlc3BvbnNlEhMKBnJlc3VsdBgBIAEoBVIGcmVzdWx0MkIKCkNhbGN1bGF0b3ISNAoDQWRkEhYuY2FsY3VsYXRvci5BZGRSZXF1ZXN0GhcuY2FsY3VsYXRvci5BZGRSZXNwb25zZSIAYgZwcm90bzM=";
 
     /// Test gRPC client connecting to server and making RPC call
-    /// LLM calls: 2 (server startup, client connection)
+    /// LLM calls: 4 with mocks (server startup, server handles request, client startup, client makes call)
     #[tokio::test]
     async fn test_grpc_client_add_request() -> E2EResult<()> {
-        // Start a gRPC server listening on an available port
+        // Start a gRPC server listening on an available port with mocks
         let server_config = NetGetConfig::new(format!(
             "Listen on port {{AVAILABLE_PORT}} via gRPC. Use this schema: {}. When you receive Add requests, return the sum of a and b in the result field.",
             CALCULATOR_SCHEMA
-        ));
+        ))
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("gRPC")
+                .and_instruction_containing("Add requests")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "gRPC",
+                        "instruction": "Return sum of a and b in result field for Add requests",
+                        "proto_schema": CALCULATOR_SCHEMA
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Server handles Add request
+                .on_event("grpc_unary_request")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "grpc_unary_response",
+                        "message": {
+                            "result": 8  // 5 + 3
+                        }
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut server = start_netget_server(server_config).await?;
 
         // Give server time to start
         tokio::time::sleep(Duration::from_millis(1000)).await;
 
-        // Now start a gRPC client that makes an Add request
+        // Now start a gRPC client that makes an Add request with mocks
         let client_config = NetGetConfig::new(format!(
             "Connect to 127.0.0.1:{} via gRPC. Use this schema: {}. Call calculator.Calculator/Add with a=5, b=3 and show the result.",
             server.port, CALCULATOR_SCHEMA
-        ));
+        ))
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Client startup
+                .on_instruction_containing("Connect")
+                .and_instruction_containing("gRPC")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": format!("127.0.0.1:{}", server.port),
+                        "protocol": "gRPC",
+                        "instruction": "Call calculator.Calculator/Add with a=5, b=3",
+                        "proto_schema": CALCULATOR_SCHEMA
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Client makes Add RPC call upon connection
+                .on_event("grpc_connected")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "call_grpc_method",
+                        "service": "calculator.Calculator",
+                        "method": "Add",
+                        "request": {
+                            "a": 5,
+                            "b": 3
+                        }
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: Client receives response
+                .on_event("grpc_response_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 
@@ -63,6 +133,10 @@ mod grpc_client_tests {
 
         println!("✅ gRPC client made Add RPC call successfully");
 
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+        client.verify_mocks().await?;
+
         // Cleanup
         server.stop().await?;
         client.stop().await?;
@@ -71,14 +145,31 @@ mod grpc_client_tests {
     }
 
     /// Test gRPC client can handle connection errors gracefully
-    /// LLM calls: 1 (client connection attempt)
+    /// LLM calls: 1 with mock (client connection attempt)
     #[tokio::test]
     async fn test_grpc_client_connection_error() -> E2EResult<()> {
-        // Try to connect to a non-existent gRPC server
+        // Try to connect to a non-existent gRPC server with mocks
         let client_config = NetGetConfig::new(format!(
             "Connect to 127.0.0.1:54321 via gRPC. Use this schema: {}. Call calculator.Calculator/Add with a=1, b=2.",
             CALCULATOR_SCHEMA
-        ));
+        ))
+        .with_mock(|mock| {
+            mock
+                // Mock: Client connection attempt (will fail)
+                .on_instruction_containing("Connect")
+                .and_instruction_containing("gRPC")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": "127.0.0.1:54321",
+                        "protocol": "gRPC",
+                        "instruction": "Call calculator.Calculator/Add with a=1, b=2",
+                        "proto_schema": CALCULATOR_SCHEMA
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 
@@ -97,6 +188,9 @@ mod grpc_client_tests {
         );
 
         println!("✅ gRPC client handled connection error gracefully");
+
+        // Verify mock expectations were met
+        client.verify_mocks().await?;
 
         // Cleanup
         client.stop().await?;

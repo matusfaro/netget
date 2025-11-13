@@ -96,19 +96,72 @@ fn create_insecure_client() -> E2EResult<Client> {
 
 #[tokio::test]
 async fn test_doh_server() -> E2EResult<()> {
-    println!("\n=== E2E Test: DNS-over-HTTPS Server with Script ===");
+    println!("\n=== E2E Test: DNS-over-HTTPS Server with Mocks ===");
 
-    // Create a prompt with a simple Python script
-    // Keep it short to avoid LLM confusion with long prompts
-    let prompt = r#"listen on port {AVAILABLE_PORT} via doh. Respond to all A record queries for example.com with IP 93.184.216.34 and TTL 300."#;
-
-    // Start server (no scripting, pure LLM mode)
-    let server = helpers::start_netget_server(
-        ServerConfig::new(prompt)
-            .with_log_level("info")
-            .with_no_scripts(true), // Disable scripting
+    // Create server with mocks for startup and DNS queries
+    let server_config = helpers::NetGetConfig::new(
+        "listen on port {AVAILABLE_PORT} via doh. Respond to all A record queries for example.com with IP 93.184.216.34 and TTL 300."
     )
-    .await?;
+    .with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_instruction_containing("listen")
+            .and_instruction_containing("doh")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "DoH",
+                    "instruction": "DNS-over-HTTPS server responding to queries"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: First GET query for example.com
+            .on_event("doh_query")
+            .and_event_data_contains("domain", "example.com")
+            .and_event_data_contains("method", "GET")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_dns_a_response",
+                    "domain": "example.com",
+                    "ip": "93.184.216.34",
+                    "ttl": 300
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 3: POST query for example.com
+            .on_event("doh_query")
+            .and_event_data_contains("domain", "example.com")
+            .and_event_data_contains("method", "POST")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_dns_a_response",
+                    "domain": "example.com",
+                    "ip": "93.184.216.34",
+                    "ttl": 300
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 4: Second GET query for test.com
+            .on_event("doh_query")
+            .and_event_data_contains("domain", "test.com")
+            .and_event_data_contains("method", "GET")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_dns_a_response",
+                    "domain": "test.com",
+                    "ip": "93.184.216.34",
+                    "ttl": 300
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
+
+    let mut server = helpers::start_netget_server(server_config).await?;
 
     println!("DoH server started on port {}", server.port);
 
@@ -133,11 +186,17 @@ async fn test_doh_server() -> E2EResult<()> {
     let response3 = query_doh_get(&client, server.port, "test.com.", RecordType::A).await?;
     assert!(
         !response3.answers().is_empty(),
-        "Expected answer (script returns same for all)"
+        "Expected answer from mock"
     );
     println!("✓ GET response: {:?}", response3.answers()[0]);
 
     println!("\n=== All DoH tests passed! ===");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
+    // Cleanup
+    server.stop().await?;
 
     Ok(())
 }

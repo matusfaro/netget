@@ -1,2 +1,2 @@
 #[cfg(all(test, feature = "irc"))]
-mod test;
+mod e2e_test;

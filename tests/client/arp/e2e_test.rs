@@ -29,9 +29,27 @@ mod arp_client_tests {
 
         println!("🔍 Using network interface: {}", interface);
 
-        // Start ARP client on loopback interface
-        let client_config =
-            NetGetConfig::new(format!("Monitor ARP traffic on interface {}", interface));
+        // Start ARP client on loopback interface with mocks
+        let client_config = NetGetConfig::new(format!(
+            "Monitor ARP traffic on interface {}",
+            interface
+        ))
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Client startup (user command)
+                .on_instruction_containing("Monitor ARP traffic")
+                .and_instruction_containing("interface")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": interface,
+                        "protocol": "ARP",
+                        "instruction": "Monitor ARP traffic"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 
@@ -46,6 +64,9 @@ mod arp_client_tests {
         );
 
         println!("✅ ARP client started on interface successfully");
+
+        // Verify mock expectations were met
+        client.verify_mocks().await?;
 
         // Cleanup
         client.stop().await?;
@@ -69,11 +90,39 @@ mod arp_client_tests {
 
         println!("🔍 Using network interface: {}", interface);
 
-        // Start ARP client with instruction to send ARP request
+        // Start ARP client with instruction to send ARP request with mocks
         let client_config = NetGetConfig::new(format!(
             "Monitor ARP on interface {}. Send who-has query for 127.0.0.1.",
             interface
-        ));
+        ))
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Client startup (user command)
+                .on_instruction_containing("Monitor ARP")
+                .and_instruction_containing("who-has query")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": interface,
+                        "protocol": "ARP",
+                        "instruction": "Send who-has query for 127.0.0.1"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Client started event (send ARP request)
+                .on_event("arp_client_started")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_arp_request",
+                        "sender_mac": "de:ad:be:ef:00:01",
+                        "sender_ip": "127.0.0.1",
+                        "target_ip": "127.0.0.1"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 
@@ -84,6 +133,9 @@ mod arp_client_tests {
         assert_eq!(client.protocol, "ARP", "Client should be ARP protocol");
 
         println!("✅ ARP client sent request successfully");
+
+        // Verify mock expectations were met
+        client.verify_mocks().await?;
 
         // Cleanup
         client.stop().await?;
@@ -107,11 +159,27 @@ mod arp_client_tests {
 
         println!("🔍 Using network interface: {}", interface);
 
-        // Start ARP client in monitoring mode
+        // Start ARP client in monitoring mode with mocks
         let client_config = NetGetConfig::new(format!(
             "Monitor all ARP traffic on interface {}. Log all ARP packets.",
             interface
-        ));
+        ))
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Client startup (user command)
+                .on_instruction_containing("Monitor all ARP traffic")
+                .and_instruction_containing("Log all ARP packets")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": interface,
+                        "protocol": "ARP",
+                        "instruction": "Monitor all ARP traffic and log packets"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 
@@ -126,6 +194,9 @@ mod arp_client_tests {
         );
 
         println!("✅ ARP client monitoring traffic successfully");
+
+        // Verify mock expectations were met
+        client.verify_mocks().await?;
 
         // Cleanup
         client.stop().await?;

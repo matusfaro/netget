@@ -13,18 +13,31 @@
 #![cfg(feature = "ipsec")]
 
 use crate::server::helpers::*;
+use serde_json::json;
 use std::net::{SocketAddr, UdpSocket};
 use std::time::Duration;
 
 #[tokio::test]
-async fn test_ipsec_ikev2_sa_init_detection() {
+async fn test_ipsec_ikev2_sa_init_detection() -> E2EResult<()> {
     let config =
         ServerConfig::new("Start an IPSec/IKEv2 VPN honeypot on port {AVAILABLE_PORT} via ipsec")
-            .with_include_disabled_protocols(true);
+            .with_include_disabled_protocols(true)
+            .with_mock(|mock| {
+                mock.on_instruction_containing("IPSec")
+                    .and_instruction_containing("honeypot")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "IPSEC",
+                            "instruction": "IPSec/IKEv2 honeypot - log all IKE packets"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
-    let mut server = start_netget_server(config)
-        .await
-        .expect("Failed to start server");
+    let mut server = start_netget_server(config).await?;
 
     // Verify correct stack was selected
     assert_stack_name(&mut server, "IPSEC");
@@ -69,19 +82,35 @@ async fn test_ipsec_ikev2_sa_init_detection() {
 
     println!("✓ IKEv2 handshake detection successful");
 
+    // Verify mock expectations
+    server.verify_mocks().await?;
+
     // Cleanup
-    server.stop().await.expect("Failed to stop server");
+    server.stop().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_ipsec_ikev2_auth_detection() {
+async fn test_ipsec_ikev2_auth_detection() -> E2EResult<()> {
     let config =
         ServerConfig::new("Start an IPSec/IKEv2 honeypot on port {AVAILABLE_PORT} via ipsec")
-            .with_include_disabled_protocols(true);
+            .with_include_disabled_protocols(true)
+            .with_mock(|mock| {
+                mock.on_instruction_containing("IPSec")
+                    .and_instruction_containing("honeypot")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "IPSEC",
+                            "instruction": "IPSec/IKEv2 honeypot - log all IKE packets"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
-    let mut server = start_netget_server(config)
-        .await
-        .expect("Failed to start server");
+    let mut server = start_netget_server(config).await?;
 
     assert_stack_name(&mut server, "IPSEC");
 
@@ -116,19 +145,35 @@ async fn test_ipsec_ikev2_auth_detection() {
 
     println!("✓ IKEv2 AUTH detection successful");
 
-    server.stop().await.expect("Failed to stop server");
+    // Verify mock expectations
+    server.verify_mocks().await?;
+
+    server.stop().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_ipsec_ikev1_detection() {
+async fn test_ipsec_ikev1_detection() -> E2EResult<()> {
     let config = ServerConfig::new(
         "Start an IPSec/IKEv2 honeypot on port {AVAILABLE_PORT} via ipsec that also detects IKEv1",
     )
-    .with_include_disabled_protocols(true);
+    .with_include_disabled_protocols(true)
+    .with_mock(|mock| {
+        mock.on_instruction_containing("IPSec")
+            .and_instruction_containing("honeypot")
+            .respond_with_actions(json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "IPSEC",
+                    "instruction": "IPSec/IKEv2 honeypot - log all IKE packets including IKEv1"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
-    let mut server = start_netget_server(config)
-        .await
-        .expect("Failed to start server");
+    let mut server = start_netget_server(config).await?;
 
     assert_stack_name(&mut server, "IPSEC");
 
@@ -163,17 +208,33 @@ async fn test_ipsec_ikev1_detection() {
 
     println!("✓ IKEv1 detection successful");
 
-    server.stop().await.expect("Failed to stop server");
+    // Verify mock expectations
+    server.verify_mocks().await?;
+
+    server.stop().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_ipsec_multiple_exchange_types() {
+async fn test_ipsec_multiple_exchange_types() -> E2EResult<()> {
     let config = ServerConfig::new("Start an IPSec/IKE honeypot on port {AVAILABLE_PORT} via ipsec that logs all IKE exchange types")
-        .with_include_disabled_protocols(true);
+        .with_include_disabled_protocols(true)
+        .with_mock(|mock| {
+            mock.on_instruction_containing("IPSec")
+                .and_instruction_containing("honeypot")
+                .respond_with_actions(json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "IPSEC",
+                        "instruction": "IPSec/IKE honeypot - log all IKE exchange types"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
-    let mut server = start_netget_server(config)
-        .await
-        .expect("Failed to start server");
+    let mut server = start_netget_server(config).await?;
 
     assert_stack_name(&mut server, "IPSEC");
 
@@ -217,18 +278,34 @@ async fn test_ipsec_multiple_exchange_types() {
 
     println!("✓ Multiple IKE exchange types detected");
 
-    server.stop().await.expect("Failed to stop server");
+    // Verify mock expectations
+    server.verify_mocks().await?;
+
+    server.stop().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_ipsec_concurrent_connections() {
+async fn test_ipsec_concurrent_connections() -> E2EResult<()> {
     let config =
         ServerConfig::new("Start an IPSec/IKEv2 VPN honeypot on port {AVAILABLE_PORT} via ipsec")
-            .with_include_disabled_protocols(true);
+            .with_include_disabled_protocols(true)
+            .with_mock(|mock| {
+                mock.on_instruction_containing("IPSec")
+                    .and_instruction_containing("honeypot")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "IPSEC",
+                            "instruction": "IPSec/IKEv2 honeypot - log all IKE packets"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
-    let mut server = start_netget_server(config)
-        .await
-        .expect("Failed to start server");
+    let mut server = start_netget_server(config).await?;
 
     assert_stack_name(&mut server, "IPSEC");
 
@@ -260,7 +337,11 @@ async fn test_ipsec_concurrent_connections() {
 
     println!("✓ Concurrent IPSec connections handled");
 
-    server.stop().await.expect("Failed to stop server");
+    // Verify mock expectations
+    server.verify_mocks().await?;
+
+    server.stop().await?;
+    Ok(())
 }
 
 // ============================================================================

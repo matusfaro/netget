@@ -29,8 +29,86 @@ For SHA-1 checksum requests, return fake checksum: abc123
 For other artifacts, return 404.
 "#;
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let server_config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("maven")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "Maven",
+                        "instruction": "Serve a library com.example:hello-world:1.0.0"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: POM request
+                .on_event("maven_artifact_request")
+                .and_event_data_contains("path", ".pom")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_response",
+                        "status": 200,
+                        "body": "<?xml version=\"1.0\"?>\n<project>\n  <modelVersion>4.0.0</modelVersion>\n  <groupId>com.example</groupId>\n  <artifactId>hello-world</artifactId>\n  <version>1.0.0</version>\n</project>"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: JAR request
+                .on_event("maven_artifact_request")
+                .and_event_data_contains("path", ".jar")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_response",
+                        "status": 200,
+                        "body": "Hello from Maven JAR"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 4: maven-metadata.xml request
+                .on_event("maven_artifact_request")
+                .and_event_data_contains("path", "maven-metadata.xml")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_response",
+                        "status": 200,
+                        "body": "<?xml version=\"1.0\"?>\n<metadata>\n  <groupId>com.example</groupId>\n  <artifactId>hello-world</artifactId>\n  <versioning>\n    <latest>1.0.0</latest>\n    <versions><version>1.0.0</version></versions>\n  </versioning>\n</metadata>"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 5: SHA-1 checksum request
+                .on_event("maven_artifact_request")
+                .and_event_data_contains("path", ".sha1")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_response",
+                        "status": 200,
+                        "body": "abc123"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 6: 404 for non-existent artifact
+                .on_event("maven_artifact_request")
+                .and_event_data_contains("path", "nonexistent")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_response",
+                        "status": 404,
+                        "body": "Not Found"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(server_config).await?;
     println!(
         "Server started: {} stack on port {}",
         server.stack, server.port
@@ -135,6 +213,9 @@ For other artifacts, return 404.
     );
     println!("✓ 404 for missing artifact validated");
 
+    // Verify mocks
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())
@@ -153,8 +234,74 @@ For maven-metadata.xml, list all three versions with 1.1.0 as latest.
 For other artifacts, return 404.
 "#;
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let server_config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("maven")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "Maven",
+                        "instruction": "Serve library com.example:mylib with three versions: 1.0.0, 1.0.1, and 1.1.0"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: maven-metadata.xml request
+                .on_event("maven_artifact_request")
+                .and_event_data_contains("path", "maven-metadata.xml")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_response",
+                        "status": 200,
+                        "body": "<?xml version=\"1.0\"?>\n<metadata>\n  <groupId>com.example</groupId>\n  <artifactId>mylib</artifactId>\n  <versioning>\n    <latest>1.1.0</latest>\n    <versions>\n      <version>1.0.0</version>\n      <version>1.0.1</version>\n      <version>1.1.0</version>\n    </versions>\n  </versioning>\n</metadata>"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: JAR request for version 1.0.0
+                .on_event("maven_artifact_request")
+                .and_event_data_contains("path", "1.0.0/mylib-1.0.0.jar")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_response",
+                        "status": 200,
+                        "body": "mylib version 1.0.0"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 4: JAR request for version 1.0.1
+                .on_event("maven_artifact_request")
+                .and_event_data_contains("path", "1.0.1/mylib-1.0.1.jar")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_response",
+                        "status": 200,
+                        "body": "mylib version 1.0.1"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 5: JAR request for version 1.1.0
+                .on_event("maven_artifact_request")
+                .and_event_data_contains("path", "1.1.0/mylib-1.1.0.jar")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_response",
+                        "status": 200,
+                        "body": "mylib version 1.1.0"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
 
     let client = reqwest::Client::new();
@@ -197,6 +344,9 @@ For other artifacts, return 404.
         println!("✓ Version {} JAR validated", version);
     }
 
+    // Verify mocks
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())
@@ -216,8 +366,62 @@ Serve com.example:toolkit:2.0.0 with the following files:
 Return 404 for other artifacts.
 "#;
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let server_config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("maven")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "Maven",
+                        "instruction": "Serve com.example:toolkit:2.0.0 with main, sources, and javadoc JARs"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Main JAR request (no classifier)
+                .on_event("maven_artifact_request")
+                .and_event_data_contains("path", "toolkit-2.0.0.jar")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_response",
+                        "status": 200,
+                        "body": "Toolkit main code"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: Sources JAR request (-sources classifier)
+                .on_event("maven_artifact_request")
+                .and_event_data_contains("path", "toolkit-2.0.0-sources.jar")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_response",
+                        "status": 200,
+                        "body": "Toolkit source code"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 4: Javadoc JAR request (-javadoc classifier)
+                .on_event("maven_artifact_request")
+                .and_event_data_contains("path", "toolkit-2.0.0-javadoc.jar")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_response",
+                        "status": 200,
+                        "body": "Toolkit documentation"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
 
     let client = reqwest::Client::new();
@@ -261,6 +465,9 @@ Return 404 for other artifacts.
     let content = response.text().await?;
     assert!(content.contains("doc"), "Should be javadoc JAR");
     println!("✓ Javadoc JAR validated");
+
+    // Verify mocks
+    server.verify_mocks().await?;
 
     server.stop().await?;
     println!("=== Test passed ===\n");

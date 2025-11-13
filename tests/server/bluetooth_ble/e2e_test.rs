@@ -87,9 +87,53 @@ async fn test_bluetooth_heart_rate_server() -> E2EResult<()> {
     // PROMPT: Create a BLE heart rate monitor
     let prompt = "Act as a BLE heart rate monitor. Create the Heart Rate Service (UUID: 0000180d-0000-1000-8000-00805f9b34fb) with the Heart Rate Measurement characteristic (UUID: 00002a37-0000-1000-8000-00805f9b34fb) that supports read and notify. Set initial BPM to 72 (hex: 0048). Start advertising as 'NetGet-HeartRate'.";
 
-    // Start the server
+    // Start the server with mocks
     println!("Starting NetGet BLE server...");
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup (user command)
+                    .on_instruction_containing("BLE heart rate monitor")
+                    .and_instruction_containing("Heart Rate Service")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "BluetoothBLE",
+                            "instruction": "Create the Heart Rate Service with Heart Rate Measurement characteristic. Set initial BPM to 72. Start advertising as 'NetGet-HeartRate'",
+                            "startup_params": {
+                                "device_name": "NetGet-HeartRate",
+                                "services": [
+                                    {
+                                        "uuid": "0000180d-0000-1000-8000-00805f9b34fb",
+                                        "characteristics": [
+                                            {
+                                                "uuid": "00002a37-0000-1000-8000-00805f9b34fb",
+                                                "properties": ["read", "notify"],
+                                                "value": "0048"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: BLE characteristic read
+                    .on_event("ble_characteristic_read")
+                    .and_event_data_contains("characteristic_uuid", "00002a37")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_ble_response",
+                            "value": "0048"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("✓ Server started");
 
     // Wait for server to initialize and start advertising
@@ -191,6 +235,9 @@ async fn test_bluetooth_heart_rate_server() -> E2EResult<()> {
     peripheral.disconnect().await?;
     println!("✓ Disconnected from device");
 
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     server.stop().await?;
 
     println!("=== Test passed ===\n");
@@ -205,9 +252,53 @@ async fn test_bluetooth_battery_service() -> E2EResult<()> {
     // PROMPT: Create a BLE battery service
     let prompt = "Act as a BLE battery-powered device. Create the Battery Service (UUID: 0000180f-0000-1000-8000-00805f9b34fb) with Battery Level characteristic (UUID: 00002a19-0000-1000-8000-00805f9b34fb) that supports read. Set battery level to 95% (hex: 5f). Start advertising as 'NetGet-Battery'.";
 
-    // Start the server
+    // Start the server with mocks
     println!("Starting NetGet BLE server...");
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup (user command)
+                    .on_instruction_containing("BLE battery-powered device")
+                    .and_instruction_containing("Battery Service")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "BluetoothBLE",
+                            "instruction": "Create Battery Service with Battery Level characteristic. Set battery level to 95%. Start advertising as 'NetGet-Battery'",
+                            "startup_params": {
+                                "device_name": "NetGet-Battery",
+                                "services": [
+                                    {
+                                        "uuid": "0000180f-0000-1000-8000-00805f9b34fb",
+                                        "characteristics": [
+                                            {
+                                                "uuid": "00002a19-0000-1000-8000-00805f9b34fb",
+                                                "properties": ["read"],
+                                                "value": "5f"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: BLE characteristic read
+                    .on_event("ble_characteristic_read")
+                    .and_event_data_contains("characteristic_uuid", "00002a19")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_ble_response",
+                            "value": "5f"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("✓ Server started");
 
     // Wait for server to initialize
@@ -290,6 +381,10 @@ async fn test_bluetooth_battery_service() -> E2EResult<()> {
     println!("✓ Battery level verified: 95%");
 
     peripheral.disconnect().await?;
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     server.stop().await?;
 
     println!("=== Test passed ===\n");
@@ -303,15 +398,52 @@ async fn test_bluetooth_ble_startup() -> E2EResult<()> {
 
     let prompt = "Act as a BLE device. Create a simple custom service with UUID 12345678-1234-5678-1234-567812345678 with one characteristic that has UUID 12345678-1234-5678-1234-567812345679 supporting read. Set the value to 'TEST' (hex: 54455354). Start advertising as 'NetGet-Test'.";
 
-    // Start server
+    // Start server with mocks
     println!("Starting NetGet BLE server...");
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server = helpers::start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup (user command)
+                    .on_instruction_containing("BLE device")
+                    .and_instruction_containing("custom service")
+                    .and_instruction_containing("12345678-1234-5678-1234-567812345678")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "BluetoothBLE",
+                            "instruction": "Create custom service with characteristic. Set value to 'TEST'. Start advertising as 'NetGet-Test'",
+                            "startup_params": {
+                                "device_name": "NetGet-Test",
+                                "services": [
+                                    {
+                                        "uuid": "12345678-1234-5678-1234-567812345678",
+                                        "characteristics": [
+                                            {
+                                                "uuid": "12345678-1234-5678-1234-567812345679",
+                                                "properties": ["read"],
+                                                "value": "54455354"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("✓ Server started");
 
     // Let it run for a bit to ensure no crashes
     println!("Letting server run for 3 seconds...");
     tokio::time::sleep(Duration::from_secs(3)).await;
     println!("✓ Server running without errors");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
 
     server.stop().await?;
     println!("✓ Server stopped cleanly");

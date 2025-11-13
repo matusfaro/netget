@@ -1,250 +1,333 @@
-//! End-to-end tests for IPP client
+//! E2E tests for IPP client
 //!
-//! These tests verify that the IPP client can:
-//! 1. Connect to an IPP print server
-//! 2. Query printer attributes via LLM
-//! 3. Submit print jobs via LLM
-//! 4. Query job status via LLM
-//!
-//! Prerequisites:
-//! - Running IPP/CUPS server (e.g., localhost:631)
-//! - Configured printer available
-//! - Ollama running with model available
+//! These tests verify IPP client functionality by spawning the actual NetGet binary
+//! and testing client behavior as a black-box.
+//! Test strategy: Use netget binary to start IPP server + client, < 10 LLM calls total.
 
 #[cfg(all(test, feature = "ipp"))]
 mod ipp_client_tests {
-    use netget::cli::Cli;
-    use netget::llm::OllamaClient;
-    use netget::state::app_state::AppState;
-    use std::sync::Arc;
-    use tokio::sync::mpsc;
+    use crate::helpers::*;
+    use std::time::Duration;
 
-    /// Test IPP client can query printer attributes
+    /// Test IPP client can query printer attributes via Get-Printer-Attributes
+    /// LLM calls: 4 (server startup, server request, client startup, client connected)
     #[tokio::test]
-    #[ignore] // Requires CUPS server and Ollama
-    async fn test_ipp_get_printer_attributes() {
-        // Setup
-        let (status_tx, mut status_rx) = mpsc::unbounded_channel();
-        let app_state = Arc::new(AppState::new());
-        let cli = Cli::default_for_tests();
-        let llm_client =
-            OllamaClient::new(&cli.ollama_endpoint, &cli.ollama_model, cli.ollama_lock);
+    async fn test_ipp_get_printer_attributes() -> E2EResult<()> {
+        println!("\n=== E2E Test: IPP Client Get-Printer-Attributes ===");
 
-        // Start IPP client with LLM instruction
-        let client_id = app_state
-            .add_client(
-                "IPP".to_string(),
-                "http://localhost:631/printers/test-printer".to_string(),
-                Some("Query the printer and tell me its capabilities".to_string()),
-                None,
-            )
-            .await;
-
-        // Connect the client
-        netget::cli::client_startup::start_client_by_id(
-            &app_state,
-            client_id,
-            &llm_client,
-            &status_tx,
+        // Start an IPP server that responds to Get-Printer-Attributes
+        let server_config = NetGetConfig::new(
+            "Listen on port {AVAILABLE_PORT} via IPP. When clients send Get-Printer-Attributes, respond with printer-name='NetGet Test Printer', printer-state='idle'."
         )
-        .await
-        .expect("Failed to start IPP client");
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("Listen on port")
+                .and_instruction_containing("IPP")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "IPP",
+                        "instruction": "IPP printer responding to Get-Printer-Attributes"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Server receives IPP request
+                .on_event("ipp_request_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "ipp_printer_attributes",
+                        "attributes": {
+                            "printer-name": "NetGet Test Printer",
+                            "printer-state": "idle"
+                        }
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
-        // Wait for connection
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        let mut server = start_netget_server(server_config).await?;
+        println!("Server started on port {}", server.port);
 
-        // Verify client is connected
-        let client = app_state
-            .get_client(client_id)
-            .await
-            .expect("Client not found");
-        assert_eq!(client.status, netget::state::ClientStatus::Connected);
+        // Give server time to start
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
-        // Trigger get_printer_attributes action manually
-        // (In real use, LLM would generate this action)
-        use netget::client::ipp::IppClient;
-        IppClient::get_printer_attributes(
-            client_id,
-            app_state.clone(),
-            llm_client.clone(),
-            status_tx.clone(),
-        )
-        .await
-        .expect("Get-Printer-Attributes failed");
+        // Start IPP client that connects and queries printer
+        let client_config = NetGetConfig::new(format!(
+            "Connect to http://127.0.0.1:{}/printers/test via IPP. Query printer attributes.",
+            server.port
+        ))
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Client startup
+                .on_instruction_containing("Connect to")
+                .and_instruction_containing("IPP")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": format!("http://127.0.0.1:{}/printers/test", server.port),
+                        "protocol": "IPP",
+                        "instruction": "Query printer attributes"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Client connected (ipp_connected event)
+                .on_event("ipp_connected")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "get_printer_attributes"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: Client receives response (ipp_response_received event)
+                .on_event("ipp_response_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
-        // Wait for LLM processing
-        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+        let mut client = start_netget_client(client_config).await?;
 
-        // Check for status messages indicating success
-        let mut messages = Vec::new();
-        while let Ok(msg) = status_rx.try_recv() {
-            messages.push(msg);
-        }
+        // Give client time to connect and query
+        tokio::time::sleep(Duration::from_secs(2)).await;
 
-        let has_response = messages
-            .iter()
-            .any(|m| m.contains("IPP client") && m.contains("received response"));
-        assert!(has_response, "Expected IPP response message");
+        // Verify client output shows connection
+        assert!(
+            client.output_contains("connected").await || client.output_contains("IPP").await,
+            "Client should show connection message. Output: {:?}",
+            client.get_output().await
+        );
 
-        println!("✓ IPP client successfully queried printer attributes");
+        println!("✅ IPP client successfully queried printer attributes");
+
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+        client.verify_mocks().await?;
+
+        // Cleanup
+        server.stop().await?;
+        client.stop().await?;
+
+        Ok(())
     }
 
-    /// Test IPP client can submit a print job
+    /// Test IPP client can submit a print job via Print-Job
+    /// LLM calls: 4 (server startup, server request, client startup, client connected)
     #[tokio::test]
-    #[ignore] // Requires CUPS server and Ollama
-    async fn test_ipp_print_job() {
-        // Setup
-        let (status_tx, mut status_rx) = mpsc::unbounded_channel();
-        let app_state = Arc::new(AppState::new());
-        let cli = Cli::default_for_tests();
-        let llm_client =
-            OllamaClient::new(&cli.ollama_endpoint, &cli.ollama_model, cli.ollama_lock);
+    async fn test_ipp_print_job() -> E2EResult<()> {
+        println!("\n=== E2E Test: IPP Client Print-Job ===");
 
-        // Start IPP client with LLM instruction
-        let client_id = app_state
-            .add_client(
-                "IPP".to_string(),
-                "http://localhost:631/printers/test-printer".to_string(),
-                Some("Print a test page with the text 'NetGet IPP Test'".to_string()),
-                None,
-            )
-            .await;
-
-        // Connect the client
-        netget::cli::client_startup::start_client_by_id(
-            &app_state,
-            client_id,
-            &llm_client,
-            &status_tx,
+        // Start an IPP server that accepts print jobs
+        let server_config = NetGetConfig::new(
+            "Listen on port {AVAILABLE_PORT} via IPP. When clients send Print-Job, accept the job and respond with job-id=42, job-state='processing'."
         )
-        .await
-        .expect("Failed to start IPP client");
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("Listen on port")
+                .and_instruction_containing("IPP")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "IPP",
+                        "instruction": "IPP printer accepting print jobs"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Server receives Print-Job request
+                .on_event("ipp_request_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "ipp_job_attributes",
+                        "attributes": {
+                            "job-id": 42,
+                            "job-state": "processing"
+                        }
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
-        // Wait for connection
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        let mut server = start_netget_server(server_config).await?;
+        println!("Server started on port {}", server.port);
 
-        // Trigger print_job action manually
-        use netget::client::ipp::IppClient;
-        let document_data = b"NetGet IPP Test\n\nThis is a test print job.".to_vec();
-        IppClient::print_job(
-            client_id,
-            "NetGet Test Job".to_string(),
-            Some("text/plain".to_string()),
-            document_data,
-            app_state.clone(),
-            llm_client.clone(),
-            status_tx.clone(),
-        )
-        .await
-        .expect("Print-Job failed");
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
-        // Wait for LLM processing
-        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+        // Start IPP client that submits a print job
+        let client_config = NetGetConfig::new(format!(
+            "Connect to http://127.0.0.1:{}/printers/test via IPP. Submit a print job with text 'Test Document'.",
+            server.port
+        ))
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Client startup
+                .on_instruction_containing("Connect to")
+                .and_instruction_containing("IPP")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": format!("http://127.0.0.1:{}/printers/test", server.port),
+                        "protocol": "IPP",
+                        "instruction": "Submit print job with test document"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Client connected
+                .on_event("ipp_connected")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "print_job",
+                        "job_name": "Test Job",
+                        "document_format": "text/plain",
+                        "document_data": "VGVzdCBEb2N1bWVudA==" // "Test Document" in base64
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: Client receives job response
+                .on_event("ipp_response_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
-        // Check for status messages
-        let mut messages = Vec::new();
-        while let Ok(msg) = status_rx.try_recv() {
-            messages.push(msg);
-        }
+        let mut client = start_netget_client(client_config).await?;
 
-        let has_print_response = messages
-            .iter()
-            .any(|m| m.contains("Print-Job") || m.contains("print_job"));
-        assert!(has_print_response, "Expected IPP Print-Job response");
+        tokio::time::sleep(Duration::from_secs(2)).await;
 
-        println!("✓ IPP client successfully submitted print job");
+        // Verify client is IPP protocol
+        assert_eq!(client.protocol, "IPP", "Client should be IPP protocol");
+
+        println!("✅ IPP client successfully submitted print job");
+
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+        client.verify_mocks().await?;
+
+        // Cleanup
+        server.stop().await?;
+        client.stop().await?;
+
+        Ok(())
     }
 
-    /// Test IPP client full workflow: connect, query, print, check status
+    /// Test IPP client can check job status via Get-Job-Attributes
+    /// LLM calls: 4 (server startup, server request, client startup, client connected)
     #[tokio::test]
-    #[ignore] // Requires CUPS server and Ollama - comprehensive test
-    async fn test_ipp_full_workflow() {
-        // Setup
-        let (status_tx, _status_rx) = mpsc::unbounded_channel();
-        let app_state = Arc::new(AppState::new());
-        let cli = Cli::default_for_tests();
-        let llm_client =
-            OllamaClient::new(&cli.ollama_endpoint, &cli.ollama_model, cli.ollama_lock);
+    async fn test_ipp_get_job_attributes() -> E2EResult<()> {
+        println!("\n=== E2E Test: IPP Client Get-Job-Attributes ===");
 
-        // Start IPP client with comprehensive instruction
-        let client_id = app_state
-            .add_client(
-                "IPP".to_string(),
-                "http://localhost:631/printers/test-printer".to_string(),
-                Some(
-                    "First query the printer capabilities, then print a test page, \
-                     and finally check the job status"
-                        .to_string(),
-                ),
-                None,
-            )
-            .await;
-
-        // Connect the client
-        netget::cli::client_startup::start_client_by_id(
-            &app_state,
-            client_id,
-            &llm_client,
-            &status_tx,
+        // Start an IPP server that responds to Get-Job-Attributes
+        let server_config = NetGetConfig::new(
+            "Listen on port {AVAILABLE_PORT} via IPP. When clients send Get-Job-Attributes, respond with job-id=100, job-state='completed'."
         )
-        .await
-        .expect("Failed to start IPP client");
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("Listen on port")
+                .and_instruction_containing("IPP")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "IPP",
+                        "instruction": "IPP server responding to Get-Job-Attributes"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Server receives Get-Job-Attributes request
+                .on_event("ipp_request_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "ipp_job_attributes",
+                        "attributes": {
+                            "job-id": 100,
+                            "job-state": "completed"
+                        }
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
-        // Wait for connection
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        let mut server = start_netget_server(server_config).await?;
+        println!("Server started on port {}", server.port);
 
-        // Step 1: Query printer
-        use netget::client::ipp::IppClient;
-        IppClient::get_printer_attributes(
-            client_id,
-            app_state.clone(),
-            llm_client.clone(),
-            status_tx.clone(),
-        )
-        .await
-        .expect("Get-Printer-Attributes failed");
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        // Start IPP client that queries job status
+        let client_config = NetGetConfig::new(format!(
+            "Connect to http://127.0.0.1:{}/printers/test via IPP. Check status of job ID 100.",
+            server.port
+        ))
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Client startup
+                .on_instruction_containing("Connect to")
+                .and_instruction_containing("IPP")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": format!("http://127.0.0.1:{}/printers/test", server.port),
+                        "protocol": "IPP",
+                        "instruction": "Check job status for job 100"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Client connected
+                .on_event("ipp_connected")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "get_job_attributes",
+                        "job_id": 100
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: Client receives job status
+                .on_event("ipp_response_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
-        // Step 2: Print job
-        let document_data = b"NetGet IPP E2E Test\n\nTesting full workflow.".to_vec();
-        IppClient::print_job(
-            client_id,
-            "E2E Test Job".to_string(),
-            Some("text/plain".to_string()),
-            document_data,
-            app_state.clone(),
-            llm_client.clone(),
-            status_tx.clone(),
-        )
-        .await
-        .expect("Print-Job failed");
+        let mut client = start_netget_client(client_config).await?;
 
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
 
-        // Step 3: Check job status (job_id would come from print_job response)
-        // For now, we'll use a dummy job_id since we don't parse the response
-        // In real usage, the LLM would extract job_id from the print_job response
-        let job_id = 1; // Placeholder
-        IppClient::get_job_attributes(
-            client_id,
-            job_id,
-            app_state.clone(),
-            llm_client.clone(),
-            status_tx.clone(),
-        )
-        .await
-        .ok(); // May fail if job_id doesn't exist, that's okay for this test
+        println!("✅ IPP client successfully queried job attributes");
 
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+        client.verify_mocks().await?;
 
-        // Verify client is still connected
-        let client = app_state
-            .get_client(client_id)
-            .await
-            .expect("Client not found");
-        assert_eq!(client.status, netget::state::ClientStatus::Connected);
+        // Cleanup
+        server.stop().await?;
+        client.stop().await?;
 
-        println!("✓ IPP client completed full workflow");
+        Ok(())
     }
 }

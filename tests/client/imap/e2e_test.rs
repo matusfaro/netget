@@ -9,20 +9,57 @@ mod imap_client_tests {
     use std::time::Duration;
 
     /// Test IMAP client connection and authentication
-    /// LLM calls: 2 (server startup, client connection)
+    /// LLM calls: 6 (server startup, server greeting, server login response, client startup, client connected, client authenticated)
     #[tokio::test]
     async fn test_imap_client_connect_and_authenticate() -> E2EResult<()> {
-        // Start an IMAP server listening on an available port
+        // Start an IMAP server listening on an available port with mocks
         let server_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via IMAP. Accept username 'testuser' and password 'testpass'.",
-        );
+        )
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup (user command)
+                    .on_instruction_containing("Listen on port")
+                    .and_instruction_containing("IMAP")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "IMAP",
+                            "instruction": "Accept username 'testuser' and password 'testpass'"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Server connection accepted (imap_connection_accepted event)
+                    .on_event("imap_connection_accepted")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_imap_response",
+                            "response": "* OK [CAPABILITY IMAP4rev1] IMAP server ready"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: Server receives LOGIN command (imap_command_received event)
+                    .on_event("imap_command_received")
+                    .and_event_data_contains("command", "LOGIN")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_imap_response",
+                            "response": "A001 OK LOGIN completed"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let mut server = start_netget_server(server_config).await?;
 
         // Give server time to start
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-        // Now start an IMAP client that connects and authenticates
+        // Now start an IMAP client that connects and authenticates with mocks
         let client_config = NetGetConfig::new_with_startup_params(
             format!(
                 "Connect to 127.0.0.1:{} via IMAP. Select INBOX and check for messages.",
@@ -33,7 +70,44 @@ mod imap_client_tests {
                 "password": "testpass",
                 "use_tls": false,
             }),
-        );
+        )
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Client startup (user command)
+                    .on_instruction_containing("Connect to")
+                    .and_instruction_containing("IMAP")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_client",
+                            "remote_addr": format!("127.0.0.1:{}", server.port),
+                            "protocol": "IMAP",
+                            "instruction": "Authenticate and select INBOX"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Client connected (imap_client_connected event)
+                    .on_event("imap_client_connected")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "authenticate_imap",
+                            "username": "testuser",
+                            "password": "testpass"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: Client authenticated (imap_client_authenticated event)
+                    .on_event("imap_client_authenticated")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "select_mailbox",
+                            "mailbox": "INBOX"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let mut client = start_netget_client(client_config).await?;
 
@@ -50,6 +124,10 @@ mod imap_client_tests {
 
         println!("✅ IMAP client connected and authenticated successfully");
 
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+        client.verify_mocks().await?;
+
         // Cleanup
         server.stop().await?;
         client.stop().await?;
@@ -58,19 +136,67 @@ mod imap_client_tests {
     }
 
     /// Test IMAP client mailbox selection
-    /// LLM calls: 2 (server startup, client connection + selection)
+    /// LLM calls: 7 (server startup, server greeting, server login, server select, client startup, client connected, client authenticated)
     #[tokio::test]
     async fn test_imap_client_select_mailbox() -> E2EResult<()> {
-        // Start IMAP server
+        // Start IMAP server with mocks
         let server_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via IMAP. Provide a mailbox 'INBOX' with 5 messages.",
-        );
+        )
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("Listen on port")
+                    .and_instruction_containing("IMAP")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "IMAP",
+                            "instruction": "Provide INBOX with 5 messages"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Server greeting
+                    .on_event("imap_connection_accepted")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_imap_response",
+                            "response": "* OK [CAPABILITY IMAP4rev1] IMAP server ready"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: Server LOGIN response
+                    .on_event("imap_command_received")
+                    .and_event_data_contains("command", "LOGIN")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_imap_response",
+                            "response": "A001 OK LOGIN completed"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 4: Server SELECT response
+                    .on_event("imap_command_received")
+                    .and_event_data_contains("command", "SELECT")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_imap_response",
+                            "response": "* 5 EXISTS\r\n* 0 RECENT\r\nA002 OK [READ-WRITE] SELECT completed"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let mut server = start_netget_server(server_config).await?;
 
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-        // Client that selects a specific mailbox
+        // Client that selects a specific mailbox with mocks
         let client_config = NetGetConfig::new_with_startup_params(
             format!(
                 "Connect to 127.0.0.1:{} via IMAP. Select the INBOX mailbox and report the number of messages.",
@@ -81,7 +207,44 @@ mod imap_client_tests {
                 "password": "testpass",
                 "use_tls": false,
             }),
-        );
+        )
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Client startup
+                    .on_instruction_containing("Connect to")
+                    .and_instruction_containing("IMAP")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_client",
+                            "remote_addr": format!("127.0.0.1:{}", server.port),
+                            "protocol": "IMAP",
+                            "instruction": "Authenticate and select INBOX"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Client connected
+                    .on_event("imap_client_connected")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "authenticate_imap",
+                            "username": "testuser",
+                            "password": "testpass"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: Client authenticated
+                    .on_event("imap_client_authenticated")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "select_mailbox",
+                            "mailbox": "INBOX"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let mut client = start_netget_client(client_config).await?;
 
@@ -92,6 +255,10 @@ mod imap_client_tests {
 
         println!("✅ IMAP client selected mailbox successfully");
 
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+        client.verify_mocks().await?;
+
         // Cleanup
         server.stop().await?;
         client.stop().await?;
@@ -100,19 +267,78 @@ mod imap_client_tests {
     }
 
     /// Test IMAP client search functionality
-    /// LLM calls: 2 (server startup, client connection + search)
+    /// LLM calls: 8 (server: startup, greeting, login, select, search; client: startup, connected, authenticated)
     #[tokio::test]
     async fn test_imap_client_search_messages() -> E2EResult<()> {
-        // Start IMAP server with some test messages
+        // Start IMAP server with some test messages and mocks
         let server_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via IMAP. Provide INBOX with 3 unread messages and 2 read messages.",
-        );
+        )
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("Listen on port")
+                    .and_instruction_containing("IMAP")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "IMAP",
+                            "instruction": "Provide INBOX with 3 unread and 2 read messages"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Server greeting
+                    .on_event("imap_connection_accepted")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_imap_response",
+                            "response": "* OK [CAPABILITY IMAP4rev1] IMAP server ready"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: Server LOGIN response
+                    .on_event("imap_command_received")
+                    .and_event_data_contains("command", "LOGIN")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_imap_response",
+                            "response": "A001 OK LOGIN completed"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 4: Server SELECT response
+                    .on_event("imap_command_received")
+                    .and_event_data_contains("command", "SELECT")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_imap_response",
+                            "response": "* 5 EXISTS\r\n* 3 RECENT\r\nA002 OK [READ-WRITE] SELECT completed"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 5: Server SEARCH response
+                    .on_event("imap_command_received")
+                    .and_event_data_contains("command", "SEARCH")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_imap_response",
+                            "response": "* SEARCH 1 2 3\r\nA003 OK SEARCH completed"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let mut server = start_netget_server(server_config).await?;
 
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-        // Client that searches for unread messages
+        // Client that searches for unread messages with mocks
         let client_config = NetGetConfig::new_with_startup_params(
             format!(
                 "Connect to 127.0.0.1:{} via IMAP. Select INBOX and search for UNSEEN messages.",
@@ -123,7 +349,48 @@ mod imap_client_tests {
                 "password": "testpass",
                 "use_tls": false,
             }),
-        );
+        )
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Client startup
+                    .on_instruction_containing("Connect to")
+                    .and_instruction_containing("IMAP")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_client",
+                            "remote_addr": format!("127.0.0.1:{}", server.port),
+                            "protocol": "IMAP",
+                            "instruction": "Authenticate, select INBOX, search UNSEEN"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Client connected
+                    .on_event("imap_client_connected")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "authenticate_imap",
+                            "username": "testuser",
+                            "password": "testpass"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: Client authenticated
+                    .on_event("imap_client_authenticated")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "select_mailbox",
+                            "mailbox": "INBOX"
+                        },
+                        {
+                            "type": "search_messages",
+                            "criteria": "UNSEEN"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let mut client = start_netget_client(client_config).await?;
 
@@ -139,6 +406,10 @@ mod imap_client_tests {
 
         println!("✅ IMAP client searched messages successfully");
 
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+        client.verify_mocks().await?;
+
         // Cleanup
         server.stop().await?;
         client.stop().await?;
@@ -147,19 +418,89 @@ mod imap_client_tests {
     }
 
     /// Test IMAP client fetch message functionality
-    /// LLM calls: 2 (server startup, client connection + fetch)
+    /// LLM calls: 9 (server: startup, greeting, login, select, search, fetch; client: startup, connected, authenticated)
     #[tokio::test]
     async fn test_imap_client_fetch_message() -> E2EResult<()> {
-        // Start IMAP server
+        // Start IMAP server with mocks
         let server_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via IMAP. Provide INBOX with a message from alice@example.com with subject 'Test Message'.",
-        );
+        )
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("Listen on port")
+                    .and_instruction_containing("IMAP")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "IMAP",
+                            "instruction": "Provide INBOX with message from alice@example.com"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Server greeting
+                    .on_event("imap_connection_accepted")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_imap_response",
+                            "response": "* OK [CAPABILITY IMAP4rev1] IMAP server ready"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: Server LOGIN response
+                    .on_event("imap_command_received")
+                    .and_event_data_contains("command", "LOGIN")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_imap_response",
+                            "response": "A001 OK LOGIN completed"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 4: Server SELECT response
+                    .on_event("imap_command_received")
+                    .and_event_data_contains("command", "SELECT")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_imap_response",
+                            "response": "* 1 EXISTS\r\n* 1 RECENT\r\nA002 OK [READ-WRITE] SELECT completed"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 5: Server SEARCH response
+                    .on_event("imap_command_received")
+                    .and_event_data_contains("command", "SEARCH")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_imap_response",
+                            "response": "* SEARCH 1\r\nA003 OK SEARCH completed"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 6: Server FETCH response
+                    .on_event("imap_command_received")
+                    .and_event_data_contains("command", "FETCH")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_imap_response",
+                            "response": "* 1 FETCH (FLAGS (\\Seen) BODY[] {50}\r\nFrom: alice@example.com\r\nSubject: Test Message\r\n\r\nBody)\r\nA004 OK FETCH completed"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let mut server = start_netget_server(server_config).await?;
 
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-        // Client that fetches a specific message
+        // Client that fetches a specific message with mocks
         let client_config = NetGetConfig::new_with_startup_params(
             format!(
                 "Connect to 127.0.0.1:{} via IMAP. Select INBOX, search for all messages, and fetch the first one.",
@@ -170,7 +511,53 @@ mod imap_client_tests {
                 "password": "testpass",
                 "use_tls": false,
             }),
-        );
+        )
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Client startup
+                    .on_instruction_containing("Connect to")
+                    .and_instruction_containing("IMAP")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_client",
+                            "remote_addr": format!("127.0.0.1:{}", server.port),
+                            "protocol": "IMAP",
+                            "instruction": "Authenticate, select INBOX, search and fetch messages"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Client connected
+                    .on_event("imap_client_connected")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "authenticate_imap",
+                            "username": "testuser",
+                            "password": "testpass"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: Client authenticated
+                    .on_event("imap_client_authenticated")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "select_mailbox",
+                            "mailbox": "INBOX"
+                        },
+                        {
+                            "type": "search_messages",
+                            "criteria": "ALL"
+                        },
+                        {
+                            "type": "fetch_message",
+                            "message_id": "1",
+                            "parts": "BODY[]"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let mut client = start_netget_client(client_config).await?;
 
@@ -185,6 +572,10 @@ mod imap_client_tests {
         );
 
         println!("✅ IMAP client fetched message successfully");
+
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+        client.verify_mocks().await?;
 
         // Cleanup
         server.stop().await?;

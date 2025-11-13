@@ -7,7 +7,7 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use super::super::super::helpers::{self, E2EResult, NetGetConfig};
 use rsntp::SntpClient;
 use std::net::UdpSocket;
 use std::time::Duration;
@@ -20,8 +20,37 @@ async fn test_ntp_basic_query() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via ntp. Respond to NTP time requests with the current system time. Use stratum 2";
 
     // Start the server with debug logging
-    let server =
-        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("debug")).await?;
+    let config = NetGetConfig::new(prompt)
+        .with_log_level("debug")
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("ntp")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "NTP",
+                        "instruction": "NTP server stratum 2"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: NTP request received
+                .on_event("ntp_request_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_ntp_response",
+                        "stratum": 2,
+                        "transmit_timestamp": 0
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let mut server = helpers::start_netget_server(config).await?;
     println!("NTP server started on port {}", server.port);
 
     // Wait for NTP server to fully initialize (needs LLM call)
@@ -67,6 +96,9 @@ async fn test_ntp_basic_query() -> E2EResult<()> {
         }
     }
 
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -80,8 +112,37 @@ async fn test_ntp_time_sync() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via ntp. Act as a stratum 1 NTP server. Respond with accurate current time in NTP format";
 
     // Start the server
-    let server =
-        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("debug")).await?;
+    let config = NetGetConfig::new(prompt)
+        .with_log_level("debug")
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("ntp")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "NTP",
+                        "instruction": "NTP server stratum 1"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: NTP request received
+                .on_event("ntp_request_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_ntp_response",
+                        "stratum": 1,
+                        "transmit_timestamp": 0
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let mut server = helpers::start_netget_server(config).await?;
     println!("NTP server started on port {}", server.port);
 
     // VALIDATION: Use rsntp to synchronize time
@@ -118,6 +179,9 @@ async fn test_ntp_time_sync() -> E2EResult<()> {
         }
     }
 
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -131,8 +195,37 @@ async fn test_ntp_stratum_levels() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via ntp. Act as a stratum 3 NTP server. Include reference identifier 'LOCL'";
 
     // Start the server
-    let server =
-        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("debug")).await?;
+    let config = NetGetConfig::new(prompt)
+        .with_log_level("debug")
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("ntp")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "NTP",
+                        "instruction": "NTP server stratum 3"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: NTP request received
+                .on_event("ntp_request_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_ntp_response",
+                        "stratum": 3,
+                        "transmit_timestamp": 0
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let mut server = helpers::start_netget_server(config).await?;
     println!("NTP server started on port {}", server.port);
 
     // VALIDATION: Send NTP request and check stratum
@@ -164,6 +257,9 @@ async fn test_ntp_stratum_levels() -> E2EResult<()> {
             );
         }
     }
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
 
     server.stop().await?;
     println!("=== Test completed ===\n");

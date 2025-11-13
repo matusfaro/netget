@@ -1,11 +1,10 @@
 //! End-to-end OpenAPI tests for NetGet
 //!
-//! These tests spawn the actual NetGet binary with OpenAPI prompts
-//! and validate that the server provides OpenAPI specs and handles requests.
+//! These tests use mock LLM responses to validate OpenAPI server functionality.
 
 #![cfg(feature = "openapi")]
 
-use crate::server::helpers::{self, E2EResult, ServerConfig};
+use crate::helpers::*;
 use serde_json::Value;
 use std::time::Duration;
 
@@ -16,20 +15,49 @@ async fn test_openapi_todo_list() -> E2EResult<()> {
     // Get path to test spec file
     let spec_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/server/openapi/test_spec.yaml");
-    let spec_path_str = spec_path.to_str().unwrap();
+    let spec_content = std::fs::read_to_string(&spec_path).unwrap();
 
-    let prompt = format!(
-        "CRITICAL: Use base_stack exactly 'openapi' (lowercase, NOT 'http', NOT 'HTTP'). \
-        First, read the OpenAPI spec file at {} using read_file tool. \
-        Then call open_server with base_stack='openapi', port={{AVAILABLE_PORT}}, and startup_params containing 'spec' key with the file content as value.",
-        spec_path_str
-    );
+    let server_config = NetGetConfig::new("Start OpenAPI server with todo list spec on port {AVAILABLE_PORT}")
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup (user command)
+                .on_instruction_containing("OpenAPI")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "openapi",
+                        "startup_params": {
+                            "spec": spec_content
+                        }
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: HTTP GET /todos request
+                .on_event("http_request_received")
+                .and_event_data_contains("path", "/todos")
+                .and_event_data_contains("method", "GET")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_response",
+                        "status": 200,
+                        "headers": {"Content-Type": "application/json"},
+                        "body": serde_json::json!([
+                            {"id": 1, "title": "Buy milk", "done": false},
+                            {"id": 2, "title": "Write tests", "done": true}
+                        ]).to_string()
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
-    let server = helpers::start_netget_server(ServerConfig::new_no_scripts(prompt)).await?;
+    let mut server = start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
 
     // Wait for server to be ready
-    helpers::wait_for_server_startup(&server, Duration::from_secs(10), "OpenAPI").await?;
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Send GET /todos request
     println!("Sending GET /todos request...");
@@ -66,38 +94,39 @@ async fn test_openapi_todo_list() -> E2EResult<()> {
     let json: Value = response.json().await?;
     println!("Response JSON: {}", serde_json::to_string_pretty(&json)?);
 
-    // Accept either placeholder response or actual todo list
-    if status == 200 {
-        // Could be placeholder or actual response
-        if json.is_array() {
-            // Actual todo list
-            let todos = json.as_array().unwrap();
-            println!("✓ Received todo list with {} items", todos.len());
+    // Validate response
+    assert_eq!(status, 200, "Expected HTTP 200, got {}", status);
 
-            // Validate structure if todos exist
-            if !todos.is_empty() {
-                let first_todo = &todos[0];
-                assert!(
-                    first_todo.get("id").is_some(),
-                    "Todo should have 'id' field"
-                );
-                assert!(
-                    first_todo.get("title").is_some(),
-                    "Todo should have 'title' field"
-                );
-                assert!(
-                    first_todo.get("done").is_some(),
-                    "Todo should have 'done' field"
-                );
-                println!("✓ First todo: {}", serde_json::to_string(&first_todo)?);
-            }
-        } else {
-            // Placeholder response
-            println!("✓ Received placeholder response (implementation in progress)");
-        }
-    }
+    // Validate JSON structure
+    let todos = json.as_array().expect("Response should be an array");
+    println!("✓ Received todo list with {} items", todos.len());
+
+    assert!(!todos.is_empty(), "Todo list should not be empty");
+
+    // Validate structure of first todo
+    let first_todo = &todos[0];
+    assert!(
+        first_todo.get("id").is_some(),
+        "Todo should have 'id' field"
+    );
+    assert!(
+        first_todo.get("title").is_some(),
+        "Todo should have 'title' field"
+    );
+    assert!(
+        first_todo.get("done").is_some(),
+        "Todo should have 'done' field"
+    );
+    println!("✓ First todo: {}", serde_json::to_string(&first_todo)?);
 
     println!("✓ OpenAPI TODO List test completed\n");
+
+    // Verify mock expectations
+    server.verify_mocks().await?;
+
+    // Cleanup
+    server.stop().await?;
+
     Ok(())
 }
 
@@ -108,20 +137,49 @@ async fn test_openapi_create_todo() -> E2EResult<()> {
     // Get path to test spec file
     let spec_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/server/openapi/test_spec.yaml");
-    let spec_path_str = spec_path.to_str().unwrap();
+    let spec_content = std::fs::read_to_string(&spec_path).unwrap();
 
-    let prompt = format!(
-        "CRITICAL: Use base_stack exactly 'openapi' (lowercase, NOT 'http', NOT 'HTTP'). \
-        First, read the OpenAPI spec file at {} using read_file tool. \
-        Then call open_server with base_stack='openapi', port={{AVAILABLE_PORT}}, and startup_params containing 'spec' key with the file content as value.",
-        spec_path_str
-    );
+    let server_config = NetGetConfig::new("Start OpenAPI server with todo list spec on port {AVAILABLE_PORT}")
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("OpenAPI")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "openapi",
+                        "startup_params": {
+                            "spec": spec_content
+                        }
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: HTTP POST /todos request
+                .on_event("http_request_received")
+                .and_event_data_contains("path", "/todos")
+                .and_event_data_contains("method", "POST")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_response",
+                        "status": 201,
+                        "headers": {"Content-Type": "application/json"},
+                        "body": serde_json::json!({
+                            "id": 3,
+                            "title": "Buy milk",
+                            "done": false
+                        }).to_string()
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
-    let server = helpers::start_netget_server(ServerConfig::new_no_scripts(prompt)).await?;
+    let mut server = start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
 
-    // Wait for server to be ready
-    helpers::wait_for_server_startup(&server, Duration::from_secs(10), "OpenAPI").await?;
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Send POST /todos request
     println!("Sending POST /todos request...");
@@ -168,29 +226,32 @@ async fn test_openapi_create_todo() -> E2EResult<()> {
     let json: Value = response.json().await?;
     println!("Response JSON: {}", serde_json::to_string_pretty(&json)?);
 
-    // Accept 200 or 201 status codes
-    assert!(
-        status == 200 || status == 201,
-        "Expected HTTP 200 or 201, got {}",
-        status
-    );
+    // Validate response
+    assert_eq!(status, 201, "Expected HTTP 201, got {}", status);
 
-    // If it's a structured todo response, validate it
-    if json.get("id").is_some() {
-        assert!(
-            json.get("title").is_some(),
-            "Created todo should have 'title' field"
-        );
-        assert!(
-            json.get("done").is_some(),
-            "Created todo should have 'done' field"
-        );
-        println!("✓ Created todo: {}", serde_json::to_string(&json)?);
-    } else {
-        println!("✓ Received response (placeholder or alternative format)");
-    }
+    // Validate todo response structure
+    assert!(
+        json.get("id").is_some(),
+        "Created todo should have 'id' field"
+    );
+    assert!(
+        json.get("title").is_some(),
+        "Created todo should have 'title' field"
+    );
+    assert!(
+        json.get("done").is_some(),
+        "Created todo should have 'done' field"
+    );
+    println!("✓ Created todo: {}", serde_json::to_string(&json)?);
 
     println!("✓ OpenAPI Create TODO test completed\n");
+
+    // Verify mock expectations
+    server.verify_mocks().await?;
+
+    // Cleanup
+    server.stop().await?;
+
     Ok(())
 }
 
@@ -201,20 +262,31 @@ async fn test_openapi_method_validation() -> E2EResult<()> {
     // Get path to test spec file
     let spec_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/server/openapi/test_spec.yaml");
-    let spec_path_str = spec_path.to_str().unwrap();
+    let spec_content = std::fs::read_to_string(&spec_path).unwrap();
 
-    let prompt = format!(
-        "CRITICAL: Use base_stack exactly 'openapi' (lowercase, NOT 'http', NOT 'HTTP'). \
-        First, read the OpenAPI spec file at {} using read_file tool. \
-        Then call open_server with base_stack='openapi', port={{AVAILABLE_PORT}}, and startup_params containing 'spec' key with the file content as value.",
-        spec_path_str
-    );
+    // For this test, OpenAPI server automatically returns 405 without LLM consultation
+    let server_config = NetGetConfig::new("Start OpenAPI server on port {AVAILABLE_PORT}")
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("OpenAPI")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "openapi",
+                        "startup_params": {
+                            "spec": spec_content
+                        }
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
-    let server = helpers::start_netget_server(ServerConfig::new_no_scripts(prompt)).await?;
+    let mut server = start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
 
-    // Wait for server to be ready
-    helpers::wait_for_server_startup(&server, Duration::from_secs(10), "OpenAPI").await?;
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Send GET request to POST-only endpoint (/admin/reset only supports POST)
     println!("Sending GET /admin/reset (should fail with 405)...");
@@ -275,6 +347,13 @@ async fn test_openapi_method_validation() -> E2EResult<()> {
     );
 
     println!("✓ OpenAPI Method Validation test completed\n");
+
+    // Verify mock expectations
+    server.verify_mocks().await?;
+
+    // Cleanup
+    server.stop().await?;
+
     Ok(())
 }
 
@@ -285,20 +364,43 @@ async fn test_openapi_spec_compliant_flag() -> E2EResult<()> {
     // Get path to test spec file
     let spec_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/server/openapi/test_spec.yaml");
-    let spec_path_str = spec_path.to_str().unwrap();
+    let spec_content = std::fs::read_to_string(&spec_path).unwrap();
 
-    let prompt = format!(
-        "CRITICAL: Use base_stack exactly 'openapi' (lowercase, NOT 'http', NOT 'HTTP'). \
-        First, read the OpenAPI spec file at {} using read_file tool. \
-        Then call open_server with base_stack='openapi', port={{AVAILABLE_PORT}}, and startup_params containing 'spec' key with the file content as value.",
-        spec_path_str
-    );
+    let server_config = NetGetConfig::new("Start OpenAPI server on port {AVAILABLE_PORT}")
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("OpenAPI")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "openapi",
+                        "startup_params": {
+                            "spec": spec_content
+                        }
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock HTTP request - return intentional spec violation (201 instead of 200)
+                .on_event("http_request_received")
+                .and_event_data_contains("path", "/todos")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_response",
+                        "status": 201,  // Intentional violation - spec says 200
+                        "headers": {"Content-Type": "application/json"},
+                        "body": "[]"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
-    let server = helpers::start_netget_server(ServerConfig::new_no_scripts(prompt)).await?;
+    let mut server = start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
 
-    // Wait for server to be ready
-    helpers::wait_for_server_startup(&server, Duration::from_secs(10), "OpenAPI").await?;
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Send GET /todos request
     println!("Sending GET /todos (expecting intentional spec violation)...");
@@ -329,17 +431,18 @@ async fn test_openapi_spec_compliant_flag() -> E2EResult<()> {
     let status = response.status();
     println!("Response status: {}", status);
 
-    // The LLM might intentionally return 201 instead of 200 (spec violation)
-    // Or return 200 (placeholder implementation)
-    // Both are acceptable for this test
-    assert!(
-        status.is_success() || status.is_client_error() || status.is_server_error(),
-        "Expected some HTTP response, got {}",
-        status
-    );
+    // Verify we got the intentional violation (201 instead of 200)
+    assert_eq!(status, 201, "Expected HTTP 201 (spec violation), got {}", status);
 
     println!("✓ Received response (spec_compliant flag test completed)");
     println!("✓ OpenAPI Spec Compliance Flag test completed\n");
+
+    // Verify mock expectations
+    server.verify_mocks().await?;
+
+    // Cleanup
+    server.stop().await?;
+
     Ok(())
 }
 
@@ -350,20 +453,31 @@ async fn test_openapi_404_not_found() -> E2EResult<()> {
     // Get path to test spec file
     let spec_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/server/openapi/test_spec.yaml");
-    let spec_path_str = spec_path.to_str().unwrap();
+    let spec_content = std::fs::read_to_string(&spec_path).unwrap();
 
-    let prompt = format!(
-        "CRITICAL: Use base_stack exactly 'openapi' (lowercase, NOT 'http', NOT 'HTTP'). \
-        First, read the OpenAPI spec file at {} using read_file tool. \
-        Then call open_server with base_stack='openapi', port={{AVAILABLE_PORT}}, and startup_params containing 'spec' key with the file content as value.",
-        spec_path_str
-    );
+    // OpenAPI server automatically returns 404 for undefined paths without LLM consultation
+    let server_config = NetGetConfig::new("Start OpenAPI server on port {AVAILABLE_PORT}")
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("OpenAPI")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "openapi",
+                        "startup_params": {
+                            "spec": spec_content
+                        }
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
-    let server = helpers::start_netget_server(ServerConfig::new_no_scripts(prompt)).await?;
+    let mut server = start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
 
-    // Wait for server to be ready
-    helpers::wait_for_server_startup(&server, Duration::from_secs(10), "OpenAPI").await?;
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Send request to undefined endpoint
     println!("Sending GET /unknown (should return 404)...");
@@ -411,5 +525,12 @@ async fn test_openapi_404_not_found() -> E2EResult<()> {
     );
 
     println!("✓ OpenAPI 404 Not Found test completed\n");
+
+    // Verify mock expectations
+    server.verify_mocks().await?;
+
+    // Cleanup
+    server.stop().await?;
+
     Ok(())
 }

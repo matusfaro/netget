@@ -18,61 +18,97 @@ use super::super::helpers::{start_netget_server, ServerConfig};
 /// Test basic SQS queue operations: CreateQueue, SendMessage, ReceiveMessage, DeleteMessage
 ///
 /// LLM Calls:
-/// - 1 server startup (with scripting for SendMessage)
+/// - 1 server startup
 /// - 1 CreateQueue request
-/// - 3 SendMessage requests (handled by script = 0 LLM calls)
+/// - 3 SendMessage requests
 /// - 1 ReceiveMessage request
 /// - 1 DeleteMessage request
-/// Total: ~5 LLM calls
+/// - 1 GetQueueAttributes request
+/// Total: ~8 LLM calls (reduced with mocks)
 #[tokio::test]
 async fn test_sqs_basic_queue_operations() {
-    let prompt = r#"
-Listen on port 0 via SQS (AWS Simple Queue Service).
+    use super::super::helpers::NetGetConfig;
 
-Configure the SQS server with:
-- Default visibility timeout: 30 seconds
-- Message retention period: 4 days (345600 seconds)
-- Support for standard queues
+    let prompt = r#"Listen on port {AVAILABLE_PORT} via SQS. Handle CreateQueue, SendMessage, ReceiveMessage, DeleteMessage, and GetQueueAttributes operations."#;
 
-Handle these queue operations:
+    let config = NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("SQS")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "SQS",
+                        "instruction": "Handle SQS queue operations"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: CreateQueue
+                .on_event("sqs_request")
+                .and_event_data_contains("operation", "CreateQueue")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_sqs_response",
+                        "status_code": 200,
+                        "body": "{\"QueueUrl\":\"http://localhost:9324/queue/test-queue\"}"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3-5: SendMessage (3 times)
+                .on_event("sqs_request")
+                .and_event_data_contains("operation", "SendMessage")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_sqs_response",
+                        "status_code": 200,
+                        "body": "{\"MessageId\":\"msg-123\",\"MD5OfMessageBody\":\"d41d8cd98f00b204e9800998ecf8427e\"}"
+                    }
+                ]))
+                .expect_calls(3)
+                .and()
+                // Mock 6: ReceiveMessage
+                .on_event("sqs_request")
+                .and_event_data_contains("operation", "ReceiveMessage")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_sqs_response",
+                        "status_code": 200,
+                        "body": "{\"Messages\":[{\"MessageId\":\"msg-123\",\"ReceiptHandle\":\"receipt-xyz\",\"Body\":\"Test message 1\"}]}"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 7: DeleteMessage
+                .on_event("sqs_request")
+                .and_event_data_contains("operation", "DeleteMessage")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_sqs_response",
+                        "status_code": 200,
+                        "body": "{}"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 8: GetQueueAttributes
+                .on_event("sqs_request")
+                .and_event_data_contains("operation", "GetQueueAttributes")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_sqs_response",
+                        "status_code": 200,
+                        "body": "{\"Attributes\":{\"VisibilityTimeout\":\"30\",\"MessageRetentionPeriod\":\"345600\"}}"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
-1. CreateQueue:
-   - Accept queue names matching [a-zA-Z0-9_-]{1,80}
-   - Create "test-queue" as a standard queue
-   - Return queue URL: http://localhost:{port}/queue/test-queue
-   - Track queue attributes: visibility timeout, message retention, approximate message count
-
-2. SendMessage:
-   - Accept messages to existing queues only
-   - Generate unique message IDs (format: msg-{timestamp}-{random})
-   - Calculate MD5 checksum of message body (you can use any deterministic value)
-   - Store message with: body, attributes, sent timestamp
-   - Return 200 with MessageId and MD5OfMessageBody
-   - Return 400 error with QueueDoesNotExist if queue doesn't exist
-
-3. ReceiveMessage:
-   - Return up to MaxNumberOfMessages (default: 1, max: 10)
-   - Include message body, message ID, receipt handle
-   - Generate unique receipt handles (format: receipt-{timestamp}-{messageId})
-   - Mark messages as "in-flight" with visibility timeout
-   - Return SentTimestamp and ApproximateReceiveCount attributes
-   - Return empty Messages array if queue is empty
-
-4. DeleteMessage:
-   - Validate receipt handle exists and matches a message
-   - Permanently remove message from queue
-   - Return 200 with empty body on success
-   - Return 400 if receipt handle is invalid
-
-5. GetQueueAttributes:
-   - Return queue attributes: ApproximateNumberOfMessages, VisibilityTimeout, MessageRetentionPeriod
-   - Support "All" to return all attributes
-
-Remember messages across operations: when a message is sent, it should be retrievable with ReceiveMessage until deleted with DeleteMessage.
-"#;
-
-    let config = ServerConfig::new(prompt);
-    let server = start_netget_server(config)
+    let mut server = start_netget_server(config)
         .await
         .expect("Failed to start server");
     let port = server.port;
@@ -196,36 +232,107 @@ Remember messages across operations: when a message is sent, it should be retrie
     );
 
     println!("✓ All SQS basic operations passed");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await.expect("Mock verification failed");
+
+    // Cleanup
+    server.stop().await.expect("Failed to stop server");
 }
 
 /// Test SQS message visibility and deletion lifecycle
 ///
 /// LLM Calls:
 /// - 1 server startup
-/// - 1 CreateQueue + SendMessage request
-/// - 1 ReceiveMessage request
+/// - 1 CreateQueue
+/// - 1 SendMessage
+/// - 2 ReceiveMessage requests (first returns message, second should be empty)
 /// - 1 DeleteMessage request
-/// Total: ~3-4 LLM calls
+/// Total: ~6 LLM calls (reduced with mocks)
 #[tokio::test]
 async fn test_sqs_message_visibility() {
-    let prompt = r#"
-Listen on port 0 via SQS with default_visibility_timeout=30.
+    use super::super::helpers::NetGetConfig;
 
-Create a queue "visibility-test" and handle these operations:
+    let prompt = r#"Listen on port {AVAILABLE_PORT} via SQS. Handle visibility timeout: messages should not appear in subsequent ReceiveMessage calls after being received."#;
 
-1. CreateQueue: Return queue URL http://localhost:{port}/queue/visibility-test
-2. SendMessage: Generate message ID and MD5, store message
-3. ReceiveMessage:
-   - Return message with receipt handle format "receipt-{timestamp}-{msgId}"
-   - Mark message in-flight (invisible for 30 seconds)
-   - Include ApproximateReceiveCount attribute (starts at "1")
-4. DeleteMessage: Remove message permanently if receipt handle is valid
+    let config = NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("SQS")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "SQS",
+                        "instruction": "Handle SQS with visibility timeout"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: CreateQueue
+                .on_event("sqs_request")
+                .and_event_data_contains("operation", "CreateQueue")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_sqs_response",
+                        "status_code": 200,
+                        "body": "{\"QueueUrl\":\"http://localhost:9324/queue/visibility-test\"}"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: SendMessage
+                .on_event("sqs_request")
+                .and_event_data_contains("operation", "SendMessage")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_sqs_response",
+                        "status_code": 200,
+                        "body": "{\"MessageId\":\"msg-456\",\"MD5OfMessageBody\":\"d41d8cd98f00b204e9800998ecf8427e\"}"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 4: First ReceiveMessage (returns message)
+                .on_event("sqs_request")
+                .and_event_data_contains("operation", "ReceiveMessage")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_sqs_response",
+                        "status_code": 200,
+                        "body": "{\"Messages\":[{\"MessageId\":\"msg-456\",\"ReceiptHandle\":\"receipt-xyz\",\"Body\":\"Test visibility\",\"Attributes\":{\"ApproximateReceiveCount\":\"1\"}}]}"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 5: Second ReceiveMessage (message in-flight, should be empty)
+                .on_event("sqs_request")
+                .and_event_data_contains("operation", "ReceiveMessage")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_sqs_response",
+                        "status_code": 200,
+                        "body": "{\"Messages\":[]}"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 6: DeleteMessage
+                .on_event("sqs_request")
+                .and_event_data_contains("operation", "DeleteMessage")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_sqs_response",
+                        "status_code": 200,
+                        "body": "{}"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
-Remember: Once a message is received, it should not appear in subsequent ReceiveMessage calls until the visibility timeout expires.
-"#;
-
-    let config = ServerConfig::new(prompt);
-    let server = start_netget_server(config)
+    let mut server = start_netget_server(config)
         .await
         .expect("Failed to start server");
     let port = server.port;
@@ -305,6 +412,12 @@ Remember: Once a message is received, it should not appear in subsequent Receive
     );
 
     println!("✓ SQS visibility timeout test passed");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await.expect("Mock verification failed");
+
+    // Cleanup
+    server.stop().await.expect("Failed to stop server");
 }
 
 /// Test SQS error handling for non-existent queues
@@ -312,22 +425,43 @@ Remember: Once a message is received, it should not appear in subsequent Receive
 /// LLM Calls:
 /// - 1 server startup
 /// - 1 SendMessage to non-existent queue
-/// Total: ~2 LLM calls
+/// Total: ~2 LLM calls (reduced with mocks)
 #[tokio::test]
 async fn test_sqs_queue_not_found() {
-    let prompt = r#"
-Listen on port 0 via SQS.
+    use super::super::helpers::NetGetConfig;
 
-Handle queue operations:
-1. SendMessage to non-existent queue: Return 400 error with {"__type":"QueueDoesNotExist","message":"The specified queue does not exist"}
-2. ReceiveMessage from non-existent queue: Return same 400 error
-3. DeleteMessage with invalid queue: Return same 400 error
+    let prompt = r#"Listen on port {AVAILABLE_PORT} via SQS. Return QueueDoesNotExist error for operations on non-existent queues."#;
 
-Do not create any queues automatically - all queues must be explicitly created via CreateQueue.
-"#;
+    let config = NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("SQS")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "SQS",
+                        "instruction": "Handle SQS error responses"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: SendMessage to non-existent queue (error)
+                .on_event("sqs_request")
+                .and_event_data_contains("operation", "SendMessage")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_sqs_response",
+                        "status_code": 400,
+                        "body": "{\"__type\":\"QueueDoesNotExist\",\"message\":\"The specified queue does not exist\"}"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
-    let config = ServerConfig::new(prompt);
-    let server = start_netget_server(config)
+    let mut server = start_netget_server(config)
         .await
         .expect("Failed to start server");
     let port = server.port;
@@ -360,4 +494,10 @@ Do not create any queues automatically - all queues must be explicitly created v
     // Note: AWS SDK may map this to QueueDoesNotExist error type
 
     println!("✓ SQS error handling test passed");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await.expect("Mock verification failed");
+
+    // Cleanup
+    server.stop().await.expect("Failed to stop server");
 }

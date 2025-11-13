@@ -11,7 +11,7 @@ use std::time::Duration;
 #[tokio::test]
 async fn test_rss_comprehensive() -> E2EResult<()> {
     // Single comprehensive server that serves multiple RSS feeds
-    let config = ServerConfig::new(
+    let config = NetGetConfig::new(
         r#"listen on port 0 via rss
 
 You are an RSS feed server. Generate RSS 2.0 XML feeds dynamically for each request.
@@ -86,7 +86,135 @@ For any other path: Return 404 Not Found
 IMPORTANT: Respond with the generate_rss_feed action containing all the feed data as structured JSON.
 "#,
     )
-    .with_log_level("debug"); // Use debug to see LLM interactions
+    .with_log_level("debug") // Use debug to see LLM interactions
+    .with_mock(|mock| {
+        mock
+            // Mock 1: Server startup (user command)
+            .on_instruction_containing("listen")
+            .and_instruction_containing("rss")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "RSS",
+                    "instruction": "RSS feed server - generate feeds dynamically"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: GET /tech-news.xml
+            .on_event("http_request")
+            .and_event_data_contains("path", "/tech-news.xml")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "generate_rss_feed",
+                    "title": "Tech News Daily",
+                    "link": "https://technews.example.com",
+                    "description": "Latest technology news and updates",
+                    "language": "en-us",
+                    "ttl": 60,
+                    "items": [
+                        {
+                            "title": "New AI Model Released",
+                            "link": "https://technews.example.com/ai-model",
+                            "description": "Company X released groundbreaking AI model",
+                            "author": "editor@technews.example.com (Tech Editor)",
+                            "pub_date": "Mon, 09 Nov 2025 10:00:00 GMT",
+                            "categories": ["AI", "Machine Learning", "Deep Learning"]
+                        },
+                        {
+                            "title": "Cloud Computing Trends 2025",
+                            "link": "https://technews.example.com/cloud-trends",
+                            "description": "Analysis of cloud computing market trends",
+                            "pub_date": "Mon, 09 Nov 2025 09:00:00 GMT",
+                            "categories": ["Cloud", "Infrastructure"]
+                        },
+                        {
+                            "title": "Quantum Computing Breakthrough",
+                            "link": "https://technews.example.com/quantum",
+                            "description": "Researchers achieve quantum supremacy milestone",
+                            "pub_date": "Mon, 09 Nov 2025 08:00:00 GMT",
+                            "categories": ["Quantum", "Research", "Science"]
+                        }
+                    ]
+                }
+            ]))
+            .expect_calls(2)
+            .and()
+            // Mock 3: GET /sports.xml
+            .on_event("http_request")
+            .and_event_data_contains("path", "/sports.xml")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "generate_rss_feed",
+                    "title": "Sports Headlines",
+                    "link": "https://sports.example.com",
+                    "description": "Latest sports news",
+                    "items": [
+                        {
+                            "title": "Championship Game Results",
+                            "link": "https://sports.example.com/championship",
+                            "description": "Final score and game highlights",
+                            "pub_date": "Mon, 09 Nov 2025 11:00:00 GMT",
+                            "categories": ["Football", "Championships"]
+                        },
+                        {
+                            "title": "Transfer News Update",
+                            "link": "https://sports.example.com/transfers",
+                            "description": "Latest player transfer announcements",
+                            "pub_date": "Mon, 09 Nov 2025 10:30:00 GMT",
+                            "categories": ["Soccer", "Transfers"]
+                        }
+                    ]
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 4: GET /blog.xml
+            .on_event("http_request")
+            .and_event_data_contains("path", "/blog.xml")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "generate_rss_feed",
+                    "title": "My Dev Blog",
+                    "link": "https://myblog.example.com",
+                    "description": "Software development tutorials and insights",
+                    "items": [
+                        {
+                            "title": "Getting Started with Rust",
+                            "link": "https://myblog.example.com/rust-intro",
+                            "description": "A beginner's guide to Rust programming",
+                            "author": "john@example.com (John Doe)",
+                            "pub_date": "Sun, 08 Nov 2025 15:00:00 GMT",
+                            "guid": "https://myblog.example.com/rust-intro",
+                            "categories": ["Rust", "Programming", "Tutorial"]
+                        },
+                        {
+                            "title": "Understanding RSS Feeds",
+                            "link": "https://myblog.example.com/rss-guide",
+                            "description": "How RSS feeds work and why they matter",
+                            "pub_date": "Sat, 07 Nov 2025 12:00:00 GMT",
+                            "guid": "https://myblog.example.com/rss-guide",
+                            "categories": ["Web", "RSS"]
+                        }
+                    ]
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 5: GET /nonexistent.xml (404)
+            .on_event("http_request")
+            .and_event_data_contains("path", "/nonexistent.xml")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_http_response",
+                    "status": 404,
+                    "body": "Not Found"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
     let test_state = start_netget_server(config).await?;
 
@@ -262,6 +390,9 @@ IMPORTANT: Respond with the generate_rss_feed action containing all the feed dat
     println!("   Total LLM calls: ~6 (3 successful feeds + 1 404 + 2 repeat fetches)");
     println!("   All feeds generated dynamically by LLM");
     println!("   Categories properly rendered");
+
+    // Verify mock expectations were met
+    test_state.verify_mocks().await?;
 
     Ok(())
 }

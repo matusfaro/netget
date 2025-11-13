@@ -5,7 +5,7 @@ use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::time::timeout;
+use tokio::time::{sleep, timeout};
 
 use super::common::*;
 
@@ -604,6 +604,128 @@ async fn wait_for_netget_startup_with_capture(
     timeout(Duration::from_secs(120), wait_future)
         .await
         .map_err(|_| "Timeout waiting for netget startup")?
+}
+
+impl NetGetInstance {
+    /// Verify all mock expectations were met
+    pub async fn verify_mocks(&self) -> E2EResult<()> {
+        let Some(ref mock_config) = self.mock_config else {
+            // No mocks configured, nothing to verify
+            return Ok(());
+        };
+
+        // Mark as verified
+        mock_config.mark_verified();
+
+        let mut errors = Vec::new();
+
+        for (idx, rule) in mock_config.rules.iter().enumerate() {
+            let actual = rule.actual_calls.load(std::sync::atomic::Ordering::SeqCst);
+
+            // Check exact count
+            if let Some(expected) = rule.expected_calls {
+                if actual != expected {
+                    errors.push(format!(
+                        "Rule #{} ({}): Expected {} calls, got {}",
+                        idx,
+                        rule.describe(),
+                        expected,
+                        actual
+                    ));
+                }
+            }
+
+            // Check minimum
+            if let Some(min) = rule.min_calls {
+                if actual < min {
+                    errors.push(format!(
+                        "Rule #{} ({}): Expected at least {} calls, got {}",
+                        idx,
+                        rule.describe(),
+                        min,
+                        actual
+                    ));
+                }
+            }
+
+            // Check maximum
+            if let Some(max) = rule.max_calls {
+                if actual > max {
+                    errors.push(format!(
+                        "Rule #{} ({}): Expected at most {} calls, got {}",
+                        idx,
+                        rule.describe(),
+                        max,
+                        actual
+                    ));
+                }
+            }
+        }
+
+        if !errors.is_empty() {
+            // Print detailed diagnostics
+            eprintln!("\n❌ Mock verification failed:");
+            for error in &errors {
+                eprintln!("  {}", error);
+            }
+            eprintln!("\nAll LLM call history:");
+            let history = mock_config.call_history.lock().await;
+            for (idx, call) in history.iter().enumerate() {
+                eprintln!(
+                    "  Call #{}: {} -> matched rule #{}",
+                    idx + 1,
+                    call.context.event_type.as_deref().unwrap_or("(none)"),
+                    call.matched_rule_idx
+                );
+            }
+            eprintln!();
+
+            return Err(format!("Mock verification failed:\n{}", errors.join("\n")).into());
+        }
+
+        println!("✅ All mock expectations verified successfully");
+        Ok(())
+    }
+
+    /// Stop the NetGet instance gracefully
+    pub async fn stop(mut self) -> E2EResult<()> {
+        // Try to stop gracefully with Ctrl+C
+        #[cfg(unix)]
+        {
+            use nix::sys::signal::{self, Signal};
+            use nix::unistd::Pid;
+
+            if let Some(pid) = self.child.id() {
+                let _ = signal::kill(Pid::from_raw(pid as i32), Signal::SIGINT);
+            }
+        }
+
+        // Give it time to shutdown gracefully
+        let shutdown = async {
+            sleep(Duration::from_millis(500)).await;
+            self.child.wait().await
+        };
+
+        match tokio::time::timeout(Duration::from_secs(5), shutdown).await {
+            Ok(Ok(_)) => Ok(()),
+            _ => {
+                // Force kill if graceful shutdown failed
+                self.child.kill().await?;
+                Ok(())
+            }
+        }
+    }
+
+    /// Check if output contains a specific string
+    pub async fn output_contains(&self, needle: &str) -> bool {
+        let lines = self.output_lines.lock().await;
+        lines.iter().any(|line| line.contains(needle))
+    }
+
+    /// Get all output lines
+    pub async fn get_output(&self) -> Vec<String> {
+        self.output_lines.lock().await.clone()
+    }
 }
 
 /// Check if Ollama is available

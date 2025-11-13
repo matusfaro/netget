@@ -18,7 +18,19 @@ async fn test_xmpp_stream_header() -> E2EResult<()> {
         respond with: <?xml version='1.0'?><stream:stream xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams' from='localhost' id='stream-123' version='1.0'>";
 
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("xmpp")
+                .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "XMPP", "instruction": "Respond to stream header"}]))
+                .expect_calls(1)
+                .and()
+                .on_event("xmpp_data_received")
+                .respond_with_actions(serde_json::json!([{"type": "send_stream_header", "from": "localhost", "stream_id": "stream-123"}]))
+                .expect_calls(1)
+                .and()
+        });
+    let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Connect and send stream header
@@ -57,6 +69,7 @@ async fn test_xmpp_stream_header() -> E2EResult<()> {
         }
     }
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -73,7 +86,23 @@ async fn test_xmpp_message() -> E2EResult<()> {
         <message from='bot@localhost' to='[sender]' type='chat'><body>Echo: [body]</body></message>";
 
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("xmpp")
+                .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "XMPP", "instruction": "Echo messages"}]))
+                .expect_calls(1)
+                .and()
+                .on_event("xmpp_data_received")
+                .respond_with_actions(serde_json::json!([{"type": "send_stream_header", "from": "localhost", "stream_id": "stream-456"}]))
+                .expect_calls(1)
+                .and()
+                .on_event("xmpp_data_received")
+                .respond_with_actions(serde_json::json!([{"type": "send_message", "from": "bot@localhost", "to": "alice@localhost", "message_type": "chat", "body": "Echo: Hello XMPP!"}]))
+                .expect_calls(1)
+                .and()
+        });
+    let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Send message and verify echo
@@ -133,6 +162,7 @@ async fn test_xmpp_message() -> E2EResult<()> {
         }
     }
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -148,7 +178,23 @@ async fn test_xmpp_presence() -> E2EResult<()> {
         <presence from='server@localhost' type='available'><status>Server online</status></presence>";
 
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("xmpp")
+                .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "XMPP", "instruction": "Handle presence"}]))
+                .expect_calls(1)
+                .and()
+                .on_event("xmpp_data_received")
+                .respond_with_actions(serde_json::json!([{"type": "send_stream_header", "from": "localhost", "stream_id": "stream-789"}]))
+                .expect_calls(1)
+                .and()
+                .on_event("xmpp_data_received")
+                .respond_with_actions(serde_json::json!([{"type": "send_presence", "from": "server@localhost", "presence_type": "available", "status": "Server online"}]))
+                .expect_calls(1)
+                .and()
+        });
+    let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Send presence and verify response
@@ -200,6 +246,7 @@ async fn test_xmpp_presence() -> E2EResult<()> {
         }
     }
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())

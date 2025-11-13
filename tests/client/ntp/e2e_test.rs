@@ -16,7 +16,31 @@ mod ntp_client_tests {
         // Use Google's public NTP server
         let client_config = NetGetConfig::new(
             "Query time.google.com:123 for current time and show the server time.",
-        );
+        )
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Client startup
+                .on_instruction_containing("Query time.google.com")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": "time.google.com:123",
+                        "protocol": "NTP",
+                        "instruction": "Query time server"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: NTP response received
+                .on_event("ntp_response_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_at_most(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 
@@ -32,6 +56,9 @@ mod ntp_client_tests {
 
         println!("✅ NTP client queried time server successfully");
 
+        // Verify mock expectations were met
+        client.verify_mocks().await?;
+
         // Cleanup
         client.stop().await?;
 
@@ -44,7 +71,31 @@ mod ntp_client_tests {
     async fn test_ntp_client_stratum_analysis() -> E2EResult<()> {
         // Use pool.ntp.org which should return stratum 2-3
         let client_config =
-            NetGetConfig::new("Query pool.ntp.org:123 and report the stratum level.");
+            NetGetConfig::new("Query pool.ntp.org:123 and report the stratum level.")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Client startup
+                    .on_instruction_containing("Query pool.ntp.org")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_client",
+                            "remote_addr": "pool.ntp.org:123",
+                            "protocol": "NTP",
+                            "instruction": "Query NTP server and report stratum"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: NTP response received
+                    .on_event("ntp_response_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "wait_for_more"
+                        }
+                    ]))
+                    .expect_at_most(1)
+                    .and()
+            });
 
         let mut client = start_netget_client(client_config).await?;
 
@@ -55,6 +106,9 @@ mod ntp_client_tests {
         assert_eq!(client.protocol, "NTP", "Client should be NTP protocol");
 
         println!("✅ NTP client analyzed stratum level");
+
+        // Verify mock expectations were met
+        client.verify_mocks().await?;
 
         // Cleanup
         client.stop().await?;
@@ -67,7 +121,31 @@ mod ntp_client_tests {
     #[tokio::test]
     async fn test_ntp_client_single_query_model() -> E2EResult<()> {
         // Request time from NTP server
-        let client_config = NetGetConfig::new("Query time.google.com:123 for the current time.");
+        let client_config = NetGetConfig::new("Query time.google.com:123 for the current time.")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Client startup
+                    .on_instruction_containing("Query time.google.com")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_client",
+                            "remote_addr": "time.google.com:123",
+                            "protocol": "NTP",
+                            "instruction": "Query time server"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: NTP response received
+                    .on_event("ntp_response_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "wait_for_more"
+                        }
+                    ]))
+                    .expect_at_most(1)
+                    .and()
+            });
 
         let mut client = start_netget_client(client_config).await?;
 
@@ -80,6 +158,9 @@ mod ntp_client_tests {
         println!("NTP client output: {:?}", output);
 
         println!("✅ NTP client completed single query");
+
+        // Verify mock expectations were met
+        client.verify_mocks().await?;
 
         // Cleanup
         client.stop().await?;

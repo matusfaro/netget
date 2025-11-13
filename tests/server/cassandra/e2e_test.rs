@@ -5,7 +5,7 @@
 
 #[cfg(all(test, feature = "cassandra", feature = "cassandra"))]
 mod e2e_cassandra {
-    use crate::server::helpers::{start_netget_server, E2EResult, ServerConfig};
+    use crate::server::helpers::{start_netget_server, E2EResult, NetGetConfig};
     use std::time::Duration;
     use tokio::time::sleep;
 
@@ -21,7 +21,25 @@ mod e2e_cassandra {
         let prompt = "Start a Cassandra/CQL database server on port 9042. \
                      Accept all connections and respond to OPTIONS with CQL version 3.0.0.";
 
-        let server = start_netget_server(ServerConfig::new(prompt)).await?;
+        let config = NetGetConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock: Server startup
+                    .on_instruction_containing("Cassandra")
+                    .and_instruction_containing("CQL")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 9042,
+                            "base_stack": "Cassandra",
+                            "instruction": "Accept connections and respond to OPTIONS with CQL version 3.0.0"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
+
+        let mut server = start_netget_server(config).await?;
 
         // Wait for server to be ready
         sleep(Duration::from_secs(2)).await;
@@ -41,6 +59,9 @@ mod e2e_cassandra {
         // The session will close when dropped
         drop(session);
 
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+
         server.stop().await?;
         println!("  [TEST] ✓ Test completed successfully\n");
 
@@ -57,7 +78,44 @@ mod e2e_cassandra {
                      columns=[{name:'id',type:'int'},{name:'name',type:'varchar'}] \
                      rows=[[1,'Alice'],[2,'Bob'],[3,'Charlie']]";
 
-        let server = start_netget_server(ServerConfig::new(prompt)).await?;
+        let config = NetGetConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("Cassandra")
+                    .and_instruction_containing("CQL")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 9043,
+                            "base_stack": "Cassandra",
+                            "instruction": "When receiving query 'SELECT * FROM users', respond with appropriate data"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Query received
+                    .on_event("cassandra_query_received")
+                    .and_event_data_contains("query", "SELECT * FROM users")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_result_rows",
+                            "columns": [
+                                {"name": "id", "type": "int"},
+                                {"name": "name", "type": "varchar"}
+                            ],
+                            "rows": [
+                                [1, "Alice"],
+                                [2, "Bob"],
+                                [3, "Charlie"]
+                            ]
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
+
+        let mut server = start_netget_server(config).await?;
 
         // Wait for server to be ready
         sleep(Duration::from_secs(2)).await;
@@ -94,6 +152,9 @@ mod e2e_cassandra {
 
         drop(session);
 
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+
         server.stop().await?;
         println!("  [TEST] ✓ Test completed successfully\n");
 
@@ -109,7 +170,37 @@ mod e2e_cassandra {
                      When receiving query 'SELECT * FROM nonexistent', respond with error: \
                      error_code=0x2200 message='Table does not exist'";
 
-        let server = start_netget_server(ServerConfig::new(prompt)).await?;
+        let config = NetGetConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("Cassandra")
+                    .and_instruction_containing("CQL")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "Cassandra",
+                            "instruction": "When receiving query 'SELECT * FROM nonexistent', respond with error"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Error query received
+                    .on_event("cassandra_query_received")
+                    .and_event_data_contains("query", "SELECT * FROM nonexistent")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_error",
+                            "error_code": 0x2200,
+                            "message": "Table does not exist"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
+
+        let mut server = start_netget_server(config).await?;
 
         // Wait for server to be ready
         sleep(Duration::from_secs(2)).await;
@@ -138,6 +229,9 @@ mod e2e_cassandra {
 
         drop(session);
 
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+
         server.stop().await?;
         println!("  [TEST] ✓ Test completed successfully\n");
 
@@ -153,7 +247,58 @@ mod e2e_cassandra {
                      For 'SELECT count(*) FROM users', return columns=[{name:'count',type:'int'}] rows=[[5]]. \
                      For 'SELECT * FROM users WHERE id=1', return columns=[{name:'id',type:'int'},{name:'name',type:'varchar'}] rows=[[1,'Alice']].";
 
-        let server = start_netget_server(ServerConfig::new(prompt)).await?;
+        let config = NetGetConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("Cassandra")
+                    .and_instruction_containing("CQL")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "Cassandra",
+                            "instruction": "Handle multiple queries"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: First query (count)
+                    .on_event("cassandra_query_received")
+                    .and_event_data_contains("query", "SELECT count(*) FROM users")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_result_rows",
+                            "columns": [
+                                {"name": "count", "type": "int"}
+                            ],
+                            "rows": [
+                                [5]
+                            ]
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: Second query (select with WHERE)
+                    .on_event("cassandra_query_received")
+                    .and_event_data_contains("query", "SELECT * FROM users WHERE id=1")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_result_rows",
+                            "columns": [
+                                {"name": "id", "type": "int"},
+                                {"name": "name", "type": "varchar"}
+                            ],
+                            "rows": [
+                                [1, "Alice"]
+                            ]
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
+
+        let mut server = start_netget_server(config).await?;
 
         // Wait for server to be ready
         sleep(Duration::from_secs(2)).await;
@@ -196,6 +341,9 @@ mod e2e_cassandra {
 
         drop(session);
 
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+
         server.stop().await?;
         println!("  [TEST] ✓ Test completed successfully\n");
 
@@ -211,7 +359,41 @@ mod e2e_cassandra {
                      When receiving any SELECT query, respond with: \
                      columns=[{name:'value',type:'int'}] rows=[[42]]";
 
-        let server = start_netget_server(ServerConfig::new(prompt)).await?;
+        let config = NetGetConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("Cassandra")
+                    .and_instruction_containing("CQL")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "Cassandra",
+                            "instruction": "When receiving any SELECT query, respond with value 42"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Query received (will be called 3 times for concurrent connections)
+                    .on_event("cassandra_query_received")
+                    .and_event_data_contains("query", "SELECT value")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_result_rows",
+                            "columns": [
+                                {"name": "value", "type": "int"}
+                            ],
+                            "rows": [
+                                [42]
+                            ]
+                        }
+                    ]))
+                    .expect_calls(3)
+                    .and()
+            });
+
+        let mut server = start_netget_server(config).await?;
 
         // Wait for server to be ready
         sleep(Duration::from_secs(2)).await;
@@ -251,6 +433,9 @@ mod e2e_cassandra {
 
         println!("  [TEST] ✓ All concurrent connections successful");
 
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+
         server.stop().await?;
         println!("  [TEST] ✓ Test completed successfully\n");
 
@@ -268,7 +453,55 @@ mod e2e_cassandra {
                      When receiving EXECUTE with parameter '1', respond with: \
                      columns=[{name:'id',type:'int'},{name:'name',type:'varchar'}] rows=[[1,'Alice']]";
 
-        let server = start_netget_server(ServerConfig::new(prompt)).await?;
+        let config = NetGetConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("Cassandra")
+                    .and_instruction_containing("CQL")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "Cassandra",
+                            "instruction": "Handle prepared statements"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: PREPARE received
+                    .on_event("cassandra_prepare_received")
+                    .and_event_data_contains("query", "SELECT * FROM users WHERE id = ?")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_prepared",
+                            "columns": [
+                                {"name": "id", "type": "int"},
+                                {"name": "name", "type": "varchar"}
+                            ]
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: EXECUTE received
+                    .on_event("cassandra_execute_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_result_rows",
+                            "columns": [
+                                {"name": "id", "type": "int"},
+                                {"name": "name", "type": "varchar"}
+                            ],
+                            "rows": [
+                                [1, "Alice"]
+                            ]
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
+
+        let mut server = start_netget_server(config).await?;
 
         // Wait for server to be ready
         sleep(Duration::from_secs(2)).await;
@@ -311,6 +544,9 @@ mod e2e_cassandra {
 
         drop(session);
 
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+
         server.stop().await?;
         println!("  [TEST] ✓ Test completed successfully\n");
 
@@ -327,7 +563,68 @@ mod e2e_cassandra {
                      For PREPARE 'SELECT count(*) FROM users', respond with columns=[{name:'count',type:'int'}]. \
                      For EXECUTE with any params, respond with appropriate test data.";
 
-        let server = start_netget_server(ServerConfig::new(prompt)).await?;
+        let config = NetGetConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("Cassandra")
+                    .and_instruction_containing("CQL")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "Cassandra",
+                            "instruction": "Handle multiple prepared statements"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: First PREPARE
+                    .on_event("cassandra_prepare_received")
+                    .and_event_data_contains("query", "SELECT * FROM users WHERE id = ?")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_prepared",
+                            "columns": [
+                                {"name": "id", "type": "int"},
+                                {"name": "name", "type": "varchar"}
+                            ]
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: Second PREPARE
+                    .on_event("cassandra_prepare_received")
+                    .and_event_data_contains("query", "SELECT count(*) FROM users")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_prepared",
+                            "columns": [
+                                {"name": "count", "type": "int"}
+                            ]
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 4: EXECUTE calls (3 total)
+                    .on_event("cassandra_execute_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_result_rows",
+                            "columns": [
+                                {"name": "id", "type": "int"},
+                                {"name": "name", "type": "varchar"}
+                            ],
+                            "rows": [
+                                [1, "Alice"]
+                            ]
+                        }
+                    ]))
+                    .expect_calls(3)
+                    .and()
+            });
+
+        let mut server = start_netget_server(config).await?;
 
         // Wait for server to be ready
         sleep(Duration::from_secs(2)).await;
@@ -390,6 +687,9 @@ mod e2e_cassandra {
 
         drop(session);
 
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+
         server.stop().await?;
         println!("  [TEST] ✓ Test completed successfully\n");
 
@@ -405,7 +705,48 @@ mod e2e_cassandra {
                      When receiving PREPARE with 2 parameters, respond with columns=[{name:'id',type:'int'}]. \
                      When receiving EXECUTE with wrong parameter count, respond with error_code=0x2200 message='Parameter count mismatch'.";
 
-        let server = start_netget_server(ServerConfig::new(prompt)).await?;
+        let config = NetGetConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("Cassandra")
+                    .and_instruction_containing("CQL")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 9049,
+                            "base_stack": "Cassandra",
+                            "instruction": "Handle prepared statement parameter validation"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: PREPARE received
+                    .on_event("cassandra_prepare_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_prepared",
+                            "columns": [
+                                {"name": "id", "type": "int"}
+                            ]
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: EXECUTE with wrong param count (error)
+                    .on_event("cassandra_execute_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_error",
+                            "error_code": 0x2200,
+                            "message": "Parameter count mismatch"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
+
+        let mut server = start_netget_server(config).await?;
 
         // Wait for server to be ready
         sleep(Duration::from_secs(2)).await;
@@ -442,6 +783,9 @@ mod e2e_cassandra {
         println!("  [TEST] ✓ Received expected error for parameter mismatch");
 
         drop(session);
+
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
 
         server.stop().await?;
         println!("  [TEST] ✓ Test completed successfully\n");

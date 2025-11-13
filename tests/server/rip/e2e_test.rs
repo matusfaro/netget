@@ -5,7 +5,7 @@
 
 #[cfg(all(test, feature = "rip"))]
 mod e2e_rip {
-    use crate::server::helpers::{start_netget_server, E2EResult, ServerConfig};
+    use crate::server::helpers::{start_netget_server, E2EResult, NetGetConfig};
     use tokio::net::UdpSocket;
     use tokio::time::{timeout, Duration};
 
@@ -116,7 +116,54 @@ mod e2e_rip {
             - 10.0.0.0/8 with metric 5 and next hop 0.0.0.0 \
             - 172.16.0.0/12 with metric 3 and next hop 192.168.1.1";
 
-        let server = start_netget_server(ServerConfig::new(prompt)).await?;
+        let config = NetGetConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup (user command)
+                    .on_instruction_containing("listen")
+                    .and_instruction_containing("rip")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "RIP",
+                            "instruction": "RIP server - respond to routing table requests with specified routes"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: RIP request received
+                    .on_event("rip_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_rip_response",
+                            "routes": [
+                                {
+                                    "ip": "192.168.1.0",
+                                    "subnet_mask": "255.255.255.0",
+                                    "next_hop": "0.0.0.0",
+                                    "metric": 1
+                                },
+                                {
+                                    "ip": "10.0.0.0",
+                                    "subnet_mask": "255.0.0.0",
+                                    "next_hop": "0.0.0.0",
+                                    "metric": 5
+                                },
+                                {
+                                    "ip": "172.16.0.0",
+                                    "subnet_mask": "255.240.0.0",
+                                    "next_hop": "192.168.1.1",
+                                    "metric": 3
+                                }
+                            ]
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
+
+        let server = start_netget_server(config).await?;
 
         // Wait a bit for server to be ready
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -173,6 +220,9 @@ mod e2e_rip {
 
         println!("  [TEST] ✓ RIP routing table request test passed");
 
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+
         server.stop().await;
         Ok(())
     }
@@ -186,7 +236,48 @@ mod e2e_rip {
             - 10.20.30.0/24 with metric 1 \
             - 172.30.0.0/16 with metric 8";
 
-        let server = start_netget_server(ServerConfig::new(prompt)).await?;
+        let config = NetGetConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("listen")
+                    .and_instruction_containing("rip")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "RIP",
+                            "instruction": "RIP server - advertise specified routes"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: RIP request received
+                    .on_event("rip_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_rip_response",
+                            "routes": [
+                                {
+                                    "ip": "10.20.30.0",
+                                    "subnet_mask": "255.255.255.0",
+                                    "next_hop": "0.0.0.0",
+                                    "metric": 1
+                                },
+                                {
+                                    "ip": "172.30.0.0",
+                                    "subnet_mask": "255.255.0.0",
+                                    "next_hop": "0.0.0.0",
+                                    "metric": 8
+                                }
+                            ]
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
+
+        let server = start_netget_server(config).await?;
 
         // Wait for server to be ready
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -238,6 +329,9 @@ mod e2e_rip {
 
         println!("  [TEST] ✓ RIP route advertisement test passed");
 
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+
         server.stop().await;
         Ok(())
     }
@@ -253,7 +347,60 @@ mod e2e_rip {
             - 172.20.0.0/16 with metric 15 (15 hops away, maximum reachable) \
             - 192.168.99.0/24 with metric 16 (unreachable/withdrawn)";
 
-        let server = start_netget_server(ServerConfig::new(prompt)).await?;
+        let config = NetGetConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("listen")
+                    .and_instruction_containing("rip")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "RIP",
+                            "instruction": "RIP server - advertise routes with various metrics"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: RIP request received
+                    .on_event("rip_request_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_rip_response",
+                            "routes": [
+                                {
+                                    "ip": "192.168.100.0",
+                                    "subnet_mask": "255.255.255.0",
+                                    "next_hop": "0.0.0.0",
+                                    "metric": 1
+                                },
+                                {
+                                    "ip": "10.10.0.0",
+                                    "subnet_mask": "255.255.0.0",
+                                    "next_hop": "0.0.0.0",
+                                    "metric": 5
+                                },
+                                {
+                                    "ip": "172.20.0.0",
+                                    "subnet_mask": "255.255.0.0",
+                                    "next_hop": "0.0.0.0",
+                                    "metric": 15
+                                },
+                                {
+                                    "ip": "192.168.99.0",
+                                    "subnet_mask": "255.255.255.0",
+                                    "next_hop": "0.0.0.0",
+                                    "metric": 16
+                                }
+                            ]
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
+
+        let server = start_netget_server(config).await?;
 
         // Wait for server
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -298,6 +445,9 @@ mod e2e_rip {
         );
 
         println!("  [TEST] ✓ RIP metric handling test passed");
+
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
 
         server.stop().await;
         Ok(())

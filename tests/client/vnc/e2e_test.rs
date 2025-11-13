@@ -17,7 +17,14 @@ mod vnc_client_tests {
         let server_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via VNC. Accept connections with no password. \
              Provide a 800x600 framebuffer with name 'NetGet Test VNC'.",
-        );
+        )
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("vnc")
+                .respond_with_actions(serde_json::json!([{"type": "open_client", "protocol": "VNC", "instruction": "VNC client"}]))
+                .expect_calls(1)
+                .and()
+        })
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -46,7 +53,13 @@ mod vnc_client_tests {
         println!("✅ VNC client connected to server successfully");
 
         // Cleanup
+
+    // Verify mocks
+    server.verify_mocks().await?;
         server.stop().await?;
+
+    // Verify mocks
+    client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -60,7 +73,14 @@ mod vnc_client_tests {
         let server_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via VNC. Accept connections with no password. \
              Log all pointer events received.",
-        );
+        )
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("vnc")
+                .respond_with_actions(serde_json::json!([{"type": "open_client", "protocol": "VNC", "instruction": "VNC client"}]))
+                .expect_calls(1)
+                .and()
+        })
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -83,7 +103,13 @@ mod vnc_client_tests {
         println!("✅ VNC client sent pointer event successfully");
 
         // Cleanup
+
+    // Verify mocks
+    server.verify_mocks().await?;
         server.stop().await?;
+
+    // Verify mocks
+    client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -97,7 +123,14 @@ mod vnc_client_tests {
         let server_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via VNC. Accept connections with no password. \
              Log all key events received.",
-        );
+        )
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("vnc")
+                .respond_with_actions(serde_json::json!([{"type": "open_client", "protocol": "VNC", "instruction": "VNC client"}]))
+                .expect_calls(1)
+                .and()
+        })
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -123,7 +156,13 @@ mod vnc_client_tests {
         println!("✅ VNC client sent key events successfully");
 
         // Cleanup
+
+    // Verify mocks
+    server.verify_mocks().await?;
         server.stop().await?;
+
+    // Verify mocks
+    client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -138,7 +177,14 @@ mod vnc_client_tests {
         let server_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via VNC with password 'test123'. \
              Accept connections from clients with matching password.",
-        );
+        )
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("vnc")
+                .respond_with_actions(serde_json::json!([{"type": "open_client", "protocol": "VNC", "instruction": "VNC client"}]))
+                .expect_calls(1)
+                .and()
+        })
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -163,7 +209,13 @@ mod vnc_client_tests {
         println!("✅ VNC client authenticated with password successfully");
 
         // Cleanup
+
+    // Verify mocks
+    server.verify_mocks().await?;
         server.stop().await?;
+
+    // Verify mocks
+    client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())

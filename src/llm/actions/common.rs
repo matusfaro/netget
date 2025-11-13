@@ -199,7 +199,7 @@ pub fn open_server_action(
             Parameter {
                 name: "port".to_string(),
                 type_hint: "number".to_string(),
-                description: "Port number to listen on".to_string(),
+                description: "Port number to listen on. Use 0 to automatically find an available port.".to_string(),
                 required: true,
             },
             Parameter {

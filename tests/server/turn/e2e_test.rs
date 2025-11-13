@@ -13,7 +13,34 @@ use std::time::Duration;
 async fn test_turn_basic_allocation() -> E2EResult<()> {
     let config =
         ServerConfig::new("Start a TURN relay server on port 0 with 600 second allocations")
-            .with_log_level("off");
+            .with_log_level("off")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("TURN relay server")
+                    .and_instruction_containing("600 second")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "TURN",
+                            "instruction": "TURN relay server with 600 second allocations"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Allocate request received
+                    .on_event("turn_allocate_request")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "turn_allocate_success",
+                            "relay_address": "127.0.0.1:50000",
+                            "lifetime": 600
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
     let test_state = start_netget_server(config).await?;
 
@@ -112,6 +139,9 @@ async fn test_turn_basic_allocation() -> E2EResult<()> {
         }
     }
 
+    // Verify mocks
+    test_state.verify_mocks().await?;
+
     test_state.stop().await?;
     Ok(())
 }
@@ -120,7 +150,28 @@ async fn test_turn_basic_allocation() -> E2EResult<()> {
 async fn test_turn_refresh_allocation() -> E2EResult<()> {
     let config =
         ServerConfig::new("Start a TURN relay server on port 0 allowing allocation refresh")
-            .with_log_level("off");
+            .with_log_level("off")
+            .with_mock(|mock| {
+                mock
+                    .on_instruction_containing("TURN relay server")
+                    .respond_with_actions(serde_json::json!([
+                        {"type": "open_server", "port": 0, "base_stack": "TURN", "instruction": "TURN relay server"}
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    .on_event("turn_allocate_request")
+                    .respond_with_actions(serde_json::json!([
+                        {"type": "turn_allocate_success", "relay_address": "127.0.0.1:50000", "lifetime": 600}
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    .on_event("turn_refresh_request")
+                    .respond_with_actions(serde_json::json!([
+                        {"type": "turn_refresh_success", "lifetime": 600}
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
     let test_state = start_netget_server(config).await?;
 
@@ -177,6 +228,9 @@ async fn test_turn_refresh_allocation() -> E2EResult<()> {
         }
     }
 
+    // Verify mocks
+    test_state.verify_mocks().await?;
+
     test_state.stop().await?;
     Ok(())
 }
@@ -186,7 +240,22 @@ async fn test_turn_create_permission() -> E2EResult<()> {
     let config = ServerConfig::new(
         "Start a TURN relay server on port 0 that allows creating permissions for peers",
     )
-    .with_log_level("off");
+    .with_log_level("off")
+    .with_mock(|mock| {
+        mock
+            .on_instruction_containing("TURN relay server")
+            .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "TURN", "instruction": "TURN relay server"}]))
+            .expect_calls(1)
+            .and()
+            .on_event("turn_allocate_request")
+            .respond_with_actions(serde_json::json!([{"type": "turn_allocate_success", "relay_address": "127.0.0.1:50000", "lifetime": 600}]))
+            .expect_calls(1)
+            .and()
+            .on_event("turn_create_permission_request")
+            .respond_with_actions(serde_json::json!([{"type": "turn_create_permission_success"}]))
+            .expect_calls(1)
+            .and()
+    });
 
     let test_state = start_netget_server(config).await?;
 
@@ -244,6 +313,9 @@ async fn test_turn_create_permission() -> E2EResult<()> {
         }
     }
 
+
+    // Verify mocks
+    test_state.verify_mocks().await?;
     test_state.stop().await?;
     Ok(())
 }
@@ -292,6 +364,9 @@ async fn test_turn_multiple_allocations() -> E2EResult<()> {
 
     println!("✓ Multiple allocations successful");
 
+
+    // Verify mocks
+    test_state.verify_mocks().await?;
     test_state.stop().await?;
     Ok(())
 }
@@ -345,6 +420,9 @@ async fn test_turn_error_insufficient_capacity() -> E2EResult<()> {
         }
     }
 
+
+    // Verify mocks
+    test_state.verify_mocks().await?;
     test_state.stop().await?;
     Ok(())
 }
@@ -403,6 +481,9 @@ async fn test_turn_invalid_magic_cookie() -> E2EResult<()> {
         }
     }
 
+
+    // Verify mocks
+    test_state.verify_mocks().await?;
     test_state.stop().await?;
     Ok(())
 }
@@ -465,6 +546,9 @@ async fn test_turn_refresh_without_allocation() -> E2EResult<()> {
         }
     }
 
+
+    // Verify mocks
+    test_state.verify_mocks().await?;
     test_state.stop().await?;
     Ok(())
 }
@@ -474,6 +558,57 @@ async fn test_turn_permission_without_allocation() -> E2EResult<()> {
     let config = ServerConfig::new(
         "Start a TURN relay server on port 0 that rejects permission requests without allocation",
     )
+    .with_mock(|mock| {
+        mock
+            .on_instruction_containing("TURN")
+            .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "TURN", "instruction": "TURN relay server"}]))
+            .expect_calls(1)
+            .and()
+            .on_event("turn_allocate_request")
+            .respond_with_actions(serde_json::json!([{"type": "turn_allocate_success"}]))
+            .expect_calls(3)
+            .and()
+    })
+    .with_mock(|mock| {
+        mock
+            .on_instruction_containing("TURN")
+            .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "TURN", "instruction": "TURN relay server"}]))
+            .expect_calls(1)
+            .and()
+            .on_event("turn_allocate_request")
+            .respond_with_actions(serde_json::json!([{"type": "turn_allocate_success"}]))
+            .expect_calls(1)
+            .and()
+    })
+    .with_mock(|mock| {
+        mock
+            .on_instruction_containing("TURN")
+            .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "TURN", "instruction": "TURN relay server"}]))
+            .expect_calls(1)
+            .and()
+    })
+    .with_mock(|mock| {
+        mock
+            .on_instruction_containing("TURN")
+            .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "TURN", "instruction": "TURN relay server"}]))
+            .expect_calls(1)
+            .and()
+            .on_event("turn_refresh_request")
+            .respond_with_actions(serde_json::json!([{"type": "turn_refresh_success"}]))
+            .expect_calls(1)
+            .and()
+    })
+    .with_mock(|mock| {
+        mock
+            .on_instruction_containing("TURN")
+            .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "TURN", "instruction": "TURN relay server"}]))
+            .expect_calls(1)
+            .and()
+            .on_event("turn_create_permission_request")
+            .respond_with_actions(serde_json::json!([{"type": "turn_create_permission_success"}]))
+            .expect_calls(1)
+            .and()
+    })
     .with_log_level("off");
 
     let test_state = start_netget_server(config).await?;
@@ -528,6 +663,9 @@ async fn test_turn_permission_without_allocation() -> E2EResult<()> {
         }
     }
 
+
+    // Verify mocks
+    test_state.verify_mocks().await?;
     test_state.stop().await?;
     Ok(())
 }
@@ -537,6 +675,17 @@ async fn test_turn_short_lifetime_allocation() -> E2EResult<()> {
     let config = ServerConfig::new(
         "Start a TURN relay server on port 0 with very short 5 second allocation lifetime",
     )
+    .with_mock(|mock| {
+        mock
+            .on_instruction_containing("TURN")
+            .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "TURN", "instruction": "TURN relay server"}]))
+            .expect_calls(1)
+            .and()
+            .on_event("turn_allocate_request")
+            .respond_with_actions(serde_json::json!([{"type": "turn_allocate_success"}]))
+            .expect_calls(1)
+            .and()
+    })
     .with_log_level("off");
 
     let test_state = start_netget_server(config).await?;
@@ -616,6 +765,9 @@ async fn test_turn_short_lifetime_allocation() -> E2EResult<()> {
         }
     }
 
+
+    // Verify mocks
+    test_state.verify_mocks().await?;
     test_state.stop().await?;
     Ok(())
 }
@@ -703,6 +855,9 @@ async fn test_turn_allocate_with_lifetime_attribute() -> E2EResult<()> {
         }
     }
 
+
+    // Verify mocks
+    test_state.verify_mocks().await?;
     test_state.stop().await?;
     Ok(())
 }

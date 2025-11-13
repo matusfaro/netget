@@ -4,6 +4,7 @@
 
 #[cfg(all(test, feature = "ospf"))]
 mod tests {
+    use crate::helpers::*;
     use std::net::{Ipv4Addr, SocketAddr};
     use tokio::net::UdpSocket;
 
@@ -92,34 +93,255 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ospf_hello_exchange() {
-        // Find available port for test
-        let test_socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        let test_port = test_socket.local_addr().unwrap().port();
-        drop(test_socket); // Release the port
+    async fn test_ospf_hello_exchange() -> E2EResult<()> {
+        println!("\n=== E2E Test: OSPF Hello Exchange ===");
 
-        // Start NetGet server
-        let server_addr =
-            SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), test_port);
+        // PROMPT: Tell the LLM to act as an OSPF router
+        let prompt = "Listen on port {AVAILABLE_PORT} via UDP. Act as OSPF router with router_id 1.1.1.1 in area 0.0.0.0. \
+                     When receiving OSPF Hello packets, respond with Hello packets including the sender's router_id in the neighbor list.";
 
-        // TODO: Start server with LLM
-        // For now, this is a compilation test
-        // Full implementation would:
-        // 1. Start server with instruction: "Listen on port {port} via OSPF as router 1.1.1.1 in area 0.0.0.0"
-        // 2. Create UDP client
-        // 3. Send Hello packet
-        // 4. Receive and verify Hello response
-        // 5. Verify neighbor state transitions
+        // Start the server with mocks
+        let config = NetGetConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("OSPF")
+                    .and_instruction_containing("router")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "UDP",
+                            "application_protocol": "OSPF",
+                            "instruction": "Act as OSPF router 1.1.1.1 in area 0.0.0.0"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Receive OSPF Hello packet
+                    .on_event("udp_data_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_udp_data",
+                            "data": hex::encode(build_ospf_hello_response())
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
-        println!(
-            "OSPF E2E test placeholder - server would listen on {}",
-            server_addr
+        let mut server = start_netget_server(config).await?;
+        println!("OSPF server started on port {}", server.port);
+
+        // Create UDP client
+        let client_socket = UdpSocket::bind("127.0.0.1:0").await?;
+        let server_addr = format!("127.0.0.1:{}", server.port);
+        client_socket.connect(&server_addr).await?;
+        println!("✓ UDP client connected");
+
+        // Build and send OSPF Hello packet
+        let hello_packet = build_ospf_hello(
+            "2.2.2.2",       // our router_id
+            "0.0.0.0",       // area_id (backbone)
+            "255.255.255.0", // network_mask
+            1,               // priority
         );
-        println!("Future implementation:");
-        println!("  1. Start OSPF server with LLM");
-        println!("  2. Send OSPF Hello packet");
-        println!("  3. Verify Hello response");
-        println!("  4. Check neighbor state: Down → Init → 2-Way");
+
+        println!("Sending OSPF Hello packet ({} bytes)...", hello_packet.len());
+        client_socket.send(&hello_packet).await?;
+
+        // Receive Hello response
+        let mut buf = vec![0u8; 1024];
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            client_socket.recv(&mut buf),
+        )
+        .await
+        {
+            Ok(Ok(n)) => {
+                println!("✓ Received OSPF response ({} bytes)", n);
+
+                // Basic validation of OSPF header
+                assert!(n >= 24, "OSPF packet must be at least 24 bytes (header)");
+                assert_eq!(buf[0], 2, "OSPF version should be 2");
+                assert_eq!(buf[1], 1, "OSPF type should be 1 (Hello)");
+
+                println!("✓ OSPF Hello response validated");
+            }
+            Ok(Err(e)) => {
+                panic!("Failed to receive OSPF response: {}", e);
+            }
+            Err(_) => {
+                panic!("Timeout waiting for OSPF response");
+            }
+        }
+
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+
+        server.stop().await?;
+        println!("=== Test completed ===\n");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_ospf_neighbor_discovery() -> E2EResult<()> {
+        println!("\n=== E2E Test: OSPF Neighbor Discovery ===");
+
+        let prompt = "Listen on port {AVAILABLE_PORT} via UDP. Act as OSPF router 1.1.1.1 in area 0.0.0.0. \
+                     Track neighbors from received Hello packets. When receiving Hello, respond with Hello including all known neighbors.";
+
+        let config = NetGetConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("OSPF")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "UDP",
+                            "application_protocol": "OSPF",
+                            "instruction": "Track and respond to OSPF neighbors"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2-3: Multiple Hello exchanges
+                    .on_event("udp_data_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_udp_data",
+                            "data": hex::encode(build_ospf_hello_response())
+                        }
+                    ]))
+                    .expect_calls(2)
+                    .and()
+            });
+
+        let mut server = start_netget_server(config).await?;
+        println!("OSPF server started on port {}", server.port);
+
+        let client_socket = UdpSocket::bind("127.0.0.1:0").await?;
+        client_socket.connect(format!("127.0.0.1:{}", server.port)).await?;
+
+        // Send first Hello packet
+        println!("Sending first OSPF Hello...");
+        let hello1 = build_ospf_hello("3.3.3.3", "0.0.0.0", "255.255.255.0", 1);
+        client_socket.send(&hello1).await?;
+
+        // Receive first response
+        let mut buf = vec![0u8; 1024];
+        let n1 = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            client_socket.recv(&mut buf),
+        )
+        .await??;
+        println!("✓ Received first Hello response ({} bytes)", n1);
+
+        // Send second Hello packet
+        println!("Sending second OSPF Hello...");
+        let hello2 = build_ospf_hello("3.3.3.3", "0.0.0.0", "255.255.255.0", 1);
+        client_socket.send(&hello2).await?;
+
+        // Receive second response
+        let n2 = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            client_socket.recv(&mut buf),
+        )
+        .await??;
+        println!("✓ Received second Hello response ({} bytes)", n2);
+        println!("✓ OSPF neighbor discovery test passed");
+
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+
+        server.stop().await?;
+        println!("=== Test completed ===\n");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_ospf_multiple_routers() -> E2EResult<()> {
+        println!("\n=== E2E Test: OSPF Multiple Routers ===");
+
+        let prompt = "Listen on port {AVAILABLE_PORT} via UDP. Act as OSPF router 1.1.1.1 in area 0.0.0.0. \
+                     Accept Hello packets from multiple routers and maintain neighbor relationships.";
+
+        let config = NetGetConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("OSPF")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "UDP",
+                            "application_protocol": "OSPF",
+                            "instruction": "Handle multiple OSPF neighbors"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2-4: Multiple Hello packets from different routers
+                    .on_event("udp_data_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_udp_data",
+                            "data": hex::encode(build_ospf_hello_response())
+                        }
+                    ]))
+                    .expect_calls(3)
+                    .and()
+            });
+
+        let mut server = start_netget_server(config).await?;
+        println!("OSPF server started on port {}", server.port);
+
+        // Create three "routers" (UDP clients with different router IDs)
+        let routers = vec![
+            ("4.4.4.4", "Router 4"),
+            ("5.5.5.5", "Router 5"),
+            ("6.6.6.6", "Router 6"),
+        ];
+
+        for (router_id, name) in &routers {
+            let client_socket = UdpSocket::bind("127.0.0.1:0").await?;
+            client_socket.connect(format!("127.0.0.1:{}", server.port)).await?;
+
+            println!("Sending Hello from {} ({})", name, router_id);
+            let hello = build_ospf_hello(router_id, "0.0.0.0", "255.255.255.0", 1);
+            client_socket.send(&hello).await?;
+
+            // Receive response
+            let mut buf = vec![0u8; 1024];
+            let n = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                client_socket.recv(&mut buf),
+            )
+            .await??;
+            println!("✓ {} received response ({} bytes)", name, n);
+        }
+
+        println!("✓ All routers successfully exchanged Hello packets");
+
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+
+        server.stop().await?;
+        println!("=== Test completed ===\n");
+        Ok(())
+    }
+
+    // Helper function to build a simple OSPF Hello response
+    fn build_ospf_hello_response() -> Vec<u8> {
+        build_ospf_hello(
+            "1.1.1.1",       // server router_id
+            "0.0.0.0",       // area_id
+            "255.255.255.0", // network_mask
+            128,             // priority (DR eligible)
+        )
     }
 
     #[test]

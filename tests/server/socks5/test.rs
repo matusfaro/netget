@@ -211,8 +211,47 @@ async fn test_socks5_basic_connect() -> E2EResult<()> {
     let prompt = "Start a SOCKS5 proxy server on port {AVAILABLE_PORT} that allows all connections without authentication. \
         When clients send CONNECT requests, establish the connection to the target.";
 
-    // Start the SOCKS5 server
-    let server = start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the SOCKS5 server with mocks
+    let server = start_netget_server(
+        ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup (user command)
+                    .on_instruction_containing("SOCKS5 proxy")
+                    .and_instruction_containing("allows all connections")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "SOCKS5",
+                            "instruction": "Allow all connections without authentication. When clients send CONNECT requests, establish the connection to the target",
+                            "startup_params": {
+                                "auth_methods": ["no_auth"]
+                            }
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: SOCKS5 handshake completed
+                    .on_event("socks5_handshake")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "wait_for_more"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: SOCKS5 CONNECT request
+                    .on_event("socks5_connect")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "allow_connect"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("SOCKS5 server started on port {}", server.port);
 
     // Give server time to start
@@ -263,6 +302,9 @@ async fn test_socks5_basic_connect() -> E2EResult<()> {
         Ok(Err(e)) => println!("Read error: {}", e),
         Err(_) => println!("Timeout reading HTTP response"),
     }
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
 
     // Cleanup
     http_handle.abort();

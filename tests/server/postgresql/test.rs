@@ -18,7 +18,7 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use super::super::super::helpers::{self, E2EResult, NetGetConfig};
 use std::time::Duration;
 use tokio_postgres::NoTls;
 
@@ -32,8 +32,50 @@ async fn test_postgresql_simple_query() -> E2EResult<()> {
         postgresql_query_response with columns=[{{name:'version',type:'text'}}] rows=[['PostgreSQL 16.0 (LLM)']]. \
         Other queries use postgresql_ok_response tag='OK'.";
 
-    // Start the server (using default qwen3-coder:30b)
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let config = NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("PostgreSQL")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "TCP",
+                        "application_protocol": "PostgreSQL",
+                        "instruction": "Handle SELECT 1 and SELECT version() queries"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: SELECT version() query (startup query)
+                .on_event("postgresql_query")
+                .and_event_data_contains("query", "version")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "postgresql_query_response",
+                        "columns": [{"name": "version", "type": "text"}],
+                        "rows": [["PostgreSQL 16.0 (LLM)"]]
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: SELECT 1 query
+                .on_event("postgresql_query")
+                .and_event_data_contains("query", "SELECT 1")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "postgresql_query_response",
+                        "columns": [{"name": "?column?", "type": "int4"}],
+                        "rows": [[1]]
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let mut server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Connect and execute query using tokio-postgres
@@ -89,6 +131,9 @@ async fn test_postgresql_simple_query() -> E2EResult<()> {
 
     assert_eq!(result, 1, "Expected SELECT 1 to return 1");
 
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     println!("✓ PostgreSQL simple query test passed\n");
     Ok(())
 }
@@ -103,7 +148,56 @@ async fn test_postgresql_multi_row_query() -> E2EResult<()> {
         For SELECT version() queries use postgresql_query_response columns=[{{name:'version',type:'text'}}] rows=[['PostgreSQL 16.0']]. \
         Other queries use postgresql_ok_response tag='SELECT 0'.";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("PostgreSQL")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "TCP",
+                        "application_protocol": "PostgreSQL",
+                        "instruction": "Handle SELECT * FROM users query"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: SELECT version() query
+                .on_event("postgresql_query")
+                .and_event_data_contains("query", "version")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "postgresql_query_response",
+                        "columns": [{"name": "version", "type": "text"}],
+                        "rows": [["PostgreSQL 16.0"]]
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: SELECT * FROM users query
+                .on_event("postgresql_query")
+                .and_event_data_contains("query", "SELECT * FROM users")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "postgresql_query_response",
+                        "columns": [
+                            {"name": "id", "type": "int4"},
+                            {"name": "name", "type": "text"}
+                        ],
+                        "rows": [
+                            [1, "Alice"],
+                            [2, "Bob"],
+                            [3, "Charlie"]
+                        ]
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let mut server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     println!("Connecting to PostgreSQL server...");
@@ -129,6 +223,10 @@ async fn test_postgresql_multi_row_query() -> E2EResult<()> {
     }
 
     assert!(!rows.is_empty(), "Expected at least one row");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     println!("✓ PostgreSQL multi-row query test passed\n");
 
     Ok(())
@@ -142,7 +240,48 @@ async fn test_postgresql_create_table() -> E2EResult<()> {
         columns=[{{name:'version',type:'text'}}] rows=[['PostgreSQL 16.0']]. For CREATE/INSERT/UPDATE queries, \
         use postgresql_ok_response tag='CREATE TABLE'. For SELECT queries use postgresql_ok_response tag='SELECT 0'.";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("PostgreSQL")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "TCP",
+                        "application_protocol": "PostgreSQL",
+                        "instruction": "Handle CREATE TABLE and version queries"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: SELECT version() query
+                .on_event("postgresql_query")
+                .and_event_data_contains("query", "version")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "postgresql_query_response",
+                        "columns": [{"name": "version", "type": "text"}],
+                        "rows": [["PostgreSQL 16.0"]]
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: CREATE TABLE query
+                .on_event("postgresql_query")
+                .and_event_data_contains("query", "CREATE TABLE")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "postgresql_ok_response",
+                        "tag": "CREATE TABLE"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let mut server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     println!("Connecting to PostgreSQL server...");
@@ -169,6 +308,9 @@ async fn test_postgresql_create_table() -> E2EResult<()> {
         }
     }
 
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     println!("✓ PostgreSQL CREATE TABLE test completed\n");
     Ok(())
 }
@@ -182,7 +324,50 @@ async fn test_postgresql_error_response() -> E2EResult<()> {
         For queries containing 'invalid_table', use postgresql_error_response severity='ERROR' code='42P01' \
         message='relation \"invalid_table\" does not exist'. Other queries use postgresql_ok_response tag='OK'.";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("PostgreSQL")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "TCP",
+                        "application_protocol": "PostgreSQL",
+                        "instruction": "Handle error responses for invalid_table"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: SELECT version() query
+                .on_event("postgresql_query")
+                .and_event_data_contains("query", "version")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "postgresql_query_response",
+                        "columns": [{"name": "version", "type": "text"}],
+                        "rows": [["PostgreSQL 16.0"]]
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: SELECT * FROM invalid_table query (error)
+                .on_event("postgresql_query")
+                .and_event_data_contains("query", "invalid_table")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "postgresql_error_response",
+                        "severity": "ERROR",
+                        "code": "42P01",
+                        "message": "relation \"invalid_table\" does not exist"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let mut server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     println!("Connecting to PostgreSQL server...");
@@ -212,6 +397,9 @@ async fn test_postgresql_error_response() -> E2EResult<()> {
             );
         }
     }
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
 
     println!("✓ PostgreSQL error response test passed\n");
     Ok(())

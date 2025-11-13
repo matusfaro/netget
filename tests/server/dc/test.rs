@@ -7,7 +7,7 @@
 
 // Helper module imported from parent
 
-use super::super::super::helpers::{self, E2EResult, ServerConfig};
+use super::super::super::helpers::{self, E2EResult, NetGetConfig};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -48,8 +48,47 @@ async fn test_dc_authentication() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via dc. When users send $ValidateNick, accept with $Hello. \
         When users send $Key, acknowledge. Be a friendly DC hub named 'NetGet Hub'.";
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let config = NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup (user command)
+                .on_instruction_containing("listen")
+                .and_instruction_containing("dc")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "DC",
+                        "instruction": "DC hub - accept all users with $Hello, send hub name NetGet Hub"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: ValidateNick received (dc_command_received event)
+                .on_event("dc_command_received")
+                .and_event_data_contains("command", "ValidateNick")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_dc_hello",
+                        "nickname": "testuser"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: Key received (dc_command_received event)
+                .on_event("dc_command_received")
+                .and_event_data_contains("command", "Key")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Connect and perform DC authentication
@@ -114,6 +153,9 @@ async fn test_dc_authentication() -> E2EResult<()> {
         "Expected $Hello response after $ValidateNick"
     );
 
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -127,8 +169,51 @@ async fn test_dc_hub_info() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via dc. Accept all users. \
         Send hub name 'NetGet DC Hub' and hub topic 'Test Hub' to new users after they send $ValidateNick.";
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let config = NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup (user command)
+                .on_instruction_containing("listen")
+                .and_instruction_containing("dc")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "DC",
+                        "instruction": "DC hub - send hub name and topic to new users"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: ValidateNick received (dc_command_received event)
+                .on_event("dc_command_received")
+                .and_event_data_contains("command", "ValidateNick")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_dc_hello",
+                        "nickname": "testuser"
+                    },
+                    {
+                        "type": "send_dc_hubname",
+                        "name": "NetGet DC Hub"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: Key received (dc_command_received event)
+                .on_event("dc_command_received")
+                .and_event_data_contains("command", "Key")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Connect and check hub info
@@ -179,6 +264,9 @@ async fn test_dc_hub_info() -> E2EResult<()> {
         println!("  This may be expected if hub info broadcasting is not fully implemented");
     }
 
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -192,8 +280,58 @@ async fn test_dc_chat() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via dc. Accept all users. \
         When users send public chat messages (format: <nickname> message|), echo them back or respond with a greeting.";
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let config = NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup (user command)
+                .on_instruction_containing("listen")
+                .and_instruction_containing("dc")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "DC",
+                        "instruction": "DC hub - echo chat messages or respond with greetings"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: ValidateNick received (dc_command_received event)
+                .on_event("dc_command_received")
+                .and_event_data_contains("command", "ValidateNick")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_dc_hello",
+                        "nickname": "testuser"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: Key received (dc_command_received event)
+                .on_event("dc_command_received")
+                .and_event_data_contains("command", "Key")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 4: Chat message received (dc_command_received event)
+                .on_event("dc_command_received")
+                .and_event_data_contains("command", "testuser> Hello hub!")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_dc_raw",
+                        "command": "<Hub> Hello testuser!"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Connect, authenticate, and send chat
@@ -242,6 +380,9 @@ async fn test_dc_chat() -> E2EResult<()> {
         }
     }
 
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -256,8 +397,62 @@ async fn test_dc_search() -> E2EResult<()> {
         When users send $Search commands, respond with one fake search result: filename 'test.txt', \
         size 1024 bytes, using $SR command.";
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let config = NetGetConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup (user command)
+                .on_instruction_containing("listen")
+                .and_instruction_containing("dc")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "DC",
+                        "instruction": "DC hub - respond to search with fake results"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: ValidateNick received (dc_command_received event)
+                .on_event("dc_command_received")
+                .and_event_data_contains("command", "ValidateNick")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_dc_hello",
+                        "nickname": "testuser"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: Key received (dc_command_received event)
+                .on_event("dc_command_received")
+                .and_event_data_contains("command", "Key")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 4: Search received (dc_command_received event)
+                .on_event("dc_command_received")
+                .and_event_data_contains("command", "Search")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_dc_search_result",
+                        "source": "testuser",
+                        "filename": "test.txt",
+                        "size": 1024,
+                        "slots": 1,
+                        "hub_name": "NetGetHub"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Connect, authenticate, and search
@@ -319,6 +514,9 @@ async fn test_dc_search() -> E2EResult<()> {
         println!("Note: Did not receive search result");
         println!("  This may be expected if search is not fully implemented");
     }
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
 
     server.stop().await?;
     println!("=== Test completed ===\n");

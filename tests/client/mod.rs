@@ -2,8 +2,12 @@
 
 #[cfg(feature = "amqp")]
 pub mod amqp;
+#[cfg(feature = "datalink")]
+pub mod datalink;
 #[cfg(feature = "http")]
 pub mod http;
+#[cfg(feature = "ipp")]
+pub mod ipp;
 #[cfg(feature = "ollama")]
 pub mod ollama;
 #[cfg(feature = "openai")]

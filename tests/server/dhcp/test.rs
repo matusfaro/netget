@@ -111,9 +111,43 @@ async fn test_dhcp_discover_offer() -> E2EResult<()> {
     // PROMPT: Tell the LLM to act as a DHCP server
     let prompt = "listen on port {AVAILABLE_PORT} via dhcp. When receiving DHCP DISCOVER messages, respond with DHCP OFFER. Offer IP addresses in the 192.168.1.0/24 range starting from 192.168.1.100";
 
-    // Start the server with debug logging
-    let server =
-        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("debug")).await?;
+    // Start the server with debug logging and mocks
+    let config = helpers::NetGetConfig::new(prompt)
+        .with_log_level("debug")
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup (user command)
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("dhcp")
+                .and_instruction_containing("DISCOVER")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "DHCP",
+                        "instruction": "DHCP server - respond to DISCOVER with OFFER from 192.168.1.100+"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Server receives DHCP DISCOVER (dhcp_request event)
+                .on_event("dhcp_request")
+                .and_event_data_contains("message_type", "DISCOVER")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_dhcp_offer",
+                        "offered_ip": "192.168.1.100",
+                        "subnet_mask": "255.255.255.0",
+                        "router": "192.168.1.1",
+                        "dns_servers": ["8.8.8.8"],
+                        "lease_time": 86400
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(config).await?;
     println!("DHCP server started on port {}", server.port);
 
     // Wait for DHCP server to fully initialize (needs LLM call)
@@ -151,6 +185,9 @@ async fn test_dhcp_discover_offer() -> E2EResult<()> {
         }
     }
 
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -163,9 +200,43 @@ async fn test_dhcp_request_ack() -> E2EResult<()> {
     // PROMPT: Tell the LLM to handle DHCP REQUEST
     let prompt = "listen on port {AVAILABLE_PORT} via dhcp. Handle DHCP DISCOVER and REQUEST messages. Assign IP addresses from 192.168.1.100 onwards. Respond with OFFER to DISCOVER and ACK to REQUEST";
 
-    // Start the server
-    let server =
-        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("debug")).await?;
+    // Start the server with mocks
+    let config = helpers::NetGetConfig::new(prompt)
+        .with_log_level("debug")
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("dhcp")
+                .and_instruction_containing("REQUEST")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "DHCP",
+                        "instruction": "DHCP server - OFFER on DISCOVER, ACK on REQUEST"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Server receives DHCP REQUEST
+                .on_event("dhcp_request")
+                .and_event_data_contains("message_type", "REQUEST")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_dhcp_ack",
+                        "assigned_ip": "192.168.1.100",
+                        "subnet_mask": "255.255.255.0",
+                        "router": "192.168.1.1",
+                        "dns_servers": ["8.8.8.8"],
+                        "lease_time": 86400
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(config).await?;
     println!("DHCP server started on port {}", server.port);
 
     // VALIDATION: Send DHCP REQUEST (simplified - usually follows DISCOVER/OFFER)
@@ -206,6 +277,9 @@ async fn test_dhcp_request_ack() -> E2EResult<()> {
         }
     }
 
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -218,9 +292,42 @@ async fn test_dhcp_lease_options() -> E2EResult<()> {
     // PROMPT: Tell the LLM to include DHCP options
     let prompt = "listen on port {AVAILABLE_PORT} via dhcp. Respond to DHCP requests with: IP address 192.168.1.100, subnet mask 255.255.255.0, gateway 192.168.1.1, DNS server 8.8.8.8, lease time 86400 seconds";
 
-    // Start the server
-    let server =
-        helpers::start_netget_server(ServerConfig::new(prompt).with_log_level("debug")).await?;
+    // Start the server with mocks
+    let config = helpers::NetGetConfig::new(prompt)
+        .with_log_level("debug")
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("dhcp")
+                .and_instruction_containing("lease time")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "DHCP",
+                        "instruction": "DHCP server - respond with full options including lease time"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Server receives DHCP DISCOVER with options request
+                .on_event("dhcp_request")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_dhcp_offer",
+                        "offered_ip": "192.168.1.100",
+                        "subnet_mask": "255.255.255.0",
+                        "router": "192.168.1.1",
+                        "dns_servers": ["8.8.8.8"],
+                        "lease_time": 86400
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(config).await?;
     println!("DHCP server started on port {}", server.port);
 
     // VALIDATION: Send DHCP DISCOVER and check for options in response
@@ -249,6 +356,9 @@ async fn test_dhcp_lease_options() -> E2EResult<()> {
             );
         }
     }
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
 
     server.stop().await?;
     println!("=== Test completed ===\n");

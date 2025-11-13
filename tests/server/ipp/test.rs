@@ -19,8 +19,40 @@ async fn test_ipp_get_printer_attributes() -> E2EResult<()> {
         use ipp_printer_attributes action with attributes={\"printer-name\":\"NetGet Printer\",\
         \"printer-state\":\"idle\",\"printer-uri-supported\":\"ipp://localhost:{AVAILABLE_PORT}/printers/netget\"}.";
 
-    // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup (user command)
+                .on_instruction_containing("Open IPP")
+                .and_instruction_containing("port")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "IPP",
+                        "instruction": "IPP printer responding to Get-Printer-Attributes with printer-name='NetGet Printer', printer-state='idle'"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: IPP request received (ipp_request_received event)
+                .on_event("ipp_request_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "ipp_printer_attributes",
+                        "attributes": {
+                            "printer-name": "NetGet Printer",
+                            "printer-state": "idle",
+                            "printer-uri-supported": format!("ipp://localhost:{{AVAILABLE_PORT}}/printers/netget")
+                        }
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let mut server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Send HTTP POST request to IPP endpoint
@@ -119,6 +151,10 @@ async fn test_ipp_get_printer_attributes() -> E2EResult<()> {
     }
 
     println!("✓ IPP Get-Printer-Attributes test completed\n");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     Ok(())
 }
 
@@ -130,7 +166,39 @@ async fn test_ipp_print_job() -> E2EResult<()> {
         use ipp_job_attributes action with attributes={\"job-id\":1,\"job-state\":\"processing\",\
         \"job-name\":\"test\"}.";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup (user command)
+                .on_instruction_containing("Open IPP")
+                .and_instruction_containing("port")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "IPP",
+                        "instruction": "IPP printer accepting Print-Job requests with job-id=1, job-state='processing'"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: IPP Print-Job request received
+                .on_event("ipp_request_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "ipp_job_attributes",
+                        "attributes": {
+                            "job-id": 1,
+                            "job-state": "processing",
+                            "job-name": "test"
+                        }
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let mut server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     println!("Sending Print-Job request...");
@@ -200,6 +268,10 @@ async fn test_ipp_print_job() -> E2EResult<()> {
     assert_eq!(response.status(), 200, "Expected HTTP 200 OK");
 
     println!("✓ IPP Print-Job test completed\n");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     Ok(())
 }
 
@@ -209,7 +281,36 @@ async fn test_ipp_basic_http() -> E2EResult<()> {
 
     let prompt = "Open IPP on port {AVAILABLE_PORT}. For all IPP requests, use ipp_response action with status=200.";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup (user command)
+                .on_instruction_containing("Open IPP")
+                .and_instruction_containing("port")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "IPP",
+                        "instruction": "IPP server responding to all requests with status 200"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: HTTP GET request (not typical IPP but tests HTTP layer)
+                .on_event("http_request_received")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "http_response",
+                        "status": 200,
+                        "body": ""
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let mut server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     println!("Sending basic HTTP request...");
@@ -230,5 +331,9 @@ async fn test_ipp_basic_http() -> E2EResult<()> {
     );
 
     println!("✓ IPP basic HTTP test completed\n");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     Ok(())
 }

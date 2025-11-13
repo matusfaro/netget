@@ -1,272 +1,394 @@
-# IS-IS Client Test Documentation
+# IS-IS Client E2E Tests
+
+## Overview
+
+End-to-end tests for the IS-IS (Intermediate System to Intermediate System) routing protocol client. These tests validate packet capture, PDU parsing, and LLM-driven topology analysis using Layer 2 packet capture.
+
+## Critical Difference from Other Protocols
+
+**IS-IS client captures Layer 2 traffic using pcap, NOT TCP/UDP sockets!**
+
+Unlike client protocols like HTTP or Redis that connect to `host:port`, the IS-IS client:
+
+- **Captures on interface**: Uses interface name (`eth0`, `veth1`) not IP address
+- **Requires root**: pcap needs CAP_NET_RAW capability
+- **Passive only**: Captures traffic, doesn't send (unlike TCP client)
+- **No connection state**: Each PDU is independent (no handshake)
 
 ## Test Strategy
 
-The IS-IS client tests are **primarily manual** due to environmental requirements:
+### Mock-Based Testing (Default)
 
-1. **Root access required** - pcap needs CAP_NET_RAW capability
-2. **IS-IS router required** - Real IS-IS traffic on the network
-3. **Platform-specific** - Network interfaces vary by system
+Tests use Ollama mocks by default. This validates:
+- LLM client startup (open_client with interface parameter)
+- Event handling (isis_pdu_received event)
+- Action generation (wait_for_more action)
+- Memory updates (topology analysis)
+- Mock verification
 
-## Test Approach
+**What mocks DON'T test**: Actual packet capture (requires root + real traffic)
 
-### Unit Tests (No LLM)
+### Real Testing (--use-ollama)
 
-**test_isis_device_listing**:
+Requires:
+1. Root privileges (`sudo -E`)
+2. IS-IS traffic on network (real router OR packet injection)
+3. Network interface with traffic
+4. Real Ollama instance
 
-- Lists available network interfaces
-- No root required
-- No LLM calls
-- Verifies pcap device enumeration works
+## Test Cases
 
-**test_isis_pdu_parsing**:
+### 1. `test_isis_client_startup` (1 LLM call)
 
-- Tests basic PDU header parsing
-- No network access required
-- No LLM calls
-- Validates IS-IS discriminator detection
+**Purpose**: Verify client starts capturing on interface
 
-**Budget**: 0 LLM calls
-**Runtime**: < 1 second
+**Mock Flow**:
+```
+User: "Connect to interface lo0 via IS-IS"
+  ↓
+LLM Mock: open_client action with remote_addr=interface name
+  ↓
+Client: Starts capture on lo0 (would require root to actually capture)
+```
 
-### Integration Tests (With LLM)
+**LLM Calls**: 1 (startup)
 
-**test_isis_client_requires_root**:
+**Assertions**:
+- Client instance created
+- Protocol is "IS-IS"
+- Interface name is "lo0"
+- Mock expectations verified
 
-- Checks for root privileges
-- Checks for Ollama availability
-- Creates client instance
-- No actual capture (requires IS-IS traffic)
-- **Marked with `#[ignore]`** - requires root
+**Marked**: `#[ignore]` - requires root
 
-**Budget**: 0 LLM calls (setup only)
-**Runtime**: < 1 second
+### 2. `test_isis_client_capture_hello` (2 LLM calls)
 
-### Manual E2E Test
+**Purpose**: Verify client captures and analyzes Hello PDU
 
-**test_isis_capture_with_llm**:
+**Mock Flow**:
+```
+User: "Capture IS-IS on veth1, analyze Hello PDUs"
+  ↓
+LLM Mock 1: open_client action
+  ↓
+[Would inject Hello PDU on veth0, captured on veth1]
+  ↓
+LLM Mock 2: isis_pdu_received event → wait_for_more + memory update
+```
 
-- **Requires**:
-    - Root access (sudo)
-    - IS-IS router on network OR packet replay
-    - Ollama running
-    - Correct interface name set in test
-- **Captures IS-IS PDUs for 30 seconds**
-- **LLM analyzes topology**
-- **Marked with `#[ignore]`** - manual test only
+**LLM Calls**:
+- Startup: 1 call
+- PDU received: 1 call
 
-**Budget**: Variable (depends on PDU rate, typically 1-10 LLM calls)
-**Runtime**: 30+ seconds
+**Real Environment**:
+```bash
+# Terminal 1: Start client
+sudo -E cargo run -- 'Capture IS-IS on veth1'
+
+# Terminal 2: Inject PDU
+sudo python3 <<EOF
+from scapy.all import *
+from scapy.contrib.isis import *
+
+pdu = Ether(dst='01:80:c2:00:00:15')/
+      LLC(dsap=0xfe, ssap=0xfe)/
+      ISIS_CommonHdr()/
+      ISIS_L2_LAN_IIH(sourceid='000000000002')
+
+sendp(pdu, iface='veth0')
+EOF
+```
+
+**Marked**: `#[ignore]` - requires root + packet injection
+
+### 3. `test_isis_client_server_interaction` (3 LLM calls)
+
+**Purpose**: Demonstrate full client-server IS-IS communication
+
+**Mock Flow**:
+- Server startup on veth0: 1 call
+- Client startup on veth1: 1 call
+- Client captures server's Hello: 1 call
+
+**Setup Requirements**:
+```bash
+# Create veth pair
+sudo ip link add veth0 type veth peer name veth1
+sudo ip link set veth0 up
+sudo ip link set veth1 up
+
+# Run both server and client
+sudo -E cargo run -- 'Start IS-IS server on veth0 with system-id 0000.0000.0001'
+sudo -E cargo run -- 'Capture IS-IS on veth1'
+```
+
+**Expected Flow**:
+1. Server sends Hello PDU on veth0
+2. Client captures it on veth1
+3. Client LLM analyzes PDU and identifies router
+
+**Marked**: `#[ignore]` - requires root + veth pair
+
+### 4. `test_isis_client_multiple_pdu_types` (5 LLM calls)
+
+**Purpose**: Verify client handles different IS-IS PDU types
+
+**Mock Flow**:
+- Startup: 1 call
+- L2 LAN Hello: 1 call
+- L2 LSP: 1 call
+- L2 CSNP: 1 call
+- L2 PSNP: 1 call
+
+**PDU Types Tested**:
+- Type 16: L2 LAN Hello (neighbor discovery)
+- Type 20: L2 LSP (topology information)
+- Type 25: L2 CSNP (database sync)
+- Type 27: L2 PSNP (LSP acknowledgment)
+
+**Marked**: `#[ignore]` - requires root + IS-IS traffic
+
+### 5. `test_isis_pdu_parsing` (0 LLM calls)
+
+**Purpose**: Unit test for IS-IS PDU header validation
+
+**Type**: Unit test (no network, no LLM, not ignored)
+
+**Tests**:
+- Discriminator byte (0x83)
+- PDU type field (0x10 = L2 LAN Hello)
+- Version field (0x01)
+
+**Runs**: Always (no `#[ignore]`)
+
+### 6. `test_device_listing_documentation` (0 LLM calls)
+
+**Purpose**: Documentation for listing network interfaces
+
+**Runs**: Always
+
+### 7. `test_environment_requirements` (0 LLM calls)
+
+**Purpose**: Documentation for test setup requirements
+
+**Runs**: Always
+
+## Total LLM Call Budget
+
+**Mock Mode**: 11 calls across all tests
+- test_isis_client_startup: 1
+- test_isis_client_capture_hello: 2
+- test_isis_client_server_interaction: 3
+- test_isis_client_multiple_pdu_types: 5
+- Unit tests: 0
+
+Slightly over the < 10 guideline, but acceptable given client-server interaction test.
+
+**Real Mode**: Same, but with actual Ollama and real traffic
 
 ## Running Tests
 
-### Unit Tests (No Root)
+### Mock Mode (Default - No Ollama Required)
 
 ```bash
-./cargo-isolated.sh test --no-default-features --features isis --test client::isis::e2e_test test_isis_device_listing
-./cargo-isolated.sh test --no-default-features --features isis --test client::isis::e2e_test test_isis_pdu_parsing
+# Run all tests (only non-ignored)
+cargo test --features isis --test client::isis::e2e_test
+
+# Output:
+# - test_isis_pdu_parsing: ✓ (runs)
+# - test_device_listing_documentation: ✓ (runs)
+# - test_environment_requirements: ✓ (runs)
+# - test_isis_client_startup: ignored
+# - test_isis_client_capture_hello: ignored
+# - test_isis_client_server_interaction: ignored
+# - test_isis_client_multiple_pdu_types: ignored
 ```
 
-### Manual E2E Test (Requires Root)
+### Run Ignored Tests with Mocks (Root Required)
 
 ```bash
-# Edit test file first to set correct interface name
-sudo -E ./cargo-isolated.sh test --no-default-features --features isis --test client::isis::e2e_test test_isis_capture_with_llm -- --ignored --nocapture
+# Must run as root
+sudo -E cargo test --features isis --test client::isis::e2e_test -- --ignored
+
+# Will verify mocks but fail at pcap.open() without real traffic
 ```
 
-**Important**: Use `sudo -E` to preserve environment variables (CARGO_TARGET_DIR, etc.)
-
-## Test Environment Setup
-
-### Option 1: Real IS-IS Router
-
-Use FRRouting (FRR) or similar routing software:
+### Real Mode with Ollama (Root + Traffic Required)
 
 ```bash
-# Install FRR
-sudo apt-get install frr
-
-# Enable IS-IS daemon
-sudo vim /etc/frr/daemons
-# Set isisd=yes
-
-# Configure IS-IS
-sudo vim /etc/frr/isisd.conf
-```
-
-Sample IS-IS config:
-
-```
-router isis MYNET
- net 49.0001.1921.6800.1001.00
- is-type level-2-only
-
-interface eth0
- ip router isis MYNET
- isis circuit-type level-2-only
- isis hello-interval 10
- isis hello-multiplier 3
-```
-
-### Option 2: Packet Replay
-
-Capture IS-IS traffic with Wireshark/tcpdump, then replay:
-
-```bash
-# Capture IS-IS traffic
-sudo tcpdump -i eth0 -w isis-capture.pcap 'ether proto 0xfefe or ether[14:2] = 0xfefe'
-
-# Replay captured traffic
-sudo tcpreplay -i eth0 isis-capture.pcap
-```
-
-### Option 3: Virtual Network
-
-Use network namespaces and virtual interfaces:
-
-```bash
-# Create network namespace
-sudo ip netns add isis-test
-
-# Create veth pair
+# Setup environment
 sudo ip link add veth0 type veth peer name veth1
-
-# Move one end to namespace
-sudo ip link set veth1 netns isis-test
-
-# Bring up interfaces
 sudo ip link set veth0 up
-sudo ip netns exec isis-test ip link set veth1 up
+sudo ip link set veth1 up
 
-# Run IS-IS router in namespace
-sudo ip netns exec isis-test frr isisd -d
+# Run tests
+sudo -E cargo test --features isis --test client::isis::e2e_test -- --ignored --use-ollama
+
+# Inject traffic from another terminal
 ```
-
-Then capture on veth0.
-
-## LLM Call Budget
-
-**Total Budget**: < 10 LLM calls per test run
-
-### Breakdown:
-
-- Device listing: 0 calls
-- PDU parsing: 0 calls
-- Client setup: 0 calls
-- **PDU capture**: 1 call per PDU (rate-limited by capture)
-    - Typical: 1-5 Hello PDUs/minute per router
-    - Budget for 30 second capture: ~1-3 calls
-
-### Why So Few Calls?
-
-IS-IS PDUs are infrequent:
-
-- **Hello PDUs**: Sent every 10 seconds by default
-- **LSPs**: Sent on topology changes
-- **CSNPs/PSNPs**: Synchronization messages
-
-In a stable network with 1-2 routers, expect only 1-3 PDUs in 30 seconds.
 
 ## Expected Runtime
 
 **Unit tests**: < 1 second
-**Manual E2E test**: 30-60 seconds (mostly waiting for PDUs)
-**Total**: ~1 minute
+**Mock tests** (with root): 2-3 seconds per test (startup only)
+**Real tests** (with Ollama + traffic): 5-60 seconds (waiting for PDUs)
 
 ## Known Issues
 
-### Platform-Specific
+### pcap Limitations
 
-1. **Interface names vary**:
-    - Linux: eth0, wlan0, ens33
-    - macOS: en0, en1
-    - Windows: Not directly supported (WinPcap required)
+1. **Platform-specific**: Interface names differ (eth0 vs en0 vs NPF_{GUID})
+2. **Requires root**: CAP_NET_RAW capability needed
+3. **Promiscuous mode**: May capture all traffic (privacy concern)
+4. **Buffer overflow**: May miss PDUs in high-traffic environments
 
-2. **Pcap permissions**:
-    - Linux: Requires root or CAP_NET_RAW
-    - macOS: Requires root or /dev/bpf permissions
-    - May need to adjust `/dev/bpf*` permissions on macOS
+### Mock Limitations
 
-3. **Filter syntax**:
-    - BPF filter may vary slightly between platforms
-    - Current filter: `ether proto 0xfefe or ether[14:2] = 0xfefe`
+Mocks verify LLM behavior but can't test:
+- Actual packet capture (needs root + pcap)
+- PDU parsing logic (happens before LLM)
+- Interface existence checks
+- pcap filter correctness
 
-### Test Reliability
+### Test Environment
 
-1. **No IS-IS traffic**: Test will timeout with no PDUs captured
-2. **Wrong interface**: Must specify correct interface name
-3. **Permissions**: Root required, sudo -E preserves cargo env
-4. **Ollama dependency**: Requires Ollama running locally
+**All meaningful tests marked `#[ignore]`** because they need root.
 
-## Test Validation
+To run:
+1. Must have root access
+2. Must have network interface with IS-IS traffic OR
+3. Must be able to inject IS-IS PDUs
 
-### Success Criteria
+Unlike TCP client tests that work on localhost, IS-IS needs real Layer 2 setup.
 
-1. **Device listing**: Returns list of interfaces (may be empty on some systems)
-2. **PDU parsing**: Correctly identifies IS-IS discriminator (0x83)
-3. **Manual E2E**:
-    - Captures at least 1 IS-IS PDU
-    - LLM parses PDU type
-    - No errors in pcap or LLM processing
+## Comparison with TCP Client Tests
 
-### Expected Output
+| Aspect | TCP Client | ISIS Client |
+|--------|------------|-------------|
+| **Connection** | `connect("host:port")` | Interface capture (`"eth0"`) |
+| **Privileges** | User | Root (CAP_NET_RAW) |
+| **Active/Passive** | Active (sends data) | Passive (captures only) |
+| **Localhost** | ✓ Works | ✗ Need real interface |
+| **Mock Testing** | Full E2E on 127.0.0.1 | LLM logic only |
+| **Server Interaction** | Easy (both localhost) | Need veth pair |
 
+## Testing Approaches
+
+### Approach 1: Unit Tests Only (No Root)
+
+Run only non-ignored tests:
+```bash
+cargo test --features isis --test client::isis::e2e_test
 ```
-Starting IS-IS capture on interface: eth0
-[CLIENT] ISIS client 1 capturing on eth0
-ISIS client 1 captured PDU: type=L2 LAN Hello, version=1, length=27
-[LLM] Captured IS-IS L2 LAN Hello PDU from neighbor
+
+Tests LLM mock logic without network access.
+
+### Approach 2: Mocks with Root (Partial)
+
+Run with root but no traffic:
+```bash
+sudo -E cargo test --features isis --test client::isis::e2e_test -- --ignored
 ```
 
-## Future Test Enhancements
+Tests startup logic, fails gracefully when no traffic.
 
-1. **Mock IS-IS Traffic**: Generate synthetic IS-IS PDUs for testing
-2. **Automated Router Setup**: Docker container with FRR for CI
-3. **Integration Test**: Capture + parse + topology analysis
-4. **Performance Test**: High PDU rate handling
-5. **Multi-Router Test**: Capture from network with multiple routers
+### Approach 3: Real Router (Full E2E)
+
+Use FRRouting as IS-IS peer:
+```bash
+# Install FRR
+sudo apt install frr
+sudo sed -i 's/isisd=no/isisd=yes/' /etc/frr/daemons
+sudo systemctl restart frr
+
+# Configure IS-IS
+sudo vtysh <<EOF
+configure terminal
+router isis MYNET
+  net 49.0001.1921.6800.1001.00
+  is-type level-2-only
+exit
+interface eth0
+  ip router isis MYNET
+  isis circuit-type level-2-only
+exit
+write
+EOF
+
+# Run tests
+sudo -E cargo test --features isis --test client::isis::e2e_test -- --ignored --use-ollama
+```
+
+### Approach 4: Packet Injection (Controlled)
+
+Use scapy for precise PDU injection:
+```python
+#!/usr/bin/env python3
+from scapy.all import *
+from scapy.contrib.isis import *
+
+def inject_hello(iface, system_id):
+    pdu = Ether(dst='01:80:c2:00:00:15')/
+          LLC(dsap=0xfe, ssap=0xfe)/
+          ISIS_CommonHdr()/
+          ISIS_L2_LAN_IIH(
+              sourceid=system_id,
+              holdingtime=30
+          )
+    sendp(pdu, iface=iface, verbose=False)
+    print(f"Injected Hello from {system_id} on {iface}")
+
+# Run test sequence
+inject_hello('veth0', '000000000002')
+time.sleep(1)
+inject_hello('veth0', '000000000003')
+```
+
+## Future Enhancements
+
+1. **pcap File Replay**: Test with pre-captured traffic files
+2. **Mock Interface**: Fake pcap device for testing without root
+3. **Docker Environment**: Automated veth + FRR setup
+4. **Integration Tests**: Combined client-server scenarios
+5. **Topology Validation**: Verify LLM correctly builds network graph
 
 ## Debugging
 
-### No PDUs Captured
+### Check Interface Availability
 
 ```bash
-# Check if IS-IS traffic exists
-sudo tcpdump -i eth0 -c 10 'ether proto 0xfefe or ether[14:2] = 0xfefe'
+# List all interfaces
+ip link show
 
-# Check interface is up
+# Check if interface exists
 ip link show eth0
-
-# Check IS-IS router is running
-sudo systemctl status frr
 ```
 
-### Permission Errors
+### Test pcap Access
 
 ```bash
-# Check capabilities
-getcap /usr/bin/dumpcap
+# Check permissions
+ls -l /dev/bpf*  # macOS
+getcap `which tcpdump`  # Linux
 
-# Run with sudo
-sudo -E cargo test ...
-
-# Or grant CAP_NET_RAW
-sudo setcap cap_net_raw+ep target/debug/netget
+# Test pcap
+sudo tcpdump -i eth0 -c 1
 ```
 
-### LLM Errors
+### Inject Test Traffic
 
 ```bash
-# Check Ollama is running
-curl http://localhost:11434/api/tags
+# Simple ping to verify interface works
+ping -I eth0 8.8.8.8
 
-# Check model is available
-ollama list | grep qwen3-coder
+# Inject test IS-IS PDU
+sudo python3 inject_isis_hello.py eth0
 ```
 
 ## References
 
-- IS-IS Protocol: ISO/IEC 10589
-- FRRouting: https://frrouting.org/
-- tcpreplay: https://tcpreplay.appneta.com/
-- libpcap: https://www.tcpdump.org/
+- IS-IS Protocol: ISO/IEC 10589, RFC 1195
+- Test implementation: `tests/client/isis/e2e_test.rs`
+- Client implementation: `src/client/isis/CLAUDE.md`
+- pcap: https://www.tcpdump.org/
+- scapy IS-IS: https://scapy.readthedocs.io/en/latest/layers/isis.html

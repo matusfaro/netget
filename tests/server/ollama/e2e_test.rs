@@ -17,7 +17,42 @@ async fn test_ollama_list_models() -> E2EResult<()> {
     let prompt = "Open Ollama on port {AVAILABLE_PORT}. This is an Ollama-compatible API server. \
         When clients request GET /api/tags, list available Ollama models from the backend.";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: User command to open Ollama server
+                .on_instruction_containing("Open Ollama")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "Ollama",
+                        "instruction": "Handle Ollama API requests"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Models list request (GET /api/tags)
+                .on_event("ollama_models_request")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_ollama_response",
+                        "body": {
+                            "models": [
+                                {
+                                    "name": "qwen2.5-coder:0.5b",
+                                    "size": 524288000,
+                                    "modified_at": "2024-01-01T00:00:00Z"
+                                }
+                            ]
+                        }
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // Wait a bit for server to be ready
@@ -74,6 +109,9 @@ async fn test_ollama_list_models() -> E2EResult<()> {
         println!("✓ First model: {}", first_model.get("name").unwrap());
     }
 
+    // Verify mock expectations
+    server.verify_mocks().await?;
+
     println!("✓ Ollama List Models test completed\n");
     Ok(())
 }
@@ -85,7 +123,39 @@ async fn test_ollama_generate() -> E2EResult<()> {
     let prompt = "Open Ollama on port {AVAILABLE_PORT}. This is an Ollama-compatible API server. \
         When clients send POST /api/generate requests, use the backend Ollama to generate responses.";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: User command to open Ollama server
+                .on_instruction_containing("Open Ollama")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "Ollama",
+                        "instruction": "Handle Ollama generate requests"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Generate request (POST /api/generate)
+                .on_event("ollama_generate_request")
+                .and_event_data_contains("model", "qwen2.5-coder:0.5b")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_ollama_response",
+                        "body": {
+                            "model": "qwen2.5-coder:0.5b",
+                            "response": "Hello from NetGet Ollama",
+                            "done": true
+                        }
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // Wait for server to be ready
@@ -143,6 +213,9 @@ async fn test_ollama_generate() -> E2EResult<()> {
     println!("✓ Generated response: {}", response_text);
     assert!(!response_text.is_empty(), "Response should not be empty");
 
+    // Verify mock expectations
+    server.verify_mocks().await?;
+
     println!("✓ Ollama Generate test completed\n");
     Ok(())
 }
@@ -154,7 +227,42 @@ async fn test_ollama_chat() -> E2EResult<()> {
     let prompt = "Open Ollama on port {AVAILABLE_PORT}. This is an Ollama-compatible API server. \
         When clients send POST /api/chat requests, use the backend Ollama to generate chat responses.";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: User command to open Ollama server
+                .on_instruction_containing("Open Ollama")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "Ollama",
+                        "instruction": "Handle Ollama chat requests"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Chat request (POST /api/chat)
+                .on_event("ollama_chat_request")
+                .and_event_data_contains("model", "qwen2.5-coder:0.5b")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_ollama_response",
+                        "body": {
+                            "model": "qwen2.5-coder:0.5b",
+                            "message": {
+                                "role": "assistant",
+                                "content": "NetGet Ollama Chat"
+                            },
+                            "done": true
+                        }
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     // Wait for server to be ready
@@ -221,6 +329,9 @@ async fn test_ollama_chat() -> E2EResult<()> {
     println!("✓ Chat response: {}", content);
     assert!(!content.is_empty(), "Response content should not be empty");
 
+    // Verify mock expectations
+    server.verify_mocks().await?;
+
     println!("✓ Ollama Chat test completed\n");
     Ok(())
 }
@@ -231,7 +342,39 @@ async fn test_ollama_invalid_endpoint() -> E2EResult<()> {
 
     let prompt = "Open Ollama on port {AVAILABLE_PORT}. This is an Ollama-compatible API server.";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let config = ServerConfig::new(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: User command to open Ollama server
+                .on_instruction_containing("Open Ollama")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "Ollama",
+                        "instruction": "Handle Ollama API server"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Invalid endpoint request - HTTP layer returns 404
+                .on_event("http_request_received")
+                .and_event_data_contains("path", "/api/nonexistent")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http_response",
+                        "status": 404,
+                        "headers": {
+                            "Content-Type": "application/json"
+                        },
+                        "body": "{\"error\":\"Endpoint not found\"}"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let server = helpers::start_netget_server(config).await?;
     println!("Server started on port {}", server.port);
 
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -257,6 +400,9 @@ async fn test_ollama_invalid_endpoint() -> E2EResult<()> {
         json.get("error").is_some(),
         "Expected 'error' field in response"
     );
+
+    // Verify mock expectations
+    server.verify_mocks().await?;
 
     println!("✓ Ollama Invalid Endpoint test completed\n");
     Ok(())

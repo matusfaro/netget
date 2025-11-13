@@ -85,7 +85,59 @@ mod e2e_bitcoin {
              Then send verack to complete the handshake. \
              After receiving verack from peer, handshake is complete.";
 
-        let server = start_netget_server(ServerConfig::new(prompt)).await?;
+        let config = ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: User command to open server
+                    .on_instruction_containing("listen on port")
+                    .and_instruction_containing("bitcoin")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "Bitcoin",
+                            "startup_params": {
+                                "network": "mainnet"
+                            },
+                            "instruction": "Handle Bitcoin P2P protocol"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Connection opened (wait for version)
+                    .on_event("bitcoin_connection_opened")
+                    .respond_with_actions(serde_json::json!([]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: Version message received
+                    .on_event("bitcoin_message_received")
+                    .and_event_data_contains("message_type", "version")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_version",
+                            "network": "mainnet",
+                            "version": 70015,
+                            "services": 0,
+                            "user_agent": "/NetGet:0.1.0/",
+                            "start_height": 0,
+                            "relay": false
+                        },
+                        {
+                            "type": "send_verack",
+                            "network": "mainnet"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 4: Verack received from peer
+                    .on_event("bitcoin_message_received")
+                    .and_event_data_contains("message_type", "verack")
+                    .respond_with_actions(serde_json::json!([]))
+                    .expect_calls(1)
+                    .and()
+            });
+
+        let server = start_netget_server(config).await?;
 
         // Wait for server to be ready
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -151,6 +203,9 @@ mod e2e_bitcoin {
 
         println!("  [TEST] ✓ Bitcoin P2P handshake completed successfully");
 
+        // Verify mock expectations
+        server.verify_mocks().await?;
+
         server.stop().await?;
         println!("  [TEST] ✓ Test completed successfully\n");
 
@@ -165,7 +220,77 @@ mod e2e_bitcoin {
              Complete the version/verack handshake with peers. \
              When you receive a ping message, respond with a pong message using the same nonce.";
 
-        let server = start_netget_server(ServerConfig::new(prompt)).await?;
+        let config = ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: User command to open server
+                    .on_instruction_containing("listen on port")
+                    .and_instruction_containing("bitcoin")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "Bitcoin",
+                            "startup_params": {
+                                "network": "mainnet"
+                            },
+                            "instruction": "Handle handshake and ping/pong"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Connection opened
+                    .on_event("bitcoin_connection_opened")
+                    .respond_with_actions(serde_json::json!([]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: Version received
+                    .on_event("bitcoin_message_received")
+                    .and_event_data_contains("message_type", "version")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_version",
+                            "network": "mainnet",
+                            "version": 70015
+                        },
+                        {
+                            "type": "send_verack",
+                            "network": "mainnet"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 4: Verack received
+                    .on_event("bitcoin_message_received")
+                    .and_event_data_contains("message_type", "verack")
+                    .respond_with_actions(serde_json::json!([]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 5: Ping received - extract nonce and respond
+                    .on_event("bitcoin_message_received")
+                    .and_event_data_contains("message_type", "ping")
+                    .respond_with_custom_fn(|context| {
+                        // Extract nonce from ping message
+                        let nonce = context.event_data
+                            .as_ref()
+                            .and_then(|d| d.get("message"))
+                            .and_then(|m| m.get("nonce"))
+                            .and_then(|n| n.as_u64())
+                            .unwrap_or(0);
+
+                        serde_json::json!([
+                            {
+                                "type": "send_pong",
+                                "network": "mainnet",
+                                "nonce": nonce
+                            }
+                        ])
+                    })
+                    .expect_calls(1)
+                    .and()
+            });
+
+        let server = start_netget_server(config).await?;
         tokio::time::sleep(Duration::from_secs(2)).await;
 
         println!("  [TEST] Establishing Bitcoin P2P connection");
@@ -218,6 +343,9 @@ mod e2e_bitcoin {
             }
         }
 
+        // Verify mock expectations
+        server.verify_mocks().await?;
+
         server.stop().await?;
         println!("  [TEST] ✓ Test completed successfully\n");
 
@@ -232,7 +360,61 @@ mod e2e_bitcoin {
              Complete handshake normally. \
              When you receive a getaddr message, respond with an addr message containing an empty list (no peers to share).";
 
-        let server = start_netget_server(ServerConfig::new(prompt)).await?;
+        let config = ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: User command to open server
+                    .on_instruction_containing("listen on port")
+                    .and_instruction_containing("bitcoin")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "Bitcoin",
+                            "startup_params": {
+                                "network": "mainnet"
+                            },
+                            "instruction": "Handle handshake and getaddr"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Connection opened
+                    .on_event("bitcoin_connection_opened")
+                    .respond_with_actions(serde_json::json!([]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: Version received
+                    .on_event("bitcoin_message_received")
+                    .and_event_data_contains("message_type", "version")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_version",
+                            "network": "mainnet",
+                            "version": 70015
+                        },
+                        {
+                            "type": "send_verack",
+                            "network": "mainnet"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 4: Verack received
+                    .on_event("bitcoin_message_received")
+                    .and_event_data_contains("message_type", "verack")
+                    .respond_with_actions(serde_json::json!([]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 5: Getaddr received - no response (no peers to share)
+                    .on_event("bitcoin_message_received")
+                    .and_event_data_contains("message_type", "getaddr")
+                    .respond_with_actions(serde_json::json!([]))
+                    .expect_calls(1)
+                    .and()
+            });
+
+        let server = start_netget_server(config).await?;
         tokio::time::sleep(Duration::from_secs(2)).await;
 
         println!("  [TEST] Establishing connection");
@@ -289,6 +471,9 @@ mod e2e_bitcoin {
             }
         }
 
+        // Verify mock expectations
+        server.verify_mocks().await?;
+
         server.stop().await?;
         println!("  [TEST] ✓ Test completed successfully\n");
 
@@ -302,7 +487,47 @@ mod e2e_bitcoin {
         let prompt = "listen on port 0 via bitcoin with network=testnet. \
              Accept version messages and respond appropriately for testnet.";
 
-        let server = start_netget_server(ServerConfig::new(prompt)).await?;
+        let config = ServerConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: User command to open server
+                    .on_instruction_containing("listen on port")
+                    .and_instruction_containing("bitcoin")
+                    .and_instruction_containing("testnet")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "Bitcoin",
+                            "startup_params": {
+                                "network": "testnet"
+                            },
+                            "instruction": "Handle testnet Bitcoin P2P"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Connection opened
+                    .on_event("bitcoin_connection_opened")
+                    .respond_with_actions(serde_json::json!([]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: Version received - respond with testnet version
+                    .on_event("bitcoin_message_received")
+                    .and_event_data_contains("message_type", "version")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_version",
+                            "network": "testnet",
+                            "version": 70015,
+                            "user_agent": "/NetGet:0.1.0/"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
+
+        let server = start_netget_server(config).await?;
         tokio::time::sleep(Duration::from_secs(2)).await;
 
         println!("  [TEST] Connecting to testnet server");
@@ -365,6 +590,9 @@ mod e2e_bitcoin {
                 return Err(format!("Expected version message, got {:?}", other).into());
             }
         }
+
+        // Verify mock expectations
+        server.verify_mocks().await?;
 
         server.stop().await?;
         println!("  [TEST] ✓ Test completed successfully\n");

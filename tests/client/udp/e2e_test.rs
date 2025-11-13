@@ -16,7 +16,14 @@ mod udp_client_tests {
         // Start a UDP server listening on an available port
         let server_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via UDP. Echo received datagrams back to sender.",
-        );
+        )
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("udp")
+                .respond_with_actions(serde_json::json!([{"type": "open_client", "protocol": "UDP", "instruction": "UDP client"}]))
+                .expect_calls(1)
+                .and()
+        })
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -44,7 +51,13 @@ mod udp_client_tests {
         println!("✅ UDP client connected to server successfully");
 
         // Cleanup
+
+    // Verify mocks
+    server.verify_mocks().await?;
         server.stop().await?;
+
+    // Verify mocks
+    client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -57,7 +70,14 @@ mod udp_client_tests {
         // Start a simple UDP server
         let server_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via UDP. Log all incoming datagrams.",
-        );
+        )
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("udp")
+                .respond_with_actions(serde_json::json!([{"type": "open_client", "protocol": "UDP", "instruction": "UDP client"}]))
+                .expect_calls(1)
+                .and()
+        })
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -79,7 +99,13 @@ mod udp_client_tests {
         println!("✅ UDP client responded to LLM instruction");
 
         // Cleanup
+
+    // Verify mocks
+    server.verify_mocks().await?;
         server.stop().await?;
+
+    // Verify mocks
+    client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -90,7 +116,14 @@ mod udp_client_tests {
     #[tokio::test]
     async fn test_udp_client_receive_and_respond() -> E2EResult<()> {
         // Start a UDP server that sends a datagram immediately upon receiving one
-        let server_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via UDP. When you receive a datagram, send 'PONG' back.");
+        let server_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via UDP. When you receive a datagram, send 'PONG' back.")
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("udp")
+                .respond_with_actions(serde_json::json!([{"type": "open_client", "protocol": "UDP", "instruction": "UDP client"}]))
+                .expect_calls(1)
+                .and()
+        })
 
         let mut server = start_netget_server(server_config).await?;
 
@@ -117,7 +150,13 @@ mod udp_client_tests {
         println!("✅ UDP client received and processed response");
 
         // Cleanup
+
+    // Verify mocks
+    server.verify_mocks().await?;
         server.stop().await?;
+
+    // Verify mocks
+    client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())
@@ -130,14 +169,28 @@ mod udp_client_tests {
         // Start two UDP servers
         let server1_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via UDP. Log 'SERVER1' for each datagram.",
-        );
+        )
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("udp")
+                .respond_with_actions(serde_json::json!([{"type": "open_client", "protocol": "UDP", "instruction": "UDP client"}]))
+                .expect_calls(1)
+                .and()
+        })
         let mut server1 = start_netget_server(server1_config).await?;
 
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         let server2_config = NetGetConfig::new(
             "Listen on port {AVAILABLE_PORT} via UDP. Log 'SERVER2' for each datagram.",
-        );
+        )
+        .with_mock(|mock| {
+            mock
+                .on_instruction_containing("udp")
+                .respond_with_actions(serde_json::json!([{"type": "open_client", "protocol": "UDP", "instruction": "UDP client"}]))
+                .expect_calls(1)
+                .and()
+        })
         let mut server2 = start_netget_server(server2_config).await?;
 
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -160,6 +213,9 @@ mod udp_client_tests {
         // Cleanup
         server1.stop().await?;
         server2.stop().await?;
+
+    // Verify mocks
+    client.verify_mocks().await?;
         client.stop().await?;
 
         Ok(())

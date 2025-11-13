@@ -12,8 +12,7 @@ use std::time::Duration;
 #[tokio::test]
 async fn test_sip_comprehensive() -> E2EResult<()> {
     // Single comprehensive server with scripting for all test cases
-    let config = ServerConfig::new(
-        r#"listen on port 0 via sip
+    let prompt = r#"listen on port 0 via sip
 
 You are a SIP (Session Initiation Protocol) server implementing RFC 3261.
 
@@ -45,9 +44,28 @@ ACKNOWLEDGMENT (ACK method):
 - No response needed (ACK is not a request that requires response)
 
 Use scripting mode to handle all requests without LLM calls after initial setup.
-"#,
-    )
-    .with_log_level("off");
+"#;
+
+    let config = helpers::NetGetConfig::new(prompt)
+        .with_log_level("off")
+        .with_mock(|mock| {
+            mock
+                // Mock: Server startup with scripting
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("SIP")
+                .and_instruction_containing("scripting")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "SIP",
+                        "instruction": prompt,
+                        "scripting": true
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
     let test_state = start_netget_server(config).await?;
 
@@ -219,6 +237,9 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
     println!("✓ charlie→bob INVITE rejected as expected");
 
     println!("\n✓ All SIP tests passed!");
+
+    // Verify mock expectations were met
+    test_state.verify_mocks().await?;
 
     // Cleanup
     test_state.stop().await?;

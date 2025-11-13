@@ -17,7 +17,60 @@ mod tests {
         println!("\n=== Test: Elasticsearch Search ===");
 
         let prompt = "Start Elasticsearch on port 0 with product search";
-        let config = ServerConfig::new(prompt).with_log_level("off");
+        let config = ServerConfig::new(prompt)
+            .with_log_level("off")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("Start Elasticsearch")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "HTTP",
+                            "protocol": "ELASTICSEARCH",
+                            "instruction": "Elasticsearch search engine with product index"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: HTTP request received (search query)
+                    .on_event("http_request_received")
+                    .and_event_data_contains("path", "/_search")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "http_response",
+                            "status_code": 200,
+                            "headers": {
+                                "Content-Type": "application/json",
+                                "X-elastic-product": "Elasticsearch"
+                            },
+                            "body": json!({
+                                "took": 1,
+                                "timed_out": false,
+                                "hits": {
+                                    "total": {"value": 2, "relation": "eq"},
+                                    "hits": [
+                                        {
+                                            "_index": "products",
+                                            "_id": "1",
+                                            "_score": 1.0,
+                                            "_source": {"name": "Widget", "price": 19.99}
+                                        },
+                                        {
+                                            "_index": "products",
+                                            "_id": "2",
+                                            "_score": 1.0,
+                                            "_source": {"name": "Gadget", "price": 29.99}
+                                        }
+                                    ]
+                                }
+                            }).to_string()
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let server = start_netget_server(config).await?;
         println!(
@@ -71,6 +124,9 @@ mod tests {
 
         println!("[PASS] Elasticsearch search request succeeded with valid JSON response");
 
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+
         server.stop().await?;
         println!("=== Test Complete ===\n");
         Ok(())
@@ -81,7 +137,45 @@ mod tests {
         println!("\n=== Test: Elasticsearch Index Document ===");
 
         let prompt = "Start an Elasticsearch server on port 0";
-        let config = ServerConfig::new(prompt).with_log_level("off");
+        let config = ServerConfig::new(prompt)
+            .with_log_level("off")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("Start an Elasticsearch")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "HTTP",
+                            "protocol": "ELASTICSEARCH",
+                            "instruction": "Elasticsearch server"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: HTTP PUT request to index document
+                    .on_event("http_request_received")
+                    .and_event_data_contains("method", "PUT")
+                    .and_event_data_contains("path", "/_doc/")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "http_response",
+                            "status_code": 200,
+                            "headers": {
+                                "Content-Type": "application/json"
+                            },
+                            "body": json!({
+                                "_index": "products",
+                                "_id": "1",
+                                "_version": 1,
+                                "result": "created"
+                            }).to_string()
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let server = start_netget_server(config).await?;
         println!(
@@ -126,6 +220,9 @@ mod tests {
 
         println!("[PASS] Elasticsearch index document succeeded");
 
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+
         server.stop().await?;
         println!("=== Test Complete ===\n");
         Ok(())
@@ -136,7 +233,49 @@ mod tests {
         println!("\n=== Test: Elasticsearch Get Document ===");
 
         let prompt = "Start Elasticsearch on port 0 with product id 123";
-        let config = ServerConfig::new(prompt).with_log_level("off");
+        let config = ServerConfig::new(prompt)
+            .with_log_level("off")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("Start Elasticsearch")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "HTTP",
+                            "protocol": "ELASTICSEARCH",
+                            "instruction": "Elasticsearch with product id 123"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: HTTP GET request for document
+                    .on_event("http_request_received")
+                    .and_event_data_contains("method", "GET")
+                    .and_event_data_contains("path", "/_doc/123")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "http_response",
+                            "status_code": 200,
+                            "headers": {
+                                "Content-Type": "application/json"
+                            },
+                            "body": json!({
+                                "_index": "products",
+                                "_id": "123",
+                                "_version": 1,
+                                "found": true,
+                                "_source": {
+                                    "name": "Product 123",
+                                    "price": 99.99
+                                }
+                            }).to_string()
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let server = start_netget_server(config).await?;
         println!(
@@ -172,6 +311,9 @@ mod tests {
 
         println!("[PASS] Elasticsearch get document succeeded");
 
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+
         server.stop().await?;
         println!("=== Test Complete ===\n");
         Ok(())
@@ -182,7 +324,64 @@ mod tests {
         println!("\n=== Test: Elasticsearch Bulk Operations ===");
 
         let prompt = "Start an Elasticsearch server on port 0 that handles bulk requests";
-        let config = ServerConfig::new(prompt).with_log_level("off");
+        let config = ServerConfig::new(prompt)
+            .with_log_level("off")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("Elasticsearch")
+                    .and_instruction_containing("bulk")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "HTTP",
+                            "protocol": "ELASTICSEARCH",
+                            "instruction": "Elasticsearch server with bulk operations"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: HTTP POST to /_bulk
+                    .on_event("http_request_received")
+                    .and_event_data_contains("method", "POST")
+                    .and_event_data_contains("path", "/_bulk")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "http_response",
+                            "status_code": 200,
+                            "headers": {
+                                "Content-Type": "application/json"
+                            },
+                            "body": json!({
+                                "took": 2,
+                                "errors": false,
+                                "items": [
+                                    {
+                                        "index": {
+                                            "_index": "products",
+                                            "_id": "1",
+                                            "_version": 1,
+                                            "result": "created",
+                                            "status": 201
+                                        }
+                                    },
+                                    {
+                                        "index": {
+                                            "_index": "products",
+                                            "_id": "2",
+                                            "_version": 1,
+                                            "result": "created",
+                                            "status": 201
+                                        }
+                                    }
+                                ]
+                            }).to_string()
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let server = start_netget_server(config).await?;
         println!(
@@ -229,6 +428,9 @@ mod tests {
 
         println!("[PASS] Elasticsearch bulk operations succeeded");
 
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+
         server.stop().await?;
         println!("=== Test Complete ===\n");
         Ok(())
@@ -239,7 +441,50 @@ mod tests {
         println!("\n=== Test: Elasticsearch Cluster Health ===");
 
         let prompt = "Start an Elasticsearch cluster on port 0";
-        let config = ServerConfig::new(prompt).with_log_level("off");
+        let config = ServerConfig::new(prompt)
+            .with_log_level("off")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("Elasticsearch cluster")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "HTTP",
+                            "protocol": "ELASTICSEARCH",
+                            "instruction": "Elasticsearch cluster"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: HTTP GET to /_cluster/health
+                    .on_event("http_request_received")
+                    .and_event_data_contains("path", "/_cluster/health")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "http_response",
+                            "status_code": 200,
+                            "headers": {
+                                "Content-Type": "application/json"
+                            },
+                            "body": json!({
+                                "cluster_name": "netget-cluster",
+                                "status": "green",
+                                "timed_out": false,
+                                "number_of_nodes": 1,
+                                "number_of_data_nodes": 1,
+                                "active_primary_shards": 5,
+                                "active_shards": 5,
+                                "relocating_shards": 0,
+                                "initializing_shards": 0,
+                                "unassigned_shards": 0
+                            }).to_string()
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let server = start_netget_server(config).await?;
         println!(
@@ -274,6 +519,9 @@ mod tests {
 
         println!("[PASS] Elasticsearch cluster health succeeded");
 
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+
         server.stop().await?;
         println!("=== Test Complete ===\n");
         Ok(())
@@ -284,7 +532,53 @@ mod tests {
         println!("\n=== Test: Elasticsearch Root Endpoint ===");
 
         let prompt = "Start an Elasticsearch search engine on port 0";
-        let config = ServerConfig::new(prompt).with_log_level("off");
+        let config = ServerConfig::new(prompt)
+            .with_log_level("off")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("Elasticsearch search engine")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "HTTP",
+                            "protocol": "ELASTICSEARCH",
+                            "instruction": "Elasticsearch search engine"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: HTTP GET to / (root endpoint)
+                    .on_event("http_request_received")
+                    .and_event_data_contains("path", "/")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "http_response",
+                            "status_code": 200,
+                            "headers": {
+                                "Content-Type": "application/json",
+                                "X-elastic-product": "Elasticsearch"
+                            },
+                            "body": json!({
+                                "name": "netget-node",
+                                "cluster_name": "netget-cluster",
+                                "cluster_uuid": "test-uuid-1234",
+                                "version": {
+                                    "number": "8.11.0",
+                                    "build_flavor": "default",
+                                    "build_type": "tar",
+                                    "build_hash": "test",
+                                    "build_date": "2024-01-01T00:00:00.000Z",
+                                    "lucene_version": "9.8.0"
+                                },
+                                "tagline": "You Know, for Search"
+                            }).to_string()
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let server = start_netget_server(config).await?;
         println!(
@@ -331,6 +625,9 @@ mod tests {
 
         println!("[PASS] Elasticsearch root endpoint succeeded");
 
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+
         server.stop().await?;
         println!("=== Test Complete ===\n");
         Ok(())
@@ -341,7 +638,45 @@ mod tests {
         println!("\n=== Test: Elasticsearch Delete Document ===");
 
         let prompt = "Start Elasticsearch on port 0";
-        let config = ServerConfig::new(prompt).with_log_level("off");
+        let config = ServerConfig::new(prompt)
+            .with_log_level("off")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("Start Elasticsearch")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "HTTP",
+                            "protocol": "ELASTICSEARCH",
+                            "instruction": "Elasticsearch server"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: HTTP DELETE request
+                    .on_event("http_request_received")
+                    .and_event_data_contains("method", "DELETE")
+                    .and_event_data_contains("path", "/_doc/999")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "http_response",
+                            "status_code": 200,
+                            "headers": {
+                                "Content-Type": "application/json"
+                            },
+                            "body": json!({
+                                "_index": "products",
+                                "_id": "999",
+                                "_version": 2,
+                                "result": "deleted"
+                            }).to_string()
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let server = start_netget_server(config).await?;
         println!(
@@ -375,6 +710,9 @@ mod tests {
         );
 
         println!("[PASS] Elasticsearch delete document succeeded");
+
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
 
         server.stop().await?;
         println!("=== Test Complete ===\n");

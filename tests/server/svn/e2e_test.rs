@@ -1,68 +1,9 @@
 #[cfg(all(test, feature = "svn"))]
 mod svn_e2e_test {
-    use netget::llm::ollama_client::OllamaClient;
-    use netget::state::app_state::AppState;
-    use std::sync::Arc;
+    use crate::helpers::{E2EResult, NetGetConfig};
     use std::time::Duration;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::TcpStream;
-
-    const TEST_MODEL: &str = "qwen2.5-coder:0.5b";
-
-    async fn start_svn_server(instruction: &str) -> (Arc<AppState>, String) {
-        let state = Arc::new(AppState::new());
-        let (status_tx, mut status_rx) = tokio::sync::mpsc::unbounded_channel();
-
-        // Use Ollama lock for concurrent test safety
-        let ollama_lock = std::env::var("OLLAMA_LOCK_PATH").ok();
-        let ollama_client = OllamaClient::new(
-            "http://localhost:11434",
-            TEST_MODEL,
-            0.7,
-            ollama_lock.as_deref(),
-        )
-        .expect("Failed to create Ollama client");
-
-        // Open SVN server via user input
-        let user_input = format!(
-            "listen on port {{{{AVAILABLE_PORT}}}} via svn\n{}",
-            instruction
-        );
-        state
-            .handle_user_input(&user_input, &ollama_client, status_tx.clone())
-            .await
-            .expect("Failed to start server");
-
-        // Wait for server to start and extract address
-        let mut server_addr = None;
-        let timeout = tokio::time::sleep(Duration::from_secs(10));
-        tokio::pin!(timeout);
-
-        loop {
-            tokio::select! {
-                Some(msg) = status_rx.recv() => {
-                    if msg.contains("listening on") {
-                        // Extract address from message like "SVN server (action-based) listening on 127.0.0.1:12345"
-                        if let Some(addr_start) = msg.rfind("127.0.0.1:") {
-                            let addr_str = &msg[addr_start..];
-                            if let Some(addr_end) = addr_str.find(|c: char| !c.is_ascii_digit() && c != '.' && c != ':') {
-                                server_addr = Some(addr_str[..addr_end].to_string());
-                            } else {
-                                server_addr = Some(addr_str.to_string());
-                            }
-                            break;
-                        }
-                    }
-                }
-                _ = &mut timeout => {
-                    panic!("Timeout waiting for SVN server to start");
-                }
-            }
-        }
-
-        let addr = server_addr.expect("Failed to extract server address");
-        (state, addr)
-    }
 
     async fn send_svn_command(addr: &str, command: &str) -> String {
         let mut stream = TcpStream::connect(addr)
@@ -96,16 +37,50 @@ mod svn_e2e_test {
     }
 
     #[tokio::test]
-    #[ignore = "requires ollama"]
-    async fn test_svn_greeting() {
-        let instruction = r#"
-When client connects, send protocol greeting with:
-  - Protocol version 2 (min and max)
-  - ANONYMOUS authentication mechanism
-  - edit-pipeline and svndiff1 capabilities
-"#;
+    async fn test_svn_greeting() -> E2EResult<()> {
+        println!("\n=== E2E Test: SVN Greeting with Mocks ===");
 
-        let (_state, addr) = start_svn_server(instruction).await;
+        let config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via SVN")
+            .with_log_level("info")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("Listen on port")
+                    .and_instruction_containing("SVN")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "SVN",
+                            "instruction": "SVN server with protocol greeting"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: SVN greeting event
+                    .on_event("svn_greeting")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_svn_greeting",
+                            "min_version": 2,
+                            "max_version": 2,
+                            "mechanisms": ["ANONYMOUS"],
+                            "capabilities": ["edit-pipeline", "svndiff1"]
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
+
+        let mut server = crate::helpers::start_netget(config).await?;
+
+        // Extract server port
+        assert!(!server.servers.is_empty(), "Expected at least one server");
+        let port = server.servers[0].port;
+        let addr = format!("127.0.0.1:{}", port);
+
+        // Wait for server to be ready
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Connect and read greeting
         let stream = TcpStream::connect(&addr).await.expect("Failed to connect");
@@ -126,18 +101,71 @@ When client connects, send protocol greeting with:
         );
 
         println!("✓ SVN greeting test passed");
+
+        // Verify mock expectations
+        server.verify_mocks().await?;
+
+        // Cleanup
+        server.stop().await?;
+        Ok(())
     }
 
     #[tokio::test]
-    #[ignore = "requires ollama"]
-    async fn test_svn_get_latest_rev() {
-        let instruction = r#"
-Send standard greeting on connect.
-For get-latest-rev command, respond with revision number 42.
-Use send_svn_success action with data: "42"
-"#;
+    async fn test_svn_get_latest_rev() -> E2EResult<()> {
+        println!("\n=== E2E Test: SVN Get Latest Revision with Mocks ===");
 
-        let (_state, addr) = start_svn_server(instruction).await;
+        let config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via SVN")
+            .with_log_level("info")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("Listen on port")
+                    .and_instruction_containing("SVN")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "SVN",
+                            "instruction": "SVN server"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: SVN greeting event
+                    .on_event("svn_greeting")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_svn_greeting",
+                            "min_version": 2,
+                            "max_version": 2,
+                            "mechanisms": ["ANONYMOUS"],
+                            "capabilities": ["edit-pipeline"]
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: get-latest-rev command
+                    .on_event("svn_command")
+                    .and_event_data_contains("command", "get-latest-rev")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_svn_success",
+                            "data": "42"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
+
+        let mut server = crate::helpers::start_netget(config).await?;
+
+        // Extract server port
+        assert!(!server.servers.is_empty(), "Expected at least one server");
+        let port = server.servers[0].port;
+        let addr = format!("127.0.0.1:{}", port);
+
+        // Wait for server to be ready
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
         let response = send_svn_command(&addr, "( get-latest-rev )").await;
         println!("Received response: {}", response);
@@ -149,6 +177,13 @@ Use send_svn_success action with data: "42"
         );
 
         println!("✓ SVN get-latest-rev test passed");
+
+        // Verify mock expectations
+        server.verify_mocks().await?;
+
+        // Cleanup
+        server.stop().await?;
+        Ok(())
     }
 
     #[tokio::test]

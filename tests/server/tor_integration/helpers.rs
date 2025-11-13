@@ -2,6 +2,7 @@
 
 use super::super::helpers::{self, ServerConfig};
 use anyhow::Result;
+use serde_json::json;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::TcpListener;
@@ -52,7 +53,23 @@ impl TorTestNetwork {
 
         // 2. Start NetGet Tor Relay
         let relay_prompt = "listen on port {AVAILABLE_PORT} via tor-relay. Handle TLS connections and Tor cells. Allow exit connections to localhost for testing.";
-        let relay_config = ServerConfig::new_no_scripts(relay_prompt).with_log_level("info");
+        let relay_config = ServerConfig::new_no_scripts(relay_prompt)
+            .with_log_level("info")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Relay server startup
+                    .on_instruction_containing("tor-relay")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "TorRelay",
+                            "instruction": "Tor exit relay allowing localhost connections"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
         let relay_server = helpers::start_netget_server(relay_config)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to start relay: {}", e))?;
@@ -79,8 +96,41 @@ impl TorTestNetwork {
              respond with this document:\n\n{}\n\nFor microdescriptor requests, return appropriate microdescriptors.",
             consensus
         );
+        let consensus_copy = consensus.clone();
         let directory_config =
-            ServerConfig::new_no_scripts(directory_prompt).with_log_level("info");
+            ServerConfig::new_no_scripts(directory_prompt)
+                .with_log_level("info")
+                .with_mock(|mock| {
+                    mock
+                        // Mock 1: Directory server startup
+                        .on_instruction_containing("tor-directory")
+                        .respond_with_actions(json!([
+                            {
+                                "type": "open_server",
+                                "port": 0,
+                                "base_stack": "HTTP",
+                                "protocol": "TOR_DIRECTORY",
+                                "instruction": "Tor directory serving custom consensus"
+                            }
+                        ]))
+                        .expect_calls(1)
+                        .and()
+                        // Mock 2: Consensus request
+                        .on_event("http_request_received")
+                        .and_event_data_contains("path", "/tor/status-vote/current/consensus")
+                        .respond_with_actions(json!([
+                            {
+                                "type": "http_response",
+                                "status_code": 200,
+                                "headers": {
+                                    "Content-Type": "text/plain"
+                                },
+                                "body": consensus_copy
+                            }
+                        ]))
+                        .min_calls(1)
+                        .and()
+                });
         let directory_server = helpers::start_netget_server(directory_config)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to start directory: {}", e))?;
@@ -110,6 +160,12 @@ impl TorTestNetwork {
 
     /// Shutdown the test network
     pub async fn shutdown(mut self) -> Result<()> {
+        // Verify mock expectations before shutdown
+        self.relay.verify_mocks().await
+            .map_err(|e| anyhow::anyhow!("Relay mock verification failed: {}", e))?;
+        self.directory.verify_mocks().await
+            .map_err(|e| anyhow::anyhow!("Directory mock verification failed: {}", e))?;
+
         self.relay
             .stop()
             .await

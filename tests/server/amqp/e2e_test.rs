@@ -102,7 +102,44 @@ async fn test_amqp_keyword_detection() -> E2EResult<()> {
 async fn test_amqp_basic_connect() -> E2EResult<()> {
     let config =
         ServerConfig::new("Start an AMQP broker on port 0. Accept all client connections and send Connection.Start.")
-            .with_log_level("debug");
+            .with_log_level("debug")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup (user command)
+                    .on_instruction_containing("Start an AMQP broker")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "AMQP",
+                            "instruction": "Accept all client connections and send Connection.Start"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Client connection received
+                    .on_event("amqp_connection_received")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "send_amqp_frame",
+                            "channel": 0,
+                            "method_name": "Connection.Start",
+                            "arguments": {
+                                "version_major": 0,
+                                "version_minor": 9,
+                                "server_properties": {
+                                    "product": "NetGet-AMQP",
+                                    "version": "0.1.0",
+                                    "platform": "Rust"
+                                },
+                                "mechanisms": "PLAIN",
+                                "locales": "en_US"
+                            }
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
     let test_state = start_netget_server(config).await?;
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -135,6 +172,9 @@ async fn test_amqp_basic_connect() -> E2EResult<()> {
         }
     }
 
+    // Verify mock expectations
+    test_state.verify_mocks().await?;
+
     test_state.stop().await?;
     Ok(())
 }
@@ -149,7 +189,40 @@ async fn test_amqp_protocol_header() -> E2EResult<()> {
 
     let config =
         ServerConfig::new("Start an AMQP broker on port 0. Validate AMQP protocol headers.")
-            .with_log_level("debug");
+            .with_log_level("debug")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("Start an AMQP broker")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "AMQP",
+                            "instruction": "Validate AMQP protocol headers"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Protocol header received
+                    .on_event("amqp_connection_received")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "send_amqp_frame",
+                            "channel": 0,
+                            "method_name": "Connection.Start",
+                            "arguments": {
+                                "version_major": 0,
+                                "version_minor": 9,
+                                "server_properties": {},
+                                "mechanisms": "PLAIN",
+                                "locales": "en_US"
+                            }
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
     let test_state = start_netget_server(config).await?;
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -182,6 +255,9 @@ async fn test_amqp_protocol_header() -> E2EResult<()> {
         }
     }
 
+    // Verify mock expectations
+    test_state.verify_mocks().await?;
+
     test_state.stop().await?;
     Ok(())
 }
@@ -194,7 +270,31 @@ async fn test_amqp_invalid_header_rejection() -> E2EResult<()> {
 
     let config =
         ServerConfig::new("Start an AMQP broker on port 0. Reject invalid protocol headers.")
-            .with_log_level("debug");
+            .with_log_level("debug")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup
+                    .on_instruction_containing("Start an AMQP broker")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "AMQP",
+                            "instruction": "Reject invalid protocol headers"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Invalid data received - close connection
+                    .on_event("amqp_invalid_header")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "close_connection"
+                        }
+                    ]))
+                    .expect_calls(0)  // May or may not trigger depending on implementation
+                    .and()
+            });
 
     let test_state = start_netget_server(config).await?;
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -225,6 +325,9 @@ async fn test_amqp_invalid_header_rejection() -> E2EResult<()> {
             println!("⚠ Timeout (broker may have silently dropped connection)");
         }
     }
+
+    // Verify mock expectations
+    test_state.verify_mocks().await?;
 
     test_state.stop().await?;
     Ok(())

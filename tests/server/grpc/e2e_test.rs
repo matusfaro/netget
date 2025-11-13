@@ -107,8 +107,41 @@ When you receive GetUser requests, respond with a User message containing the re
         proto_text
     );
 
-    // Start the server
-    let mut server = helpers::start_netget_server(ServerConfig::new_no_scripts(prompt)).await?;
+    // Start the server with mocks
+    let server_config = ServerConfig::new_no_scripts(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup (user command)
+                .on_instruction_containing("gRPC server")
+                .and_instruction_containing("GetUser")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "gRPC",
+                        "instruction": "Respond to GetUser with id, name Alice, email alice@example.com",
+                        "proto_schema": proto_text
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Handle incoming gRPC request
+                .on_event("grpc_unary_request")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "grpc_unary_response",
+                        "message": {
+                            "id": 123,
+                            "name": "Alice",
+                            "email": "alice@example.com"
+                        }
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let mut server = helpers::start_netget_server(server_config).await?;
     println!(
         "Server started: {} stack on port {}",
         server.stack, server.port
@@ -178,6 +211,10 @@ When you receive GetUser requests, respond with a User message containing the re
     assert_eq!(grpc_status, "0", "Expected grpc-status: 0");
 
     println!("✓ gRPC request successful");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())
@@ -209,8 +246,27 @@ When you receive CreateUser requests, respond with a User message having id=456 
         proto_file.display()
     );
 
-    // Start the server
-    let mut server = helpers::start_netget_server(ServerConfig::new_no_scripts(prompt)).await?;
+    // Start the server with mocks
+    let server_config = ServerConfig::new_no_scripts(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock: Server startup with file loading
+                .on_instruction_containing("gRPC server")
+                .and_instruction_containing("proto")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "gRPC",
+                        "instruction": "Respond to CreateUser with id=456, copy name and email from request",
+                        "proto_file_path": proto_file.display().to_string()
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let mut server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
 
     // Give server time to load schema
@@ -227,6 +283,10 @@ When you receive CreateUser requests, respond with a User message having id=456 
     }
 
     println!("✓ Proto file loading test passed");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     server.stop().await?;
 
     // Clean up proto file AFTER server is stopped
@@ -259,8 +319,27 @@ When you receive GetUser requests, respond with a User message containing the re
         proto_text
     );
 
-    // Start the server
-    let mut server = helpers::start_netget_server(ServerConfig::new_no_scripts(prompt)).await?;
+    // Start the server with mocks
+    let server_config = ServerConfig::new_no_scripts(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock: Server startup with inline proto text
+                .on_instruction_containing("gRPC server")
+                .and_instruction_containing("protobuf schema")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "gRPC",
+                        "instruction": "Respond to GetUser with id, name Bob, email bob@test.com",
+                        "proto_schema": proto_text
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let mut server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
 
     // Give server time to compile and load schema
@@ -273,6 +352,10 @@ When you receive GetUser requests, respond with a User message containing the re
     );
 
     println!("✓ Proto text inline loading test passed");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())
@@ -308,8 +391,38 @@ When you receive GetUser requests:
         proto_text
     );
 
-    // Start the server
-    let mut server = helpers::start_netget_server(ServerConfig::new_no_scripts(prompt)).await?;
+    // Start the server with mocks
+    let server_config = ServerConfig::new_no_scripts(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("gRPC server")
+                .and_instruction_containing("error")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "gRPC",
+                        "instruction": "If id=0 return NOT_FOUND error, else return User with id, name Charlie, email charlie@test.com",
+                        "proto_schema": proto_text
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Handle error case (id=0)
+                .on_event("grpc_unary_request")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "grpc_error",
+                        "code": "NOT_FOUND",
+                        "message": "User not found"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+    let mut server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
 
     // Give server time to initialize
@@ -364,6 +477,10 @@ When you receive GetUser requests:
     );
 
     println!("✓ Error handling test passed");
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())
@@ -397,8 +514,41 @@ When you receive GetUser requests, respond with a User message where the id matc
         proto_text
     );
 
-    // Start the server
-    let mut server = helpers::start_netget_server(ServerConfig::new_no_scripts(prompt)).await?;
+    // Start the server with mocks
+    let server_config = ServerConfig::new_no_scripts(prompt)
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("gRPC server")
+                .and_instruction_containing("GetUser")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "gRPC",
+                        "instruction": "Respond to GetUser with id from request, name User<id>, email user<id>@test.com",
+                        "proto_schema": proto_text
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2-4: Handle 3 concurrent requests
+                .on_event("grpc_unary_request")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "grpc_unary_response",
+                        "message": {
+                            "id": 1,
+                            "name": "User1",
+                            "email": "user1@test.com"
+                        }
+                    }
+                ]))
+                .expect_calls(3)  // 3 concurrent requests
+                .and()
+        });
+
+    let mut server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
 
     sleep(Duration::from_secs(2)).await;
@@ -462,6 +612,10 @@ When you receive GetUser requests, respond with a User message where the id matc
         "✓ Concurrent requests test passed ({}/3 succeeded)",
         success_count
     );
+
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+
     server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())

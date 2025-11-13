@@ -1,262 +1,261 @@
-# IS-IS E2E Tests
+# IS-IS Server E2E Tests
 
 ## Overview
 
-End-to-end tests for the IS-IS (Intermediate System to Intermediate System) routing protocol server. These tests
-validate neighbor discovery, Hello PDU exchange, and basic protocol operations using real UDP clients.
+End-to-end tests for the IS-IS (Intermediate System to Intermediate System) routing protocol server. These tests validate neighbor discovery, Hello PDU exchange, and basic protocol operations using Layer 2 packet capture.
+
+## Critical Difference from Other Protocols
+
+**IS-IS uses Layer 2 (pcap), NOT TCP/UDP!**
+
+Unlike protocols like TCP, HTTP, or DNS that run over IP sockets, IS-IS operates directly on the data link layer using raw Ethernet frames. This means:
+
+- **No localhost testing**: Can't use `127.0.0.1:port` like TCP
+- **Requires root**: pcap needs CAP_NET_RAW capability
+- **Interface-based**: Uses interface names (`eth0`, `veth0`) not ports
+- **Raw frames**: Ethernet + LLC/SNAP + IS-IS PDU structure
 
 ## Test Strategy
 
-### Black-Box Testing
+### Mock-Based Testing (Default)
 
-Tests interact with NetGet via UDP protocol operations only:
+Tests use Ollama mocks by default. This validates:
+- LLM action parsing (open_server with interface parameter)
+- Event handling (isis_hello event)
+- Action generation (send_isis_hello action)
+- Mock verification
 
-- Send IS-IS Hello PDUs via UDP
-- Receive IS-IS responses
-- Validate PDU structure and contents
-- No access to internal NetGet state
+**What mocks DON'T test**: Actual packet capture/sending (requires root + real interfaces)
 
-### LLM-Driven Protocol
+### Real Testing (--use-ollama)
 
-Tests provide prompts that instruct the LLM how to behave:
-
-- Configure system-id, area-id, and level
-- Specify Hello PDU response behavior
-- Validate LLM correctly interprets IS-IS events
+Requires:
+1. Root privileges (`sudo -E`)
+2. Virtual network interfaces (veth pairs)
+3. Packet injection tool (scapy, raw sockets)
+4. Real Ollama instance
 
 ## Test Cases
 
-### 1. `test_isis_hello_exchange` (4 LLM calls)
+### 1. `test_isis_server_startup` (1 LLM call)
 
-**Budget**: 4 LLM calls
+**Purpose**: Verify server starts with correct interface configuration
 
-- Startup: 1 call (server initialization)
-- Hello received: 1 call (process Hello PDU)
-- Hello response: 1 call (send_isis_hello action)
-- Cleanup: 1 call (server shutdown)
-
-**Test Flow**:
-
-1. Start IS-IS server on random port with system-id 0000.0000.0001 in area 49.0001
-2. Send IS-IS Hello PDU from client (system-id 0000.0000.0002)
-3. Wait for server's Hello response (120s timeout for LLM processing)
-4. Validate response is a valid IS-IS Hello PDU
-5. Verify PDU type, version, and structure
-
-**Assertions**:
-
-- Response is a Hello PDU (type 15, 16, or 17)
-- IS-IS version is 1
-- PDU is at least 27 bytes (minimum Hello size)
-
-**Prompt**:
-
+**Mock Flow**:
 ```
-Start an IS-IS router on port 0 with system-id 0000.0000.0001 in area 49.0001 at level-2.
-When you receive a Hello PDU from a neighbor, respond with your own Hello PDU using the
-send_isis_hello action. Include your system-id 0000.0000.0001 and area 49.0001 in the response.
+User: "Start IS-IS router on lo0 with system-id 0000.0000.0001"
+  ↓
+LLM Mock: open_server action with interface/startup_params
+  ↓
+Server: IS-IS server on interface lo0 (would require root to actually start)
 ```
 
-### 2. `test_isis_multiple_hellos` (7 LLM calls)
-
-**Budget**: 7 LLM calls
-
+**LLM Calls**:
 - Startup: 1 call
-- 3 Hello exchanges: 6 calls (2 per exchange: receive + send)
-
-**Test Flow**:
-
-1. Start IS-IS server
-2. Send 3 Hello PDUs from different system-ids
-3. Validate all 3 responses
 
 **Assertions**:
+- Server instance created
+- Stack is "IS-IS"
+- Mock expectations verified
 
-- All 3 responses are valid Hello PDUs
-- Server responds to each Hello individually
+**Marked**: `#[ignore]` - requires root
 
-**Prompt**:
+### 2. `test_isis_hello_pdu_exchange` (2 LLM calls)
 
+**Purpose**: Verify Hello PDU handling
+
+**Mock Flow**:
 ```
-Start an IS-IS router on port 0 with system-id 0000.0000.0001 in area 49.0001.
-Respond to all Hello PDUs with your own Hello PDU.
+User: "Start IS-IS router on veth0, respond to Hello PDUs"
+  ↓
+LLM Mock 1: open_server action
+  ↓
+[Would inject Hello PDU via raw socket on veth1]
+  ↓
+LLM Mock 2: isis_hello event → send_isis_hello action
 ```
+
+**LLM Calls**:
+- Startup: 1 call
+- Hello received: 1 call
+
+**Real Environment Requirements**:
+```bash
+# Create veth pair
+sudo ip link add veth0 type veth peer name veth1
+sudo ip link set veth0 up
+sudo ip link set veth1 up
+
+# Inject ISIS Hello PDU on veth1 using scapy:
+from scapy.all import *
+from scapy.contrib.isis import *
+
+pdu = Ether(dst='01:80:c2:00:00:15')/
+      LLC(dsap=0xfe, ssap=0xfe)/
+      ISIS_CommonHdr()/
+      ISIS_L2_LAN_IIH(
+          sourceid='000000000002',
+          holdingtime=30
+      )
+
+sendp(pdu, iface='veth1')
+```
+
+**Marked**: `#[ignore]` - requires root + veth setup
+
+### 3. `test_isis_multiple_neighbors` (4 LLM calls)
+
+**Purpose**: Verify multiple neighbor discovery
+
+**Mock Flow**:
+- Startup: 1 call
+- 3 Hello PDUs from different neighbors: 3 calls
+
+**Would inject**:
+- Hello from 0000.0000.0002
+- Hello from 0000.0000.0003
+- Hello from 0000.0000.0004
+
+**Marked**: `#[ignore]` - requires root + veth setup
+
+### 4. `test_isis_pdu_structure` (0 LLM calls)
+
+**Purpose**: Validate IS-IS PDU structure constants
+
+**Type**: Unit test (no network, no LLM, not ignored)
+
+**Tests**:
+- Ethernet header structure (14 bytes)
+- LLC/SNAP header (8 bytes, DSAP/SSAP 0xFE)
+- IS-IS header (discriminator 0x83, PDU type 16)
+
+**Runs**: Always (no `#[ignore]`)
+
+### 5. `test_environment_requirements` (0 LLM calls)
+
+**Purpose**: Documentation test explaining setup requirements
+
+**Type**: Unit test (prints setup instructions)
+
+**Runs**: Always (no `#[ignore]`)
 
 ## Total LLM Call Budget
 
-**Target**: < 10 LLM calls per test suite
-**Actual**: 11 LLM calls (4 + 7)
+**Mock Mode (default)**: 7 calls across all tests
+- Startup tests: 1 + 2 + 4 = 7
+- Unit tests: 0
 
-Slightly over budget, but acceptable for comprehensive IS-IS testing.
+**Real Mode (--use-ollama)**: Same, but with actual Ollama
+
+All tests stay well under the < 10 calls per suite guideline.
 
 ## Running Tests
 
-### Feature-Gated Execution
-
-**ALWAYS use `--features isis`** to run IS-IS tests:
+### Mock Mode (Default - No Ollama Required)
 
 ```bash
-# Build release binary first (required for E2E tests)
-./cargo-isolated.sh build --release --no-default-features --features isis
+# Run all tests (only non-ignored tests will run)
+cargo test --features isis --test server::isis::e2e_test
 
-# Run IS-IS E2E tests
-./cargo-isolated.sh test --no-default-features --features isis --test server::isis::e2e_test
+# Output:
+# - test_isis_pdu_structure: ✓ (runs)
+# - test_environment_requirements: ✓ (runs)
+# - test_isis_server_startup: ignored
+# - test_isis_hello_pdu_exchange: ignored
+# - test_isis_multiple_neighbors: ignored
 ```
 
-### With Ollama Lock
-
-Tests use `--ollama-lock` by default to serialize LLM API calls:
+### Run Ignored Tests with Mocks (Root Required)
 
 ```bash
-# Tests automatically use --ollama-lock when spawning servers
-# No manual flag needed
+# Must run as root for pcap
+sudo -E cargo test --features isis --test server::isis::e2e_test -- --ignored
+
+# Tests will fail at pcap.open() but mocks will be verified
 ```
 
-## Test Infrastructure
+### Real Mode with Ollama (Root + Veth Required)
 
-### Server Helpers
+```bash
+# Setup veth pair first
+sudo ip link add veth0 type veth peer name veth1
+sudo ip link set veth0 up
+sudo ip link set veth1 up
 
-Uses `tests/server/helpers.rs`:
+# Run tests
+sudo -E cargo test --features isis --test server::isis::e2e_test -- --ignored --use-ollama
 
-- `start_netget_server()` - Spawns NetGet binary with prompt
-- `ServerConfig` - Test configuration (prompt, model, etc.)
-- Automatic port allocation (port 0)
-- Graceful cleanup on test completion
-
-### UDP Client
-
-Tests use Tokio's `UdpSocket` for IS-IS communication:
-
-- No persistent connection (UDP is stateless)
-- Send Hello PDUs via `send_to()`
-- Receive responses via `recv_from()`
-- 120-second timeout for LLM processing
-
-### IS-IS PDU Construction
-
-Helper functions build IS-IS packets manually:
-
-- `build_isis_hello()` - Construct LAN Hello L2 PDU
-- Includes common header, LAN Hello header, TLVs
-- Area Addresses TLV (type 1)
-- Protocols Supported TLV (type 129, IPv4)
-
-### IS-IS PDU Parsing
-
-Helper functions parse responses:
-
-- `parse_isis_header()` - Extract PDU type and version
-- Validates IS-IS discriminator (0x83)
-- Returns PDU type (15/16/17 for Hello)
+# In another terminal, inject IS-IS PDUs on veth1
+```
 
 ## Expected Runtime
 
-- `test_isis_hello_exchange`: ~5-15 seconds (2 LLM calls)
-- `test_isis_multiple_hellos`: ~15-30 seconds (6 LLM calls)
-
-**Total**: ~20-45 seconds for full suite
-
-LLM processing dominates runtime (most time spent waiting for Ollama).
+**Unit tests**: < 1 second (test_isis_pdu_structure, test_environment_requirements)
+**Mock tests** (if root available): 2-3 seconds per test (startup only, no traffic)
+**Real tests** (with Ollama + packet injection): 5-30 seconds per test
 
 ## Known Issues
 
-### UDP Timing
+### Layer 2 Limitations
 
-IS-IS uses UDP, which is stateless:
+1. **Can't test on localhost**: IS-IS doesn't use IP sockets
+2. **Requires root**: pcap needs elevated privileges
+3. **Platform-specific**: veth (Linux), utun (macOS), different on Windows
+4. **Packet injection complex**: Need scapy or raw socket programming
 
-- No connection establishment delay
-- Immediate packet delivery
-- May need small delays between tests for cleanup
+### Mock Limitations
 
-### LLM Variability
+Mocks verify LLM behavior but can't test:
+- Actual packet capture (requires root + pcap)
+- PDU parsing (not exposed to mocks)
+- Raw frame construction
+- LLC/SNAP encapsulation
 
-LLM responses may vary:
+### Test Isolation
 
-- LLM might send different Hello types (L1 vs L2 vs P2P)
-- LLM might include different TLVs
-- Tests validate structure, not exact content
+**All tests marked `#[ignore]`** because they require root.
 
-### Port Allocation
+To run any meaningful tests:
+1. Must run as root: `sudo -E`
+2. Must setup veth interfaces
+3. Must inject packets (manually or via script)
 
-Uses port 0 for automatic allocation:
+This is fundamentally different from TCP/HTTP tests that work on localhost without privileges.
 
-- Each test gets random available port
-- No port conflicts between tests
-- But requires parsing server output for actual port
+## Comparison with TCP Tests
 
-## Debugging
+| Aspect | TCP Tests | ISIS Tests |
+|--------|-----------|------------|
+| **Transport** | TCP sockets (Layer 4) | Raw Ethernet (Layer 2) |
+| **Connection** | `127.0.0.1:port` | Interface name (`veth0`) |
+| **Privileges** | User | Root (CAP_NET_RAW) |
+| **Localhost** | ✓ Works | ✗ Doesn't work |
+| **Mock Testing** | Full E2E | LLM logic only |
+| **Client-Server** | Easy (both on localhost) | Need veth pair |
 
-### Enable Trace Logging
+## Testing Without Root
 
-Set `RUST_LOG=trace` to see full IS-IS PDU hex dumps:
-
+**Option 1**: Use `setcap` to grant specific binary CAP_NET_RAW:
 ```bash
-RUST_LOG=trace ./cargo-isolated.sh test --features isis --test server::isis::e2e_test
+sudo setcap cap_net_raw+ep target/debug/netget
+cargo test --features isis --test server::isis::e2e_test -- --ignored
 ```
 
-### Inspect PDU Hex
+**Option 2**: Run in Docker container with `--cap-add=NET_RAW`
 
-Tests print PDU sizes and types:
+**Option 3**: Use packet replay files instead of live capture (future enhancement)
 
-```
-[TEST] Sending IS-IS Hello PDU to 127.0.0.1:12345
-[TEST] Received 96 bytes from server
-[TEST] PDU Type: 16, Version: 1
-```
+## Future Enhancements
 
-Use hexdump to analyze raw packets if needed.
-
-### LLM Prompt Debugging
-
-Check NetGet output for LLM reasoning:
-
-- Server logs show received Hello events
-- LLM response includes action selections
-- Status messages show protocol state
-
-## Limitations
-
-### No LSP Testing
-
-Tests only cover Hello PDUs:
-
-- No Link State PDU (LSP) testing
-- No CSNP/PSNP testing
-- No database synchronization
-
-**Rationale**: LSPs require routing information that LLM doesn't have. Hello testing validates core protocol operations.
-
-### No Adjacency State Machine
-
-Tests don't validate full adjacency FSM:
-
-- No "Up" state verification
-- No holding time enforcement
-- No DIS (Designated IS) election
-
-**Rationale**: IS-IS implementation is simplified for honeypot use. Full FSM not required.
-
-### No Multi-Level Testing
-
-Tests only use Level 2:
-
-- No Level 1 testing
-- No inter-level routing
-- No route leaking
-
-**Rationale**: Single-level sufficient for validation.
-
-## Privacy & Offline
-
-All tests use localhost only:
-
-- Client: 127.0.0.1
-- Server: 127.0.0.1
-- No external network access
-- Works completely offline
+1. **Packet Replay Testing**: Use pre-captured pcap files
+2. **Mock Interface**: Create fake pcap device for testing
+3. **Docker Test Environment**: Automated veth setup + FRR router
+4. **Scapy Test Helper**: Python script for packet injection
+5. **Non-Root Mode**: Fallback to pcap file replay when not root
 
 ## References
 
-- [ISO/IEC 10589 - IS-IS Routing Protocol](https://www.iso.org/standard/30932.html)
-- [RFC 1195 - IS-IS for IP](https://datatracker.ietf.org/doc/html/rfc1195)
-- Implementation: `src/server/isis/CLAUDE.md`
+- IS-IS Protocol: ISO/IEC 10589, RFC 1195
+- Test implementation: `tests/server/isis/e2e_test.rs`
+- Server implementation: `src/server/isis/CLAUDE.md`
+- pcap documentation: https://www.tcpdump.org/

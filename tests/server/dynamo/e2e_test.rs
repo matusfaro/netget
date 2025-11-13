@@ -17,7 +17,37 @@ mod tests {
         println!("\n=== Test: DynamoDB GetItem ===");
 
         let prompt = "Start a DynamoDB-compatible server on port 0 that stores user data in memory";
-        let config = ServerConfig::new(prompt).with_log_level("off");
+        let config = ServerConfig::new(prompt)
+            .with_log_level("off")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup (user command)
+                    .on_instruction_containing("DynamoDB")
+                    .and_instruction_containing("server")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "HTTP",
+                            "protocol": "DYNAMO",
+                            "instruction": "Handle DynamoDB operations and respond with appropriate JSON"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: GetItem operation (dynamo_request event)
+                    .on_event("dynamo_request")
+                    .and_event_data_contains("operation", "GetItem")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "send_dynamo_response",
+                            "status_code": 200,
+                            "body": "{\"Item\":{\"id\":{\"S\":\"user-123\"},\"name\":{\"S\":\"Alice\"}}}"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let server = start_netget_server(config).await?;
         println!(
@@ -54,6 +84,9 @@ mod tests {
 
         println!("[PASS] DynamoDB GetItem request succeeded");
 
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+
         server.stop().await?;
         println!("=== Test Complete ===\n");
         Ok(())
@@ -64,7 +97,37 @@ mod tests {
         println!("\n=== Test: DynamoDB PutItem ===");
 
         let prompt = "Start a DynamoDB server on port 0";
-        let config = ServerConfig::new(prompt).with_log_level("off");
+        let config = ServerConfig::new(prompt)
+            .with_log_level("off")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup (user command)
+                    .on_instruction_containing("DynamoDB")
+                    .and_instruction_containing("server")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "HTTP",
+                            "protocol": "DYNAMO",
+                            "instruction": "Handle DynamoDB operations and respond with appropriate JSON"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: PutItem operation (dynamo_request event)
+                    .on_event("dynamo_request")
+                    .and_event_data_contains("operation", "PutItem")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "send_dynamo_response",
+                            "status_code": 200,
+                            "body": "{}"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let server = start_netget_server(config).await?;
         println!(
@@ -102,6 +165,9 @@ mod tests {
 
         println!("[PASS] DynamoDB PutItem request succeeded");
 
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+
         server.stop().await?;
         println!("=== Test Complete ===\n");
         Ok(())
@@ -112,7 +178,37 @@ mod tests {
         println!("\n=== Test: DynamoDB Query ===");
 
         let prompt = "Start a DynamoDB-compatible database server on port 0";
-        let config = ServerConfig::new(prompt).with_log_level("off");
+        let config = ServerConfig::new(prompt)
+            .with_log_level("off")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup (user command)
+                    .on_instruction_containing("DynamoDB")
+                    .and_instruction_containing("server")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "HTTP",
+                            "protocol": "DYNAMO",
+                            "instruction": "Handle DynamoDB operations and respond with appropriate JSON"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Query operation (dynamo_request event)
+                    .on_event("dynamo_request")
+                    .and_event_data_contains("operation", "Query")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "send_dynamo_response",
+                            "status_code": 200,
+                            "body": "{\"Items\":[{\"id\":{\"S\":\"user-123\"},\"name\":{\"S\":\"Alice\"}}],\"Count\":1,\"ScannedCount\":1}"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let server = start_netget_server(config).await?;
         println!(
@@ -154,6 +250,9 @@ mod tests {
 
         println!("[PASS] DynamoDB Query request succeeded with valid JSON");
 
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+
         server.stop().await?;
         println!("=== Test Complete ===\n");
         Ok(())
@@ -164,7 +263,37 @@ mod tests {
         println!("\n=== Test: DynamoDB CreateTable ===");
 
         let prompt = "Start a DynamoDB API server on port 0 that can create tables";
-        let config = ServerConfig::new(prompt).with_log_level("off");
+        let config = ServerConfig::new(prompt)
+            .with_log_level("off")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup (user command)
+                    .on_instruction_containing("DynamoDB")
+                    .and_instruction_containing("server")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "HTTP",
+                            "protocol": "DYNAMO",
+                            "instruction": "Handle DynamoDB operations and respond with appropriate JSON"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: CreateTable operation (dynamo_request event)
+                    .on_event("dynamo_request")
+                    .and_event_data_contains("operation", "CreateTable")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "send_dynamo_response",
+                            "status_code": 200,
+                            "body": "{\"TableDescription\":{\"TableName\":\"Products\",\"TableStatus\":\"ACTIVE\"}}"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let server = start_netget_server(config).await?;
         println!(
@@ -204,6 +333,9 @@ mod tests {
 
         println!("[PASS] DynamoDB CreateTable request succeeded");
 
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+
         server.stop().await?;
         println!("=== Test Complete ===\n");
         Ok(())
@@ -214,7 +346,61 @@ mod tests {
         println!("\n=== Test: DynamoDB Multiple Operations ===");
 
         let prompt = "Start a DynamoDB server on port 0 that remembers items across requests";
-        let config = ServerConfig::new(prompt).with_log_level("off");
+        let config = ServerConfig::new(prompt)
+            .with_log_level("off")
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup (user command)
+                    .on_instruction_containing("DynamoDB")
+                    .and_instruction_containing("server")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "HTTP",
+                            "protocol": "DYNAMO",
+                            "instruction": "Handle DynamoDB operations and respond with appropriate JSON"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: PutItem operation (dynamo_request event)
+                    .on_event("dynamo_request")
+                    .and_event_data_contains("operation", "PutItem")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "send_dynamo_response",
+                            "status_code": 200,
+                            "body": "{}"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: GetItem operation (dynamo_request event)
+                    .on_event("dynamo_request")
+                    .and_event_data_contains("operation", "GetItem")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "send_dynamo_response",
+                            "status_code": 200,
+                            "body": "{\"Item\":{\"orderId\":{\"S\":\"order-001\"},\"amount\":{\"N\":\"99.99\"}}}"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 4: DeleteItem operation (dynamo_request event)
+                    .on_event("dynamo_request")
+                    .and_event_data_contains("operation", "DeleteItem")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "send_dynamo_response",
+                            "status_code": 200,
+                            "body": "{}"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            });
 
         let server = start_netget_server(config).await?;
         println!(
@@ -279,6 +465,9 @@ mod tests {
 
         assert!(delete_response.status().is_success());
         println!("[PASS] DeleteItem succeeded");
+
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
 
         server.stop().await?;
         println!("=== Test Complete ===\n");

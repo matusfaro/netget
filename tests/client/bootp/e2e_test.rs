@@ -1,268 +1,246 @@
 //! BOOTP client end-to-end tests
 //!
-//! Tests BOOTP client with real BOOTP server (dnsmasq or isc-dhcp-server).
+//! Tests BOOTP client with mock LLM responses.
 
 #![cfg(all(test, feature = "bootp"))]
 
-use netget::llm::ollama_client::OllamaClient;
-use netget::state::app_state::AppState;
-use std::sync::Arc;
-use tokio::sync::mpsc;
+use crate::helpers::*;
+use std::time::Duration;
 
-/// Test BOOTP client basic connectivity
-///
-/// LLM Budget: 2 calls
-/// - Call 1: bootp_connected event → send_bootp_request action
-/// - Call 2: bootp_reply_received event → analyze and disconnect
+/// Test BOOTP client connecting to BOOTP server with mocks
+/// LLM calls: 4 (server startup, server request received, client startup, client connected)
 #[tokio::test]
-#[ignore] // Requires BOOTP server (dnsmasq) running
-async fn test_bootp_request_reply() {
-    // Setup
-    let app_state = Arc::new(AppState::new());
-    let llm_client = OllamaClient::new("http://127.0.0.1:11434".to_string());
-    let (status_tx, mut status_rx) = mpsc::unbounded_channel();
+async fn test_bootp_request_reply() -> E2EResult<()> {
+    // Start a BOOTP server first that can respond to the client
+    let server_instruction = r#"
+BOOTP server that assigns IP address 192.168.1.100.
+When receiving BOOTREQUEST:
+  - Assign IP 192.168.1.100
+  - Server IP: 192.168.1.1
+  - Boot file: "boot/pxeboot.n12"
+  - Server hostname: "bootserver"
+"#;
 
-    // Register BOOTP client
-    let client_id = app_state
-        .register_client(
-            "BOOTP".to_string(),
-            "127.0.0.1:67".to_string(), // dnsmasq BOOTP server
-            Some(
-                "Request IP address for MAC 00:11:22:33:44:55 and report boot server details"
-                    .to_string(),
-            ),
-            None,
-        )
-        .await;
+    let server_config = NetGetConfig::new(format!("Listen on port {{AVAILABLE_PORT}} via BOOTP. {}", server_instruction))
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("Listen on port")
+                .and_instruction_containing("BOOTP")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "BOOTP",
+                        "instruction": server_instruction
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Server receives BOOTP request
+                .on_event("bootp_request")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_bootp_reply",
+                        "assigned_ip": "192.168.1.100",
+                        "server_ip": "192.168.1.1",
+                        "boot_file": "boot/pxeboot.n12",
+                        "server_hostname": "bootserver"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
-    // Start client
-    netget::cli::client_startup::start_client_by_id(&app_state, client_id, &llm_client, &status_tx)
-        .await
-        .expect("Failed to start BOOTP client");
+    let mut server = start_netget_server(server_config).await?;
 
-    // Collect status messages for verification
-    let mut messages = Vec::new();
-    let timeout = tokio::time::Duration::from_secs(30);
-    let deadline = tokio::time::Instant::now() + timeout;
+    // Give server time to start
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
-    while tokio::time::Instant::now() < deadline {
-        match tokio::time::timeout_at(deadline, status_rx.recv()).await {
-            Ok(Some(msg)) => {
-                println!("[TEST] {}", msg);
-                messages.push(msg.clone());
-
-                // Stop when we see disconnect or error
-                if msg.contains("disconnect") || msg.contains("ERROR") {
-                    break;
+    // Start BOOTP client connecting to the server
+    let client_config = NetGetConfig::new(format!(
+        "Connect to 127.0.0.1:{} via BOOTP. Request IP for MAC 00:11:22:33:44:55",
+        server.port
+    ))
+    .with_mock(|mock| {
+        mock
+            // Mock 1: Client startup
+            .on_instruction_containing("Connect to")
+            .and_instruction_containing("BOOTP")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_client",
+                    "remote_addr": format!("127.0.0.1:{}", server.port),
+                    "protocol": "BOOTP",
+                    "instruction": "Request IP for MAC 00:11:22:33:44:55"
                 }
-            }
-            Ok(None) => break,
-            Err(_) => break,
-        }
-    }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Client connected
+            .on_event("bootp_connected")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_bootp_request",
+                    "client_mac": "00:11:22:33:44:55",
+                    "broadcast": false
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 3: Client receives BOOTP reply
+            .on_event("bootp_reply_received")
+            .and_event_data_contains("assigned_ip", "192.168.1.100")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "disconnect"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
-    // Verify BOOTP flow completed
-    let all_messages = messages.join("\n");
+    let mut client = start_netget_client(client_config).await?;
 
-    // Should see connected event
+    // Give client time to connect and exchange data
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // Verify client output shows connection
     assert!(
-        all_messages.contains("BOOTP client") && all_messages.contains("connected"),
-        "Did not see BOOTP client connected"
+        client.output_contains("connected").await,
+        "Client should show connection message. Output: {:?}",
+        client.get_output().await
     );
 
-    // Should see BOOTP request sent
-    assert!(
-        all_messages.contains("BOOTP request sent") || all_messages.contains("send_bootp_request"),
-        "Did not see BOOTP request sent"
-    );
+    println!("✓ BOOTP client connected to server and received IP assignment");
 
-    // Note: Reply verification depends on having a real BOOTP server
-    // If no server, test will timeout but that's expected
-    if all_messages.contains("assigned_ip") || all_messages.contains("boot_filename") {
-        println!("[TEST] ✓ BOOTP reply received and processed by LLM");
-    } else {
-        println!("[TEST] ⚠ No BOOTP reply received (server may not be running)");
-    }
+    // Verify mock expectations were met
+    server.verify_mocks().await?;
+    client.verify_mocks().await?;
+
+    // Cleanup
+    server.stop().await?;
+    client.stop().await?;
+
+    Ok(())
 }
 
-/// Test BOOTP client with broadcast discovery
-///
-/// LLM Budget: 2-3 calls
-/// - Call 1: bootp_connected → send_bootp_request (broadcast)
-/// - Call 2+: bootp_reply_received (possibly multiple servers) → analyze
+/// Test BOOTP client broadcast discovery with mocks
+/// LLM calls: 2 (client startup, client connected)
 #[tokio::test]
-#[ignore] // Requires BOOTP server
-async fn test_bootp_broadcast_discovery() {
-    let app_state = Arc::new(AppState::new());
-    let llm_client = OllamaClient::new("http://127.0.0.1:11434".to_string());
-    let (status_tx, mut status_rx) = mpsc::unbounded_channel();
-
-    // Register client with broadcast instruction
-    let client_id = app_state
-        .register_client(
-            "BOOTP".to_string(),
-            "255.255.255.255:67".to_string(),
-            Some("Broadcast BOOTP request to discover all boot servers on network. Use MAC 52:54:00:12:34:56".to_string()),
-            None,
-        )
-        .await;
-
-    // Start client
-    netget::cli::client_startup::start_client_by_id(&app_state, client_id, &llm_client, &status_tx)
-        .await
-        .expect("Failed to start BOOTP client");
-
-    // Collect messages
-    let mut messages = Vec::new();
-    let timeout = tokio::time::Duration::from_secs(30);
-    let deadline = tokio::time::Instant::now() + timeout;
-
-    while tokio::time::Instant::now() < deadline {
-        match tokio::time::timeout_at(deadline, status_rx.recv()).await {
-            Ok(Some(msg)) => {
-                println!("[TEST] {}", msg);
-                messages.push(msg.clone());
-
-                if msg.contains("disconnect") {
-                    break;
-                }
-            }
-            Ok(None) => break,
-            Err(_) => break,
-        }
-    }
-
-    let all_messages = messages.join("\n");
-
-    // Verify broadcast was attempted
-    assert!(
-        all_messages.contains("255.255.255.255") || all_messages.contains("broadcast"),
-        "Did not see broadcast BOOTP request"
-    );
-
-    println!("[TEST] BOOTP broadcast discovery completed");
-}
-
-/// Test BOOTP client error handling (no server)
-///
-/// LLM Budget: 1 call
-/// - Call 1: bootp_connected → send_bootp_request
-/// - (No reply, timeout expected)
-#[tokio::test]
-async fn test_bootp_no_server() {
-    let app_state = Arc::new(AppState::new());
-    let llm_client = OllamaClient::new("http://127.0.0.1:11434".to_string());
-    let (status_tx, mut status_rx) = mpsc::unbounded_channel();
-
-    // Register client pointing to non-existent server
-    let client_id = app_state
-        .register_client(
-            "BOOTP".to_string(),
-            "192.0.2.1:67".to_string(), // TEST-NET-1 (no server)
-            Some("Request IP for MAC 00:11:22:33:44:55".to_string()),
-            None,
-        )
-        .await;
-
-    // Start client
-    let result = netget::cli::client_startup::start_client_by_id(
-        &app_state,
-        client_id,
-        &llm_client,
-        &status_tx,
+async fn test_bootp_broadcast_discovery() -> E2EResult<()> {
+    // Test client startup with broadcast mode (no server needed, just verify client starts)
+    let client_config = NetGetConfig::new(
+        "Connect to 255.255.255.255:67 via BOOTP. Broadcast BOOTP request to discover boot servers. Use MAC 52:54:00:12:34:56"
     )
-    .await;
+    .with_mock(|mock| {
+        mock
+            // Mock 1: Client startup
+            .on_instruction_containing("Connect to")
+            .and_instruction_containing("BOOTP")
+            .and_instruction_containing("broadcast")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_client",
+                    "remote_addr": "255.255.255.255:67",
+                    "protocol": "BOOTP",
+                    "instruction": "Broadcast BOOTP request. Use MAC 52:54:00:12:34:56"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Client connected
+            .on_event("bootp_connected")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_bootp_request",
+                    "client_mac": "52:54:00:12:34:56",
+                    "broadcast": true
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
 
-    // Should succeed (UDP is connectionless, can't detect no-server at connect time)
+    let mut client = start_netget_client(client_config).await?;
+
+    // Give client time to start and send broadcast request
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    // Verify client started
     assert!(
-        result.is_ok(),
-        "BOOTP client should start even without server"
+        client.output_contains("BOOTP").await || client.output_contains("connected").await,
+        "Client should show startup. Output: {:?}",
+        client.get_output().await
     );
 
-    // Collect messages with short timeout
-    let mut messages = Vec::new();
-    let timeout = tokio::time::Duration::from_secs(5);
-    let deadline = tokio::time::Instant::now() + timeout;
+    println!("✓ BOOTP client broadcast discovery test completed");
 
-    while tokio::time::Instant::now() < deadline {
-        match tokio::time::timeout_at(deadline, status_rx.recv()).await {
-            Ok(Some(msg)) => {
-                println!("[TEST] {}", msg);
-                messages.push(msg.clone());
-            }
-            Ok(None) => break,
-            Err(_) => break,
-        }
-    }
+    // Verify mock expectations were met
+    client.verify_mocks().await?;
 
-    let all_messages = messages.join("\n");
+    // Cleanup
+    client.stop().await?;
 
-    // Should see request sent (but no reply)
-    assert!(
-        all_messages.contains("connected") || all_messages.contains("BOOTP"),
-        "BOOTP client should start"
-    );
-
-    println!("[TEST] BOOTP no-server test completed (timeout expected)");
+    Ok(())
 }
 
-/// Test BOOTP client with custom MAC address
-///
-/// LLM Budget: 2 calls
-/// - Call 1: bootp_connected → send_bootp_request with specific MAC
-/// - Call 2: bootp_reply_received → verify MAC was used
+/// Test BOOTP client error handling (no server) with mocks
+/// LLM calls: 2 (client startup, client connected)
 #[tokio::test]
-#[ignore] // Requires BOOTP server
-async fn test_bootp_custom_mac() {
-    let app_state = Arc::new(AppState::new());
-    let llm_client = OllamaClient::new("http://127.0.0.1:11434".to_string());
-    let (status_tx, mut status_rx) = mpsc::unbounded_channel();
-
-    let client_id = app_state
-        .register_client(
-            "BOOTP".to_string(),
-            "127.0.0.1:67".to_string(),
-            Some(
-                "Request IP for specific MAC address AA:BB:CC:DD:EE:FF and report results"
-                    .to_string(),
-            ),
-            None,
-        )
-        .await;
-
-    // Start client
-    netget::cli::client_startup::start_client_by_id(&app_state, client_id, &llm_client, &status_tx)
-        .await
-        .expect("Failed to start BOOTP client");
-
-    // Collect messages
-    let mut messages = Vec::new();
-    let timeout = tokio::time::Duration::from_secs(20);
-    let deadline = tokio::time::Instant::now() + timeout;
-
-    while tokio::time::Instant::now() < deadline {
-        match tokio::time::timeout_at(deadline, status_rx.recv()).await {
-            Ok(Some(msg)) => {
-                println!("[TEST] {}", msg);
-                messages.push(msg.clone());
-
-                if msg.contains("disconnect") {
-                    break;
+async fn test_bootp_no_server() -> E2EResult<()> {
+    // Test client connecting to non-existent server (should start but no reply)
+    let client_config = NetGetConfig::new(
+        "Connect to 192.0.2.1:67 via BOOTP. Request IP for MAC 00:11:22:33:44:55"
+    )
+    .with_mock(|mock| {
+        mock
+            // Mock 1: Client startup
+            .on_instruction_containing("Connect to")
+            .and_instruction_containing("BOOTP")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_client",
+                    "remote_addr": "192.0.2.1:67",
+                    "protocol": "BOOTP",
+                    "instruction": "Request IP for MAC 00:11:22:33:44:55"
                 }
-            }
-            Ok(None) => break,
-            Err(_) => break,
-        }
-    }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: Client connected (UDP is connectionless)
+            .on_event("bootp_connected")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_bootp_request",
+                    "client_mac": "00:11:22:33:44:55",
+                    "broadcast": false
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // No reply expected - test will timeout waiting for reply
+    });
 
-    let all_messages = messages.join("\n");
+    let mut client = start_netget_client(client_config).await?;
 
-    // Verify MAC address was used
+    // Give client time to start and send request (no reply expected)
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    // Verify client started
     assert!(
-        all_messages.to_lowercase().contains("aa:bb:cc:dd:ee:ff")
-            || all_messages.to_lowercase().contains("aabbccddeeff"),
-        "Custom MAC address should be used in request"
+        client.output_contains("BOOTP").await || client.output_contains("connected").await,
+        "BOOTP client should start even without server. Output: {:?}",
+        client.get_output().await
     );
 
-    println!("[TEST] BOOTP custom MAC test completed");
+    println!("✓ BOOTP no-server test completed (timeout expected)");
+
+    // Verify mock expectations were met
+    client.verify_mocks().await?;
+
+    // Cleanup
+    client.stop().await?;
+
+    Ok(())
 }

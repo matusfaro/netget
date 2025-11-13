@@ -1,86 +1,350 @@
 //! E2E tests for DoH (DNS-over-HTTPS) client
 //!
-//! These tests verify DoH client functionality by connecting to public DoH servers
-//! and testing DNS query resolution as a black-box.
+//! These tests verify DoH client functionality by connecting to a local DoH server
+//! and testing DNS query resolution as a black-box with Ollama mocks.
 
 #[cfg(all(test, feature = "doh"))]
 mod doh_client_tests {
     use crate::helpers::*;
     use std::time::Duration;
 
-    /// Test DoH client connecting to Google Public DNS
-    /// LLM calls: 1 (client connection with query)
+    /// Test DoH client connecting to local DoH server with A record query
+    /// LLM calls: 4 (server startup, server query, client startup, client query)
     #[tokio::test]
-    async fn test_doh_client_google_dns() -> E2EResult<()> {
-        // Start DoH client connecting to Google Public DNS
-        let client_config = NetGetConfig::new(
-            "Connect to https://dns.google/dns-query via DoH. Query example.com A record and show the IP address."
-        );
+    async fn test_doh_client_local_server_a_query() -> E2EResult<()> {
+        // Start a local DoH server with mocks
+        let server_config = NetGetConfig::new(
+            "Listen on port {AVAILABLE_PORT} via DoH. Respond to DNS queries."
+        )
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("Listen")
+                .and_instruction_containing("DoH")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "DoH",
+                        "instruction": "DoH server for client testing"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Server receives query for example.com
+                .on_event("doh_query")
+                .and_event_data_contains("domain", "example.com")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_dns_a_response",
+                        "domain": "example.com",
+                        "ip": "93.184.216.34",
+                        "ttl": 300
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+        let mut server = start_netget_server(server_config).await?;
+
+        // Wait for server to start
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Start DoH client connecting to local server with mocks
+        let client_config = NetGetConfig::new(format!(
+            "Connect to https://127.0.0.1:{}/dns-query via DoH. Query example.com A record.",
+            server.port
+        ))
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Client startup
+                .on_instruction_containing("Connect to")
+                .and_instruction_containing("DoH")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": format!("https://127.0.0.1:{}/dns-query", server.port),
+                        "protocol": "DoH",
+                        "instruction": "Query example.com A record"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Client connected
+                .on_event("doh_connected")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "query_dns",
+                        "domain": "example.com",
+                        "record_type": "A"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: Client receives response
+                .on_event("doh_response_received")
+                .and_event_data_contains("domain", "example.com")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 
-        // Give client time to connect and make query
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        // Give client time to connect and query
+        tokio::time::sleep(Duration::from_secs(2)).await;
 
-        // Verify client output shows DoH protocol or DNS query
-        let output = client.get_output().await;
+        // Verify client output shows connection
         assert!(
-            output.contains("DoH") || output.contains("DNS") || output.contains("example.com"),
-            "Client should show DoH/DNS protocol or query domain. Output: {:?}",
-            output
+            client.output_contains("connected").await,
+            "Client should show connection. Output: {:?}",
+            client.get_output().await
         );
 
-        println!("✅ DoH client connected to Google DNS successfully");
+        println!("✅ DoH client connected to local server and queried successfully");
+
+        // Verify mock expectations were met
+        server.verify_mocks().await?;
+        client.verify_mocks().await?;
 
         // Cleanup
+        server.stop().await?;
         client.stop().await?;
 
         Ok(())
     }
 
-    /// Test DoH client connecting to Cloudflare DNS
-    /// LLM calls: 1 (client connection with query)
+    /// Test DoH client connecting to local DoH server with AAAA record query
+    /// LLM calls: 4 (server startup, server query, client startup, client query)
     #[tokio::test]
-    async fn test_doh_client_cloudflare_dns() -> E2EResult<()> {
-        // Start DoH client connecting to Cloudflare DNS
-        let client_config = NetGetConfig::new(
-            "Connect to https://cloudflare-dns.com/dns-query via DoH. Query cloudflare.com AAAA record."
-        );
+    async fn test_doh_client_local_server_aaaa_query() -> E2EResult<()> {
+        // Start a local DoH server with mocks
+        let server_config = NetGetConfig::new(
+            "Listen on port {AVAILABLE_PORT} via DoH. Respond to DNS queries."
+        )
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("Listen")
+                .and_instruction_containing("DoH")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "DoH",
+                        "instruction": "DoH server for AAAA testing"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Server receives AAAA query
+                .on_event("doh_query")
+                .and_event_data_contains("domain", "example.com")
+                .and_event_data_contains("query_type", "AAAA")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_dns_aaaa_response",
+                        "domain": "example.com",
+                        "ip": "2001:db8::1",
+                        "ttl": 300
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+        let mut server = start_netget_server(server_config).await?;
+
+        // Wait for server to start
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Start DoH client with mocks
+        let client_config = NetGetConfig::new(format!(
+            "Connect to https://127.0.0.1:{}/dns-query via DoH. Query example.com AAAA record.",
+            server.port
+        ))
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Client startup
+                .on_instruction_containing("Connect to")
+                .and_instruction_containing("DoH")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": format!("https://127.0.0.1:{}/dns-query", server.port),
+                        "protocol": "DoH",
+                        "instruction": "Query example.com AAAA record"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Client connected
+                .on_event("doh_connected")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "query_dns",
+                        "domain": "example.com",
+                        "record_type": "AAAA"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: Client receives response
+                .on_event("doh_response_received")
+                .and_event_data_contains("query_type", "AAAA")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 
-        // Give client time to connect and make query
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        // Give client time to connect and query
+        tokio::time::sleep(Duration::from_secs(2)).await;
 
-        // Verify the client connected (check for DoH or DNS related output)
-        let output = client.get_output().await;
-        assert!(
-            output.contains("DoH") || output.contains("DNS") || output.contains("cloudflare"),
-            "Client should show DoH/DNS protocol or Cloudflare. Output: {:?}",
-            output
+        // Verify client connected
+        assert_eq!(
+            client.protocol, "DNS-over-HTTPS",
+            "Client should be DoH protocol"
         );
 
-        println!("✅ DoH client connected to Cloudflare DNS successfully");
+        println!("✅ DoH client AAAA query test passed");
+
+        // Verify mock expectations
+        server.verify_mocks().await?;
+        client.verify_mocks().await?;
 
         // Cleanup
+        server.stop().await?;
         client.stop().await?;
 
         Ok(())
     }
 
     /// Test DoH client making multiple queries
-    /// LLM calls: 1 (client connection with query instructions)
+    /// LLM calls: 6 (server startup, 2 server queries, client startup, client connected, 2 client queries)
     #[tokio::test]
     async fn test_doh_client_multiple_queries() -> E2EResult<()> {
-        // Start DoH client that will make multiple queries
-        let client_config = NetGetConfig::new(
-            "Connect to https://dns.google/dns-query via DoH. Query example.com A record, then query example.org A record."
-        );
+        // Start a local DoH server with mocks
+        let server_config = NetGetConfig::new(
+            "Listen on port {AVAILABLE_PORT} via DoH. Respond to DNS queries."
+        )
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("Listen")
+                .and_instruction_containing("DoH")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "DoH",
+                        "instruction": "DoH server for multi-query testing"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Server receives first query (example.com)
+                .on_event("doh_query")
+                .and_event_data_contains("domain", "example.com")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_dns_a_response",
+                        "domain": "example.com",
+                        "ip": "93.184.216.34",
+                        "ttl": 300
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: Server receives second query (example.org)
+                .on_event("doh_query")
+                .and_event_data_contains("domain", "example.org")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_dns_a_response",
+                        "domain": "example.org",
+                        "ip": "93.184.216.35",
+                        "ttl": 300
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+        let mut server = start_netget_server(server_config).await?;
+
+        // Wait for server to start
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Start DoH client with mocks for multiple queries
+        let client_config = NetGetConfig::new(format!(
+            "Connect to https://127.0.0.1:{}/dns-query via DoH. Query example.com A record, then query example.org A record.",
+            server.port
+        ))
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Client startup
+                .on_instruction_containing("Connect to")
+                .and_instruction_containing("DoH")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": format!("https://127.0.0.1:{}/dns-query", server.port),
+                        "protocol": "DoH",
+                        "instruction": "Query example.com then example.org"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Client connected - issue first query
+                .on_event("doh_connected")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "query_dns",
+                        "domain": "example.com",
+                        "record_type": "A"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: First response received - issue second query
+                .on_event("doh_response_received")
+                .and_event_data_contains("domain", "example.com")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "query_dns",
+                        "domain": "example.org",
+                        "record_type": "A"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 4: Second response received - done
+                .on_event("doh_response_received")
+                .and_event_data_contains("domain", "example.org")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 
-        // Give client time to connect and make queries
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        // Give client time to make multiple queries
+        tokio::time::sleep(Duration::from_secs(3)).await;
 
         // Verify client is using DNS-over-HTTPS protocol
         assert_eq!(
@@ -90,37 +354,126 @@ mod doh_client_tests {
 
         println!("✅ DoH client made multiple queries successfully");
 
+        // Verify mock expectations
+        server.verify_mocks().await?;
+        client.verify_mocks().await?;
+
         // Cleanup
+        server.stop().await?;
         client.stop().await?;
 
         Ok(())
     }
 
-    /// Test DoH client query different record types
-    /// LLM calls: 1 (client connection with query)
+    /// Test DoH client query different record types (MX)
+    /// LLM calls: 4 (server startup, server query, client startup, client query)
     #[tokio::test]
-    async fn test_doh_client_record_types() -> E2EResult<()> {
-        // Start DoH client querying MX records
-        let client_config = NetGetConfig::new(
-            "Connect to https://dns.google/dns-query via DoH. Query gmail.com MX records to find mail servers."
-        );
+    async fn test_doh_client_mx_record_query() -> E2EResult<()> {
+        // Start a local DoH server with mocks
+        let server_config = NetGetConfig::new(
+            "Listen on port {AVAILABLE_PORT} via DoH. Respond to DNS queries."
+        )
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup
+                .on_instruction_containing("Listen")
+                .and_instruction_containing("DoH")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "DoH",
+                        "instruction": "DoH server for MX record testing"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Server receives MX query
+                .on_event("doh_query")
+                .and_event_data_contains("domain", "example.com")
+                .and_event_data_contains("query_type", "MX")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_dns_mx_response",
+                        "domain": "example.com",
+                        "mail_server": "mail.example.com",
+                        "priority": 10,
+                        "ttl": 300
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+        let mut server = start_netget_server(server_config).await?;
+
+        // Wait for server to start
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Start DoH client with mocks
+        let client_config = NetGetConfig::new(format!(
+            "Connect to https://127.0.0.1:{}/dns-query via DoH. Query example.com MX records to find mail servers.",
+            server.port
+        ))
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Client startup
+                .on_instruction_containing("Connect to")
+                .and_instruction_containing("DoH")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_client",
+                        "remote_addr": format!("https://127.0.0.1:{}/dns-query", server.port),
+                        "protocol": "DoH",
+                        "instruction": "Query example.com MX records"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Client connected
+                .on_event("doh_connected")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "query_dns",
+                        "domain": "example.com",
+                        "record_type": "MX"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: Client receives MX response
+                .on_event("doh_response_received")
+                .and_event_data_contains("query_type", "MX")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "wait_for_more"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
 
         let mut client = start_netget_client(client_config).await?;
 
         // Give client time to connect and make query
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
 
         // Verify output shows MX query or mail-related content
         let output = client.get_output().await;
         assert!(
-            output.contains("MX") || output.contains("mail") || output.contains("gmail"),
+            output.contains("MX") || output.contains("mail") || output.contains("example.com"),
             "Client should show MX query or mail server info. Output: {:?}",
             output
         );
 
         println!("✅ DoH client queried MX records successfully");
 
+        // Verify mock expectations
+        server.verify_mocks().await?;
+        client.verify_mocks().await?;
+
         // Cleanup
+        server.stop().await?;
         client.stop().await?;
 
         Ok(())
