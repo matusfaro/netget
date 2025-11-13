@@ -2,11 +2,11 @@
 //! Virtual NFC tag/card emulation for testing (PC/SC readers typically can't emulate)
 
 use crate::llm::actions::{
-    protocol_trait::Protocol, ActionDefinition, ActionResult, Parameter,
+    protocol_trait::Protocol, ActionDefinition, ParameterDefinition,
 };
+use crate::llm::ActionResult;
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
-use crate::state::server::ServerId;
 use anyhow::{anyhow, Context, Result};
 use serde_json::json;
 use std::sync::LazyLock;
@@ -25,7 +25,7 @@ pub static NFC_TAG_SELECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "nfc_tag_selected",
         "Virtual NFC tag application selected by reader",
     )
-    .with_parameters(vec![Parameter {
+    .with_parameters(vec![ParameterDefinition {
         name: "application_id".to_string(),
         type_hint: "string".to_string(),
         description: "Application ID (AID) that was selected (hex)".to_string(),
@@ -40,37 +40,37 @@ pub static NFC_APDU_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "APDU command received by virtual NFC tag",
     )
     .with_parameters(vec![
-        Parameter {
+        ParameterDefinition {
             name: "apdu_hex".to_string(),
             type_hint: "string".to_string(),
             description: "APDU command as hex string".to_string(),
             required: true,
         },
-        Parameter {
+        ParameterDefinition {
             name: "cla".to_string(),
             type_hint: "string".to_string(),
             description: "Class byte (hex)".to_string(),
             required: true,
         },
-        Parameter {
+        ParameterDefinition {
             name: "ins".to_string(),
             type_hint: "string".to_string(),
             description: "Instruction byte (hex)".to_string(),
             required: true,
         },
-        Parameter {
+        ParameterDefinition {
             name: "p1".to_string(),
             type_hint: "string".to_string(),
             description: "Parameter 1 (hex)".to_string(),
             required: true,
         },
-        Parameter {
+        ParameterDefinition {
             name: "p2".to_string(),
             type_hint: "string".to_string(),
             description: "Parameter 2 (hex)".to_string(),
             required: true,
         },
-        Parameter {
+        ParameterDefinition {
             name: "data_hex".to_string(),
             type_hint: "string".to_string(),
             description: "Command data (hex)".to_string(),
@@ -123,7 +123,7 @@ impl Protocol for NfcServerProtocol {
             ActionDefinition {
                 name: "set_atr".to_string(),
                 description: "Set Answer to Reset (ATR) for virtual tag".to_string(),
-                parameters: vec![Parameter {
+                parameters: vec![ParameterDefinition {
                     name: "atr_hex".to_string(),
                     type_hint: "string".to_string(),
                     description: "ATR bytes as hex string".to_string(),
@@ -137,7 +137,7 @@ impl Protocol for NfcServerProtocol {
             ActionDefinition {
                 name: "set_ndef_message".to_string(),
                 description: "Set NDEF message content for virtual tag".to_string(),
-                parameters: vec![Parameter {
+                parameters: vec![ParameterDefinition {
                     name: "records".to_string(),
                     type_hint: "array".to_string(),
                     description: "Array of NDEF records".to_string(),
@@ -166,20 +166,20 @@ impl Protocol for NfcServerProtocol {
             name: "respond_to_apdu".to_string(),
             description: "Respond to received APDU command with data and status bytes".to_string(),
             parameters: vec![
-                Parameter {
+                ParameterDefinition {
                     name: "data_hex".to_string(),
                     type_hint: "string".to_string(),
                     description: "Response data (hex, optional)".to_string(),
                     required: false,
                 },
-                Parameter {
+                ParameterDefinition {
                     name: "sw1".to_string(),
                     type_hint: "string".to_string(),
                     description:
                         "Status byte 1 (hex, default: '90' for success)".to_string(),
                     required: false,
                 },
-                Parameter {
+                ParameterDefinition {
                     name: "sw2".to_string(),
                     type_hint: "string".to_string(),
                     description: "Status byte 2 (hex, default: '00' for success)".to_string(),
@@ -192,19 +192,19 @@ impl Protocol for NfcServerProtocol {
                 "sw1": "90",
                 "sw2": "00"
             }),
-        })]
+        }]
     }
 
-    fn get_startup_params(&self) -> Vec<Parameter> {
+    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
         vec![
-            Parameter {
+            ParameterDefinition {
                 name: "tag_type".to_string(),
                 type_hint: "string".to_string(),
                 description: "Virtual tag type: 'type2' (MIFARE), 'type4' (ISO14443-4), 'generic' (default)"
                     .to_string(),
                 required: false,
             },
-            Parameter {
+            ParameterDefinition {
                 name: "uid".to_string(),
                 type_hint: "string".to_string(),
                 description: "Tag UID (hex, auto-generated if not specified)".to_string(),
@@ -215,7 +215,6 @@ impl Protocol for NfcServerProtocol {
 
     fn execute_action(
         &self,
-        _server_id: ServerId,
         action: serde_json::Value,
     ) -> Result<ActionResult> {
         let action_type = action["type"]

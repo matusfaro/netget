@@ -16,12 +16,12 @@
 pub mod actions;
 
 use crate::llm::action_helper::call_llm;
-use crate::llm::actions::ActionResult;
+use crate::llm::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::server::nfc::actions::*;
 use crate::state::app_state::AppState;
-use crate::state::server::{ServerConnectionState, ServerId};
+use crate::state::server::{ConnectionState, ServerId};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::net::SocketAddr;
