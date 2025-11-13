@@ -11,7 +11,7 @@ use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, trace};
 
-use crate::client::tcp::actions::TCP_CLIENT_DATA_RECEIVED_EVENT;
+use crate::client::tcp::actions::{TCP_CLIENT_CONNECTED_EVENT, TCP_CLIENT_DATA_RECEIVED_EVENT};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
@@ -69,6 +69,7 @@ impl TcpClient {
         // Split stream
         let (mut read_half, write_half) = tokio::io::split(stream);
         let write_half_arc = Arc::new(Mutex::new(write_half));
+        let write_half_for_connected = write_half_arc.clone();
 
         // Initialize client data
         let client_data = Arc::new(Mutex::new(ClientData {
@@ -76,6 +77,71 @@ impl TcpClient {
             queued_data: Vec::new(),
             memory: String::new(),
         }));
+
+        // Call LLM with tcp_connected event
+        if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
+            let event = Event::new(
+                &TCP_CLIENT_CONNECTED_EVENT,
+                serde_json::json!({
+                    "remote_addr": remote_sock_addr.to_string(),
+                }),
+            );
+
+            match call_llm_for_client(
+                &llm_client,
+                &app_state,
+                client_id.to_string(),
+                &instruction,
+                &client_data.lock().await.memory,
+                Some(&event),
+                &crate::client::tcp::actions::TcpClientProtocol,
+                &status_tx,
+            )
+            .await
+            {
+                Ok(result) => {
+                    // Update memory if provided
+                    if let Some(new_memory) = result.memory_updates {
+                        client_data.lock().await.memory = new_memory;
+                    }
+
+                    // Execute actions from LLM response
+                    for action in result.actions {
+                        if let Some(action_type) = action["type"].as_str() {
+                            match action_type {
+                                "send_tcp_data" => {
+                                    if let Some(hex_data) = action["data"].as_str() {
+                                        if let Ok(bytes) = hex::decode(hex_data) {
+                                            let mut write_guard = write_half_for_connected.lock().await;
+                                            if let Err(e) = write_guard.write_all(&bytes).await {
+                                                error!("Failed to send data after connect: {}", e);
+                                            } else if let Err(e) = write_guard.flush().await {
+                                                error!("Failed to flush after connect: {}", e);
+                                            } else {
+                                                info!("Sent {} bytes after connect", bytes.len());
+                                            }
+                                        }
+                                    }
+                                }
+                                "disconnect" => {
+                                    info!("LLM requested disconnect after connect");
+                                    return Ok(local_addr);
+                                }
+                                "wait_for_more" => {
+                                    // Just wait for data
+                                }
+                                _ => {
+                                    trace!("Unknown action type after connect: {}", action_type);
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("LLM error on tcp_connected event: {}", e);
+                }
+            }
+        }
 
         // Spawn read loop
         tokio::spawn(async move {

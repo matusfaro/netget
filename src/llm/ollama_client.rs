@@ -288,7 +288,30 @@ impl OllamaClient {
     /// Create a new Ollama client
     pub fn new(base_url: impl Into<String>) -> Self {
         let url_str = base_url.into();
-        let ollama = Ollama::new(url_str.as_str(), 11434);
+
+        // Parse the URL to extract host and port
+        // URL format: "http://host:port" or "http://host" (default port 11434)
+        let (host, port) = if let Some(port_start) = url_str.rfind(':') {
+            // Check if this is a port (not the :// in http://)
+            if port_start > 6 && !url_str[port_start..].contains('/') {
+                // Extract port number
+                if let Ok(port_num) = url_str[port_start + 1..].parse::<u16>() {
+                    // Valid port found - split host and port
+                    (&url_str[..port_start], port_num)
+                } else {
+                    // Invalid port - use whole URL as host with default port
+                    (url_str.as_str(), 11434)
+                }
+            } else {
+                // No port in URL - use default
+                (url_str.as_str(), 11434)
+            }
+        } else {
+            // No colon found - use default port
+            (url_str.as_str(), 11434)
+        };
+
+        let ollama = Ollama::new(host, port);
         Self {
             ollama,
             status_tx: None,

@@ -67,7 +67,8 @@ pub async fn start_server_by_id(
     let requires_privileges = match &metadata.privilege_requirement {
         crate::protocol::metadata::PrivilegeRequirement::PrivilegedPort(_) => {
             // Only require privileges if actually binding to a privileged port
-            server.port < 1024
+            // Port 0 means OS-assigned port, which will always be unprivileged (>1024)
+            server.port > 0 && server.port < 1024
         }
         _ => {
             // For other requirements (RawSockets, Root, etc.), check as normal
