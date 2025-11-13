@@ -10,6 +10,7 @@ use std::net::{SocketAddr, UdpSocket};
 use std::time::Duration;
 
 #[tokio::test]
+#[ignore = "Requires root/admin privileges to create TUN interface"]
 async fn test_wireguard_handshake_detection() -> E2EResult<()> {
     let config = NetGetConfig::new("Start a WireGuard VPN honeypot on port 0")
         .with_mock(|mock| {
@@ -38,7 +39,7 @@ async fn test_wireguard_handshake_detection() -> E2EResult<()> {
                 .and()
         });
 
-    let mut server = start_netget_server(config).await?;
+    let server = start_netget_server(config).await?;
 
     // Wait for server to be ready
     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -95,6 +96,7 @@ async fn test_wireguard_handshake_detection() -> E2EResult<()> {
 }
 
 #[tokio::test]
+#[ignore = "Requires root/admin privileges to create TUN interface"]
 async fn test_wireguard_multiple_packet_types() -> E2EResult<()> {
     let config = NetGetConfig::new("Start a WireGuard honeypot on port 0 that logs all packet types")
         .with_mock(|mock| {
@@ -123,7 +125,7 @@ async fn test_wireguard_multiple_packet_types() -> E2EResult<()> {
                 .and()
         });
 
-    let mut server = start_netget_server(config).await?;
+    let server = start_netget_server(config).await?;
 
     tokio::time::sleep(Duration::from_secs(2)).await;
 
@@ -169,6 +171,7 @@ async fn test_wireguard_multiple_packet_types() -> E2EResult<()> {
 }
 
 #[tokio::test]
+#[ignore = "Requires root/admin privileges to create TUN interface"]
 async fn test_wireguard_concurrent_connections() -> E2EResult<()> {
     let config = NetGetConfig::new("Start a WireGuard VPN honeypot on port 0")
         .with_mock(|mock| {
@@ -197,7 +200,7 @@ async fn test_wireguard_concurrent_connections() -> E2EResult<()> {
                 .and()
         });
 
-    let mut server = start_netget_server(config).await?;
+    let server = start_netget_server(config).await?;
 
     tokio::time::sleep(Duration::from_secs(2)).await;
 

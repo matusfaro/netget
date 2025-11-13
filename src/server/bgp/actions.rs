@@ -476,18 +476,18 @@ impl Protocol for BgpProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Incomplete)
-            .privilege_requirement(PrivilegeRequirement::PrivilegedPort(179))
+            .privilege_requirement(PrivilegeRequirement::None)
             .implementation("Manual BGP-4 (RFC 4271), 6-state FSM")
             .llm_control("Peering decisions, route advertisements")
             .e2e_testing("Manual BGP client")
-            .notes("No RIB, no route propagation, session tracking only")
+            .notes("No RIB, no route propagation, session tracking only. Standard port is 179 but can run on any port.")
             .build()
     }
     fn description(&self) -> &'static str {
         "BGP routing server"
     }
     fn example_prompt(&self) -> &'static str {
-        "Start a BGP routing server on port 179"
+        "Start a BGP routing server on port 8179"
     }
     fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
         use crate::llm::actions::ParameterDefinition;

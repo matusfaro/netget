@@ -21,6 +21,8 @@ pub struct NetGetInstance {
     pub output_lines: std::sync::Arc<tokio::sync::Mutex<Vec<String>>>,
     /// Mock configuration (for verification)
     pub mock_config: Option<netget::testing::MockLlmConfig>,
+    /// Temporary mock config file (kept alive for duration of test)
+    _mock_temp_file: Option<tempfile::TempPath>,
 }
 
 /// Information about a server that was started
@@ -231,13 +233,15 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
         println!("🤖 Using real Ollama");
         None
     } else {
-        // Mock mode (default): Use mocks
+        // Mock mode (default): Use mocks (or show helpful error when Ollama is called without mocks)
         if !has_mocks {
-            return Err("Mock mode (default) requires mocks to be configured via .with_mock()\nUse --use-ollama flag to use real Ollama instead".into());
+            println!("🔧 Mock mode enabled but no mocks configured");
+            println!("   → If Ollama is called, you'll see what needs to be mocked");
+        } else {
+            println!("🔧 Using mock LLM responses");
         }
-        println!("🔧 Using mock LLM responses");
 
-        // Write mock config to a temporary file
+        // Write mock config to a temporary file (empty if no mocks configured)
         use std::io::Write;
         let mock_json = serde_json::to_string(&config.mock_config)?;
         let mut temp_file = tempfile::NamedTempFile::new()?;
@@ -347,6 +351,7 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
         clients,
         output_lines,
         mock_config: config.mock_config.clone(),
+        _mock_temp_file: mock_config_file,
     })
 }
 
@@ -590,6 +595,13 @@ async fn wait_for_netget_startup_with_capture(
             // Check for non-interactive mode completion
             if line.contains("Press Ctrl+C to stop") {
                 server_confirmations.insert("non_interactive".to_string());
+            }
+
+            // Check for conversation state update (appears after server startup completes)
+            if line.contains("Updated conversation state after server changes")
+                || line.contains("Updated conversation state after client changes")
+            {
+                server_confirmations.insert("state_updated".to_string());
             }
 
             // Heuristic: If we had startup messages and haven't seen a new one in a bit,

@@ -15,14 +15,11 @@ const SNAPSHOT_DIR: &str = "tests/docs_tui/snapshots";
 /// Test /docs command (list all protocols)
 #[test]
 fn test_docs_list_all_protocols() {
-    // Check if release binary exists
-    if !std::path::Path::new("./target/release/netget").exists() {
-        eprintln!("Skipping TUI test: Release binary not found. Run 'cargo build --release --all-features' first.");
-        return;
-    }
+    // Use cargo's env variable to get the actual binary path
+    let binary_path = env!("CARGO_BIN_EXE_netget");
 
     // Run netget with /docs command
-    let mut child = Command::new("./target/release/netget")
+    let mut child = Command::new(binary_path)
         .env("COLUMNS", "120") // Set terminal width
         .env("LINES", "50") // Set terminal height
         .stdin(Stdio::piped())
@@ -68,14 +65,11 @@ fn test_docs_list_all_protocols() {
 /// Test /docs bgp command (detailed protocol docs)
 #[test]
 fn test_docs_bgp_protocol() {
-    // Check if release binary exists
-    if !std::path::Path::new("./target/release/netget").exists() {
-        eprintln!("Skipping TUI test: Release binary not found. Run 'cargo build --release --all-features' first.");
-        return;
-    }
+    // Use cargo's env variable to get the actual binary path
+    let binary_path = env!("CARGO_BIN_EXE_netget");
 
     // Run netget with /docs bgp command
-    let mut child = Command::new("./target/release/netget")
+    let mut child = Command::new(binary_path)
         .env("COLUMNS", "120") // Set terminal width
         .env("LINES", "80") // Set terminal height (larger for detailed view)
         .stdin(Stdio::piped())
@@ -128,14 +122,11 @@ fn test_docs_bgp_protocol() {
 /// Test /docs ssh command (protocol with rich actions)
 #[test]
 fn test_docs_ssh_protocol() {
-    // Check if release binary exists
-    if !std::path::Path::new("./target/release/netget").exists() {
-        eprintln!("Skipping TUI test: Release binary not found. Run 'cargo build --release --all-features' first.");
-        return;
-    }
+    // Use cargo's env variable to get the actual binary path
+    let binary_path = env!("CARGO_BIN_EXE_netget");
 
     // Run netget with /docs ssh command
-    let mut child = Command::new("./target/release/netget")
+    let mut child = Command::new(binary_path)
         .env("COLUMNS", "120") // Set terminal width
         .env("LINES", "80") // Set terminal height
         .stdin(Stdio::piped())

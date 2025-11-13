@@ -11,7 +11,7 @@ async fn test_weight_scale_service_startup() -> E2EResult<()> {
 
     let prompt = "Act as a BLE weight scale. Create the Weight Scale Service (UUID: 0000181d-0000-1000-8000-00805f9b34fb) with Weight Measurement characteristic showing 75.5 kg. Advertise as 'NetGet-WeightScale'.";
 
-    let mut server = helpers::start_netget_server(
+    let server = helpers::start_netget_server(
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock

@@ -67,7 +67,7 @@ Initialize the heartbeat counter to 0 when the server starts."#;
                     // Mock 3: Recurring task executions (allow multiple)
                     .on_instruction_containing("heartbeat counter")
                     .respond_with_actions(serde_json::json!([]))
-                    .expect_calls_at_least(1)
+                    .expect_at_least(1)
                     .and()
             })
     ).await?;
@@ -310,7 +310,7 @@ Initialize metrics counter to 0 and initialized flag to false."#;
                     // Mock 3: Recurring metrics task (multiple executions)
                     .on_instruction_containing("metrics")
                     .respond_with_actions(serde_json::json!([]))
-                    .expect_calls_at_least(1)
+                    .expect_at_least(1)
                     .and()
                     // Mock 4: One-shot init task
                     .on_instruction_containing("initialized")

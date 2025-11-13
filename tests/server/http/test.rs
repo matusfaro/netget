@@ -587,8 +587,6 @@ async fn test_http_simple_get_with_logging() -> E2EResult<()> {
     // Give LLM time to write the log
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-    server.stop().await?;
-
     // Check that a log file was created matching pattern: netget_access_logs_*.log
     let current_dir = std::env::current_dir()?;
     let entries = std::fs::read_dir(&current_dir)?;
@@ -635,6 +633,7 @@ async fn test_http_simple_get_with_logging() -> E2EResult<()> {
     }
 
     server.verify_mocks().await?;
+    server.stop().await?;
     println!("=== Test passed ===\n");
     Ok(())
 }

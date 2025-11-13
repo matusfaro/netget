@@ -94,7 +94,7 @@ impl Protocol for BluetoothBleCyclingProtocol {
         vec![CYCLING_MEASUREMENT_EVENT.clone()]
     }
     fn stack_name(&self) -> &'static str {
-        "DATALINK>BLE_CYCLING"
+        "BLUETOOTH_BLE_CYCLING"
     }
     fn keywords(&self) -> Vec<&'static str> {
         vec!["bluetooth", "cycling", "bike", "fitness"]

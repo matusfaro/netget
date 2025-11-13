@@ -20,7 +20,25 @@ async fn test_mdns_service_advertisement() -> E2EResult<()> {
         with property 'version=1.0'";
 
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server_config = ServerConfig::new(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("mdns")
+            .and_instruction_containing("Advertise service")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "mdns",
+                    "startup_params": {
+                        "service_type": "_http._tcp.local.",
+                        "service_name": "NetGet Test Server",
+                        "properties": {"version": "1.0"}
+                    }
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
+    let mut server = helpers::start_netget_server(server_config).await?;
     println!("Server started, mDNS should be advertising");
 
     // Give mDNS time to start advertising
@@ -100,6 +118,7 @@ async fn test_mdns_service_advertisement() -> E2EResult<()> {
     // Shutdown mDNS daemon
     let _ = mdns.shutdown();
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -115,7 +134,26 @@ async fn test_mdns_multiple_services() -> E2EResult<()> {
         2) type '_ftp._tcp.local.', name 'FTP Service', port {AVAILABLE_PORT}";
 
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server_config = ServerConfig::new(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("mdns")
+            .and_instruction_containing("two services")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "mdns",
+                    "startup_params": {
+                        "services": [
+                            {"service_type": "_http._tcp.local.", "service_name": "Web Service"},
+                            {"service_type": "_ftp._tcp.local.", "service_name": "FTP Service"}
+                        ]
+                    }
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
+    let mut server = helpers::start_netget_server(server_config).await?;
     println!("Server started, mDNS should be advertising multiple services");
 
     // Give mDNS time to start advertising
@@ -173,6 +211,7 @@ async fn test_mdns_multiple_services() -> E2EResult<()> {
     // Shutdown mDNS daemon
     let _ = mdns.shutdown();
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -188,7 +227,25 @@ async fn test_mdns_service_with_properties() -> E2EResult<()> {
         with properties: version='2.0', path='/api', secure='true'";
 
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server_config = ServerConfig::new(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("mdns")
+            .and_instruction_containing("properties")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "mdns",
+                    "startup_params": {
+                        "service_type": "_http._tcp.local.",
+                        "service_name": "Property Test",
+                        "properties": {"version": "2.0", "path": "/api", "secure": "true"}
+                    }
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
+    let mut server = helpers::start_netget_server(server_config).await?;
     println!("Server started, mDNS advertising with properties");
 
     // Give mDNS time to start
@@ -242,6 +299,7 @@ async fn test_mdns_service_with_properties() -> E2EResult<()> {
 
     let _ = mdns.shutdown();
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())
@@ -256,7 +314,24 @@ async fn test_mdns_custom_service_type() -> E2EResult<()> {
         type '_netget._tcp.local.', name 'Custom NetGet Service', port {AVAILABLE_PORT}";
 
     // Start the server
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server_config = ServerConfig::new(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("mdns")
+            .and_instruction_containing("custom service")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "mdns",
+                    "startup_params": {
+                        "service_type": "_netget._tcp.local.",
+                        "service_name": "Custom NetGet Service"
+                    }
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
+    let mut server = helpers::start_netget_server(server_config).await?;
     println!("Server started with custom service type");
 
     // VALIDATION: Query for custom service type
@@ -306,6 +381,7 @@ async fn test_mdns_custom_service_type() -> E2EResult<()> {
 
     let _ = mdns.shutdown();
 
+    server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test completed ===\n");
     Ok(())

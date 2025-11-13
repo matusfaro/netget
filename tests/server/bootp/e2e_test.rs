@@ -27,8 +27,7 @@ When receiving BOOTREQUEST:
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup (user command)
-                .on_instruction_containing("Listen on port")
-                .and_instruction_containing("BOOTP")
+                .on_any()
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -204,8 +203,7 @@ When receiving BOOTREQUEST:
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup (user command)
-                .on_instruction_containing("Listen on port")
-                .and_instruction_containing("BOOTP")
+                .on_any()
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -326,8 +324,7 @@ Use server IP 192.168.1.1 for all responses.
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup (user command)
-                .on_instruction_containing("Listen on port")
-                .and_instruction_containing("BOOTP")
+                .on_any()
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",

@@ -35,14 +35,12 @@ Log all requests at DEBUG level.
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup (user command)
-                .on_instruction_containing("Kafka broker")
-                .and_instruction_containing("port 0")
-                .and_instruction_containing("Cluster ID: netget-test")
+                .on_any()
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
                         "port": 0,
-                        "base_stack": "Kafka",
+                        "base_stack": "KAFKA",
                         "instruction": "Kafka broker - handle all Kafka protocol requests"
                     }
                 ]))
@@ -90,14 +88,12 @@ Log all produce and fetch requests at DEBUG level.
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup (user command)
-                .on_instruction_containing("Kafka broker")
-                .and_instruction_containing("port 0")
-                .and_instruction_containing("Auto-create topics")
+                .on_any()
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
                         "port": 0,
-                        "base_stack": "Kafka",
+                        "base_stack": "KAFKA",
                         "instruction": "Kafka broker - accept produce to orders topic, store in memory, return on fetch"
                     }
                 ]))
@@ -247,14 +243,12 @@ Log all metadata requests at DEBUG level.
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup (user command)
-                .on_instruction_containing("Kafka broker")
-                .and_instruction_containing("port 0")
-                .and_instruction_containing("Cluster ID: test-cluster")
+                .on_any()
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
                         "port": 0,
-                        "base_stack": "Kafka",
+                        "base_stack": "KAFKA",
                         "instruction": "Kafka broker - respond to metadata requests with events and logs topics"
                     }
                 ]))

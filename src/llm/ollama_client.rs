@@ -351,11 +351,20 @@ impl OllamaClient {
     ) -> Result<String> {
         // CHECK FOR MOCK MODE (test environment)
         if let Some(ref mock_file_path) = self.mock_config_file {
+            debug!("🔧 Mock config file present: {:?}", mock_file_path);
             // Read mock config from file
-            let mock_config_json = tokio::fs::read_to_string(mock_file_path)
-                .await
-                .context("Failed to read mock config file")?;
-            return self.handle_mock_request(prompt, &mock_config_json).await;
+            match tokio::fs::read_to_string(mock_file_path).await {
+                Ok(mock_config_json) => {
+                    debug!("🔧 Successfully read mock config file ({} bytes)", mock_config_json.len());
+                    return self.handle_mock_request(prompt, &mock_config_json).await;
+                }
+                Err(e) => {
+                    error!("🔧 Failed to read mock config file: {}", e);
+                    return Err(anyhow::anyhow!("Failed to read mock config file: {}", e));
+                }
+            }
+        } else {
+            debug!("No mock config file set");
         }
 
         // Legacy: Simple mock response (backward compatibility for old tests)
@@ -486,6 +495,8 @@ impl OllamaClient {
     async fn handle_mock_request(&self, prompt: &str, config_json: &str) -> Result<String> {
         use crate::testing::MockLlmConfig;
 
+        debug!("🔧 handle_mock_request: config_json length = {}", config_json.len());
+
         // Parse serialized mock configuration
         #[derive(serde::Deserialize)]
         struct SerializedConfig {
@@ -494,8 +505,12 @@ impl OllamaClient {
         let serialized: SerializedConfig = serde_json::from_str(config_json)
             .context("Failed to parse NETGET_MOCK_CONFIG_JSON")?;
 
+        debug!("🔧 Parsed {} serialized rules", serialized.serialized_rules.len());
+
         // Reconstruct config from serialized rules
         let config = MockLlmConfig::from_serialized(serialized.serialized_rules);
+
+        debug!("🔧 Reconstructed {} rules", config.rules.len());
 
         // Extract context from prompt
         let context = self.extract_llm_context(prompt);
@@ -504,8 +519,16 @@ impl OllamaClient {
             "🔧 MOCK MODE: Matching against {} rules",
             config.rules.len()
         );
-        debug!("Context: event_type={:?}, instruction='{}', event_data={}",
+        info!("🔧 Context: event_type={:?}, instruction='{}', event_data={}",
             context.event_type, context.instruction, context.event_data);
+
+        // Log first 500 chars of prompt for debugging
+        let prompt_preview = if prompt.len() > 500 {
+            format!("{}... [+{} more chars]", &prompt[..500], prompt.len() - 500)
+        } else {
+            prompt.to_string()
+        };
+        trace!("Full prompt preview:\n{}", prompt_preview);
 
         // Find matching rule
         if let Some((rule_idx, response)) = config.find_match(&context).await {
@@ -526,10 +549,23 @@ impl OllamaClient {
         warn!("  Event type: {:?}", context.event_type);
         warn!("  Instruction: {}", context.instruction);
 
+        // Show the prompt so user knows what needs to be mocked
+        let prompt_preview = if prompt.len() > 500 {
+            format!("{}... [truncated {} chars]", &prompt[..500], prompt.len() - 500)
+        } else {
+            prompt.to_string()
+        };
+
         Err(anyhow::anyhow!(
-            "Mock mode: No matching rule for LLM call. Context: event_type={:?}, instruction='{}'",
+            "Mock mode: Ollama was unexpectedly called but no matching mock rule found.\n\n\
+            Event type: {:?}\n\
+            Instruction: '{}'\n\n\
+            Full prompt (first 500 chars):\n{}\n\n\
+            Add a mock for this call using .with_mock() on your test server.\n\
+            Or use --use-ollama flag to use real Ollama instead.",
             context.event_type,
-            context.instruction
+            context.instruction,
+            prompt_preview
         ))
     }
 
@@ -547,9 +583,16 @@ impl OllamaClient {
             if let Some(event_type) = event_line.split("Event:").nth(1) {
                 let event_type = event_type.trim().split_whitespace().next().unwrap_or("");
                 if !event_type.is_empty() {
+                    trace!("🔍 Extracted event type: '{}'", event_type);
                     context = context.with_event_type(event_type);
+                } else {
+                    trace!("🔍 Event type extraction: empty after parsing");
                 }
+            } else {
+                trace!("🔍 Event type extraction: no text after 'Event:'");
             }
+        } else {
+            trace!("🔍 Event type extraction: no 'Event:' line found");
         }
 
         // Try to extract instruction
@@ -562,26 +605,42 @@ impl OllamaClient {
                 .nth(1)
                 .or_else(|| instruction_line.split("Your instruction:").nth(1))
             {
-                context = context.with_instruction(instruction.trim());
+                let instruction_trimmed = instruction.trim();
+                trace!("🔍 Extracted instruction: '{}'", instruction_trimmed);
+                context = context.with_instruction(instruction_trimmed);
+            } else {
+                trace!("🔍 Instruction extraction: found line with 'instruction:' but couldn't split");
             }
         } else {
-            // Fallback: Look for last user message (after "# Task" section)
-            // For initial network requests, the user's prompt is the instruction
-            if let Some(task_idx) = prompt.find("# Task") {
-                let after_task = &prompt[task_idx..];
-                // Find the last non-empty, non-header line as the instruction
-                for line in after_task.lines().rev() {
-                    let trimmed = line.trim();
-                    if !trimmed.is_empty()
-                        && !trimmed.starts_with('#')
-                        && !trimmed.starts_with("You are")
-                        && !trimmed.starts_with("You ")
-                        && trimmed.len() > 10  // Skip very short lines that are likely metadata
-                    {
-                        context = context.with_instruction(trimmed);
-                        break;
-                    }
+            debug!("🔍 Instruction extraction: no 'instruction:' line found, trying fallback");
+            // Fallback 1: Look for content after system prompt (user message)
+            // In conversation format, user messages come after the system message
+            // Try to find where system prompt ends (after ## or # Task section)
+            let mut found_instruction = false;
+
+            // Look for the last substantial non-empty line (likely the user message)
+            let lines: Vec<&str> = prompt.lines().collect();
+            for line in lines.iter().rev() {
+                let trimmed = line.trim();
+                // Skip empty lines, very short lines, and lines that look like headers or system text
+                if !trimmed.is_empty()
+                    && trimmed.len() > 5  // Allow shorter instructions
+                    && !trimmed.starts_with('#')
+                    && !trimmed.starts_with("You ")
+                    && !trimmed.starts_with("Your ")
+                    && !trimmed.starts_with("Please ")
+                    && !trimmed.contains("```")  // Skip code blocks
+                    && !trimmed.starts_with("Use `/")  // Skip help text like "Use `/model`"
+                {
+                    debug!("🔍 Extracted instruction (fallback): '{}'", trimmed);
+                    context = context.with_instruction(trimmed);
+                    found_instruction = true;
+                    break;
                 }
+            }
+
+            if !found_instruction {
+                debug!("🔍 Instruction extraction: no suitable instruction found in fallback");
             }
         }
 
@@ -590,15 +649,36 @@ impl OllamaClient {
             .or_else(|| prompt.find("Event data:"))
             .or_else(|| prompt.find("Data:")) {
             let after_data = &prompt[data_start_idx..];
+            trace!("🔍 Found data marker at position {}", data_start_idx);
+
             // Try to find JSON object
             if let Some(json_start) = after_data.find('{') {
                 let json_str = &after_data[json_start..];
-                // Try to parse as JSON
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(json_str) {
-                    context = context.with_event_data(json);
+                trace!("🔍 Found JSON starting at: {}", &json_str[..json_str.len().min(100)]);
+
+                // Try to parse as JSON - this may fail if there's text after the JSON
+                match serde_json::from_str::<serde_json::Value>(json_str) {
+                    Ok(json) => {
+                        trace!("🔍 Successfully parsed event data: {}", json);
+                        context = context.with_event_data(json);
+                    }
+                    Err(e) => {
+                        trace!("🔍 Failed to parse event data as JSON: {}", e);
+                        trace!("🔍 JSON string was: {}", &json_str[..json_str.len().min(200)]);
+                    }
                 }
+            } else {
+                trace!("🔍 No '{{' found after data marker");
             }
+        } else {
+            trace!("🔍 Event data extraction: no data marker found (Context data:, Event data:, or Data:)");
         }
+
+        debug!("🔍 Final context - event_type: {:?}, instruction: '{}', event_data: {}",
+            context.event_type,
+            context.instruction,
+            context.event_data
+        );
 
         context
     }

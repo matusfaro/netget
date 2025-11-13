@@ -11,7 +11,7 @@ async fn test_presenter_service_startup() -> E2EResult<()> {
 
     let prompt = "Act as a BLE presentation remote. Create HID service for presenter controls (next slide, previous slide, laser pointer). Advertise as 'NetGet-Presenter'.";
 
-    let mut server = helpers::start_netget_server(
+    let server = helpers::start_netget_server(
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock

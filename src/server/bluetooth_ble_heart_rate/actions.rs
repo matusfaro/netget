@@ -83,7 +83,7 @@ impl Protocol for BluetoothBleHeartRateProtocol {
         vec![HEART_RATE_UPDATED_EVENT.clone()]
     }
     fn stack_name(&self) -> &'static str {
-        "DATALINK>BLE_HEART_RATE"
+        "BLUETOOTH_BLE_HEART_RATE"
     }
     fn keywords(&self) -> Vec<&'static str> {
         vec!["bluetooth", "heart", "rate", "bluetooth_ble_heart_rate"]

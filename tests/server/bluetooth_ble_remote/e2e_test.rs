@@ -11,7 +11,7 @@ async fn test_remote_service_startup() -> E2EResult<()> {
 
     let prompt = "Act as a BLE remote control. Create HID service for media controls (play, pause, volume, track navigation). Advertise as 'NetGet-Remote'.";
 
-    let mut server = helpers::start_netget_server(
+    let server = helpers::start_netget_server(
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock

@@ -451,7 +451,7 @@ async fn test_socks5_connection_rejection() -> E2EResult<()> {
                     .and()
                     // Mock 3: CONNECT to blocked port 9999
                     .on_event("socks5_connect")
-                    .and_event_data_contains("port", 9999)
+                    .and_event_data_contains("port", "9999")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "deny_connect",
@@ -644,7 +644,7 @@ async fn test_socks5_mitm_inspection() -> E2EResult<()> {
                             "type": "forward_data"
                         }
                     ]))
-                    .expect_calls_at_least(1)
+                    .expect_at_least(1)
                     .and()
             })
     ).await?;

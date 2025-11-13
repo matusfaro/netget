@@ -17,7 +17,21 @@ async fn test_openai_list_models() -> E2EResult<()> {
     let prompt = "Open OpenAI on port {AVAILABLE_PORT}. This is an OpenAI-compatible API server \
         that wraps Ollama. When clients request GET /v1/models, list available Ollama models.";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server_config = ServerConfig::new(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("OpenAI")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "openai",
+                    "instruction": "OpenAI-compatible API wrapping Ollama"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
+
+    let mut server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
 
     // Wait a bit for server to be ready
@@ -85,6 +99,7 @@ async fn test_openai_list_models() -> E2EResult<()> {
         println!("✓ First model: {}", first_model.get("id").unwrap());
     }
 
+    server.verify_mocks().await?;
     println!("✓ OpenAI List Models test completed\n");
     Ok(())
 }
@@ -97,7 +112,21 @@ async fn test_openai_chat_completion() -> E2EResult<()> {
         that wraps Ollama. When clients send POST /v1/chat/completions requests, \
         use Ollama to generate responses and return them in OpenAI format.";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server_config = ServerConfig::new(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("OpenAI")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "openai",
+                    "instruction": "OpenAI chat completions via Ollama"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
+
+    let mut server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
 
     // Wait for server to be ready
@@ -230,6 +259,7 @@ async fn test_openai_chat_completion() -> E2EResult<()> {
         "Expected 'total_tokens'"
     );
 
+    server.verify_mocks().await?;
     println!("✓ OpenAI Chat Completion test completed\n");
     Ok(())
 }
@@ -240,7 +270,21 @@ async fn test_openai_invalid_endpoint() -> E2EResult<()> {
 
     let prompt = "Open OpenAI on port {AVAILABLE_PORT}. Return 404 errors for unknown endpoints.";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server_config = ServerConfig::new(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("OpenAI")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "openai",
+                    "instruction": "Return 404 for unknown endpoints"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
+
+    let mut server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
 
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -289,6 +333,7 @@ async fn test_openai_invalid_endpoint() -> E2EResult<()> {
     );
     assert!(error.get("type").is_some(), "Expected error 'type' field");
 
+    server.verify_mocks().await?;
     println!("✓ OpenAI Invalid Endpoint test completed\n");
     Ok(())
 }
@@ -301,7 +346,21 @@ async fn test_openai_with_rust_client() -> E2EResult<()> {
         that wraps Ollama. When clients request models, list available Ollama models. \
         When clients request chat completions, use Ollama to generate responses.";
 
-    let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
+    let server_config = ServerConfig::new(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("OpenAI")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "openai",
+                    "instruction": "OpenAI-compatible API with models and chat"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
+
+    let mut server = helpers::start_netget_server(server_config).await?;
     println!("Server started on port {}", server.port);
 
     // Wait for server to be ready
@@ -441,6 +500,7 @@ async fn test_openai_with_rust_client() -> E2EResult<()> {
         );
     }
 
+    server.verify_mocks().await?;
     println!("\n✓ OpenAI Rust Client test completed - Full compatibility verified!\n");
     Ok(())
 }

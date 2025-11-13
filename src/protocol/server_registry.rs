@@ -534,55 +534,55 @@ impl ServerRegistry {
         // More specific protocols checked first to avoid substring collisions
 
         // Priority 1: Check mDNS before DNS (avoid substring match)
-        if let Some(stack) = self.match_protocol_by_any_keyword(&input_lower, "mDNS") {
+        if let Some(stack) = self.match_protocol_by_any_keyword_with_boundaries(&input_lower, "mDNS") {
             return Some(stack);
         }
 
         // Priority 2: Check IMAP before SMTP (more specific for mail/email)
-        if let Some(stack) = self.match_protocol_by_any_keyword(&input_lower, "IMAP") {
+        if let Some(stack) = self.match_protocol_by_any_keyword_with_boundaries(&input_lower, "IMAP") {
             return Some(stack);
         }
 
         // Priority 2.5: Check SMTP before general loop (avoid hash order collisions)
-        if let Some(stack) = self.match_protocol_by_any_keyword(&input_lower, "SMTP") {
+        if let Some(stack) = self.match_protocol_by_any_keyword_with_boundaries(&input_lower, "SMTP") {
             return Some(stack);
         }
 
         // Priority 2.7: Check SNMP before SSH-Agent (avoid "agent" substring match)
-        if let Some(stack) = self.match_protocol_by_any_keyword(&input_lower, "SNMP") {
+        if let Some(stack) = self.match_protocol_by_any_keyword_with_boundaries(&input_lower, "SNMP") {
             return Some(stack);
         }
 
         // Priority 3: Check PostgreSQL before MySQL (avoid "sql" substring)
-        if let Some(stack) = self.match_protocol_by_any_keyword(&input_lower, "PostgreSQL") {
+        if let Some(stack) = self.match_protocol_by_any_keyword_with_boundaries(&input_lower, "PostgreSQL") {
             return Some(stack);
         }
 
         // Priority 4: Check XML-RPC and JSON-RPC before HTTP (avoid "http" substring in stack names)
-        if let Some(stack) = self.match_protocol_by_any_keyword(&input_lower, "XmlRPC") {
+        if let Some(stack) = self.match_protocol_by_any_keyword_with_boundaries(&input_lower, "XmlRPC") {
             return Some(stack);
         }
-        if let Some(stack) = self.match_protocol_by_any_keyword(&input_lower, "JsonRPC") {
+        if let Some(stack) = self.match_protocol_by_any_keyword_with_boundaries(&input_lower, "JsonRPC") {
             return Some(stack);
         }
 
         // Priority 5: Check Proxy before HTTP (avoid "http" substring in "http proxy")
-        if let Some(stack) = self.match_protocol_by_any_keyword(&input_lower, "Proxy") {
+        if let Some(stack) = self.match_protocol_by_any_keyword_with_boundaries(&input_lower, "Proxy") {
             return Some(stack);
         }
 
         // Priority 6: Check Tor protocols before TCP fallback
-        if let Some(stack) = self.match_protocol_by_any_keyword(&input_lower, "TorDirectory") {
+        if let Some(stack) = self.match_protocol_by_any_keyword_with_boundaries(&input_lower, "TorDirectory") {
             return Some(stack);
         }
-        if let Some(stack) = self.match_protocol_by_any_keyword(&input_lower, "TorRelay") {
+        if let Some(stack) = self.match_protocol_by_any_keyword_with_boundaries(&input_lower, "TorRelay") {
             return Some(stack);
         }
 
-        // For all other protocols, check ALL keywords from each protocol
+        // For all other protocols, check ALL keywords from each protocol with word boundaries
         for (protocol_name, protocol) in &self.protocols {
             for keyword in protocol.keywords() {
-                if input_lower.contains(&keyword.to_lowercase()) {
+                if self.matches_with_word_boundary(&input_lower, &keyword.to_lowercase()) {
                     return Some(protocol_name.clone());
                 }
             }
@@ -601,18 +601,59 @@ impl ServerRegistry {
         None
     }
 
-    /// Match a specific protocol by checking if input contains ANY of its keywords
+    /// Check if input matches keyword with word boundaries
+    ///
+    /// Matches if keyword appears as a complete word or phrase (not substring).
+    /// Examples:
+    ///   - "mail" matches "mail server" ✓
+    ///   - "mail" does NOT match "email" ✗
+    ///   - "ai" does NOT match "mail" ✗
+    fn matches_with_word_boundary(&self, input: &str, keyword: &str) -> bool {
+        // Handle multi-word keywords (e.g., "mail server", "ssh keys")
+        if keyword.contains(' ') {
+            return input.contains(keyword);
+        }
+
+        // For single-word keywords, check word boundaries
+        let keyword_bytes = keyword.as_bytes();
+        let input_bytes = input.as_bytes();
+
+        if let Some(pos) = input.find(keyword) {
+            // Check character before keyword
+            let before_ok = if pos == 0 {
+                true
+            } else {
+                let c = input_bytes[pos - 1];
+                !c.is_ascii_alphanumeric() && c != b'_' && c != b'-'
+            };
+
+            // Check character after keyword
+            let end_pos = pos + keyword.len();
+            let after_ok = if end_pos >= input.len() {
+                true
+            } else {
+                let c = input_bytes[end_pos];
+                !c.is_ascii_alphanumeric() && c != b'_' && c != b'-'
+            };
+
+            return before_ok && after_ok;
+        }
+
+        false
+    }
+
+    /// Match a specific protocol by checking if input contains ANY of its keywords (with word boundaries)
     ///
     /// This method checks ALL keywords defined by the protocol, not just a hardcoded subset.
     /// Returns the protocol name if any keyword matches.
-    fn match_protocol_by_any_keyword(
+    fn match_protocol_by_any_keyword_with_boundaries(
         &self,
         input_lower: &str,
         protocol_name: &str,
     ) -> Option<String> {
         if let Some(protocol) = self.protocols.get(protocol_name) {
             for keyword in protocol.keywords() {
-                if input_lower.contains(&keyword.to_lowercase()) {
+                if self.matches_with_word_boundary(input_lower, &keyword.to_lowercase()) {
                     return Some(protocol_name.to_string());
                 }
             }

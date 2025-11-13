@@ -31,7 +31,7 @@ impl Protocol for BluetoothBleGamepadProtocol {
         vec![]
     }
     fn stack_name(&self) -> &'static str {
-        "DATALINK>BLE_GAMEPAD"
+        "BLUETOOTH_BLE_GAMEPAD"
     }
     fn keywords(&self) -> Vec<&'static str> {
         vec!["bluetooth", "gamepad"]

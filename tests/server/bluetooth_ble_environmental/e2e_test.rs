@@ -11,7 +11,7 @@ async fn test_environmental_service_startup() -> E2EResult<()> {
 
     let prompt = "Act as a BLE environmental sensor. Create the Environmental Sensing Service (UUID: 0000181a-0000-1000-8000-00805f9b34fb) with temperature 22°C, humidity 60%, pressure 1013 hPa. Advertise as 'NetGet-Environment'.";
 
-    let mut server = helpers::start_netget_server(
+    let server = helpers::start_netget_server(
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock

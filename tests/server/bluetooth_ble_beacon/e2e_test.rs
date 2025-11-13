@@ -18,7 +18,7 @@ async fn test_ibeacon_advertising() -> E2EResult<()> {
     let prompt = "Act as an iBeacon. Use UUID 12345678-1234-5678-1234-567812345678, major 100, minor 200, TX power -59dBm. Start advertising as 'NetGet-iBeacon'.";
 
     // Start the server with mocks
-    let mut server = helpers::start_netget_server(
+    let server = helpers::start_netget_server(
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
@@ -72,7 +72,7 @@ async fn test_eddystone_uid_advertising() -> E2EResult<()> {
     let prompt = "Act as an Eddystone-UID beacon. Use namespace 0x12345678901234567890 and instance 0x123456789012. TX power -20dBm. Advertise as 'NetGet-Eddystone'.";
 
     // Start the server with mocks
-    let mut server = helpers::start_netget_server(
+    let server = helpers::start_netget_server(
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
@@ -123,7 +123,7 @@ async fn test_eddystone_url_advertising() -> E2EResult<()> {
     let prompt = "Act as an Eddystone-URL beacon. Broadcast URL 'https://example.com'. TX power -20dBm. Advertise as 'NetGet-URL'.";
 
     // Start the server with mocks
-    let mut server = helpers::start_netget_server(
+    let server = helpers::start_netget_server(
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock

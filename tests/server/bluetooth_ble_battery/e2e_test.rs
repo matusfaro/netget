@@ -18,7 +18,7 @@ async fn test_battery_service_startup() -> E2EResult<()> {
     let prompt = "Act as a BLE battery-powered device. Create the Battery Service (UUID: 0000180f-0000-1000-8000-00805f9b34fb) with Battery Level characteristic (UUID: 00002a19-0000-1000-8000-00805f9b34fb) that supports read. Set battery level to 80% (hex: 50). Start advertising as 'NetGet-Battery'.";
 
     // Start the server with mocks
-    let mut server = helpers::start_netget_server(
+    let server = helpers::start_netget_server(
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
@@ -77,7 +77,7 @@ async fn test_battery_level_update() -> E2EResult<()> {
     let prompt = "Act as a BLE battery service. Start with 100% battery (hex: 64), then after 2 seconds update to 90% (hex: 5A). Advertise as 'NetGet-Battery-Drain'.";
 
     // Start the server with mocks
-    let mut server = helpers::start_netget_server(
+    let server = helpers::start_netget_server(
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock

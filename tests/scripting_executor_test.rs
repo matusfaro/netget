@@ -39,6 +39,9 @@ print(json.dumps(response))
     };
 
     let result = execute_script(&config, &input);
+    if let Err(ref e) = result {
+        eprintln!("Error executing script: {:?}", e);
+    }
     assert!(result.is_ok());
 
     let response = result.unwrap();
@@ -85,6 +88,9 @@ print(json.dumps(response))
     };
 
     let result = execute_script(&config, &input);
+    if let Err(ref e) = result {
+        eprintln!("Error executing script: {:?}", e);
+    }
     assert!(result.is_ok());
 
     let response = result.unwrap();
@@ -127,6 +133,9 @@ console.log(JSON.stringify(response));
     };
 
     let result = execute_script(&config, &input);
+    if let Err(ref e) = result {
+        eprintln!("Error executing script: {:?}", e);
+    }
     assert!(result.is_ok());
 
     let response = result.unwrap();
@@ -166,6 +175,9 @@ fmt.Println(string(jsonBytes))
     };
 
     let result = execute_script(&config, &input);
+    if let Err(ref e) = result {
+        eprintln!("Error executing script: {:?}", e);
+    }
     assert!(result.is_ok());
 
     let response = result.unwrap();
@@ -213,6 +225,9 @@ print encode_json($response);
     };
 
     let result = execute_script(&config, &input);
+    if let Err(ref e) = result {
+        eprintln!("Error executing script: {:?}", e);
+    }
     assert!(result.is_ok());
 
     let response = result.unwrap();
@@ -267,6 +282,9 @@ print encode_json($response);
     };
 
     let result = execute_script(&config, &input);
+    if let Err(ref e) = result {
+        eprintln!("Error executing script: {:?}", e);
+    }
     assert!(result.is_ok());
 
     let response = result.unwrap();

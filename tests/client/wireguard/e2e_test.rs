@@ -19,6 +19,7 @@ mod tests {
     /// Test WireGuard client connection to server (requires root/sudo)
     /// LLM calls: 4 (server startup, client startup, connected event, status query)
     #[tokio::test]
+    #[ignore = "Requires root/admin privileges to start WireGuard server"]
     async fn test_wireguard_client_connect() -> E2EResult<()> {
         // Note: This test requires sudo/root privileges to start WireGuard server
 
@@ -51,7 +52,7 @@ mod tests {
                     .and()
             });
 
-        let mut server = start_netget_server(server_config).await?;
+        let server = start_netget_server(server_config).await?;
 
         // Give server time to start and generate keys
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -92,7 +93,7 @@ mod tests {
                     .and()
             });
 
-        let mut client = start_netget_client(client_config).await?;
+        let client = start_netget_client(client_config).await?;
 
         // Give client time to connect
         tokio::time::sleep(Duration::from_secs(3)).await;
@@ -116,6 +117,7 @@ mod tests {
     /// Test WireGuard client status query (requires root/sudo)
     /// LLM calls: 2 (client startup, connected event)
     #[tokio::test]
+    #[ignore = "Requires root/admin privileges to start WireGuard server"]
     async fn test_wireguard_client_status_query() -> E2EResult<()> {
         // Note: This test requires sudo/root privileges
 
@@ -156,7 +158,7 @@ mod tests {
                     .and()
             });
 
-        let mut client = start_netget_client(client_config).await?;
+        let client = start_netget_client(client_config).await?;
         tokio::time::sleep(Duration::from_secs(3)).await;
 
         // Verify output contains connection information
@@ -178,6 +180,7 @@ mod tests {
     /// Test WireGuard client disconnect (requires root/sudo)
     /// LLM calls: 3 (client startup, connected event, disconnected event)
     #[tokio::test]
+    #[ignore = "Requires root/admin privileges to start WireGuard server"]
     async fn test_wireguard_client_disconnect() -> E2EResult<()> {
         // Note: This test requires sudo/root privileges
 
@@ -225,7 +228,7 @@ mod tests {
                     .and()
             });
 
-        let mut client = start_netget_client(client_config).await?;
+        let client = start_netget_client(client_config).await?;
         tokio::time::sleep(Duration::from_secs(4)).await;
 
         // Verify disconnect occurred

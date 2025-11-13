@@ -85,7 +85,7 @@ impl Protocol for BluetoothBleMouseProtocol {
     }
 
     fn stack_name(&self) -> &'static str {
-        "DATALINK>BLE_MOUSE"
+        "BLUETOOTH_BLE_MOUSE"
     }
 
     fn keywords(&self) -> Vec<&'static str> {

@@ -91,6 +91,16 @@ async fn test_openvpn_server_startup() -> E2EResult<()> {
         "OpenVPN client not available. Install with: sudo apt-get install openvpn (Ubuntu/Debian) or brew install openvpn (macOS)"
     );
 
+    // Check if running with sufficient privileges
+    #[cfg(unix)]
+    {
+        let is_root = unsafe { libc::geteuid() } == 0;
+        assert!(
+            is_root,
+            "This test requires root/sudo privileges for TUN interface creation. Run with: sudo cargo test"
+        );
+    }
+
     let server_config = NetGetConfig::new("Start an OpenVPN VPN server on port {AVAILABLE_PORT}")
         .with_mock(|mock| {
             mock
@@ -251,6 +261,16 @@ async fn test_openvpn_protocol_compatibility() -> E2EResult<()> {
         "OpenVPN client not available. Install with: sudo apt-get install openvpn (Ubuntu/Debian) or brew install openvpn (macOS)"
     );
 
+    // Check if running with sufficient privileges
+    #[cfg(unix)]
+    {
+        let is_root = unsafe { libc::geteuid() } == 0;
+        assert!(
+            is_root,
+            "This test requires root/sudo privileges for TUN interface creation. Run with: sudo cargo test"
+        );
+    }
+
     let server_config = NetGetConfig::new("Start an OpenVPN VPN server on port {AVAILABLE_PORT}")
         .with_mock(|mock| {
             mock
@@ -288,6 +308,16 @@ async fn test_openvpn_protocol_compatibility() -> E2EResult<()> {
 
 #[tokio::test]
 async fn test_openvpn_manual_handshake_v2() -> E2EResult<()> {
+    // Check if running with sufficient privileges
+    #[cfg(unix)]
+    {
+        let is_root = unsafe { libc::geteuid() } == 0;
+        assert!(
+            is_root,
+            "This test requires root/sudo privileges for TUN interface creation. Run with: sudo cargo test"
+        );
+    }
+
     let server_config = NetGetConfig::new("Start an OpenVPN VPN server on port {AVAILABLE_PORT}")
         .with_mock(|mock| {
             mock

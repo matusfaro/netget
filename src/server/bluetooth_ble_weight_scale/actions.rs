@@ -103,7 +103,7 @@ impl Protocol for BluetoothBleWeightScaleProtocol {
         vec![WEIGHT_MEASUREMENT_EVENT.clone()]
     }
     fn stack_name(&self) -> &'static str {
-        "DATALINK>BLE_WEIGHT_SCALE"
+        "BLUETOOTH_BLE_WEIGHT_SCALE"
     }
     fn keywords(&self) -> Vec<&'static str> {
         vec!["bluetooth", "weight", "scale", "health"]

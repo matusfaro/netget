@@ -9,6 +9,11 @@ use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::time::sleep;
 
+/// Helper to get the netget binary path from cargo
+fn get_netget_binary() -> &'static str {
+    env!("CARGO_BIN_EXE_netget")
+}
+
 /// Helper to get an available port
 async fn get_available_port() -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0")
@@ -41,7 +46,7 @@ async fn test_htcpcp_tea_accepts_message_teapot() {
 
     println!("Starting NetGet with RFC 7168 prompt on port {}...", port);
 
-    let mut child = Command::new("./target/release/netget")
+    let mut child = Command::new(get_netget_binary())
         .arg(prompt)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -138,7 +143,7 @@ async fn test_htcpcp_coffeepot_rejects_message_teapot() {
 
     println!("Starting NetGet with RFC 2324 prompt on port {}...", port);
 
-    let mut child = Command::new("./target/release/netget")
+    let mut child = Command::new(get_netget_binary())
         .arg(prompt)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -228,7 +233,7 @@ async fn test_llm_search_and_extract_rfc2324_media_type() {
                   Read the RFC and find what media type (Content-Type) is defined. \
                   Use show_message to tell me the exact media type string you found.";
 
-    let mut child = Command::new("./target/release/netget")
+    let mut child = Command::new(get_netget_binary())
         .arg(prompt)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

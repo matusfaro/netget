@@ -31,7 +31,7 @@ impl Protocol for BluetoothBlePresenterProtocol {
         vec![]
     }
     fn stack_name(&self) -> &'static str {
-        "DATALINK>BLE_PRESENTER"
+        "BLUETOOTH_BLE_PRESENTER"
     }
     fn keywords(&self) -> Vec<&'static str> {
         vec!["bluetooth", "presenter"]

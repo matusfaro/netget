@@ -11,7 +11,7 @@ async fn test_running_service_startup() -> E2EResult<()> {
 
     let prompt = "Act as a BLE running sensor. Create the Running Speed and Cadence Service (UUID: 00001814-0000-1000-8000-00805f9b34fb) with speed 10 km/h, cadence 170 steps/min. Advertise as 'NetGet-Running'.";
 
-    let mut server = helpers::start_netget_server(
+    let server = helpers::start_netget_server(
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock

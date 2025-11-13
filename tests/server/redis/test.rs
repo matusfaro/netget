@@ -45,8 +45,8 @@ async fn test_redis_ping() -> E2EResult<()> {
                             "value": "OK"
                         }
                     ]))
-                    .min_calls(0)
-                    .max_calls(5)
+                    .expect_at_least(0)
+                    .expect_at_most(5)
                     .and()
                     // Mock 3: PING command
                     .on_event("redis_command_received")
@@ -136,7 +136,7 @@ async fn test_redis_get_set() -> E2EResult<()> {
                     .and()
                     .on_event("redis_command_received")
                     .respond_with_actions(serde_json::json!([{"type": "redis_simple_string", "value": "OK"}]))
-                    .min_calls(1).max_calls(5).and()
+                    .expect_at_least(1).expect_at_most(5).and()
                     .on_event("redis_command_received")
                     .respond_with_actions(serde_json::json!([{"type": "redis_bulk_string", "value": "test_value"}]))
                     .expect_calls(1).and()
@@ -182,7 +182,7 @@ async fn test_redis_integer_response() -> E2EResult<()> {
                 mock.on_instruction_containing("Redis").respond_with_actions(serde_json::json!([
                     {"type": "open_server", "port": 0, "base_stack": "Redis", "instruction": "Redis with INCR"}
                 ])).expect_calls(1).and()
-                .on_event("redis_command_received").respond_with_actions(serde_json::json!([{"type": "redis_simple_string", "value": "OK"}])).min_calls(0).max_calls(5).and()
+                .on_event("redis_command_received").respond_with_actions(serde_json::json!([{"type": "redis_simple_string", "value": "OK"}])).expect_at_least(0).expect_at_most(5).and()
                 .on_event("redis_command_received").respond_with_actions(serde_json::json!([{"type": "redis_integer", "value": 42}])).expect_calls(1).and()
             })
     ).await?;
@@ -220,7 +220,7 @@ async fn test_redis_array_response() -> E2EResult<()> {
                 mock.on_instruction_containing("Redis").respond_with_actions(serde_json::json!([
                     {"type": "open_server", "port": 0, "base_stack": "Redis", "instruction": "Redis with KEYS"}
                 ])).expect_calls(1).and()
-                .on_event("redis_command_received").respond_with_actions(serde_json::json!([{"type": "redis_simple_string", "value": "OK"}])).min_calls(0).max_calls(5).and()
+                .on_event("redis_command_received").respond_with_actions(serde_json::json!([{"type": "redis_simple_string", "value": "OK"}])).expect_at_least(0).expect_at_most(5).and()
                 .on_event("redis_command_received").respond_with_actions(serde_json::json!([{"type": "redis_array", "values": ["key1", "key2", "key3"]}])).expect_calls(1).and()
             })
     ).await?;
@@ -261,7 +261,7 @@ async fn test_redis_null_response() -> E2EResult<()> {
                 mock.on_instruction_containing("Redis").respond_with_actions(serde_json::json!([
                     {"type": "open_server", "port": 0, "base_stack": "Redis", "instruction": "Redis with null"}
                 ])).expect_calls(1).and()
-                .on_event("redis_command_received").respond_with_actions(serde_json::json!([{"type": "redis_simple_string", "value": "OK"}])).min_calls(0).max_calls(5).and()
+                .on_event("redis_command_received").respond_with_actions(serde_json::json!([{"type": "redis_simple_string", "value": "OK"}])).expect_at_least(0).expect_at_most(5).and()
                 .on_event("redis_command_received").respond_with_actions(serde_json::json!([{"type": "redis_null"}])).expect_calls(1).and()
             })
     ).await?;
@@ -299,7 +299,7 @@ async fn test_redis_error_response() -> E2EResult<()> {
                 mock.on_instruction_containing("Redis").respond_with_actions(serde_json::json!([
                     {"type": "open_server", "port": 0, "base_stack": "Redis", "instruction": "Redis with errors"}
                 ])).expect_calls(1).and()
-                .on_event("redis_command_received").respond_with_actions(serde_json::json!([{"type": "redis_simple_string", "value": "OK"}])).min_calls(0).max_calls(5).and()
+                .on_event("redis_command_received").respond_with_actions(serde_json::json!([{"type": "redis_simple_string", "value": "OK"}])).expect_at_least(0).expect_at_most(5).and()
                 .on_event("redis_command_received").respond_with_actions(serde_json::json!([{"type": "redis_error", "message": "ERR unknown command"}])).expect_calls(1).and()
             })
     ).await?;

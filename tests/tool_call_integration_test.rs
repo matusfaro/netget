@@ -11,6 +11,11 @@ mod tool_call_integration_tests {
     use tokio::net::TcpListener;
     use tokio::time::sleep;
 
+    /// Helper to get the netget binary path from cargo
+    fn get_netget_binary() -> &'static str {
+        env!("CARGO_BIN_EXE_netget")
+    }
+
     /// Helper to get an available port
     async fn get_available_port() -> u16 {
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -38,7 +43,8 @@ mod tool_call_integration_tests {
 
         println!("Starting NetGet with prompt: {}", prompt);
 
-        let mut child = Command::new("./target/release/netget")
+        let netget_bin = env!("CARGO_BIN_EXE_netget");
+        let mut child = Command::new(netget_bin)
             .arg(prompt)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -144,7 +150,8 @@ mod tool_call_integration_tests {
 
         println!("Starting NetGet with meta-prompt: {}", prompt);
 
-        let mut child = Command::new("./target/release/netget")
+        let netget_bin = env!("CARGO_BIN_EXE_netget");
+        let mut child = Command::new(netget_bin)
             .arg(prompt)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())

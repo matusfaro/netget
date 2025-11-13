@@ -11,7 +11,7 @@ async fn test_file_transfer_service_startup() -> E2EResult<()> {
 
     let prompt = "Act as a BLE file transfer service. Create a custom service for file transfer with characteristics for file name, size, data chunks, and control. Advertise as 'NetGet-FileTransfer'.";
 
-    let mut server = helpers::start_netget_server(
+    let server = helpers::start_netget_server(
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock

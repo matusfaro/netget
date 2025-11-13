@@ -9,6 +9,11 @@ mod logging_integration_tests {
     use std::time::Duration;
     use tokio::time::sleep;
 
+    /// Helper to get the netget binary path from cargo
+    fn get_netget_binary() -> &'static str {
+        env!("CARGO_BIN_EXE_netget")
+    }
+
     #[tokio::test]
     async fn test_append_to_log_creates_file() {
         // Get an available port
@@ -29,7 +34,7 @@ mod logging_integration_tests {
 
         println!("Starting NetGet with prompt: {}", prompt);
 
-        let mut child = Command::new("./target/release/netget")
+        let mut child = Command::new(get_netget_binary())
             .arg(prompt)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())

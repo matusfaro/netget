@@ -42,7 +42,7 @@ impl Protocol for SnmpProtocol {
         "ETH>IP>UDP>SNMP"
     }
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["snmp"]
+        vec!["snmp", "snmp agent"]
     }
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};

@@ -367,6 +367,7 @@ XML-RPC (xmlrpc, xml-rpc, xml rpc)
 gRPC (grpc, grpcserver, protobuf)
 
 ### Application
+AMQP (amqp, rabbitmq, broker, messaging, queue)
 DC (dc, direct connect, dc++, nmdc, via dc)
 IMAP (imap)
 IRC (irc, chat)
@@ -374,6 +375,7 @@ LDAP (ldap, directory server)
 MQTT (mqtt, mosquitto, iot messaging)
 Maven (maven, maven repository, maven repo, via maven)
 NNTP (nntp, usenet, news, newsgroup)
+POP3 (pop3, pop3 server, via pop3, post office protocol)
 PyPI (pypi, python repository, python package index, pip server, via pypi)
 SMTP (smtp, mail, email)
 Telnet (telnet)
@@ -418,6 +420,7 @@ MySQL (mysql)
 PostgreSQL (postgres, psql)
 Redis (redis)
 SQS (sqs, queue, message queue)
+ZooKeeper (zookeeper, zk)
 etcd (etcd, etcd3, etcdv3, etcd server)
 
 ### Experimental

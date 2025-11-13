@@ -20,9 +20,8 @@ mod datalink_client_tests {
         .with_mock(|mock| {
             mock
                 // Mock 1: Client startup (user command)
-                .on_instruction_containing("Connect to")
-                .and_instruction_containing("DataLink")
-                .and_instruction_containing("ARP")
+                // Note: Use .on_any() for initial user command since instruction field is empty before client is created
+                .on_any()
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_client",
@@ -82,8 +81,8 @@ mod datalink_client_tests {
         .with_mock(|mock| {
             mock
                 // Mock 1: Client startup
-                .on_instruction_containing("DataLink")
-                .and_instruction_containing("promiscuous")
+                // Note: Use .on_any() for initial user command since instruction field is empty before client is created
+                .on_any()
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_client",
@@ -136,8 +135,8 @@ mod datalink_client_tests {
         .with_mock(|mock| {
             mock
                 // Mock 1: Client startup
-                .on_instruction_containing("DataLink")
-                .and_instruction_containing("ARP request")
+                // Note: Use .on_any() for initial user command since instruction field is empty before client is created
+                .on_any()
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_client",
@@ -199,8 +198,8 @@ mod datalink_client_tests {
         .with_mock(|mock| {
             mock
                 // Mock 1: Client startup
-                .on_instruction_containing("DataLink")
-                .and_instruction_containing("disconnect")
+                // Note: Use .on_any() for initial user command since instruction field is empty before client is created
+                .on_any()
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_client",

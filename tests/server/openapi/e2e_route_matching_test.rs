@@ -24,7 +24,38 @@ async fn test_openapi_route_matching_comprehensive() -> E2EResult<()> {
         spec_path_str
     );
 
-    let server = start_netget_server(ServerConfig::new_no_scripts(prompt)).await?;
+    let server_config = ServerConfig::new_no_scripts(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("OpenAPI spec")
+            .and_instruction_containing("read_file")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "read_file",
+                    "path": spec_path_str
+                },
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "openapi",
+                    "startup_params": {
+                        "spec": "{{FILE_CONTENT}}"
+                    }
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            .on_event("http_request_received")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_http_response",
+                    "status": 200,
+                    "body": {"users": [{"id": 1, "name": "Test User"}]}
+                }
+            ]))
+            .expect_at_least(1)
+            .and()
+    });
+
+    let mut server = start_netget_server(server_config).await?;
 
     // Wait for server to start
     wait_for_server_startup(&server, Duration::from_secs(30), "OpenAPI").await?;
@@ -159,6 +190,7 @@ async fn test_openapi_route_matching_comprehensive() -> E2EResult<()> {
     println!("\n=== All route matching tests passed! ===");
 
     // Cleanup
+    server.verify_mocks().await?;
     server.stop().await?;
 
     Ok(())
@@ -181,7 +213,38 @@ async fn test_openapi_llm_on_invalid_override() -> E2EResult<()> {
         spec_path_str
     );
 
-    let server = start_netget_server(ServerConfig::new_no_scripts(prompt)).await?;
+    let server_config = ServerConfig::new_no_scripts(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("OpenAPI spec")
+            .and_instruction_containing("read_file")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "read_file",
+                    "path": spec_path_str
+                },
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "openapi",
+                    "startup_params": {
+                        "spec": "{{FILE_CONTENT}}"
+                    }
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            .on_event("http_request_received")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_http_response",
+                    "status": 404,
+                    "body": {"error": "Custom LLM 404 response"}
+                }
+            ]))
+            .expect_at_least(1)
+            .and()
+    });
+
+    let mut server = start_netget_server(server_config).await?;
 
     wait_for_server_startup(&server, Duration::from_secs(30), "OpenAPI").await?;
 
@@ -214,6 +277,7 @@ async fn test_openapi_llm_on_invalid_override() -> E2EResult<()> {
 
     println!("\n=== LLM override test passed! ===");
 
+    server.verify_mocks().await?;
     server.stop().await?;
 
     Ok(())

@@ -55,7 +55,7 @@ impl AmqpClient {
         let status_tx_clone = status_tx.clone();
         tokio::spawn(async move {
             // Just keep connection alive - LLM integration simplified
-            conn.run();
+            let _ = conn.run();
             info!("AMQP client {} connection closed", client_id_clone);
             state_clone
                 .update_client_status(client_id_clone, ClientStatus::Disconnected)

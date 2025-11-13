@@ -49,7 +49,7 @@ mod mysql_client_tests {
                         "rows": [[1]]
                     }
                 ]))
-                .min_calls(0)
+                .expect_at_least(0)
                 .and()
         });
 
@@ -97,7 +97,7 @@ mod mysql_client_tests {
                         "type": "wait_for_more"
                     }
                 ]))
-                .min_calls(0)
+                .expect_at_least(0)
                 .and()
         });
 
@@ -149,7 +149,7 @@ mod mysql_client_tests {
                 .and()
                 .on_event("mysql_connection_received")
                 .respond_with_actions(serde_json::json!([{"type": "accept_connection"}]))
-                .min_calls(0)
+                .expect_at_least(0)
                 .and()
         });
 
@@ -185,7 +185,7 @@ mod mysql_client_tests {
                         "query": "SELECT * FROM users"
                     }
                 ]))
-                .min_calls(0)
+                .expect_at_least(0)
                 .and()
         });
 
@@ -231,7 +231,7 @@ mod mysql_client_tests {
                     .and()
                     .on_event("mysql_connection_received")
                     .respond_with_actions(serde_json::json!([{"type": "accept_connection"}]))
-                    .min_calls(0)
+                    .expect_at_least(0)
                     .and()
                     .on_event("mysql_query")
                     .respond_with_actions(serde_json::json!([
@@ -240,7 +240,7 @@ mod mysql_client_tests {
                             "affected_rows": 0
                         }
                     ]))
-                    .min_calls(0)
+                    .expect_at_least(0)
                     .and()
             });
 
@@ -275,7 +275,7 @@ mod mysql_client_tests {
                         "query": "BEGIN"
                     }
                 ]))
-                .min_calls(0)
+                .expect_at_least(0)
                 .and()
                 .on_event("mysql_query_result")
                 .respond_with_actions(serde_json::json!([
@@ -284,7 +284,7 @@ mod mysql_client_tests {
                         "query": "INSERT INTO logs VALUES ('test')"
                     }
                 ]))
-                .min_calls(0)
+                .expect_at_least(0)
                 .and()
         });
 

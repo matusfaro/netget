@@ -11,7 +11,7 @@ use super::super::super::helpers::{self, E2EResult, ServerConfig};
 use std::process::Command;
 
 #[tokio::test]
-#[ignore] // Requires root privileges for packet capture
+#[ignore = "Requires root privileges for packet capture and real Ollama. Run manually with: cargo test --features datalink --test server -- test_arp_responder --ignored --use-ollama"]
 async fn test_arp_responder() -> E2EResult<()> {
     println!("\n=== E2E Test: ARP Responder ===");
 
@@ -27,7 +27,7 @@ async fn test_arp_responder() -> E2EResult<()> {
         interface
     );
 
-    // Start the server
+    // Start the server (requires --use-ollama flag since this test needs real LLM)
     let server = helpers::start_netget_server(ServerConfig::new(prompt)).await?;
     println!("Server started on port {}", server.port);
 

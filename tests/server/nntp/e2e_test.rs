@@ -53,7 +53,48 @@ async fn test_nntp_basic_newsgroups() -> E2EResult<()> {
          When client sends QUIT, send \"205 Goodbye\" and close connection"
     );
 
-    let server = start_netget_server(NetGetConfig::new(&prompt)).await?;
+    let server_config = NetGetConfig::new(&prompt).with_mock(|mock| {
+        mock.on_instruction_containing("nntp")
+            .respond_with_actions(serde_json::json!([
+                {"type": "open_server", "port": 0, "base_stack": "nntp", "instruction": "3 newsgroups"}
+            ]))
+            .expect_calls(1)
+            .and()
+            .on_event("nntp_command_received")
+            .with_param("command", "LIST")
+            .respond_with_actions(serde_json::json!([
+                {"type": "send_nntp_list", "newsgroups": [
+                    {"name": "comp.lang.rust", "high": 50, "low": 1, "status": "y"},
+                    {"name": "comp.lang.python", "high": 100, "low": 1, "status": "y"},
+                    {"name": "misc.test", "high": 10, "low": 1, "status": "y"}
+                ]}
+            ]))
+            .expect_calls(1)
+            .and()
+            .on_event("nntp_command_received")
+            .with_param("command", "GROUP")
+            .respond_with_actions(serde_json::json!([
+                {"type": "send_nntp_response", "code": 211, "message": "50 1 50 comp.lang.rust"}
+            ]))
+            .expect_calls(1)
+            .and()
+            .on_event("nntp_command_received")
+            .with_param("command", "ARTICLE")
+            .respond_with_actions(serde_json::json!([
+                {"type": "send_nntp_article", "headers": {"Subject": "Test Article 1", "From": "test@example.com"}, "body": "This is test article number 1."}
+            ]))
+            .expect_calls(1)
+            .and()
+            .on_event("nntp_command_received")
+            .with_param("command", "QUIT")
+            .respond_with_actions(serde_json::json!([
+                {"type": "send_nntp_response", "code": 205, "message": "Goodbye"}
+            ]))
+            .expect_calls(1)
+            .and()
+    });
+
+    let mut server = start_netget_server(server_config).await?;
 
     // Wait for server to start
     tokio::time::sleep(Duration::from_secs(3)).await;
@@ -160,6 +201,7 @@ async fn test_nntp_basic_newsgroups() -> E2EResult<()> {
     );
 
     // Cleanup
+    server.verify_mocks().await?;
     server.stop().await?;
     Ok(())
 }
@@ -180,7 +222,43 @@ async fn test_nntp_article_overview() -> E2EResult<()> {
          When client sends QUIT, send \"205 Goodbye\" and close"
     );
 
-    let server = start_netget_server(NetGetConfig::new(&prompt)).await?;
+    let server_config = NetGetConfig::new(&prompt).with_mock(|mock| {
+        mock.on_instruction_containing("nntp")
+            .respond_with_actions(serde_json::json!([
+                {"type": "open_server", "port": 0, "base_stack": "nntp", "instruction": "comp.test newsgroup"}
+            ]))
+            .expect_calls(1)
+            .and()
+            .on_event("nntp_command_received")
+            .with_param("command", "GROUP")
+            .respond_with_actions(serde_json::json!([
+                {"type": "send_nntp_response", "code": 211, "message": "5 1 5 comp.test"}
+            ]))
+            .expect_calls(1)
+            .and()
+            .on_event("nntp_command_received")
+            .with_param("command", "XOVER")
+            .respond_with_actions(serde_json::json!([
+                {"type": "send_nntp_overview", "articles": [
+                    {"id": 1, "subject": "Article 1", "from": "test@example.com"},
+                    {"id": 2, "subject": "Article 2", "from": "test@example.com"},
+                    {"id": 3, "subject": "Article 3", "from": "test@example.com"},
+                    {"id": 4, "subject": "Article 4", "from": "test@example.com"},
+                    {"id": 5, "subject": "Article 5", "from": "test@example.com"}
+                ]}
+            ]))
+            .expect_calls(1)
+            .and()
+            .on_event("nntp_command_received")
+            .with_param("command", "QUIT")
+            .respond_with_actions(serde_json::json!([
+                {"type": "send_nntp_response", "code": 205, "message": "Goodbye"}
+            ]))
+            .expect_calls(1)
+            .and()
+    });
+
+    let mut server = start_netget_server(server_config).await?;
 
     tokio::time::sleep(Duration::from_secs(3)).await;
 
@@ -230,6 +308,7 @@ async fn test_nntp_article_overview() -> E2EResult<()> {
     stream_write.flush().unwrap();
     let _quit_response = read_response_line(&mut reader).unwrap();
 
+    server.verify_mocks().await?;
     server.stop().await?;
     Ok(())
 }

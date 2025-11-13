@@ -11,7 +11,7 @@ async fn test_keyboard_service_startup() -> E2EResult<()> {
 
     let prompt = "Act as a BLE keyboard. Create the Human Interface Device Service (UUID: 00001812-0000-1000-8000-00805f9b34fb) for keyboard input. Advertise as 'NetGet-Keyboard'.";
 
-    let mut server = helpers::start_netget_server(
+    let server = helpers::start_netget_server(
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock

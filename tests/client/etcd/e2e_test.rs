@@ -307,7 +307,7 @@ async fn test_etcd_client_multiple_keys() -> E2EResult<()> {
                     "value": "30"
                 }
             ]))
-            .min_calls(1)  // Will be called at least once
+            .expect_at_least(1)  // Will be called at least once
             .and()
             // Mock: After GET - disconnect
             .on_event("etcd_response_received")

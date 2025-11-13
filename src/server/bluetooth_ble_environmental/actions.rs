@@ -31,7 +31,7 @@ impl Protocol for BluetoothBleEnvironmentalProtocol {
         vec![]
     }
     fn stack_name(&self) -> &'static str {
-        "DATALINK>BLE_ENVIRONMENTAL"
+        "BLUETOOTH_BLE_ENVIRONMENTAL"
     }
     fn keywords(&self) -> Vec<&'static str> {
         vec!["bluetooth", "environmental"]

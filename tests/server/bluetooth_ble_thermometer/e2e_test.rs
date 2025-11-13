@@ -13,7 +13,7 @@ async fn test_thermometer_service_startup() -> E2EResult<()> {
 
     let prompt = "Act as a BLE thermometer. Create the Health Thermometer Service (UUID: 00001809-0000-1000-8000-00805f9b34fb) with Temperature Measurement characteristic (UUID: 00002a1c-0000-1000-8000-00805f9b34fb). Set temperature to 36.6°C. Advertise as 'NetGet-Thermometer'.";
 
-    let mut server = helpers::start_netget_server(
+    let server = helpers::start_netget_server(
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock

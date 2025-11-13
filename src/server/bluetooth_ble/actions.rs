@@ -186,7 +186,7 @@ impl Protocol for BluetoothBleProtocol {
     }
 
     fn stack_name(&self) -> &'static str {
-        "DATALINK>BLE"
+        "BLUETOOTH_BLE"
     }
 
     fn keywords(&self) -> Vec<&'static str> {

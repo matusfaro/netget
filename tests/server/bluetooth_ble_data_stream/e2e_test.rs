@@ -11,7 +11,7 @@ async fn test_data_stream_service_startup() -> E2EResult<()> {
 
     let prompt = "Act as a BLE data stream service. Create a custom service for streaming sensor data with characteristics for data packets and stream control. Advertise as 'NetGet-DataStream'.";
 
-    let mut server = helpers::start_netget_server(
+    let server = helpers::start_netget_server(
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock

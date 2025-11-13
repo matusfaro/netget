@@ -18,7 +18,7 @@ async fn test_heart_rate_service_startup() -> E2EResult<()> {
     let prompt = "Act as a BLE heart rate monitor. Create the Heart Rate Service (UUID: 0000180d-0000-1000-8000-00805f9b34fb) with Heart Rate Measurement characteristic (UUID: 00002a37-0000-1000-8000-00805f9b34fb) that supports read and notify. Set initial BPM to 72 (hex: 0048). Start advertising as 'NetGet-HeartRate'.";
 
     // Start the server with mocks
-    let mut server = helpers::start_netget_server(
+    let server = helpers::start_netget_server(
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
@@ -76,7 +76,7 @@ async fn test_heart_rate_updates() -> E2EResult<()> {
     let prompt = "Act as a BLE heart rate monitor. Start with 72 BPM, then simulate exercise by increasing to 120 BPM after 2 seconds. Advertise as 'NetGet-HR-Dynamic'.";
 
     // Start the server with mocks
-    let mut server = helpers::start_netget_server(
+    let server = helpers::start_netget_server(
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock

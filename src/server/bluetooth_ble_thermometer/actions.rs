@@ -54,7 +54,7 @@ impl Protocol for BluetoothBleThermometerProtocol {
         vec![TEMPERATURE_UPDATED_EVENT.clone()]
     }
     fn stack_name(&self) -> &'static str {
-        "DATALINK>BLE_THERMOMETER"
+        "BLUETOOTH_BLE_THERMOMETER"
     }
     fn keywords(&self) -> Vec<&'static str> {
         vec!["bluetooth", "thermometer", "temperature"]

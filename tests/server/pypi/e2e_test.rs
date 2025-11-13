@@ -84,8 +84,8 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
                     "body": "<!DOCTYPE html><html><body><a href=\"hello-world/\">hello-world</a><br><a href=\"example-pkg/\">example-pkg</a></body></html>"
                 }
             ]))
-            .min_calls(1)
-            .max_calls(10)
+            .expect_at_least(1)
+            .expect_at_most(10)
             .and()
     });
 

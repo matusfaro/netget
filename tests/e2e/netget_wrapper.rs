@@ -32,8 +32,8 @@ pub struct NetGetWrapper {
 impl NetGetWrapper {
     /// Create a new NetGet wrapper
     pub fn new() -> Self {
-        // Default to release binary
-        let binary_path = PathBuf::from("target/release/netget");
+        // Use cargo's env variable to get the actual binary path
+        let binary_path = PathBuf::from(env!("CARGO_BIN_EXE_netget"));
         Self::with_binary(binary_path)
     }
 

@@ -20,9 +20,8 @@ mod datalink_server_tests {
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup (user command)
-                .on_instruction_containing("Listen")
-                .and_instruction_containing("datalink")
-                .and_instruction_containing("ARP")
+                // Note: Use .on_any() for initial user command since instruction field is empty before server is created
+                .on_any()
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -69,9 +68,8 @@ mod datalink_server_tests {
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
-                .on_instruction_containing("Listen")
-                .and_instruction_containing("datalink")
-                .and_instruction_containing("custom protocol")
+                // Note: Use .on_any() for initial user command since instruction field is empty before server is created
+                .on_any()
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -115,9 +113,8 @@ mod datalink_server_tests {
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
-                .on_instruction_containing("Listen")
-                .and_instruction_containing("datalink")
-                .and_instruction_containing("Ignore")
+                // Note: Use .on_any() for initial user command since instruction field is empty before server is created
+                .on_any()
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",

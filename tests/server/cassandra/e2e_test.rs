@@ -37,6 +37,15 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
+                    // Mock: OPTIONS frame during connection
+                    .on_event("cassandra_options")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_supported"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
             });
 
         let mut server = start_netget_server(config).await?;
@@ -94,7 +103,16 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: Query received
+                    // Mock 2: OPTIONS frame during connection
+                    .on_event("cassandra_options")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_supported"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: Query received
                     .on_event("cassandra_query_received")
                     .and_event_data_contains("query", "SELECT * FROM users")
                     .respond_with_actions(serde_json::json!([
@@ -186,7 +204,16 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: Error query received
+                    // Mock 2: OPTIONS frame during connection
+                    .on_event("cassandra_options")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_supported"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: Error query received
                     .on_event("cassandra_query_received")
                     .and_event_data_contains("query", "SELECT * FROM nonexistent")
                     .respond_with_actions(serde_json::json!([
@@ -263,7 +290,16 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: First query (count)
+                    // Mock 2: OPTIONS frame during connection
+                    .on_event("cassandra_options")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_supported"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: First query (count)
                     .on_event("cassandra_query_received")
                     .and_event_data_contains("query", "SELECT count(*) FROM users")
                     .respond_with_actions(serde_json::json!([
@@ -279,7 +315,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 3: Second query (select with WHERE)
+                    // Mock 4: Second query (select with WHERE)
                     .on_event("cassandra_query_received")
                     .and_event_data_contains("query", "SELECT * FROM users WHERE id=1")
                     .respond_with_actions(serde_json::json!([
@@ -375,7 +411,16 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: Query received (will be called 3 times for concurrent connections)
+                    // Mock 2: OPTIONS frame during connection (3 connections)
+                    .on_event("cassandra_options")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_supported"
+                        }
+                    ]))
+                    .expect_calls(3)
+                    .and()
+                    // Mock 3: Query received (will be called 3 times for concurrent connections)
                     .on_event("cassandra_query_received")
                     .and_event_data_contains("query", "SELECT value")
                     .respond_with_actions(serde_json::json!([
@@ -469,7 +514,16 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: PREPARE received
+                    // Mock 2: OPTIONS frame during connection
+                    .on_event("cassandra_options")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_supported"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: PREPARE received
                     .on_event("cassandra_prepare_received")
                     .and_event_data_contains("query", "SELECT * FROM users WHERE id = ?")
                     .respond_with_actions(serde_json::json!([
@@ -483,7 +537,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 3: EXECUTE received
+                    // Mock 4: EXECUTE received
                     .on_event("cassandra_execute_received")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -579,7 +633,16 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: First PREPARE
+                    // Mock 2: OPTIONS frame during connection
+                    .on_event("cassandra_options")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_supported"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: First PREPARE
                     .on_event("cassandra_prepare_received")
                     .and_event_data_contains("query", "SELECT * FROM users WHERE id = ?")
                     .respond_with_actions(serde_json::json!([
@@ -593,7 +656,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 3: Second PREPARE
+                    // Mock 4: Second PREPARE
                     .on_event("cassandra_prepare_received")
                     .and_event_data_contains("query", "SELECT count(*) FROM users")
                     .respond_with_actions(serde_json::json!([
@@ -606,7 +669,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 4: EXECUTE calls (3 total)
+                    // Mock 5: EXECUTE calls (3 total)
                     .on_event("cassandra_execute_received")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -721,7 +784,16 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: PREPARE received
+                    // Mock 2: OPTIONS frame during connection
+                    .on_event("cassandra_options")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_supported"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: PREPARE received
                     .on_event("cassandra_prepare_received")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -733,7 +805,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 3: EXECUTE with wrong param count (error)
+                    // Mock 4: EXECUTE with wrong param count (error)
                     .on_event("cassandra_execute_received")
                     .respond_with_actions(serde_json::json!([
                         {

@@ -143,7 +143,7 @@ impl Protocol for BluetoothBleDataStreamProtocol {
         vec![STREAM_STARTED_EVENT.clone(), STREAM_DATA_EVENT.clone()]
     }
     fn stack_name(&self) -> &'static str {
-        "DATALINK>BLE_DATA_STREAM"
+        "BLUETOOTH_BLE_DATA_STREAM"
     }
     fn keywords(&self) -> Vec<&'static str> {
         vec!["bluetooth", "stream", "data", "sensor"]

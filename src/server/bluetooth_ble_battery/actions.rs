@@ -72,7 +72,7 @@ impl Protocol for BluetoothBleBatteryProtocol {
     }
 
     fn stack_name(&self) -> &'static str {
-        "DATALINK>BLE_BATTERY"
+        "BLUETOOTH_BLE_BATTERY"
     }
 
     fn keywords(&self) -> Vec<&'static str> {

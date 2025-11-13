@@ -94,7 +94,7 @@ impl Protocol for BluetoothBleRunningProtocol {
         vec![RUNNING_MEASUREMENT_EVENT.clone()]
     }
     fn stack_name(&self) -> &'static str {
-        "DATALINK>BLE_RUNNING"
+        "BLUETOOTH_BLE_RUNNING"
     }
     fn keywords(&self) -> Vec<&'static str> {
         vec!["bluetooth", "running", "jogging", "fitness"]

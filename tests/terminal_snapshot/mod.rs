@@ -23,14 +23,8 @@ fn spawn_netget() -> (pty_process::blocking::Pty, Child) {
 
 /// Helper to spawn NetGet with arguments in a PTY
 fn spawn_netget_with_args(args: &[&str]) -> (pty_process::blocking::Pty, Child) {
-    let binary_path = "target/release/netget";
-
-    // Verify binary exists
-    assert!(
-        std::path::Path::new(binary_path).exists(),
-        "NetGet binary not found at {}. Run: cargo build --release",
-        binary_path
-    );
+    // Use cargo's env variable to get the actual binary path
+    let binary_path = env!("CARGO_BIN_EXE_netget");
 
     // Create a PTY
     let pty = pty_process::blocking::Pty::new().expect("Failed to create PTY");
@@ -811,7 +805,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(300));
 
         // Now spawn netget in the PTY that already has content
-        let binary_path = "target/release/netget";
+        let binary_path = env!("CARGO_BIN_EXE_netget");
         let mut cmd = pty_process::blocking::Command::new(binary_path);
         let _child = cmd.spawn(&pts).expect("Failed to spawn netget in PTY");
 

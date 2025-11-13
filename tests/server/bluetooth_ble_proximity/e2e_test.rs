@@ -11,7 +11,7 @@ async fn test_proximity_service_startup() -> E2EResult<()> {
 
     let prompt = "Act as a BLE proximity sensor. Create the Proximity Service (UUID: 00001802-0000-1000-8000-00805f9b34fb) with Link Loss and Immediate Alert. Advertise as 'NetGet-Proximity'.";
 
-    let mut server = helpers::start_netget_server(
+    let server = helpers::start_netget_server(
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock

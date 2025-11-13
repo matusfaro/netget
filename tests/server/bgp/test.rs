@@ -174,7 +174,7 @@ async fn test_bgp_peering_establishment() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock: BGP OPEN received
-                .on_event("bgp_open_received")
+                .on_event("bgp_open")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_bgp_open",
@@ -187,7 +187,7 @@ async fn test_bgp_peering_establishment() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock: BGP KEEPALIVE received
-                .on_event("bgp_keepalive_received")
+                .on_event("bgp_keepalive")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_bgp_keepalive"
@@ -290,7 +290,7 @@ async fn test_bgp_notification_on_error() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock: Invalid BGP OPEN received (LLM may or may not send NOTIFICATION)
-                .on_event("bgp_open_received")
+                .on_event("bgp_open")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_bgp_notification",
@@ -299,8 +299,8 @@ async fn test_bgp_notification_on_error() -> E2EResult<()> {
                         "data": []
                     }
                 ]))
-                .min_calls(0)  // May not be called if LLM accepts invalid version
-                .max_calls(1)
+                .expect_at_least(0)  // May not be called if LLM accepts invalid version
+                .expect_at_most(1)
                 .and()
         });
 
@@ -388,7 +388,7 @@ async fn test_bgp_keepalive_exchange() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock: BGP OPEN received
-                .on_event("bgp_open_received")
+                .on_event("bgp_open")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_bgp_open",
@@ -401,14 +401,14 @@ async fn test_bgp_keepalive_exchange() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock: BGP KEEPALIVE received (multiple times)
-                .on_event("bgp_keepalive_received")
+                .on_event("bgp_keepalive")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_bgp_keepalive"
                     }
                 ]))
-                .min_calls(1)
-                .max_calls(3)
+                .expect_at_least(1)
+                .expect_at_most(3)
                 .and()
         });
 
@@ -497,7 +497,7 @@ async fn test_bgp_graceful_shutdown() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock: BGP OPEN received
-                .on_event("bgp_open_received")
+                .on_event("bgp_open")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_bgp_open",
@@ -510,7 +510,7 @@ async fn test_bgp_graceful_shutdown() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock: BGP KEEPALIVE received
-                .on_event("bgp_keepalive_received")
+                .on_event("bgp_keepalive")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_bgp_keepalive"
@@ -519,14 +519,14 @@ async fn test_bgp_graceful_shutdown() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock: BGP NOTIFICATION received (Cease)
-                .on_event("bgp_notification_received")
+                .on_event("bgp_notification")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "close_connection"
                     }
                 ]))
-                .min_calls(0)  // May not be called if connection closes first
-                .max_calls(1)
+                .expect_at_least(0)  // May not be called if connection closes first
+                .expect_at_most(1)
                 .and()
         });
 
