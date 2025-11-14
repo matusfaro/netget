@@ -13,7 +13,7 @@ use std::time::Duration;
 async fn test_turn_basic_allocation() -> E2EResult<()> {
     let config =
         NetGetConfig::new("Start a TURN relay server on port 0 with 600 second allocations")
-            .with_log_level("debug")
+            .with_log_level("off")
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
@@ -46,7 +46,7 @@ async fn test_turn_basic_allocation() -> E2EResult<()> {
     let test_state = start_netget_server(config).await?;
 
     // Wait for server to be ready
-    tokio::time::sleep(Duration::from_millis(2000)).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     let client = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind client socket");
     client
