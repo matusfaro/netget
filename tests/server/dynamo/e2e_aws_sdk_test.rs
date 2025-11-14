@@ -75,8 +75,8 @@ mod tests {
 
         // Verify stack
         assert!(
-            server.stack.contains("DYNAMO"),
-            "Expected DYNAMO stack, got: {}",
+            server.stack.to_lowercase().contains("dynamo"),
+            "Expected DynamoDB stack, got: {}",
             server.stack
         );
 

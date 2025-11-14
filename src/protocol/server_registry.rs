@@ -530,6 +530,13 @@ impl ServerRegistry {
             }
         }
 
+        // Second, try exact match with protocol names (for startup messages)
+        for (protocol_name, protocol) in &self.protocols {
+            if input_lower == protocol.protocol_name().to_lowercase() {
+                return Some(protocol_name.clone());
+            }
+        }
+
         // Try keyword matching with priority ordering
         // More specific protocols checked first to avoid substring collisions
 
