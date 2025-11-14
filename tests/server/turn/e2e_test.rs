@@ -13,7 +13,7 @@ use std::time::Duration;
 async fn test_turn_basic_allocation() -> E2EResult<()> {
     let config =
         NetGetConfig::new("Start a TURN relay server on port 0 with 600 second allocations")
-            .with_log_level("off")
+            .with_log_level("debug")
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
@@ -33,9 +33,10 @@ async fn test_turn_basic_allocation() -> E2EResult<()> {
                     .on_event("turn_allocate_request")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "turn_allocate_success",
+                            "type": "send_turn_allocate_response",
                             "relay_address": "127.0.0.1:50000",
-                            "lifetime": 600
+                            "transaction_id": "0102030405060708090a0b0c",
+                            "lifetime_seconds": 600
                         }
                     ]))
                     .expect_calls(1)
@@ -45,7 +46,7 @@ async fn test_turn_basic_allocation() -> E2EResult<()> {
     let test_state = start_netget_server(config).await?;
 
     // Wait for server to be ready
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(2000)).await;
 
     let client = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind client socket");
     client
@@ -161,13 +162,13 @@ async fn test_turn_refresh_allocation() -> E2EResult<()> {
                     .and()
                     .on_event("turn_allocate_request")
                     .respond_with_actions(serde_json::json!([
-                        {"type": "turn_allocate_success", "relay_address": "127.0.0.1:50000", "lifetime": 600}
+                        {"type": "send_turn_allocate_response", "relay_address": "127.0.0.1:50000", "transaction_id": "0102030405060708090a0b0c", "lifetime_seconds": 600}
                     ]))
                     .expect_calls(1)
                     .and()
                     .on_event("turn_refresh_request")
                     .respond_with_actions(serde_json::json!([
-                        {"type": "turn_refresh_success", "lifetime": 600}
+                        {"type": "send_turn_refresh_response", "transaction_id": "020202020202020202020202", "lifetime_seconds": 600}
                     ]))
                     .expect_calls(1)
                     .and()
@@ -248,11 +249,11 @@ async fn test_turn_create_permission() -> E2EResult<()> {
             .expect_calls(1)
             .and()
             .on_event("turn_allocate_request")
-            .respond_with_actions(serde_json::json!([{"type": "turn_allocate_success", "relay_address": "127.0.0.1:50000", "lifetime": 600}]))
+            .respond_with_actions(serde_json::json!([{"type": "send_turn_allocate_response", "relay_address": "127.0.0.1:50000", "transaction_id": "0102030405060708090a0b0c", "lifetime_seconds": 600}]))
             .expect_calls(1)
             .and()
             .on_event("turn_create_permission_request")
-            .respond_with_actions(serde_json::json!([{"type": "turn_create_permission_success"}]))
+            .respond_with_actions(serde_json::json!([{"type": "send_turn_create_permission_response", "transaction_id": "030303030303030303030303"}]))
             .expect_calls(1)
             .and()
     });
@@ -335,7 +336,7 @@ async fn test_turn_multiple_allocations() -> E2EResult<()> {
                     .and()
                     .on_event("turn_allocate_request")
                     .respond_with_actions(serde_json::json!([
-                        {"type": "turn_allocate_success", "relay_address": "127.0.0.1:50000"}
+                        {"type": "send_turn_allocate_response", "relay_address": "127.0.0.1:50000", "transaction_id": "0102030405060708090a0b0c", "lifetime_seconds": 600}
                     ]))
                     .expect_calls(3)
                     .and()
@@ -400,7 +401,7 @@ async fn test_turn_error_insufficient_capacity() -> E2EResult<()> {
                 .and()
                 .on_event("turn_allocate_request")
                 .respond_with_actions(serde_json::json!([
-                    {"type": "turn_error", "error_code": 508, "error_message": "Insufficient Capacity"}
+                    {"type": "send_turn_error_response", "error_code": 508, "reason": "Insufficient Capacity", "transaction_id": "0102030405060708090a0b0c"}
                 ]))
                 .expect_calls(1)
                 .and()
@@ -541,7 +542,7 @@ async fn test_turn_refresh_without_allocation() -> E2EResult<()> {
                 .and()
                 .on_event("turn_refresh_request")
                 .respond_with_actions(serde_json::json!([
-                    {"type": "turn_refresh_success"}
+                    {"type": "send_turn_refresh_response", "transaction_id": "020202020202020202020202", "lifetime_seconds": 600}
                 ]))
                 .expect_calls(1)
                 .and()
@@ -696,7 +697,7 @@ async fn test_turn_short_lifetime_allocation() -> E2EResult<()> {
             .expect_calls(1)
             .and()
             .on_event("turn_allocate_request")
-            .respond_with_actions(serde_json::json!([{"type": "turn_allocate_success"}]))
+            .respond_with_actions(serde_json::json!([{"type": "send_turn_allocate_response", "relay_address": "127.0.0.1:50000", "transaction_id": "0102030405060708090a0b0c", "lifetime_seconds": 5}]))
             .expect_calls(1)
             .and()
     })
@@ -800,7 +801,7 @@ async fn test_turn_allocate_with_lifetime_attribute() -> E2EResult<()> {
                 .and()
                 .on_event("turn_allocate_request")
                 .respond_with_actions(serde_json::json!([
-                    {"type": "turn_allocate_success", "lifetime": 300}
+                    {"type": "send_turn_allocate_response", "relay_address": "127.0.0.1:50000", "transaction_id": "0102030405060708090a0b0c", "lifetime_seconds": 300}
                 ]))
                 .expect_calls(1)
                 .and()
