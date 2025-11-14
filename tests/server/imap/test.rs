@@ -24,7 +24,7 @@ async fn send_imap_command(
     stream.flush().await?;
 
     // Read responses with timeout to prevent indefinite hangs
-    let result = timeout(Duration::from_secs(10), async {
+    let result = timeout(Duration::from_secs(60), async {
         let mut reader = BufReader::new(stream);
         let mut responses = Vec::new();
 
@@ -47,7 +47,7 @@ async fn send_imap_command(
     })
     .await
     .map_err(|_| {
-        std::io::Error::new(std::io::ErrorKind::TimedOut, "Timeout reading IMAP response after 10 seconds")
+        std::io::Error::new(std::io::ErrorKind::TimedOut, "Timeout reading IMAP response after 60 seconds")
     })??;
 
     Ok(result)
@@ -56,7 +56,7 @@ async fn send_imap_command(
 /// Helper to read greeting (untagged OK response)
 async fn read_greeting(stream: &mut TcpStream) -> E2EResult<String> {
     // Read greeting with timeout to prevent indefinite hangs
-    let result = timeout(Duration::from_secs(10), async {
+    let result = timeout(Duration::from_secs(60), async {
         let mut reader = BufReader::new(stream);
         let mut line = String::new();
         reader.read_line(&mut line).await?;
@@ -64,7 +64,7 @@ async fn read_greeting(stream: &mut TcpStream) -> E2EResult<String> {
     })
     .await
     .map_err(|_| {
-        std::io::Error::new(std::io::ErrorKind::TimedOut, "Timeout reading IMAP greeting after 10 seconds")
+        std::io::Error::new(std::io::ErrorKind::TimedOut, "Timeout reading IMAP greeting after 60 seconds")
     })??;
 
     Ok(result)

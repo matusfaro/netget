@@ -58,10 +58,25 @@ impl ImapProtocol {
     }
 
     fn execute_send_imap_response(&self, action: serde_json::Value) -> Result<ActionResult> {
+        // Support two formats:
+        // 1. Full response string in 'response' field (simple format for mocks/LLM)
+        // 2. Structured fields: tag, status, message, code (detailed format)
+
+        if let Some(response_str) = action.get("response").and_then(|v| v.as_str()) {
+            // Simple format: just send the response as-is
+            debug!("IMAP sending response (simple format): {}", response_str);
+            let mut response = response_str.to_string();
+            if !response.ends_with("\r\n") {
+                response.push_str("\r\n");
+            }
+            return Ok(ActionResult::Output(response.into_bytes()));
+        }
+
+        // Structured format: build response from tag/status/message/code
         let tag = action
             .get("tag")
             .and_then(|v| v.as_str())
-            .context("Missing 'tag' field in send_imap_response")?;
+            .context("Missing 'tag' field in send_imap_response (use 'response' field for untagged responses)")?;
 
         let status = action
             .get("status")
@@ -73,7 +88,7 @@ impl ImapProtocol {
         let code = action.get("code").and_then(|v| v.as_str());
 
         debug!(
-            "IMAP sending response: tag={}, status={}, message={}",
+            "IMAP sending response (structured format): tag={}, status={}, message={}",
             tag, status, message
         );
 

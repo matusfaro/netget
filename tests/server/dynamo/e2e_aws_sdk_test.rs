@@ -8,7 +8,7 @@
 
 #[cfg(feature = "dynamo")]
 mod tests {
-    use crate::helpers::{retry, with_client_timeout};
+    use crate::helpers::{retry, with_aws_sdk_timeout};
     use crate::server::helpers::{start_netget_server, E2EResult, NetGetConfig};
     use aws_config::BehaviorVersion;
     use aws_sdk_dynamodb::types::{
@@ -200,7 +200,7 @@ mod tests {
         }
 
         // GetItem with AWS SDK
-        let get_result = with_client_timeout(
+        let get_result = with_aws_sdk_timeout(
             client
                 .get_item()
                 .table_name("Users")
@@ -301,7 +301,7 @@ mod tests {
         println!("[INFO] Initial PutItem succeeded");
 
         // UpdateItem with AWS SDK
-        let update_result = with_client_timeout(
+        let update_result = with_aws_sdk_timeout(
             client
                 .update_item()
                 .table_name("Products")
@@ -400,7 +400,7 @@ mod tests {
         println!("[INFO] Initial PutItem succeeded");
 
         // DeleteItem with AWS SDK
-        let delete_result = with_client_timeout(
+        let delete_result = with_aws_sdk_timeout(
             client
                 .delete_item()
                 .table_name("Orders")
@@ -497,7 +497,7 @@ mod tests {
         println!("[INFO] Initial PutItem succeeded");
 
         // Query with AWS SDK
-        let query_result = with_client_timeout(
+        let query_result = with_aws_sdk_timeout(
             client
                 .query()
                 .table_name("CustomerOrders")
@@ -602,7 +602,7 @@ mod tests {
         println!("[INFO] Initial PutItem succeeded");
 
         // Scan with AWS SDK
-        let scan_result = with_client_timeout(
+        let scan_result = with_aws_sdk_timeout(
             client.scan().table_name("Inventory").send()
         )
         .await;

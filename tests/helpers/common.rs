@@ -234,6 +234,14 @@ where
 /// Default timeout for external client library calls (30 seconds)
 pub const DEFAULT_CLIENT_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Extended timeout for AWS SDK operations (90 seconds)
+/// AWS SDK operations can be slower due to internal retries and connection setup
+pub const AWS_SDK_CLIENT_TIMEOUT: Duration = Duration::from_secs(90);
+
+/// Extended timeout for Cassandra operations (90 seconds)
+/// Cassandra operations can be slower due to connection pooling and query complexity
+pub const CASSANDRA_CLIENT_TIMEOUT: Duration = Duration::from_secs(90);
+
 /// Wraps external async client library calls with a timeout to prevent indefinite hangs
 ///
 /// This wrapper is specifically designed for calls to external libraries (redis-rs, scylla,
@@ -275,6 +283,62 @@ where
         Err(_) => Err(format!(
             "Client operation timed out after {:?}. Server may not be responding or may be blocked.",
             DEFAULT_CLIENT_TIMEOUT
+        ).into()),
+    }
+}
+
+/// Wraps AWS SDK async calls with an extended timeout (90 seconds)
+///
+/// AWS SDK operations can be slower due to internal retries, connection setup,
+/// and SDK overhead. This function provides a longer timeout than the default.
+///
+/// # Example
+/// ```rust,ignore
+/// // AWS SDK DynamoDB call with extended timeout
+/// let response = with_aws_sdk_timeout(
+///     client.put_item().send()
+/// ).await?;
+/// ```
+#[allow(dead_code)]
+pub async fn with_aws_sdk_timeout<F, T, E>(fut: F) -> E2EResult<T>
+where
+    F: Future<Output = Result<T, E>>,
+    E: std::error::Error + 'static,
+{
+    match tokio::time::timeout(AWS_SDK_CLIENT_TIMEOUT, fut).await {
+        Ok(Ok(result)) => Ok(result),
+        Ok(Err(e)) => Err(e.into()),
+        Err(_) => Err(format!(
+            "AWS SDK operation timed out after {:?}. Server may not be responding or may be blocked.",
+            AWS_SDK_CLIENT_TIMEOUT
+        ).into()),
+    }
+}
+
+/// Wraps Cassandra client async calls with an extended timeout (90 seconds)
+///
+/// Cassandra operations can be slower due to connection pooling, query compilation,
+/// and CQL complexity. This function provides a longer timeout than the default.
+///
+/// # Example
+/// ```rust,ignore
+/// // Cassandra query with extended timeout
+/// let rows = with_cassandra_timeout(
+///     session.query("SELECT * FROM table")
+/// ).await?;
+/// ```
+#[allow(dead_code)]
+pub async fn with_cassandra_timeout<F, T, E>(fut: F) -> E2EResult<T>
+where
+    F: Future<Output = Result<T, E>>,
+    E: std::error::Error + 'static,
+{
+    match tokio::time::timeout(CASSANDRA_CLIENT_TIMEOUT, fut).await {
+        Ok(Ok(result)) => Ok(result),
+        Ok(Err(e)) => Err(e.into()),
+        Err(_) => Err(format!(
+            "Cassandra operation timed out after {:?}. Server may not be responding or may be blocked.",
+            CASSANDRA_CLIENT_TIMEOUT
         ).into()),
     }
 }
