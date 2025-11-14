@@ -5,7 +5,7 @@
 
 #[cfg(all(test, feature = "rip"))]
 mod e2e_rip {
-    use crate::server::helpers::{start_netget_server, E2EResult, NetGetConfig};
+    use crate::server::helpers::{start_netget_server, E2EResult, NetGetConfig, with_client_timeout};
     use tokio::net::UdpSocket;
     use tokio::time::{timeout, Duration};
 
@@ -176,12 +176,12 @@ mod e2e_rip {
         // Send RIP request for entire routing table
         println!("  [TEST] Sending RIP request to {}", server_addr);
         let request_msg = build_rip_request_all();
-        client.send_to(&request_msg, &server_addr).await?;
+        with_client_timeout(client.send_to(&request_msg, &server_addr)).await?;
 
         // Receive RIP response
         println!("  [TEST] Waiting for RIP response");
         let mut buffer = vec![0u8; 512];
-        let (n, _peer) = timeout(Duration::from_secs(120), client.recv_from(&mut buffer)).await??;
+        let (n, _peer) = with_client_timeout(client.recv_from(&mut buffer)).await?;
 
         println!("  [TEST] Received {} bytes", n);
 
@@ -289,12 +289,12 @@ mod e2e_rip {
         // Send request
         println!("  [TEST] Sending RIP request");
         let request_msg = build_rip_request_all();
-        client.send_to(&request_msg, &server_addr).await?;
+        with_client_timeout(client.send_to(&request_msg, &server_addr)).await?;
 
         // Receive response
         println!("  [TEST] Waiting for RIP response");
         let mut buffer = vec![0u8; 512];
-        let (n, _) = timeout(Duration::from_secs(120), client.recv_from(&mut buffer)).await??;
+        let (n, _) = with_client_timeout(client.recv_from(&mut buffer)).await?;
 
         // Parse response
         let (command, version, routes) = parse_rip_response(&buffer[..n])?;
@@ -411,11 +411,11 @@ mod e2e_rip {
 
         println!("  [TEST] Sending RIP request");
         let request_msg = build_rip_request_all();
-        client.send_to(&request_msg, &server_addr).await?;
+        with_client_timeout(client.send_to(&request_msg, &server_addr)).await?;
 
         // Receive and parse response
         let mut buffer = vec![0u8; 512];
-        let (n, _) = timeout(Duration::from_secs(120), client.recv_from(&mut buffer)).await??;
+        let (n, _) = with_client_timeout(client.recv_from(&mut buffer)).await?;
         let (_, _, routes) = parse_rip_response(&buffer[..n])?;
 
         println!("  [TEST] Received {} routes", routes.len());
