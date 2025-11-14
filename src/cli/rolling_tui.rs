@@ -60,42 +60,44 @@ pub async fn run_rolling_tui(
     // Determine configured model: args override settings
     let configured_model = args.model.clone().or(settings.lock().await.model.clone());
 
-    // Select or validate model from Ollama - print to console before entering raw mode
+    // Select or validate model from Ollama
     let ollama_url = args.ollama_url.as_deref().unwrap_or("http://localhost:11434");
-    let selected_model =
+    let (selected_model, model_messages) =
         match crate::llm::select_or_validate_model(configured_model.clone(), true, ollama_url).await {
             Ok(Some(model)) => {
                 info!("✓  Using model: {}", model);
-                // Print to console before raw mode is enabled
-                if let Some(ref config_model) = configured_model {
+                let messages = if let Some(ref config_model) = configured_model {
                     if config_model == &model {
-                        println!("✓  Using configured model: {}", model);
+                        info!("✓  Using configured model: {}", model);
+                        vec![]
                     } else {
-                        println!(
+                        info!(
                             "⚠  Configured model '{}' not found, auto-selected: {}",
                             config_model, model
                         );
+                        vec![]
                     }
                 } else {
-                    println!(
-                        "⚠  No model configured, auto-selected: {} (largest/most recent)",
-                        model
-                    );
-                    println!("   To set a different model, use: /model or edit ~/.netget settings");
-                }
-                model
+                    vec![
+                        format!("⚠  No model configured, auto-selected: {} (largest/most recent)", model),
+                        "   To set a different model, use: /model or edit ~/.netget settings".to_string(),
+                    ]
+                };
+                (model, messages)
             }
             Ok(None) => {
                 // No model available, but interactive mode can continue
                 warn!("⚠  No model selected. Use /model command to select one.");
-                println!("✗  Ollama is not available or no models found.");
-                println!("   Please ensure Ollama is running: https://ollama.ai");
-                println!("   Use `/model` to list and select a model once Ollama is running.");
-                "".to_string() // Empty string as placeholder
+                let messages = vec![
+                    "✗  Ollama is not available or no models found.".to_string(),
+                    "   Please ensure Ollama is running: https://ollama.ai".to_string(),
+                    "   Use `/model` to list and select a model once Ollama is running.".to_string(),
+                ];
+                ("".to_string(), messages)
             }
             Err(e) => {
                 error!("Failed to initialize model: {}", e);
-                println!("✗  Failed to initialize model: {}", e);
+                eprintln!("✗  Failed to initialize model: {}", e);
                 return Err(e);
             }
         };
@@ -107,7 +109,7 @@ pub async fn run_rolling_tui(
             Some(selected_model.clone())
         })
         .await;
-    app.connection_info.model = selected_model;
+    app.connection_info.model = selected_model.clone();
 
     // Load web search setting from settings file
     let web_search_mode = settings.lock().await.get_web_search_mode();
@@ -212,6 +214,28 @@ pub async fn run_rolling_tui(
     debug!("Rolling TUI: Creating status channel...");
     let (status_tx, mut status_rx) = mpsc::unbounded_channel::<String>();
     debug!("Rolling TUI: Status channel created");
+
+    // Send model messages to TUI (if any)
+    for msg in model_messages {
+        let _ = status_tx.send(msg);
+    }
+
+    // Spawn async task to generate and stream ASCII art banner (unless suppressed)
+    // This runs in the background and doesn't block TUI startup
+    // The banner is sent through status_tx and appears in the TUI output
+    if !args.suppress_art {
+        let ollama_url_clone = ollama_url.to_string();
+        let model_clone = selected_model.clone();
+        let status_tx_clone = status_tx.clone();
+        tokio::spawn(async move {
+            let _ = crate::cli::banner::generate_and_stream_ascii_banner(
+                &ollama_url_clone,
+                &model_clone,
+                status_tx_clone,
+            )
+            .await;
+        });
+    }
 
     // Create keyboard event stream
     debug!("Rolling TUI: Creating event stream...");
@@ -384,11 +408,79 @@ pub async fn run_rolling_tui(
 
 /// Print welcome messages to the scrolling region
 fn print_welcome_messages(footer: &mut StickyFooter, palette: &ColorPalette) -> Result<()> {
-    let messages = vec!["NetGet - LLM-Controlled Server"];
+    let title_lines = vec![
+        "░█▀█░█▀▀░▀█▀░█▀▀░█▀▀░▀█▀",
+        "░█░█░█▀▀░░█░░█░█░█▀▀░░█░",
+        "░▀░▀░▀▀▀░░▀░░▀▀▀░▀▀▀░░▀░",
+    ];
 
-    for msg in messages {
-        print_output_line(msg, footer, palette)?;
+    // Find the longest line to determine box width
+    let max_width = title_lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
+    let box_width = max_width + 4; // +4 for "│ " and " │"
+    let left_margin = "  "; // 2 spaces left margin
+
+    let mut stdout = stdout();
+    let scroll_height = footer.scroll_region_height();
+    let last_scroll_line = scroll_height.saturating_sub(1);
+
+    // Blank line above the box
+    execute!(
+        stdout,
+        cursor::MoveTo(0, last_scroll_line),
+        Print("\n")
+    )?;
+
+    // Top border (green) with left margin
+    let top_border = format!("{}┌{}┐", left_margin, "─".repeat(box_width - 2));
+    execute!(
+        stdout,
+        cursor::MoveTo(0, last_scroll_line),
+        SetForegroundColor(palette.success),
+        Print(&top_border),
+        Print("\n"),
+        ResetColor
+    )?;
+
+    // Title lines (green borders, white text) with left margin
+    for line in title_lines {
+        let line_width = line.chars().count();
+        let padding = max_width - line_width;
+        execute!(
+            stdout,
+            cursor::MoveTo(0, last_scroll_line),
+            Print(left_margin),
+            SetForegroundColor(palette.success),
+            Print("│ "),
+            ResetColor,
+            Print(line),
+            Print(" ".repeat(padding)),
+            Print(" "),
+            SetForegroundColor(palette.success),
+            Print("│"),
+            Print("\n"),
+            ResetColor
+        )?;
     }
+
+    // Bottom border (green) with left margin
+    let bottom_border = format!("{}└{}┘", left_margin, "─".repeat(box_width - 2));
+    execute!(
+        stdout,
+        cursor::MoveTo(0, last_scroll_line),
+        SetForegroundColor(palette.success),
+        Print(&bottom_border),
+        Print("\n"),
+        ResetColor
+    )?;
+
+    // Blank line below the box
+    execute!(
+        stdout,
+        cursor::MoveTo(0, last_scroll_line),
+        Print("\n")
+    )?;
+
+    stdout.flush()?;
 
     Ok(())
 }

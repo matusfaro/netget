@@ -139,8 +139,10 @@ impl StickyFooter {
             palette,
         };
 
-        // Calculate actual footer height
+        // Calculate actual footer height and set last_footer_height to match
+        // This prevents the first render from adding blank lines
         footer.recalculate_scroll_region();
+        footer.last_footer_height = footer.calculate_footer_height();
         Ok(footer)
     }
 

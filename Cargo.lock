@@ -7580,6 +7580,7 @@ dependencies = [
  "tokio-postgres",
  "tokio-rustls 0.26.4",
  "tokio-socks",
+ "tokio-stream",
  "tokio-test",
  "tokio-util",
  "tokio-xmpp",
@@ -8187,6 +8188,8 @@ dependencies = [
  "serde_json",
  "static_assertions",
  "thiserror 2.0.17",
+ "tokio 1.48.0",
+ "tokio-stream",
  "url",
 ]
 

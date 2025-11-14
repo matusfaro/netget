@@ -121,6 +121,13 @@ pub struct Args {
     )]
     pub theme: String,
 
+    /// Suppress ASCII art banner on startup
+    #[clap(
+        long = "suppress-art",
+        help = "Skip the Ollama-generated ASCII art banner on startup"
+    )]
+    pub suppress_art: bool,
+
     /// Load server/client configuration from a .netget file
     #[clap(
         long = "load",
