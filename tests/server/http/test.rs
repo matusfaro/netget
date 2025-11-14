@@ -33,11 +33,11 @@ async fn test_http_simple_get() -> E2EResult<()> {
                     ]))
                     .expect_calls(1)
                     .and()
-                    .on_event("http_request_received")
+                    .on_event("http_request")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "http_response",
-                            "status_code": 200,
+                            "type": "send_http_response",
+                            "status": 200,
                             "body": "<h1>Hello World</h1>"
                         }
                     ]))
@@ -97,11 +97,11 @@ async fn test_http_json_api() -> E2EResult<()> {
                     ]))
                     .expect_calls(1)
                     .and()
-                    .on_event("http_request_received")
+                    .on_event("http_request")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "http_response",
-                            "status_code": 201,
+                            "type": "send_http_response",
+                            "status": 201,
                             "headers": {"Content-Type": "application/json"},
                             "body": "{\"status\": \"created\", \"id\": 123}"
                         }
@@ -166,33 +166,36 @@ async fn test_http_routing() -> E2EResult<()> {
                     .expect_calls(1)
                     .and()
                     // GET /home
-                    .on_event("http_request_received")
+                    .on_event("http_request")
+                    .and_event_data_contains("uri", "/home")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "http_response",
-                            "status_code": 200,
+                            "type": "send_http_response",
+                            "status": 200,
                             "body": "Welcome Home"
                         }
                     ]))
                     .expect_calls(1)
                     .and()
                     // GET /about
-                    .on_event("http_request_received")
+                    .on_event("http_request")
+                    .and_event_data_contains("uri", "/about")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "http_response",
-                            "status_code": 200,
+                            "type": "send_http_response",
+                            "status": 200,
                             "body": "About Us"
                         }
                     ]))
                     .expect_calls(1)
                     .and()
                     // GET /unknown
-                    .on_event("http_request_received")
+                    .on_event("http_request")
+                    .and_event_data_contains("uri", "/unknown")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "http_response",
-                            "status_code": 404,
+                            "type": "send_http_response",
+                            "status": 404,
                             "body": "Not Found"
                         }
                     ]))
@@ -263,11 +266,11 @@ async fn test_http_headers() -> E2EResult<()> {
                     ]))
                     .expect_calls(1)
                     .and()
-                    .on_event("http_request_received")
+                    .on_event("http_request")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "http_response",
-                            "status_code": 200,
+                            "type": "send_http_response",
+                            "status": 200,
                             "headers": {
                                 "X-API-Version": "1.0",
                                 "X-Custom": "test-value"
@@ -332,44 +335,48 @@ async fn test_http_methods() -> E2EResult<()> {
                     .expect_calls(1)
                     .and()
                     // GET
-                    .on_event("http_request_received")
+                    .on_event("http_request")
+                    .and_event_data_contains("method", "GET")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "http_response",
-                            "status_code": 200,
+                            "type": "send_http_response",
+                            "status": 200,
                             "body": "GET Response"
                         }
                     ]))
                     .expect_calls(1)
                     .and()
                     // POST
-                    .on_event("http_request_received")
+                    .on_event("http_request")
+                    .and_event_data_contains("method", "POST")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "http_response",
-                            "status_code": 200,
+                            "type": "send_http_response",
+                            "status": 200,
                             "body": "POST Response"
                         }
                     ]))
                     .expect_calls(1)
                     .and()
                     // PUT
-                    .on_event("http_request_received")
+                    .on_event("http_request")
+                    .and_event_data_contains("method", "PUT")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "http_response",
-                            "status_code": 200,
+                            "type": "send_http_response",
+                            "status": 200,
                             "body": "PUT Response"
                         }
                     ]))
                     .expect_calls(1)
                     .and()
                     // DELETE
-                    .on_event("http_request_received")
+                    .on_event("http_request")
+                    .and_event_data_contains("method", "DELETE")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "http_response",
-                            "status_code": 200,
+                            "type": "send_http_response",
+                            "status": 200,
                             "body": "DELETE Response"
                         }
                     ]))
@@ -440,33 +447,36 @@ async fn test_http_error_responses() -> E2EResult<()> {
                     .expect_calls(1)
                     .and()
                     // GET /forbidden
-                    .on_event("http_request_received")
+                    .on_event("http_request")
+                    .and_event_data_contains("uri", "/forbidden")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "http_response",
-                            "status_code": 403,
+                            "type": "send_http_response",
+                            "status": 403,
                             "body": "Access Denied"
                         }
                     ]))
                     .expect_calls(1)
                     .and()
                     // GET /error
-                    .on_event("http_request_received")
+                    .on_event("http_request")
+                    .and_event_data_contains("uri", "/error")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "http_response",
-                            "status_code": 500,
+                            "type": "send_http_response",
+                            "status": 500,
                             "body": "Server Error"
                         }
                     ]))
                     .expect_calls(1)
                     .and()
                     // GET /redirect
-                    .on_event("http_request_received")
+                    .on_event("http_request")
+                    .and_event_data_contains("uri", "/redirect")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "http_response",
-                            "status_code": 301,
+                            "type": "send_http_response",
+                            "status": 301,
                             "headers": {"Location": "/home"},
                             "body": ""
                         }
@@ -544,11 +554,11 @@ async fn test_http_simple_get_with_logging() -> E2EResult<()> {
                     ]))
                     .expect_calls(1)
                     .and()
-                    .on_event("http_request_received")
+                    .on_event("http_request")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "http_response",
-                            "status_code": 200,
+                            "type": "send_http_response",
+                            "status": 200,
                             "body": "<h1>Hello World</h1>"
                         },
                         {

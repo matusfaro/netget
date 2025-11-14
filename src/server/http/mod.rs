@@ -49,6 +49,10 @@ impl HttpServer {
             "{} server (action-based) listening on {}",
             protocol_name, local_addr
         );
+        let _ = status_tx.send(format!(
+            "[INFO] {} server listening on {}",
+            protocol_name, local_addr
+        ));
 
         let protocol = Arc::new(HttpProtocol::new());
 
