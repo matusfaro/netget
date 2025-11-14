@@ -55,8 +55,7 @@ mod e2e_imap_client {
                 .expect_calls(1)
                 .and()
                 // Mock: Login success event
-                .on_event("imap_command")
-                .and_event_data_contains("command", "LOGIN")
+                .on_event("imap_auth")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_imap_response",
@@ -130,8 +129,7 @@ mod e2e_imap_client {
                 ]))
                 .expect_calls(1)
                 .and()
-                .on_event("imap_command")
-                .and_event_data_contains("command", "LOGIN")
+                .on_event("imap_auth")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_imap_response",
