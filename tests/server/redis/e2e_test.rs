@@ -61,7 +61,7 @@ mod redis_server_tests {
         let mut con = client.get_multiplexed_async_connection().await?;
 
         // Execute PING command
-        let pong: String = redis::cmd("PING").query_async(&mut con).await?;
+        let pong: String = with_client_timeout(redis::cmd("PING").query_async(&mut con)).await?;
         assert_eq!(pong, "PONG", "Expected PING to return PONG");
 
         println!("✅ Redis server responded to PING with mocks");
@@ -136,11 +136,11 @@ mod redis_server_tests {
         let mut con = client.get_multiplexed_async_connection().await?;
 
         // Test SET command
-        let result: String = con.set("mykey", "myvalue").await?;
+        let result: String = with_client_timeout(con.set("mykey", "myvalue")).await?;
         assert_eq!(result, "OK", "Expected SET to return OK");
 
         // Test GET command
-        let value: String = con.get("mykey").await?;
+        let value: String = with_client_timeout(con.get("mykey")).await?;
         assert_eq!(value, "test_value", "Expected GET to return test_value");
 
         println!("✅ Redis server handled GET/SET commands with mocks");
@@ -204,7 +204,7 @@ mod redis_server_tests {
         let mut con = client.get_multiplexed_async_connection().await?;
 
         // Test INCR command (returns integer)
-        let result: i64 = con.incr("counter", 1).await?;
+        let result: i64 = with_client_timeout(con.incr("counter", 1)).await?;
         assert_eq!(result, 42, "Expected INCR to return 42");
 
         println!("✅ Redis server returned integer response with mocks");
@@ -268,7 +268,7 @@ mod redis_server_tests {
         let mut con = client.get_multiplexed_async_connection().await?;
 
         // Test KEYS command (returns array)
-        let keys: Vec<String> = redis::cmd("KEYS").arg("*").query_async(&mut con).await?;
+        let keys: Vec<String> = with_client_timeout(redis::cmd("KEYS").arg("*").query_async(&mut con)).await?;
         assert!(!keys.is_empty(), "Expected at least one key");
 
         println!("✅ Redis server returned array response with mocks");
@@ -331,7 +331,7 @@ mod redis_server_tests {
         let mut con = client.get_multiplexed_async_connection().await?;
 
         // Test GET for nonexistent key (should return nil)
-        let value: Option<String> = con.get("nonexistent").await?;
+        let value: Option<String> = with_client_timeout(con.get("nonexistent")).await?;
         assert_eq!(value, None, "Expected GET nonexistent to return None");
 
         println!("✅ Redis server returned null response with mocks");
@@ -396,7 +396,7 @@ mod redis_server_tests {
 
         // Test invalid command (should return error)
         let result: Result<String, redis::RedisError> =
-            redis::cmd("INVALID").query_async(&mut con).await;
+            with_client_timeout(redis::cmd("INVALID").query_async(&mut con)).await;
 
         match result {
             Ok(_) => {
