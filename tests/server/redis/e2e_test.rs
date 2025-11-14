@@ -18,8 +18,8 @@ mod redis_server_tests {
         )
         .with_mock(|mock| {
             mock
-                // Mock 1: Server startup (use .on_any() to match any instruction)
-                .on_any()
+                // Mock 1: Server startup (match initial instruction)
+                .on_instruction_containing("Redis")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -28,19 +28,9 @@ mod redis_server_tests {
                         "instruction": "Respond to PING with PONG"
                     }
                 ]))
-                // NOTE: .expect_calls() disabled - call counts don't work across process boundary
+                .expect_calls(1)
                 .and()
-                // Mock 2: CLIENT command (redis client initialization)
-                .on_event("redis_command")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "redis_simple_string",
-                        "value": "OK"
-                    }
-                ]))
-                // NOTE: .expect_calls() disabled - call counts don't work across process boundary
-                .and()
-                // Mock 3: PING command received
+                // Mock 2: PING command (most specific - must come before generic redis_command)
                 .on_event("redis_command")
                 .and_event_data_contains("command", "PING")
                 .respond_with_actions(serde_json::json!([
@@ -49,7 +39,16 @@ mod redis_server_tests {
                         "value": "PONG"
                     }
                 ]))
-                // NOTE: .expect_calls() disabled - call counts don't work across process boundary
+                .expect_calls(1)
+                .and()
+                // Mock 3: Generic redis_command (CLIENT SETINFO commands)
+                .on_event("redis_command")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "redis_simple_string",
+                        "value": "OK"
+                    }
+                ]))
                 .and()
         });
 
@@ -82,8 +81,8 @@ mod redis_server_tests {
         )
         .with_mock(|mock| {
             mock
-                // Mock 1: Server startup (use .on_any() to match any instruction)
-                .on_any()
+                // Mock 1: Server startup (match initial instruction)
+                .on_instruction_containing("Redis")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -92,39 +91,38 @@ mod redis_server_tests {
                         "instruction": "Handle GET and SET commands"
                     }
                 ]))
-                // NOTE: .expect_calls() disabled - call counts don't work across process boundary
+                .expect_calls(1)
                 .and()
-                // Mock 2: CLIENT command (redis client initialization)
+                // Mock 2: SET command (specific - must match "SET " with space)
                 .on_event("redis_command")
+                .and_event_data_contains("command", "SET ")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "redis_simple_string",
                         "value": "OK"
                     }
                 ]))
-                // NOTE: .expect_calls() disabled - call counts don't work across process boundary
+                .expect_calls(1)
                 .and()
-                // Mock 3: SET command
+                // Mock 3: GET command (specific - must match "GET " with space)
                 .on_event("redis_command")
-                .and_event_data_contains("command", "SET")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "redis_simple_string",
-                        "value": "OK"
-                    }
-                ]))
-                // NOTE: .expect_calls() disabled - call counts don't work across process boundary
-                .and()
-                // Mock 4: GET command
-                .on_event("redis_command")
-                .and_event_data_contains("command", "GET")
+                .and_event_data_contains("command", "GET ")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "redis_bulk_string",
                         "value": "test_value"
                     }
                 ]))
-                // NOTE: .expect_calls() disabled - call counts don't work across process boundary
+                .expect_calls(1)
+                .and()
+                // Mock 4: Generic redis_command (CLIENT commands) - LAST
+                .on_event("redis_command")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "redis_simple_string",
+                        "value": "OK"
+                    }
+                ]))
                 .and()
         });
 
@@ -161,8 +159,8 @@ mod redis_server_tests {
         )
         .with_mock(|mock| {
             mock
-                // Mock 1: Server startup (use .on_any() to match any instruction)
-                .on_any()
+                // Mock 1: Server startup (match initial instruction)
+                .on_instruction_containing("Redis")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -171,19 +169,9 @@ mod redis_server_tests {
                         "instruction": "Handle INCR command"
                     }
                 ]))
-                // NOTE: .expect_calls() disabled - call counts don't work across process boundary
+                .expect_calls(1)
                 .and()
-                // Mock 2: CLIENT command (redis client initialization)
-                .on_event("redis_command")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "redis_simple_string",
-                        "value": "OK"
-                    }
-                ]))
-                // NOTE: .expect_calls() disabled - call counts don't work across process boundary
-                .and()
-                // Mock 3: INCR command
+                // Mock 2: INCR command (specific - before generic)
                 .on_event("redis_command")
                 .and_event_data_contains("command", "INCR")
                 .respond_with_actions(serde_json::json!([
@@ -192,7 +180,16 @@ mod redis_server_tests {
                         "value": 42
                     }
                 ]))
-                // NOTE: .expect_calls() disabled - call counts don't work across process boundary
+                .expect_calls(1)
+                .and()
+                // Mock 3: Generic redis_command (CLIENT commands) - LAST
+                .on_event("redis_command")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "redis_simple_string",
+                        "value": "OK"
+                    }
+                ]))
                 .and()
         });
 
@@ -225,8 +222,8 @@ mod redis_server_tests {
         )
         .with_mock(|mock| {
             mock
-                // Mock 1: Server startup (use .on_any() to match any instruction)
-                .on_any()
+                // Mock 1: Server startup (match initial instruction)
+                .on_instruction_containing("Redis")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -235,19 +232,9 @@ mod redis_server_tests {
                         "instruction": "Handle KEYS command"
                     }
                 ]))
-                // NOTE: .expect_calls() disabled - call counts don't work across process boundary
+                .expect_calls(1)
                 .and()
-                // Mock 2: CLIENT command (redis client initialization)
-                .on_event("redis_command")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "redis_simple_string",
-                        "value": "OK"
-                    }
-                ]))
-                // NOTE: .expect_calls() disabled - call counts don't work across process boundary
-                .and()
-                // Mock 3: KEYS command
+                // Mock 2: KEYS command (specific - before generic)
                 .on_event("redis_command")
                 .and_event_data_contains("command", "KEYS")
                 .respond_with_actions(serde_json::json!([
@@ -256,7 +243,16 @@ mod redis_server_tests {
                         "values": ["key1", "key2", "key3"]
                     }
                 ]))
-                // NOTE: .expect_calls() disabled - call counts don't work across process boundary
+                .expect_calls(1)
+                .and()
+                // Mock 3: Generic redis_command (CLIENT commands) - LAST
+                .on_event("redis_command")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "redis_simple_string",
+                        "value": "OK"
+                    }
+                ]))
                 .and()
         });
 
@@ -289,8 +285,8 @@ mod redis_server_tests {
         )
         .with_mock(|mock| {
             mock
-                // Mock 1: Server startup (use .on_any() to match any instruction)
-                .on_any()
+                // Mock 1: Server startup (match initial instruction)
+                .on_instruction_containing("Redis")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -299,9 +295,19 @@ mod redis_server_tests {
                         "instruction": "Return null for non-existent keys"
                     }
                 ]))
-                // NOTE: .expect_calls() disabled - call counts don't work across process boundary
+                .expect_calls(1)
                 .and()
-                // Mock 2: CLIENT command (redis client initialization)
+                // Mock 2: GET command (specific - must match "GET " with space)
+                .on_event("redis_command")
+                .and_event_data_contains("command", "GET ")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "redis_null"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: Generic redis_command (CLIENT commands) - LAST
                 .on_event("redis_command")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -309,17 +315,6 @@ mod redis_server_tests {
                         "value": "OK"
                     }
                 ]))
-                // NOTE: .expect_calls() disabled - call counts don't work across process boundary
-                .and()
-                // Mock 3: GET non-existent key
-                .on_event("redis_command")
-                .and_event_data_contains("command", "GET")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "redis_null"
-                    }
-                ]))
-                // NOTE: .expect_calls() disabled - call counts don't work across process boundary
                 .and()
         });
 
@@ -352,8 +347,8 @@ mod redis_server_tests {
         )
         .with_mock(|mock| {
             mock
-                // Mock 1: Server startup (use .on_any() to match any instruction)
-                .on_any()
+                // Mock 1: Server startup (match initial instruction)
+                .on_instruction_containing("Redis")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -362,19 +357,9 @@ mod redis_server_tests {
                         "instruction": "Return error for invalid commands"
                     }
                 ]))
-                // NOTE: .expect_calls() disabled - call counts don't work across process boundary
+                .expect_calls(1)
                 .and()
-                // Mock 2: CLIENT command (redis client initialization)
-                .on_event("redis_command")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "redis_simple_string",
-                        "value": "OK"
-                    }
-                ]))
-                // NOTE: .expect_calls() disabled - call counts don't work across process boundary
-                .and()
-                // Mock 3: Invalid command
+                // Mock 2: INVALID command (specific - before generic)
                 .on_event("redis_command")
                 .and_event_data_contains("command", "INVALID")
                 .respond_with_actions(serde_json::json!([
@@ -383,7 +368,16 @@ mod redis_server_tests {
                         "message": "ERR unknown command"
                     }
                 ]))
-                // NOTE: .expect_calls() disabled - call counts don't work across process boundary
+                .expect_calls(1)
+                .and()
+                // Mock 3: Generic redis_command (CLIENT commands) - LAST
+                .on_event("redis_command")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "redis_simple_string",
+                        "value": "OK"
+                    }
+                ]))
                 .and()
         });
 
