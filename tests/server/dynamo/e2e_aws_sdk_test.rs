@@ -8,7 +8,7 @@
 
 #[cfg(feature = "dynamo")]
 mod tests {
-    use crate::helpers::retry;
+    use crate::helpers::{retry, with_client_timeout};
     use crate::server::helpers::{start_netget_server, E2EResult, NetGetConfig};
     use aws_config::BehaviorVersion;
     use aws_sdk_dynamodb::types::{
@@ -200,12 +200,14 @@ mod tests {
         }
 
         // GetItem with AWS SDK
-        let get_result = client
-            .get_item()
-            .table_name("Users")
-            .key("userId", AttributeValue::S("user-123".to_string()))
-            .send()
-            .await;
+        let get_result = with_client_timeout(
+            client
+                .get_item()
+                .table_name("Users")
+                .key("userId", AttributeValue::S("user-123".to_string()))
+                .send()
+        )
+        .await;
 
         match get_result {
             Ok(output) => {
@@ -299,14 +301,16 @@ mod tests {
         println!("[INFO] Initial PutItem succeeded");
 
         // UpdateItem with AWS SDK
-        let update_result = client
-            .update_item()
-            .table_name("Products")
-            .key("productId", AttributeValue::S("prod-001".to_string()))
-            .update_expression("SET price = :newprice")
-            .expression_attribute_values(":newprice", AttributeValue::N("79.99".to_string()))
-            .send()
-            .await;
+        let update_result = with_client_timeout(
+            client
+                .update_item()
+                .table_name("Products")
+                .key("productId", AttributeValue::S("prod-001".to_string()))
+                .update_expression("SET price = :newprice")
+                .expression_attribute_values(":newprice", AttributeValue::N("79.99".to_string()))
+                .send()
+        )
+        .await;
 
         match update_result {
             Ok(_) => println!("[PASS] UpdateItem succeeded via AWS SDK"),
@@ -396,12 +400,14 @@ mod tests {
         println!("[INFO] Initial PutItem succeeded");
 
         // DeleteItem with AWS SDK
-        let delete_result = client
-            .delete_item()
-            .table_name("Orders")
-            .key("orderId", AttributeValue::S("order-999".to_string()))
-            .send()
-            .await;
+        let delete_result = with_client_timeout(
+            client
+                .delete_item()
+                .table_name("Orders")
+                .key("orderId", AttributeValue::S("order-999".to_string()))
+                .send()
+        )
+        .await;
 
         match delete_result {
             Ok(_) => println!("[PASS] DeleteItem succeeded via AWS SDK"),
@@ -491,13 +497,15 @@ mod tests {
         println!("[INFO] Initial PutItem succeeded");
 
         // Query with AWS SDK
-        let query_result = client
-            .query()
-            .table_name("CustomerOrders")
-            .key_condition_expression("customerId = :cid")
-            .expression_attribute_values(":cid", AttributeValue::S("cust-001".to_string()))
-            .send()
-            .await;
+        let query_result = with_client_timeout(
+            client
+                .query()
+                .table_name("CustomerOrders")
+                .key_condition_expression("customerId = :cid")
+                .expression_attribute_values(":cid", AttributeValue::S("cust-001".to_string()))
+                .send()
+        )
+        .await;
 
         match query_result {
             Ok(output) => {
@@ -594,7 +602,10 @@ mod tests {
         println!("[INFO] Initial PutItem succeeded");
 
         // Scan with AWS SDK
-        let scan_result = client.scan().table_name("Inventory").send().await;
+        let scan_result = with_client_timeout(
+            client.scan().table_name("Inventory").send()
+        )
+        .await;
 
         match scan_result {
             Ok(output) => {
