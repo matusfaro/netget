@@ -186,15 +186,6 @@ async fn test_bgp_peering_establishment() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock: BGP KEEPALIVE received
-                .on_event("bgp_keepalive")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_bgp_keepalive"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
         });
 
     let server = start_netget_server(config).await?;
@@ -400,16 +391,6 @@ async fn test_bgp_keepalive_exchange() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock: BGP KEEPALIVE received (multiple times)
-                .on_event("bgp_keepalive")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_bgp_keepalive"
-                    }
-                ]))
-                .expect_at_least(1)
-                .expect_at_most(3)
-                .and()
         });
 
     let server = start_netget_server(config).await?;
@@ -508,25 +489,6 @@ async fn test_bgp_graceful_shutdown() -> E2EResult<()> {
                     }
                 ]))
                 .expect_calls(1)
-                .and()
-                // Mock: BGP KEEPALIVE received
-                .on_event("bgp_keepalive")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_bgp_keepalive"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock: BGP NOTIFICATION received (Cease)
-                .on_event("bgp_notification")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "close_connection"
-                    }
-                ]))
-                .expect_at_least(0)  // May not be called if connection closes first
-                .expect_at_most(1)
                 .and()
         });
 

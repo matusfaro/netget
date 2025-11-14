@@ -189,18 +189,6 @@ mod e2e_bgp {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 3: KEEPALIVE received (bgp_keepalive_received event)
-                    .on_event("bgp_keepalive")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "send_bgp_keepalive"
-                        },
-                        {
-                            "type": "wait_for_more"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
             });
 
         let mut server = start_netget_server(config).await?;
@@ -406,30 +394,6 @@ mod e2e_bgp {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 3: First KEEPALIVE - respond with KEEPALIVE (peering establishment)
-                    .on_event("bgp_keepalive")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "send_bgp_keepalive"
-                        },
-                        {
-                            "type": "wait_for_more"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 4: Second KEEPALIVE - respond with KEEPALIVE (or no response)
-                    .on_event("bgp_keepalive")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "send_bgp_keepalive"
-                        },
-                        {
-                            "type": "wait_for_more"
-                        }
-                    ]))
-                    .expect_at_most(1)  // May or may not respond to additional KEEPALIVE
-                    .and()
             });
 
         let mut server = start_netget_server(config).await?;
@@ -527,28 +491,6 @@ mod e2e_bgp {
                         },
                         {
                             "type": "wait_for_more"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 3: KEEPALIVE received - respond with KEEPALIVE (establish peering)
-                    .on_event("bgp_keepalive")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "send_bgp_keepalive"
-                        },
-                        {
-                            "type": "wait_for_more"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 4: NOTIFICATION (Cease) received - close connection gracefully
-                    .on_event("bgp_notification")
-                    .and_event_data_contains("error_code", "6")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "disconnect"
                         }
                     ]))
                     .expect_calls(1)

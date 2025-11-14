@@ -359,17 +359,21 @@ impl BgpSession {
         )
         .await
         {
-            Ok(_result) => {
-                // Actions are executed automatically by the action system
-                // For now, send default OPEN response
-                self.send_open_message().await?;
+            Ok(result) => {
+                // Write any outputs from actions to the stream
+                for protocol_result in result.protocol_results {
+                    if let crate::llm::actions::protocol_trait::ActionResult::Output(output_data) = protocol_result {
+                        self.stream.write_all(&output_data).await?;
+                        self.stream.flush().await?;
+                    }
+                }
             }
             Err(e) => {
                 error!("LLM call failed for BGP OPEN: {}", e);
                 let _ = self
                     .status_tx
                     .send(format!("[ERROR] LLM call failed: {}", e));
-                // Send default OPEN response
+                // Send default OPEN response on error
                 self.send_open_message().await?;
             }
         }
