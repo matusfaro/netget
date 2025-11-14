@@ -75,7 +75,7 @@ async fn test_imap_greeting() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 2: Connection accepted
-                .on_event("imap_connection_accepted")
+                .on_event("imap_connection")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_imap_response",
@@ -138,7 +138,7 @@ async fn test_imap_capability() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 2: Connection greeting
-                .on_event("imap_connection_accepted")
+                .on_event("imap_connection")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_imap_response",
@@ -148,7 +148,7 @@ async fn test_imap_capability() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 3: CAPABILITY command response
-                .on_event("imap_command_received")
+                .on_event("imap_command")
                 .and_event_data_contains("command", "CAPABILITY")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -226,7 +226,7 @@ async fn test_imap_login() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 2: Connection greeting
-                .on_event("imap_connection_accepted")
+                .on_event("imap_connection")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_imap_response",
@@ -236,7 +236,7 @@ async fn test_imap_login() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 3: LOGIN command response
-                .on_event("imap_command_received")
+                .on_event("imap_command")
                 .and_event_data_contains("command", "LOGIN")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -295,7 +295,7 @@ async fn test_imap_login_failure() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 2: Connection greeting
-                .on_event("imap_connection_accepted")
+                .on_event("imap_connection")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_imap_response",
@@ -305,7 +305,7 @@ async fn test_imap_login_failure() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 3: LOGIN failure response
-                .on_event("imap_command_received")
+                .on_event("imap_command")
                 .and_event_data_contains("command", "LOGIN")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -363,7 +363,7 @@ async fn test_imap_select_mailbox() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 2: Connection greeting
-                .on_event("imap_connection_accepted")
+                .on_event("imap_connection")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_imap_response",
@@ -373,7 +373,7 @@ async fn test_imap_select_mailbox() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 3: LOGIN command
-                .on_event("imap_command_received")
+                .on_event("imap_command")
                 .and_event_data_contains("command", "LOGIN")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -384,7 +384,7 @@ async fn test_imap_select_mailbox() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 4: SELECT command
-                .on_event("imap_command_received")
+                .on_event("imap_command")
                 .and_event_data_contains("command", "SELECT")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -461,7 +461,7 @@ async fn test_imap_list_mailboxes() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 2: Connection greeting
-                .on_event("imap_connection_accepted")
+                .on_event("imap_connection")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_imap_response",
@@ -471,7 +471,7 @@ async fn test_imap_list_mailboxes() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 3: LOGIN command
-                .on_event("imap_command_received")
+                .on_event("imap_command")
                 .and_event_data_contains("command", "LOGIN")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -482,7 +482,7 @@ async fn test_imap_list_mailboxes() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 4: LIST command
-                .on_event("imap_command_received")
+                .on_event("imap_command")
                 .and_event_data_contains("command", "LIST")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -567,7 +567,7 @@ async fn test_imap_fetch_message() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 2: Connection greeting
-                .on_event("imap_connection_accepted")
+                .on_event("imap_connection")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_imap_response",
@@ -577,7 +577,7 @@ async fn test_imap_fetch_message() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 3: LOGIN command
-                .on_event("imap_command_received")
+                .on_event("imap_command")
                 .and_event_data_contains("command", "LOGIN")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -588,7 +588,7 @@ async fn test_imap_fetch_message() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 4: SELECT command
-                .on_event("imap_command_received")
+                .on_event("imap_command")
                 .and_event_data_contains("command", "SELECT")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -599,7 +599,7 @@ async fn test_imap_fetch_message() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 5: FETCH command
-                .on_event("imap_command_received")
+                .on_event("imap_command")
                 .and_event_data_contains("command", "FETCH")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -677,7 +677,7 @@ async fn test_imap_search() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 2: Connection greeting
-                .on_event("imap_connection_accepted")
+                .on_event("imap_connection")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_imap_response",
@@ -687,7 +687,7 @@ async fn test_imap_search() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 3: LOGIN command
-                .on_event("imap_command_received")
+                .on_event("imap_command")
                 .and_event_data_contains("command", "LOGIN")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -698,7 +698,7 @@ async fn test_imap_search() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 4: SELECT command
-                .on_event("imap_command_received")
+                .on_event("imap_command")
                 .and_event_data_contains("command", "SELECT")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -709,7 +709,7 @@ async fn test_imap_search() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 5: SEARCH command
-                .on_event("imap_command_received")
+                .on_event("imap_command")
                 .and_event_data_contains("command", "SEARCH")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -786,7 +786,7 @@ async fn test_imap_logout() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 2: Connection greeting
-                .on_event("imap_connection_accepted")
+                .on_event("imap_connection")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_imap_response",
@@ -796,7 +796,7 @@ async fn test_imap_logout() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 3: LOGOUT command
-                .on_event("imap_command_received")
+                .on_event("imap_command")
                 .and_event_data_contains("command", "LOGOUT")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -860,7 +860,7 @@ async fn test_imap_noop() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 2: Connection greeting
-                .on_event("imap_connection_accepted")
+                .on_event("imap_connection")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_imap_response",
@@ -870,7 +870,7 @@ async fn test_imap_noop() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 3: LOGIN command
-                .on_event("imap_command_received")
+                .on_event("imap_command")
                 .and_event_data_contains("command", "LOGIN")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -881,7 +881,7 @@ async fn test_imap_noop() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 4: NOOP command
-                .on_event("imap_command_received")
+                .on_event("imap_command")
                 .and_event_data_contains("command", "NOOP")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -945,7 +945,7 @@ async fn test_imap_status() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 2: Connection greeting
-                .on_event("imap_connection_accepted")
+                .on_event("imap_connection")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_imap_response",
@@ -955,7 +955,7 @@ async fn test_imap_status() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 3: LOGIN command
-                .on_event("imap_command_received")
+                .on_event("imap_command")
                 .and_event_data_contains("command", "LOGIN")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -966,7 +966,7 @@ async fn test_imap_status() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 4: STATUS command
-                .on_event("imap_command_received")
+                .on_event("imap_command")
                 .and_event_data_contains("command", "STATUS")
                 .respond_with_actions(serde_json::json!([
                     {

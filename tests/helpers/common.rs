@@ -187,3 +187,46 @@ pub fn build_prompt(base_stack: &str, port: u16, instructions: &str) -> String {
         )
     }
 }
+
+/// Wraps a test function with a timeout to prevent indefinite hangs during parallel execution
+///
+/// This is especially important for tests that may experience resource contention when run
+/// in parallel with high thread counts (e.g., --test-threads=100).
+///
+/// # Arguments
+/// * `test_name` - Name of the test for logging purposes
+/// * `timeout` - Maximum duration before timing out (default: 120 seconds)
+/// * `test_fn` - The async test function to execute
+///
+/// # Returns
+/// * `Ok(T)` - The successful result from the test
+/// * `Err(_)` - If timeout is reached before test completes
+///
+/// # Example
+/// ```rust,ignore
+/// #[tokio::test]
+/// async fn test_cassandra_connection() -> E2EResult<()> {
+///     with_timeout("cassandra_connection", Duration::from_secs(120), async {
+///         // ... test code ...
+///         Ok(())
+///     }).await
+/// }
+/// ```
+#[allow(dead_code)]
+pub async fn with_timeout<F, T>(
+    test_name: &str,
+    timeout: Duration,
+    test_fn: F,
+) -> E2EResult<T>
+where
+    F: Future<Output = E2EResult<T>>,
+{
+    match tokio::time::timeout(timeout, test_fn).await {
+        Ok(result) => result,
+        Err(_) => Err(format!(
+            "Test '{}' timed out after {:?}. This may indicate resource contention during parallel execution. \
+             Try running with --test-threads=1 or reducing parallel test load.",
+            test_name, timeout
+        ).into()),
+    }
+}

@@ -113,7 +113,7 @@ pub async fn execute_actions(
 async fn execute_common_action(
     action: CommonAction,
     state: &AppState,
-    result: &mut ExecutionResult,
+    _result: &mut ExecutionResult,
 ) -> Result<()> {
     match action {
         CommonAction::ShowMessage { .. } => {

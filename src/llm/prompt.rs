@@ -447,9 +447,10 @@ Your response must be **pure JSON** only:
     ) -> String {
         let selected_mode = state.get_selected_scripting_mode().await;
         let scripting_env = state.get_scripting_env().await;
-        // Initially disable open_server and open_client - they will be enabled after read_base_stack_docs is called
-        let is_open_server_enabled = false;
-        let is_open_client_enabled = false;
+        // Enable open_server and open_client by default
+        // LLM can still use read_server_documentation/read_client_documentation tools for detailed protocol info
+        let is_open_server_enabled = true;
+        let is_open_client_enabled = true;
         let mut actions = get_user_input_common_actions(
             selected_mode,
             &scripting_env,
@@ -632,9 +633,9 @@ Understand what the user wants and respond with the appropriate actions to make 
         let (server_id, actions, trigger, instructions) = match &task.scope {
             TaskScope::Global => {
                 // Global task: use user input actions
-                // Initially disable open_server and open_client (tasks don't use tool calling loop)
-                let is_open_server_enabled = false;
-                let is_open_client_enabled = false;
+                // Enable open_server and open_client for global tasks
+                let is_open_server_enabled = true;
+                let is_open_client_enabled = true;
                 let mut actions = get_user_input_common_actions(
                     selected_mode,
                     &scripting_env,

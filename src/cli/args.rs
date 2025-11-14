@@ -128,6 +128,14 @@ pub struct Args {
     )]
     pub suppress_art: bool,
 
+    /// Disable scripting (LLM will only use actions, no script generation)
+    #[clap(
+        long = "no-scripts",
+        help = "Disable script generation for tests that need action-only responses",
+        hide = true  // Hidden from help output - primarily for testing
+    )]
+    pub no_scripts: bool,
+
     /// Load server/client configuration from a .netget file
     #[clap(
         long = "load",
@@ -300,6 +308,11 @@ impl Args {
 
     /// Parse the scripting environment argument into a ScriptingMode
     pub fn parse_scripting_mode(&self) -> Result<Option<crate::state::app_state::ScriptingMode>> {
+        // --no-scripts flag takes precedence
+        if self.no_scripts {
+            return Ok(Some(crate::state::app_state::ScriptingMode::Off));
+        }
+
         match &self.scripting_env {
             None => Ok(None),
             Some(env) => {

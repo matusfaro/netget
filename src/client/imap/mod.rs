@@ -414,7 +414,7 @@ impl ImapClient {
                 }
 
                 let mailbox_names: Vec<String> =
-                    mailbox_list.iter().map(|m| m.name().to_string()).collect();
+                    mailbox_list.iter().map(|m: &async_imap::types::Name| m.name().to_string()).collect();
 
                 info!(
                     "IMAP client {} listed {} mailboxes",

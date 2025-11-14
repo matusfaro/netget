@@ -978,13 +978,21 @@ pub fn generate_single_protocol_doc_data(protocol_name: &str) -> anyhow::Result<
     // Build server mode data
     let server = server_protocol.map(|protocol| {
         let metadata = protocol.metadata();
+        // Format startup parameters with JSON-serialized examples
+        let mut startup_params = protocol.get_startup_parameters();
+        for param in &mut startup_params {
+            // Convert the example Value to a formatted JSON string
+            if let Ok(json_str) = serde_json::to_string(&param.example) {
+                param.example = serde_json::Value::String(json_str);
+            }
+        }
         ProtocolModeData {
             stack_name: protocol.stack_name().to_string(),
             group_name: protocol.group_name().to_string(),
             description: protocol.description().to_string(),
             example_prompt: protocol.example_prompt().to_string(),
             keywords: protocol.keywords().iter().map(|s| s.to_string()).collect(),
-            startup_params: protocol.get_startup_parameters(),
+            startup_params,
             state: format!("{:?}", metadata.state),
             notes: metadata.notes.map(|s| s.to_string()),
         }
@@ -993,13 +1001,21 @@ pub fn generate_single_protocol_doc_data(protocol_name: &str) -> anyhow::Result<
     // Build client mode data
     let client = client_protocol.map(|protocol| {
         let metadata = protocol.metadata();
+        // Format startup parameters with JSON-serialized examples
+        let mut startup_params = protocol.get_startup_parameters();
+        for param in &mut startup_params {
+            // Convert the example Value to a formatted JSON string
+            if let Ok(json_str) = serde_json::to_string(&param.example) {
+                param.example = serde_json::Value::String(json_str);
+            }
+        }
         ProtocolModeData {
             stack_name: protocol.stack_name().to_string(),
             group_name: protocol.group_name().to_string(),
             description: protocol.description().to_string(),
             example_prompt: protocol.example_prompt().to_string(),
             keywords: protocol.keywords().iter().map(|s| s.to_string()).collect(),
-            startup_params: protocol.get_startup_parameters(),
+            startup_params,
             state: format!("{:?}", metadata.state),
             notes: metadata.notes.map(|s| s.to_string()),
         }

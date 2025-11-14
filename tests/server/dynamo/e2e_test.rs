@@ -29,8 +29,7 @@ mod tests {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "HTTP",
-                            "protocol": "DYNAMO",
+                            "base_stack": "DYNAMO",
                             "instruction": "Handle DynamoDB operations and respond with appropriate JSON"
                         }
                     ]))
@@ -109,8 +108,7 @@ mod tests {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "HTTP",
-                            "protocol": "DYNAMO",
+                            "base_stack": "DYNAMO",
                             "instruction": "Handle DynamoDB operations and respond with appropriate JSON"
                         }
                     ]))
@@ -190,8 +188,7 @@ mod tests {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "HTTP",
-                            "protocol": "DYNAMO",
+                            "base_stack": "DYNAMO",
                             "instruction": "Handle DynamoDB operations and respond with appropriate JSON"
                         }
                     ]))
@@ -275,8 +272,7 @@ mod tests {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "HTTP",
-                            "protocol": "DYNAMO",
+                            "base_stack": "DYNAMO",
                             "instruction": "Handle DynamoDB operations and respond with appropriate JSON"
                         }
                     ]))
@@ -358,8 +354,7 @@ mod tests {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "HTTP",
-                            "protocol": "DYNAMO",
+                            "base_stack": "DYNAMO",
                             "instruction": "Handle DynamoDB operations and respond with appropriate JSON"
                         }
                     ]))

@@ -55,7 +55,7 @@ mod e2e_imap_client {
                 .expect_calls(1)
                 .and()
                 // Mock: Login success event
-                .on_event("imap_command_received")
+                .on_event("imap_command")
                 .and_event_data_contains("command", "LOGIN")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -68,7 +68,7 @@ mod e2e_imap_client {
                 .expect_calls(1)
                 .and()
                 // Mock: Logout event
-                .on_event("imap_command_received")
+                .on_event("imap_command")
                 .and_event_data_contains("command", "LOGOUT")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -130,7 +130,7 @@ mod e2e_imap_client {
                 ]))
                 .expect_calls(1)
                 .and()
-                .on_event("imap_command_received")
+                .on_event("imap_command")
                 .and_event_data_contains("command", "LOGIN")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -186,21 +186,21 @@ mod e2e_imap_client {
                 ]))
                 .expect_calls(1)
                 .and()
-                .on_event("imap_command_received")
+                .on_event("imap_command")
                 .and_event_data_contains("command", "LOGIN")
                 .respond_with_actions(serde_json::json!([
                     {"type": "send_imap_response", "tag": "A001", "status": "OK", "message": "LOGIN completed"}
                 ]))
                 .expect_calls(1)
                 .and()
-                .on_event("imap_command_received")
+                .on_event("imap_command")
                 .and_event_data_contains("command", "LIST")
                 .respond_with_actions(serde_json::json!([
                     {"type": "send_imap_list", "mailboxes": ["INBOX", "Sent", "Drafts", "Trash"]}
                 ]))
                 .expect_calls(1)
                 .and()
-                .on_event("imap_command_received")
+                .on_event("imap_command")
                 .and_event_data_contains("command", "LOGOUT")
                 .respond_with_actions(serde_json::json!([
                     {"type": "send_imap_response", "tag": "A003", "status": "OK", "message": "LOGOUT"}
@@ -263,13 +263,13 @@ mod e2e_imap_client {
             mock.on_instruction_containing("imap").respond_with_actions(serde_json::json!([
                 {"type": "open_server", "port": 0, "base_stack": "imap", "instruction": "INBOX has 5 messages"}
             ])).expect_calls(1).and()
-            .on_event("imap_command_received").and_event_data_contains("command", "LOGIN").respond_with_actions(serde_json::json!([
+            .on_event("imap_command").and_event_data_contains("command", "LOGIN").respond_with_actions(serde_json::json!([
                 {"type": "send_imap_response", "tag": "A001", "status": "OK", "message": "LOGIN OK"}
             ])).expect_calls(1).and()
-            .on_event("imap_command_received").and_event_data_contains("command", "SELECT").respond_with_actions(serde_json::json!([
+            .on_event("imap_command").and_event_data_contains("command", "SELECT").respond_with_actions(serde_json::json!([
                 {"type": "send_imap_select", "exists": 5, "recent": 2, "unseen": 3}
             ])).expect_calls(1).and()
-            .on_event("imap_command_received").and_event_data_contains("command", "LOGOUT").respond_with_actions(serde_json::json!([
+            .on_event("imap_command").and_event_data_contains("command", "LOGOUT").respond_with_actions(serde_json::json!([
                 {"type": "send_imap_response", "tag": "A003", "status": "OK", "message": "LOGOUT"}
             ])).expect_calls(1).and()
         });
@@ -318,16 +318,16 @@ mod e2e_imap_client {
             mock.on_instruction_containing("imap").respond_with_actions(serde_json::json!([
                 {"type": "open_server", "port": 0, "base_stack": "imap", "instruction": "INBOX has 3 messages"}
             ])).expect_calls(1).and()
-            .on_event("imap_command_received").and_event_data_contains("command", "LOGIN").respond_with_actions(serde_json::json!([
+            .on_event("imap_command").and_event_data_contains("command", "LOGIN").respond_with_actions(serde_json::json!([
                 {"type": "send_imap_response", "tag": "A001", "status": "OK", "message": "LOGIN OK"}
             ])).expect_calls(1).and()
-            .on_event("imap_command_received").and_event_data_contains("command", "SELECT").respond_with_actions(serde_json::json!([
+            .on_event("imap_command").and_event_data_contains("command", "SELECT").respond_with_actions(serde_json::json!([
                 {"type": "send_imap_select", "exists": 3}
             ])).expect_calls(1).and()
-            .on_event("imap_command_received").and_event_data_contains("command", "FETCH").respond_with_actions(serde_json::json!([
+            .on_event("imap_command").and_event_data_contains("command", "FETCH").respond_with_actions(serde_json::json!([
                 {"type": "send_imap_fetch", "message_id": 1, "body": "Test message 1"}
             ])).expect_calls(1).and()
-            .on_event("imap_command_received").and_event_data_contains("command", "LOGOUT").respond_with_actions(serde_json::json!([
+            .on_event("imap_command").and_event_data_contains("command", "LOGOUT").respond_with_actions(serde_json::json!([
                 {"type": "send_imap_response", "tag": "A004", "status": "OK", "message": "LOGOUT"}
             ])).expect_calls(1).and()
         });
@@ -390,16 +390,16 @@ mod e2e_imap_client {
             mock.on_instruction_containing("imap").respond_with_actions(serde_json::json!([
                 {"type": "open_server", "port": 0, "base_stack": "imap", "instruction": "5 messages, search alice"}
             ])).expect_calls(1).and()
-            .on_event("imap_command_received").and_event_data_contains("command", "LOGIN").respond_with_actions(serde_json::json!([
+            .on_event("imap_command").and_event_data_contains("command", "LOGIN").respond_with_actions(serde_json::json!([
                 {"type": "send_imap_response", "tag": "A001", "status": "OK", "message": "LOGIN OK"}
             ])).expect_calls(1).and()
-            .on_event("imap_command_received").and_event_data_contains("command", "SELECT").respond_with_actions(serde_json::json!([
+            .on_event("imap_command").and_event_data_contains("command", "SELECT").respond_with_actions(serde_json::json!([
                 {"type": "send_imap_select", "exists": 5}
             ])).expect_calls(1).and()
-            .on_event("imap_command_received").and_event_data_contains("command", "SEARCH").respond_with_actions(serde_json::json!([
+            .on_event("imap_command").and_event_data_contains("command", "SEARCH").respond_with_actions(serde_json::json!([
                 {"type": "send_imap_search", "message_ids": [1, 3, 5]}
             ])).expect_calls(1).and()
-            .on_event("imap_command_received").and_event_data_contains("command", "LOGOUT").respond_with_actions(serde_json::json!([
+            .on_event("imap_command").and_event_data_contains("command", "LOGOUT").respond_with_actions(serde_json::json!([
                 {"type": "send_imap_response", "tag": "A004", "status": "OK", "message": "LOGOUT"}
             ])).expect_calls(1).and()
         });
@@ -454,13 +454,13 @@ mod e2e_imap_client {
                     .on_event("imap_connection_established")
                     .respond_with_actions(serde_json::json!([{"type": "imap_greeting", "message": "* OK Server"}]))
                     .expect_calls(1).and()
-                    .on_event("imap_command_received")
+                    .on_event("imap_command")
                     .respond_with_actions(serde_json::json!([{"type": "imap_response", "response": "A001 OK LOGIN"}]))
                     .expect_calls(1).and()
-                    .on_event("imap_command_received")
+                    .on_event("imap_command")
                     .respond_with_actions(serde_json::json!([{"type": "imap_response", "response": "* CAPABILITY IMAP4rev1 IDLE NAMESPACE\r\nA002 OK CAPABILITY"}]))
                     .expect_calls(1).and()
-                    .on_event("imap_command_received")
+                    .on_event("imap_command")
                     .respond_with_actions(serde_json::json!([{"type": "imap_response", "response": "* BYE\r\nA003 OK LOGOUT"}]))
                     .expect_calls(1).and()
             })
@@ -513,13 +513,13 @@ mod e2e_imap_client {
                     .on_event("imap_connection_established")
                     .respond_with_actions(serde_json::json!([{"type": "imap_greeting", "message": "* OK Server"}]))
                     .expect_calls(1).and()
-                    .on_event("imap_command_received")
+                    .on_event("imap_command")
                     .respond_with_actions(serde_json::json!([{"type": "imap_response", "response": "A001 OK LOGIN"}]))
                     .expect_calls(1).and()
-                    .on_event("imap_command_received")
+                    .on_event("imap_command")
                     .respond_with_actions(serde_json::json!([{"type": "imap_response", "response": "* FLAGS ()\r\n* 10 EXISTS\r\n* 0 RECENT\r\nA002 OK [READ-ONLY] EXAMINE"}]))
                     .expect_calls(1).and()
-                    .on_event("imap_command_received")
+                    .on_event("imap_command")
                     .respond_with_actions(serde_json::json!([{"type": "imap_response", "response": "* BYE\r\nA003 OK LOGOUT"}]))
                     .expect_calls(1).and()
             })
@@ -564,13 +564,13 @@ mod e2e_imap_client {
             mock.on_instruction_containing("imap").respond_with_actions(serde_json::json!([
                 {"type": "open_server", "port": 0, "base_stack": "imap", "instruction": "Sent has 20 messages, 5 unseen"}
             ])).expect_calls(1).and()
-            .on_event("imap_command_received").and_event_data_contains("command", "LOGIN").respond_with_actions(serde_json::json!([
+            .on_event("imap_command").and_event_data_contains("command", "LOGIN").respond_with_actions(serde_json::json!([
                 {"type": "send_imap_response", "tag": "A001", "status": "OK", "message": "LOGIN OK"}
             ])).expect_calls(1).and()
-            .on_event("imap_command_received").and_event_data_contains("command", "STATUS").respond_with_actions(serde_json::json!([
+            .on_event("imap_command").and_event_data_contains("command", "STATUS").respond_with_actions(serde_json::json!([
                 {"type": "send_imap_status", "mailbox": "Sent", "exists": 20, "unseen": 5}
             ])).expect_calls(1).and()
-            .on_event("imap_command_received").and_event_data_contains("command", "LOGOUT").respond_with_actions(serde_json::json!([
+            .on_event("imap_command").and_event_data_contains("command", "LOGOUT").respond_with_actions(serde_json::json!([
                 {"type": "send_imap_response", "tag": "A003", "status": "OK", "message": "LOGOUT"}
             ])).expect_calls(1).and()
         });
@@ -623,13 +623,13 @@ mod e2e_imap_client {
                     .on_event("imap_connection_established")
                     .respond_with_actions(serde_json::json!([{"type": "imap_greeting", "message": "* OK Server"}]))
                     .expect_calls(3).and()
-                    .on_event("imap_command_received")
+                    .on_event("imap_command")
                     .respond_with_actions(serde_json::json!([{"type": "imap_response", "response": "A001 OK LOGIN"}]))
                     .expect_calls(3).and()
-                    .on_event("imap_command_received")
+                    .on_event("imap_command")
                     .respond_with_actions(serde_json::json!([{"type": "imap_response", "response": "* FLAGS ()\r\n* 5 EXISTS\r\n* 0 RECENT\r\nA002 OK SELECT"}]))
                     .expect_calls(3).and()
-                    .on_event("imap_command_received")
+                    .on_event("imap_command")
                     .respond_with_actions(serde_json::json!([{"type": "imap_response", "response": "* BYE\r\nA003 OK LOGOUT"}]))
                     .expect_calls(3).and()
             })
@@ -699,13 +699,13 @@ mod e2e_imap_client {
             mock.on_instruction_containing("imap").respond_with_actions(serde_json::json!([
                 {"type": "open_server", "port": 0, "base_stack": "imap", "instruction": "Support NOOP"}
             ])).expect_calls(1).and()
-            .on_event("imap_command_received").and_event_data_contains("command", "LOGIN").respond_with_actions(serde_json::json!([
+            .on_event("imap_command").and_event_data_contains("command", "LOGIN").respond_with_actions(serde_json::json!([
                 {"type": "send_imap_response", "tag": "A001", "status": "OK", "message": "LOGIN OK"}
             ])).expect_calls(1).and()
-            .on_event("imap_command_received").and_event_data_contains("command", "NOOP").respond_with_actions(serde_json::json!([
+            .on_event("imap_command").and_event_data_contains("command", "NOOP").respond_with_actions(serde_json::json!([
                 {"type": "send_imap_response", "tag": "A002", "status": "OK", "message": "NOOP OK"}
             ])).expect_calls(2).and()
-            .on_event("imap_command_received").and_event_data_contains("command", "LOGOUT").respond_with_actions(serde_json::json!([
+            .on_event("imap_command").and_event_data_contains("command", "LOGOUT").respond_with_actions(serde_json::json!([
                 {"type": "send_imap_response", "tag": "A004", "status": "OK", "message": "LOGOUT"}
             ])).expect_calls(1).and()
         });

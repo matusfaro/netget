@@ -324,6 +324,11 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
         .stderr(Stdio::piped())
         .kill_on_drop(true);
 
+    // Set environment variable to indicate mock mode (skips Ollama availability check)
+    if mock_ollama_server.is_some() {
+        cmd.env("NETGET_MOCK_CONFIG_JSON", "true");
+    }
+
     // Debug: print the command being executed
     println!("[DEBUG] Executing: {:?}", cmd);
 

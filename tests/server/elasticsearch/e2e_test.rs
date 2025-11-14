@@ -28,8 +28,7 @@ mod tests {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "HTTP",
-                            "protocol": "ELASTICSEARCH",
+                            "base_stack": "elasticsearch",
                             "instruction": "Elasticsearch search engine with product index"
                         }
                     ]))
@@ -148,8 +147,7 @@ mod tests {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "HTTP",
-                            "protocol": "ELASTICSEARCH",
+                            "base_stack": "elasticsearch",
                             "instruction": "Elasticsearch server"
                         }
                     ]))
@@ -244,8 +242,7 @@ mod tests {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "HTTP",
-                            "protocol": "ELASTICSEARCH",
+                            "base_stack": "elasticsearch",
                             "instruction": "Elasticsearch with product id 123"
                         }
                     ]))
@@ -336,8 +333,7 @@ mod tests {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "HTTP",
-                            "protocol": "ELASTICSEARCH",
+                            "base_stack": "elasticsearch",
                             "instruction": "Elasticsearch server with bulk operations"
                         }
                     ]))
@@ -452,8 +448,7 @@ mod tests {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "HTTP",
-                            "protocol": "ELASTICSEARCH",
+                            "base_stack": "elasticsearch",
                             "instruction": "Elasticsearch cluster"
                         }
                     ]))
@@ -543,8 +538,7 @@ mod tests {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "HTTP",
-                            "protocol": "ELASTICSEARCH",
+                            "base_stack": "elasticsearch",
                             "instruction": "Elasticsearch search engine"
                         }
                     ]))
@@ -649,8 +643,7 @@ mod tests {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "HTTP",
-                            "protocol": "ELASTICSEARCH",
+                            "base_stack": "elasticsearch",
                             "instruction": "Elasticsearch server"
                         }
                     ]))

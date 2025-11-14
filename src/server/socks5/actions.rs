@@ -50,7 +50,7 @@ impl Protocol for Socks5Protocol {
         "ETH>IP>TCP>SOCKS5"
     }
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["socks"]
+        vec!["socks", "socks5"]
     }
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};

@@ -4,6 +4,7 @@ use anyhow::Result;
 use tokio::sync::mpsc;
 use tracing::info;
 
+use super::errors::ActionExecutionError;
 use super::types::{AppEvent, UserCommand};
 use crate::cli::server_startup;
 use crate::llm::actions::{get_all_tool_actions, get_user_input_common_actions};
@@ -263,9 +264,10 @@ impl EventHandler {
         // Get available actions for retry correction messages
         let selected_mode = self.state.get_selected_scripting_mode().await;
         let scripting_env = self.state.get_scripting_env().await;
-        // Initially disable open_server and open_client - they will be enabled after read_base_stack_docs is called in the conversation loop
-        let is_open_server_enabled = false;
-        let is_open_client_enabled = false;
+        // Enable open_server and open_client by default
+        // LLM can still use read_server_documentation/read_client_documentation tools for detailed protocol info
+        let is_open_server_enabled = true;
+        let is_open_client_enabled = true;
         let mut available_actions = get_user_input_common_actions(
             selected_mode,
             &scripting_env,
@@ -445,9 +447,18 @@ impl EventHandler {
                 use crate::state::server::{ServerInstance, ServerStatus};
 
                 // Parse protocol name using registry
-                let protocol_name = crate::protocol::server_registry::registry()
+                let protocol_name = match crate::protocol::server_registry::registry()
                     .parse_from_str(&base_stack)
-                    .unwrap_or_else(|| "TCP".to_string());
+                {
+                    Some(name) => name,
+                    None => {
+                        let error_msg = format!(
+                            "Unknown protocol '{}'. The protocol may not be enabled as a feature.",
+                            base_stack
+                        );
+                        return Err(ActionExecutionError::Fatal(anyhow::anyhow!(error_msg)));
+                    }
+                };
 
                 // Create a new server instance
                 let mut server = ServerInstance::new(

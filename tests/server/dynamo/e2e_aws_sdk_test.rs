@@ -55,10 +55,10 @@ mod tests {
                     .expect_calls(1)
                     .and()
                     // Mock 2: CreateTable request
-                    .on_event("dynamo_request_received")
+                    .on_event("dynamo_request")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "dynamo_response",
+                            "type": "send_dynamo_response",
                             "status_code": 200,
                             "body": "{\"TableDescription\":{\"TableName\":\"Users\",\"TableStatus\":\"ACTIVE\"}}"
                         }
@@ -140,10 +140,10 @@ mod tests {
                     .expect_calls(1)
                     .and()
                     // Mock 2: PutItem request
-                    .on_event("dynamo_request_received")
+                    .on_event("dynamo_request")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "dynamo_response",
+                            "type": "send_dynamo_response",
                             "status_code": 200,
                             "body": "{}"
                         }
@@ -151,10 +151,10 @@ mod tests {
                     .expect_calls(1)
                     .and()
                     // Mock 3: GetItem request
-                    .on_event("dynamo_request_received")
+                    .on_event("dynamo_request")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "dynamo_response",
+                            "type": "send_dynamo_response",
                             "status_code": 200,
                             "body": "{\"Item\":{\"userId\":{\"S\":\"user-123\"},\"name\":{\"S\":\"Alice\"},\"email\":{\"S\":\"alice@example.com\"},\"age\":{\"N\":\"30\"}}}"
                         }
@@ -247,10 +247,10 @@ mod tests {
                     .expect_calls(1)
                     .and()
                     // Mock 2: PutItem request
-                    .on_event("dynamo_request_received")
+                    .on_event("dynamo_request")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "dynamo_response",
+                            "type": "send_dynamo_response",
                             "status_code": 200,
                             "body": "{}"
                         }
@@ -258,10 +258,10 @@ mod tests {
                     .expect_calls(1)
                     .and()
                     // Mock 3: UpdateItem request
-                    .on_event("dynamo_request_received")
+                    .on_event("dynamo_request")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "dynamo_response",
+                            "type": "send_dynamo_response",
                             "status_code": 200,
                             "body": "{\"Attributes\":{\"price\":{\"N\":\"79.99\"}}}"
                         }
@@ -341,10 +341,10 @@ mod tests {
                     .expect_calls(1)
                     .and()
                     // Mock 2: PutItem request
-                    .on_event("dynamo_request_received")
+                    .on_event("dynamo_request")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "dynamo_response",
+                            "type": "send_dynamo_response",
                             "status_code": 200,
                             "body": "{}"
                         }
@@ -352,10 +352,10 @@ mod tests {
                     .expect_calls(1)
                     .and()
                     // Mock 3: DeleteItem request
-                    .on_event("dynamo_request_received")
+                    .on_event("dynamo_request")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "dynamo_response",
+                            "type": "send_dynamo_response",
                             "status_code": 200,
                             "body": "{}"
                         }
@@ -436,10 +436,10 @@ mod tests {
                     .expect_calls(1)
                     .and()
                     // Mock 2: PutItem request
-                    .on_event("dynamo_request_received")
+                    .on_event("dynamo_request")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "dynamo_response",
+                            "type": "send_dynamo_response",
                             "status_code": 200,
                             "body": "{}"
                         }
@@ -447,10 +447,10 @@ mod tests {
                     .expect_calls(1)
                     .and()
                     // Mock 3: Query request
-                    .on_event("dynamo_request_received")
+                    .on_event("dynamo_request")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "dynamo_response",
+                            "type": "send_dynamo_response",
                             "status_code": 200,
                             "body": "{\"Items\":[{\"customerId\":{\"S\":\"cust-001\"},\"orderDate\":{\"S\":\"2024-01-01\"}}],\"Count\":1}"
                         }
@@ -539,10 +539,10 @@ mod tests {
                     .expect_calls(1)
                     .and()
                     // Mock 2: PutItem request
-                    .on_event("dynamo_request_received")
+                    .on_event("dynamo_request")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "dynamo_response",
+                            "type": "send_dynamo_response",
                             "status_code": 200,
                             "body": "{}"
                         }
@@ -550,10 +550,10 @@ mod tests {
                     .expect_calls(1)
                     .and()
                     // Mock 3: Scan request
-                    .on_event("dynamo_request_received")
+                    .on_event("dynamo_request")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "dynamo_response",
+                            "type": "send_dynamo_response",
                             "status_code": 200,
                             "body": "{\"Items\":[{\"itemId\":{\"S\":\"item-001\"},\"category\":{\"S\":\"electronics\"}}],\"Count\":1}"
                         }
@@ -637,10 +637,10 @@ mod tests {
                     .expect_calls(1)
                     .and()
                     // Mock 2: BatchWriteItem request
-                    .on_event("dynamo_request_received")
+                    .on_event("dynamo_request")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "dynamo_response",
+                            "type": "send_dynamo_response",
                             "status_code": 200,
                             "body": "{\"UnprocessedItems\":{}}"
                         }
@@ -728,10 +728,10 @@ mod tests {
                     .expect_calls(1)
                     .and()
                     // Mock 2: DescribeTable request
-                    .on_event("dynamo_request_received")
+                    .on_event("dynamo_request")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "dynamo_response",
+                            "type": "send_dynamo_response",
                             "status_code": 200,
                             "body": "{\"Table\":{\"TableName\":\"TestTable\",\"TableStatus\":\"ACTIVE\",\"ItemCount\":0}}"
                         }

@@ -7,7 +7,7 @@ pub mod mock_ollama;
 pub mod netget;
 pub mod server;
 
-pub use common::{E2EResult, retry, retry_with_backoff};
+pub use common::{E2EResult, retry, retry_with_backoff, with_timeout};
 pub use self::netget::{NetGetConfig, NetGetInstance, NetGetServer};
 pub use server::{start_netget_server, wait_for_server_startup, ServerConfig};
 pub use client::start_netget_client;

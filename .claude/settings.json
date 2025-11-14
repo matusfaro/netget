@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo info:*)",
+      "WebFetch(domain:crates.io)",
+      "Bash(./cargo-isolated.sh:*)",
+      "Bash(cargo tree:*)",
+      "Bash(cargo test:*)",
+      "Bash(./lines-of-code.sh:*)",
+      "Bash(cargo search:*)",
+      "Bash(cargo doc:*)",
+      "Bash(./cargo-isolated-kill.sh)",
+      "WebFetch(domain:docs.rs)",
+      "Bash(cargo metadata:*)",
+      "Bash(cargo check:*)",
+      "Bash(rustc:*)",
+      "Bash(./am_i_claude_code_for_web.sh)",
+      "Bash(./test-e2e.sh:*)",
+      "Bash(cargo build:*)",
+      "Bash(sccache --show-stats:*)",
+      "Bash(cargo clean:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
