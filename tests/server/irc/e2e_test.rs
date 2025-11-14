@@ -36,9 +36,9 @@ async fn test_irc_welcome() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: IRC data received (NICK command)
-                .on_event("irc_data_received")
-                .and_event_data_contains("data", "NICK")
+                // Mock 2: IRC message received (NICK command)
+                .on_event("irc_message_received")
+                .and_event_data_contains("message", "NICK")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "wait_for_more"
@@ -46,9 +46,9 @@ async fn test_irc_welcome() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 3: IRC data received (USER command)
-                .on_event("irc_data_received")
-                .and_event_data_contains("data", "USER")
+                // Mock 3: IRC message received (USER command)
+                .on_event("irc_message_received")
+                .and_event_data_contains("message", "USER")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_irc_message",
@@ -148,8 +148,8 @@ async fn test_irc_ping_pong() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 2: IRC data received (PING command)
-                .on_event("irc_data_received")
-                .and_event_data_contains("data", "PING")
+                .on_event("irc_message_received")
+                .and_event_data_contains("message", "PING")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_irc_message",
@@ -238,8 +238,8 @@ async fn test_irc_join_channel() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 2: NICK command
-                .on_event("irc_data_received")
-                .and_event_data_contains("data", "NICK")
+                .on_event("irc_message_received")
+                .and_event_data_contains("message", "NICK")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "wait_for_more"
@@ -248,8 +248,8 @@ async fn test_irc_join_channel() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 3: USER command
-                .on_event("irc_data_received")
-                .and_event_data_contains("data", "USER")
+                .on_event("irc_message_received")
+                .and_event_data_contains("message", "USER")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "wait_for_more"
@@ -258,8 +258,8 @@ async fn test_irc_join_channel() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 4: JOIN command
-                .on_event("irc_data_received")
-                .and_event_data_contains("data", "JOIN")
+                .on_event("irc_message_received")
+                .and_event_data_contains("message", "JOIN")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_irc_message",
@@ -348,8 +348,8 @@ async fn test_irc_privmsg() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 2: NICK command
-                .on_event("irc_data_received")
-                .and_event_data_contains("data", "NICK")
+                .on_event("irc_message_received")
+                .and_event_data_contains("message", "NICK")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "wait_for_more"
@@ -358,8 +358,8 @@ async fn test_irc_privmsg() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 3: USER command
-                .on_event("irc_data_received")
-                .and_event_data_contains("data", "USER")
+                .on_event("irc_message_received")
+                .and_event_data_contains("message", "USER")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "wait_for_more"
@@ -368,8 +368,8 @@ async fn test_irc_privmsg() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 4: PRIVMSG command
-                .on_event("irc_data_received")
-                .and_event_data_contains("data", "PRIVMSG")
+                .on_event("irc_message_received")
+                .and_event_data_contains("message", "PRIVMSG")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_irc_message",
@@ -459,8 +459,8 @@ async fn test_irc_multiple_clients() -> E2EResult<()> {
                 .and()
                 // Mock 2-7: 3 clients × (NICK + USER) = 6 events
                 // We expect NICK command (respond with wait_for_more)
-                .on_event("irc_data_received")
-                .and_event_data_contains("data", "NICK")
+                .on_event("irc_message_received")
+                .and_event_data_contains("message", "NICK")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "wait_for_more"
@@ -469,8 +469,8 @@ async fn test_irc_multiple_clients() -> E2EResult<()> {
                 .expect_calls(3)
                 .and()
                 // We expect USER command (respond with 001 welcome)
-                .on_event("irc_data_received")
-                .and_event_data_contains("data", "USER")
+                .on_event("irc_message_received")
+                .and_event_data_contains("message", "USER")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_irc_message",
