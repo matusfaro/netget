@@ -15,6 +15,7 @@ use crate::client::tcp::actions::{TCP_CLIENT_CONNECTED_EVENT, TCP_CLIENT_DATA_RE
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
+use crate::logging::patterns;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
@@ -118,7 +119,7 @@ impl TcpClient {
                                             } else if let Err(e) = write_guard.flush().await {
                                                 error!("Failed to flush after connect: {}", e);
                                             } else {
-                                                info!("Sent {} bytes after connect", bytes.len());
+                                                info!("Sent {} {}", bytes.len(), patterns::TCP_CLIENT_SENT);
                                             }
                                         }
                                     }
@@ -150,7 +151,7 @@ impl TcpClient {
             loop {
                 match read_half.read(&mut buffer).await {
                     Ok(0) => {
-                        info!("TCP client {} disconnected", client_id);
+                        info!("TCP client {} {}", client_id, patterns::TCP_CLIENT_DISCONNECTED);
                         app_state
                             .update_client_status(client_id, ClientStatus::Disconnected)
                             .await;
@@ -213,8 +214,11 @@ impl TcpClient {
                                                 use crate::llm::actions::client_trait::Client;
                                                 match protocol.as_ref().execute_action(action) {
                                                     Ok(crate::llm::actions::client_trait::ClientActionResult::SendData(bytes)) => {
-                                                        if (write_half_arc.lock().await.write_all(&bytes).await).is_ok() {
-                                                            trace!("TCP client {} sent {} bytes", client_id, bytes.len());
+                                                        let mut write_guard = write_half_arc.lock().await;
+                                                        if write_guard.write_all(&bytes).await.is_ok() {
+                                                            if write_guard.flush().await.is_ok() {
+                                                                trace!("TCP client {} sent {} bytes", client_id, bytes.len());
+                                                            }
                                                         }
                                                     }
                                                     Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {

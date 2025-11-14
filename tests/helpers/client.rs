@@ -180,6 +180,69 @@ impl NetGetClient {
 
         Ok(())
     }
+
+    /// Wait for a log line containing the exact pattern with timeout
+    pub async fn wait_for_pattern(&self, pattern: &str, timeout: Duration) -> E2EResult<String> {
+        let start = std::time::Instant::now();
+        loop {
+            {
+                let lines = self.output_lines.lock().await;
+                if let Some(line) = lines.iter().find(|line| line.contains(pattern)) {
+                    return Ok(line.clone());
+                }
+            }
+            if start.elapsed() >= timeout {
+                let lines = self.output_lines.lock().await;
+                return Err(format!(
+                    "Timeout waiting for pattern '{}' after {:?}.\nLast 20 lines:\n{}",
+                    pattern,
+                    timeout,
+                    lines.iter().rev().take(20).rev().map(|s| s.as_str()).collect::<Vec<_>>().join("\n")
+                )
+                .into());
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    /// Wait for a log line matching a regex pattern with timeout
+    pub async fn wait_for_regex(
+        &self,
+        regex: &regex::Regex,
+        timeout: Duration,
+    ) -> E2EResult<String> {
+        let start = std::time::Instant::now();
+        loop {
+            {
+                let lines = self.output_lines.lock().await;
+                if let Some(line) = lines.iter().find(|line| regex.is_match(line)) {
+                    return Ok(line.clone());
+                }
+            }
+            if start.elapsed() >= timeout {
+                return Err(format!(
+                    "Timeout waiting for regex pattern after {:?}",
+                    timeout
+                )
+                .into());
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    /// Wait for multiple patterns in order with timeout
+    pub async fn wait_for_patterns(
+        &self,
+        patterns: &[&str],
+        timeout: Duration,
+    ) -> E2EResult<Vec<String>> {
+        let mut results = Vec::new();
+        for pattern in patterns {
+            let line = self.wait_for_pattern(pattern, timeout).await?;
+            results.push(line);
+        }
+        Ok(results)
+    }
 }
 
 impl Drop for NetGetClient {

@@ -26,7 +26,7 @@ impl SamlClient {
     /// Connect to a SAML IdP with integrated LLM actions
     pub async fn connect_with_llm_actions(
         remote_addr: String,
-        _llm_client: OllamaClient,
+        llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         client_id: ClientId,
@@ -71,6 +71,36 @@ impl SamlClient {
             client_id, remote_addr
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
+
+        // Call LLM with saml_connected event
+        if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
+            let event = Event::new(
+                &SAML_CLIENT_CONNECTED_EVENT,
+                serde_json::json!({
+                    "idp_url": remote_addr.clone(),
+                }),
+            );
+
+            match call_llm_for_client(
+                &llm_client,
+                &app_state,
+                client_id.to_string(),
+                &instruction,
+                &String::new(),
+                Some(&event),
+                &crate::client::saml::actions::SamlClientProtocol,
+                &status_tx,
+            )
+            .await
+            {
+                Ok(_result) => {
+                    info!("SAML client ready after connect event");
+                }
+                Err(e) => {
+                    error!("LLM error on saml_connected event: {}", e);
+                }
+            }
+        }
 
         // Spawn background task to monitor client lifecycle
         tokio::spawn(async move {

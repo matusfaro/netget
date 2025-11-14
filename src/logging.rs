@@ -1,4 +1,8 @@
 //! Dual logging macros that log to both tracing (file) and status channel (TUI)
+//!
+//! Also includes shared log pattern constants for test assertions.
+
+pub mod patterns;
 
 /// Log at TRACE level to both file and TUI
 #[macro_export]

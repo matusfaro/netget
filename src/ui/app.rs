@@ -16,11 +16,11 @@ pub enum LogLevel {
     /// WARN: Warnings and errors
     Warn,
     /// INFO: One line per request/response (default)
+    #[default]
     Info,
     /// DEBUG: Detailed LLM responses, memory updates, actions
     Debug,
     /// TRACE: Full protocol and LLM content
-    #[default]
     Trace,
 }
 
@@ -63,9 +63,9 @@ impl LogLevel {
         match self {
             LogLevel::Error => crossterm::style::Color::Red,
             LogLevel::Warn => crossterm::style::Color::Yellow,
-            LogLevel::Info => crossterm::style::Color::Blue,
+            LogLevel::Info => crossterm::style::Color::Green,
             LogLevel::Debug => crossterm::style::Color::Cyan,
-            LogLevel::Trace => crossterm::style::Color::White,
+            LogLevel::Trace => crossterm::style::Color::Blue,
         }
     }
 }
@@ -158,7 +158,7 @@ impl Default for App {
             history_temp_input: None,
             connection_info: ConnectionInfo::default(),
             packet_stats: PacketStats::default(),
-            log_level: LogLevel::default(), // Defaults to VERBOSE
+            log_level: LogLevel::default(), // Defaults to INFO
             slash_suggestions: Vec::new(),
             servers: Vec::new(),
             clients: Vec::new(),

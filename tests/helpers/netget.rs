@@ -785,6 +785,143 @@ impl NetGetInstance {
         lines.iter().any(|line| line.contains(needle))
     }
 
+    /// Wait for a log line containing the exact pattern with timeout
+    ///
+    /// Polls output_lines every 50ms until a line contains the pattern or timeout occurs.
+    /// Returns the matching line on success.
+    ///
+    /// # Example
+    /// ```ignore
+    /// server.wait_for_pattern("TCP received 5 bytes", Duration::from_secs(5)).await?;
+    /// ```
+    #[allow(dead_code)]
+    pub async fn wait_for_pattern(&self, pattern: &str, timeout: Duration) -> E2EResult<String> {
+        let start = std::time::Instant::now();
+
+        loop {
+            // Check if pattern appears in output
+            {
+                let lines = self.output_lines.lock().await;
+                if let Some(line) = lines.iter().find(|line| line.contains(pattern)) {
+                    return Ok(line.clone());
+                }
+            }
+
+            // Check timeout
+            if start.elapsed() >= timeout {
+                return Err(format!(
+                    "Timeout waiting for pattern '{}' after {:?}",
+                    pattern, timeout
+                )
+                .into());
+            }
+
+            // Wait before next check
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    /// Wait for a log line matching a regex pattern with timeout
+    ///
+    /// Polls output_lines every 50ms until a line matches the regex or timeout occurs.
+    /// Returns the matching line on success.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let regex = regex::Regex::new(r"TCP received \d+ bytes").unwrap();
+    /// server.wait_for_regex(&regex, Duration::from_secs(5)).await?;
+    /// ```
+    #[allow(dead_code)]
+    pub async fn wait_for_regex(
+        &self,
+        regex: &regex::Regex,
+        timeout: Duration,
+    ) -> E2EResult<String> {
+        let start = std::time::Instant::now();
+
+        loop {
+            // Check if regex matches any line
+            {
+                let lines = self.output_lines.lock().await;
+                if let Some(line) = lines.iter().find(|line| regex.is_match(line)) {
+                    return Ok(line.clone());
+                }
+            }
+
+            // Check timeout
+            if start.elapsed() >= timeout {
+                return Err(format!(
+                    "Timeout waiting for regex pattern '{}' after {:?}",
+                    regex.as_str(),
+                    timeout
+                )
+                .into());
+            }
+
+            // Wait before next check
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    /// Wait for multiple patterns in order with timeout
+    ///
+    /// Each pattern must appear after the previous one. Returns all matching lines.
+    ///
+    /// # Example
+    /// ```ignore
+    /// server.wait_for_patterns(&[
+    ///     "TCP client connected",
+    ///     "TCP received 5 bytes",
+    ///     "Sent response"
+    /// ], Duration::from_secs(10)).await?;
+    /// ```
+    #[allow(dead_code)]
+    pub async fn wait_for_patterns(
+        &self,
+        patterns: &[&str],
+        timeout: Duration,
+    ) -> E2EResult<Vec<String>> {
+        let start = std::time::Instant::now();
+        let mut results = Vec::new();
+        let mut last_index = 0;
+
+        for pattern in patterns {
+            loop {
+                // Check if pattern appears after last match
+                {
+                    let lines = self.output_lines.lock().await;
+                    if let Some((idx, line)) = lines
+                        .iter()
+                        .enumerate()
+                        .skip(last_index)
+                        .find(|(_, line)| line.contains(pattern))
+                    {
+                        results.push(line.clone());
+                        last_index = idx + 1;
+                        break;
+                    }
+                }
+
+                // Check timeout
+                if start.elapsed() >= timeout {
+                    return Err(format!(
+                        "Timeout waiting for pattern '{}' (matched {} of {} patterns) after {:?}",
+                        pattern,
+                        results.len(),
+                        patterns.len(),
+                        timeout
+                    )
+                    .into());
+                }
+
+                // Wait before next check
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }
+
+        Ok(results)
+    }
+
     /// Get all output lines
     #[allow(dead_code)]
     pub async fn get_output(&self) -> Vec<String> {

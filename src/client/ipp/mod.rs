@@ -11,6 +11,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
+use crate::client::ipp::actions::IPP_CLIENT_CONNECTED_EVENT;
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
@@ -25,7 +26,7 @@ impl IppClient {
     /// Connect to an IPP print server with integrated LLM actions
     pub async fn connect_with_llm_actions(
         remote_addr: String,
-        _llm_client: OllamaClient,
+        llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         client_id: ClientId,
@@ -62,6 +63,37 @@ impl IppClient {
             client_id, uri_str
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
+
+        // Call LLM with ipp_connected event
+        if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
+            let event = Event::new(
+                &IPP_CLIENT_CONNECTED_EVENT,
+                serde_json::json!({
+                    "ipp_uri": uri_str.clone(),
+                }),
+            );
+
+            match call_llm_for_client(
+                &llm_client,
+                &app_state,
+                client_id.to_string(),
+                &instruction,
+                &String::new(),
+                Some(&event),
+                &crate::client::ipp::actions::IppClientProtocol,
+                &status_tx,
+            )
+            .await
+            {
+                Ok(_result) => {
+                    // IPP actions like get_printer_attributes are handled asynchronously
+                    info!("IPP client ready after connect event");
+                }
+                Err(e) => {
+                    error!("LLM error on ipp_connected event: {}", e);
+                }
+            }
+        }
 
         // Spawn background task to monitor for client disconnection
         tokio::spawn(async move {

@@ -7,6 +7,7 @@
 #[cfg(all(test, feature = "tcp"))]
 mod tcp_client_tests {
     use crate::helpers::*;
+    use ::netget::logging::patterns;
     use std::time::Duration;
 
     /// Test TCP client connection to a local server with data exchange
@@ -45,8 +46,13 @@ mod tcp_client_tests {
 
         let server = start_netget_server(server_config).await?;
 
-        // Give server time to start
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // Wait for server to be listening (no sleep needed)
+        server
+            .wait_for_pattern(
+                patterns::TCP_SERVER_LISTENING,
+                Duration::from_secs(5),
+            )
+            .await?;
 
         // Now start a TCP client that connects to this server with mocks
         let client_config = NetGetConfig::new(format!(
@@ -92,15 +98,24 @@ mod tcp_client_tests {
 
         let client = start_netget_client(client_config).await?;
 
-        // Give client time to connect and exchange data
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        // Wait for complete data exchange sequence
+        client
+            .wait_for_patterns(
+                &[
+                    patterns::TCP_CLIENT_CONNECTED, // Client connected
+                    patterns::TCP_CLIENT_SENT,       // Client sent HELLO
+                ],
+                Duration::from_secs(5),
+            )
+            .await?;
 
-        // Verify client output shows connection
-        assert!(
-            client.output_contains("connected").await,
-            "Client should show connection message. Output: {:?}",
-            client.get_output().await
-        );
+        // Wait for server to receive and process the data
+        server
+            .wait_for_pattern(
+                patterns::TCP_SERVER_RECEIVED,
+                Duration::from_secs(5),
+            )
+            .await?;
 
         println!("✅ TCP client connected to server and exchanged data successfully");
 
@@ -150,7 +165,13 @@ mod tcp_client_tests {
 
         let server = start_netget_server(server_config).await?;
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // Wait for server to be listening
+        server
+            .wait_for_pattern(
+                patterns::TCP_SERVER_LISTENING,
+                Duration::from_secs(5),
+            )
+            .await?;
 
         // Client that sends specific data based on LLM instruction with mocks
         let client_config = NetGetConfig::new(format!(
@@ -186,7 +207,16 @@ mod tcp_client_tests {
 
         let client = start_netget_client(client_config).await?;
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // Wait for client to connect and send data
+        client
+            .wait_for_patterns(
+                &[
+                    patterns::TCP_CLIENT_CONNECTED,
+                    patterns::TCP_CLIENT_SENT,
+                ],
+                Duration::from_secs(5),
+            )
+            .await?;
 
         // Verify the client initiated the connection
         assert_eq!(client.protocol, "TCP", "Client should be TCP protocol");

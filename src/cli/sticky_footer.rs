@@ -54,6 +54,7 @@ pub enum FooterContent {
 #[derive(Debug, Clone)]
 pub struct ConnectionInfo {
     pub model: String,
+    #[allow(dead_code)]
     pub scripting_env: String,
     pub web_search_mode: WebSearchMode,
     pub event_handler_mode: crate::state::app_state::EventHandlerMode,
@@ -1198,19 +1199,6 @@ impl StickyFooter {
             WebSearchMode::Ask => ("ASK", self.palette.ask),
         };
 
-        // Determine script status and color based on scripting_env value
-        // scripting_env contains the mode: "Off", "On", "Python", "JavaScript", "Go", "Perl"
-        let (script_status, script_color) = if self.connection_info.scripting_env == "Off"
-            || self.connection_info.scripting_env.is_empty()
-        {
-            ("OFF", self.palette.failure)
-        } else {
-            (
-                self.connection_info.scripting_env.as_str(),
-                self.palette.success,
-            )
-        };
-
         // Determine handler color: green for ANY, yellow for others
         let handler_color = match self.connection_info.event_handler_mode {
             crate::state::app_state::EventHandlerMode::Any => self.palette.success,
@@ -1233,27 +1221,21 @@ impl StickyFooter {
             Print(self.log_level.as_str().to_string()),
             ResetColor,
             SetForegroundColor(self.palette.dimmed),
-            Print(" ^l"),
-            Print(" | Script:"),
-            ResetColor,
-            SetForegroundColor(script_color),
-            Print(script_status.to_string()),
-            ResetColor,
-            SetForegroundColor(self.palette.dimmed),
+            Print(" <^l>"),
             Print(" | WebSearch:"),
             ResetColor,
             SetForegroundColor(web_color),
             Print(web_status.to_string()),
             ResetColor,
             SetForegroundColor(self.palette.dimmed),
-            Print(" ^w"),
+            Print(" <^w>"),
             Print(" | Handler:"),
             ResetColor,
             SetForegroundColor(handler_color),
             Print(self.connection_info.event_handler_mode.as_str().to_string()),
             ResetColor,
             SetForegroundColor(self.palette.dimmed),
-            Print(" ^h"),
+            Print(" <^h>"),
             ResetColor,
         )?;
 

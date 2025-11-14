@@ -18,6 +18,7 @@ use crate::client::redis::actions::{
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
+use crate::logging::patterns;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
@@ -43,8 +44,11 @@ impl RedisClient {
         let remote_sock_addr = stream.peer_addr()?;
 
         info!(
-            "Redis client {} connected to {} (local: {})",
-            client_id, remote_sock_addr, local_addr
+            "Redis client {} {} {} (local: {})",
+            client_id,
+            patterns::REDIS_CLIENT_CONNECTED,
+            remote_sock_addr,
+            local_addr
         );
 
         // Update client state
@@ -89,15 +93,13 @@ impl RedisClient {
                                 "execute_redis_command" => {
                                     if let Some(command) = action["command"].as_str() {
                                         let command_line = format!("{}\r\n", command);
-                                        if let Err(e) = write_half_for_connected
-                                            .lock()
-                                            .await
-                                            .write_all(command_line.as_bytes())
-                                            .await
-                                        {
+                                        let mut write_guard = write_half_for_connected.lock().await;
+                                        if let Err(e) = write_guard.write_all(command_line.as_bytes()).await {
                                             error!("Failed to send Redis command after connect: {}", e);
+                                        } else if let Err(e) = write_guard.flush().await {
+                                            error!("Failed to flush after connect: {}", e);
                                         } else {
-                                            info!("Sent Redis command after connect: {}", command);
+                                            info!("{} {}", patterns::REDIS_CLIENT_SENT_COMMAND, command);
                                         }
                                     }
                                 }
@@ -126,7 +128,7 @@ impl RedisClient {
                 let mut line = String::new();
                 match reader.read_line(&mut line).await {
                     Ok(0) => {
-                        info!("Redis client {} disconnected", client_id);
+                        info!("Redis client {} {}", client_id, patterns::REDIS_CLIENT_DISCONNECTED);
                         app_state
                             .update_client_status(client_id, ClientStatus::Disconnected)
                             .await;
@@ -183,8 +185,11 @@ impl RedisClient {
                                             Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) if name == "redis_command" => {
                                                 if let Some(command_str) = data.get("command").and_then(|v| v.as_str()) {
                                                     let cmd = format!("{}\r\n", command_str);
-                                                    if let Ok(_) = write_half_arc.lock().await.write_all(cmd.as_bytes()).await {
-                                                        trace!("Redis client {} sent: {}", client_id, command_str);
+                                                    let mut write_guard = write_half_arc.lock().await;
+                                                    if let Ok(_) = write_guard.write_all(cmd.as_bytes()).await {
+                                                        if let Ok(_) = write_guard.flush().await {
+                                                            trace!("Redis client {} sent: {}", client_id, command_str);
+                                                        }
                                                     }
                                                 }
                                             }

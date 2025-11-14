@@ -28,7 +28,16 @@ async fn get_available_port() -> u16 {
 }
 
 /// Test that HTTP server reads RFC 7168 (HTCPCP-TEA) and accepts message/teapot
+///
+/// NOTE: This test is ignored by default because:
+/// 1. It requires real Ollama to be running (not mocked)
+/// 2. It tests experimental HTCPCP feature (April Fools' RFC)
+/// 3. It's inherently flaky (depends on LLM understanding obscure RFC)
+/// 4. It takes 30+ seconds to run
+///
+/// To run: cargo test --test integration_toolcall -- --ignored test_htcpcp_tea_accepts_message_teapot
 #[tokio::test]
+#[ignore = "Requires real Ollama, tests experimental HTCPCP feature, inherently flaky"]
 async fn test_htcpcp_tea_accepts_message_teapot() {
     // 1. Get an available port to avoid conflicts
     let port = get_available_port().await;
@@ -127,7 +136,16 @@ async fn test_htcpcp_tea_accepts_message_teapot() {
 }
 
 /// Test that HTTP server reads RFC 2324 (original HTCPCP) and rejects message/teapot
+///
+/// NOTE: This test is ignored by default because:
+/// 1. It requires real Ollama to be running (not mocked)
+/// 2. It tests experimental HTCPCP feature (April Fools' RFC)
+/// 3. It's inherently flaky (depends on LLM understanding obscure RFC)
+/// 4. It takes 30+ seconds to run
+///
+/// To run: cargo test --test integration_toolcall -- --ignored test_htcpcp_coffeepot_rejects_message_teapot
 #[tokio::test]
+#[ignore = "Requires real Ollama, tests experimental HTCPCP feature, inherently flaky"]
 async fn test_htcpcp_coffeepot_rejects_message_teapot() {
     // 1. Get an available port to avoid conflicts
     let port = get_available_port().await;
@@ -227,7 +245,16 @@ async fn test_htcpcp_coffeepot_rejects_message_teapot() {
 }
 
 /// Integration test: LLM searches for RFC 2324 and extracts media type
+///
+/// NOTE: This test is ignored by default because:
+/// 1. It requires real Ollama to be running (not mocked)
+/// 2. It tests web_search integration with obscure RFC content
+/// 3. It's inherently flaky (depends on LLM search and extraction capabilities)
+/// 4. It takes 45+ seconds to run
+///
+/// To run: cargo test --test integration_toolcall -- --ignored test_llm_search_and_extract_rfc2324_media_type
 #[tokio::test]
+#[ignore = "Requires real Ollama, tests web_search integration, inherently flaky"]
 async fn test_llm_search_and_extract_rfc2324_media_type() {
     println!("Starting NetGet to search for RFC 2324 and extract media type...");
 
