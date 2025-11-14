@@ -175,7 +175,14 @@ impl MockOllamaServer {
 
     /// Verify that all mock expectations were met
     pub async fn verify_calls(&self) -> E2EResult<()> {
-        let config = self.config.lock().await;
+        // Add timeout to prevent deadlock on lock acquisition
+        let config = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            self.config.lock()
+        )
+        .await
+        .map_err(|_| "Timeout acquiring mock config lock (deadlock detected)")?;
+
         config.mark_verified();
 
         let mut errors = Vec::new();

@@ -230,3 +230,51 @@ where
         ).into()),
     }
 }
+
+/// Default timeout for external client library calls (30 seconds)
+pub const DEFAULT_CLIENT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Wraps external async client library calls with a timeout to prevent indefinite hangs
+///
+/// This wrapper is specifically designed for calls to external libraries (redis-rs, scylla,
+/// aws-sdk-dynamodb, etc.) that may hang indefinitely if the server doesn't respond.
+///
+/// # Arguments
+/// * `fut` - The async future to execute (typically a client library call)
+///
+/// # Returns
+/// * `Ok(T)` - The successful result from the future
+/// * `Err(_)` - If timeout is reached (30 seconds by default)
+///
+/// # Example
+/// ```rust,ignore
+/// // Redis client call with timeout
+/// let pong: String = with_client_timeout(
+///     redis::cmd("PING").query_async(&mut con)
+/// ).await?;
+///
+/// // Cassandra query with timeout
+/// let rows = with_client_timeout(
+///     session.query("SELECT * FROM table")
+/// ).await?;
+///
+/// // AWS SDK call with timeout
+/// let response = with_client_timeout(
+///     client.put_item().send()
+/// ).await?;
+/// ```
+#[allow(dead_code)]
+pub async fn with_client_timeout<F, T, E>(fut: F) -> E2EResult<T>
+where
+    F: Future<Output = Result<T, E>>,
+    E: std::error::Error + 'static,
+{
+    match tokio::time::timeout(DEFAULT_CLIENT_TIMEOUT, fut).await {
+        Ok(Ok(result)) => Ok(result),
+        Ok(Err(e)) => Err(e.into()),
+        Err(_) => Err(format!(
+            "Client operation timed out after {:?}. Server may not be responding or may be blocked.",
+            DEFAULT_CLIENT_TIMEOUT
+        ).into()),
+    }
+}
