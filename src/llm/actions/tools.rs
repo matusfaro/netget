@@ -53,9 +53,21 @@ pub enum ToolAction {
         query: String,
     },
 
-    /// Get detailed documentation for a specific protocol
+    /// Get detailed documentation for a specific protocol (DEPRECATED - use ReadServerDocumentation or ReadClientDocumentation)
     ReadBaseStackDocs {
         /// Protocol name (e.g., "http", "ssh", "tor")
+        protocol: String,
+    },
+
+    /// Get detailed server protocol documentation
+    ReadServerDocumentation {
+        /// Server protocol name (e.g., "HTTP", "SSH", "TOR")
+        protocol: String,
+    },
+
+    /// Get detailed client protocol documentation
+    ReadClientDocumentation {
+        /// Client protocol name (e.g., "http", "ssh", "tor")
         protocol: String,
     },
 
@@ -110,11 +122,13 @@ impl ToolAction {
                 "read_file"
                     | "web_search"
                     | "read_base_stack_docs"
+                    | "read_server_documentation"
+                    | "read_client_documentation"
                     | "list_network_interfaces"
                     | "list_models"
                     | "generate_random"
             ) {
-                anyhow::bail!("Unknown tool type: '{}'. Valid tools: read_file, web_search, read_base_stack_docs, list_network_interfaces, list_models, generate_random", action_type);
+                anyhow::bail!("Unknown tool type: '{}'. Valid tools: read_file, web_search, read_base_stack_docs, read_server_documentation, read_client_documentation, list_network_interfaces, list_models, generate_random", action_type);
             }
         }
 
@@ -129,6 +143,8 @@ impl ToolAction {
                 "read_file"
                     | "web_search"
                     | "read_base_stack_docs"
+                    | "read_server_documentation"
+                    | "read_client_documentation"
                     | "list_network_interfaces"
                     | "list_models"
                     | "generate_random"
@@ -172,6 +188,12 @@ impl ToolAction {
             }
             ToolAction::ReadBaseStackDocs { protocol } => {
                 format!("read_base_stack_docs: \"{}\"", protocol)
+            }
+            ToolAction::ReadServerDocumentation { protocol } => {
+                format!("read_server_documentation: \"{}\"", protocol)
+            }
+            ToolAction::ReadClientDocumentation { protocol } => {
+                format!("read_client_documentation: \"{}\"", protocol)
             }
             ToolAction::ListNetworkInterfaces => "list_network_interfaces".to_string(),
             ToolAction::ListModels => "list_models: query available Ollama models".to_string(),
@@ -1290,7 +1312,7 @@ pub fn web_search_action() -> ActionDefinition {
     }
 }
 
-/// Get protocol documentation action definition
+/// Get protocol documentation action definition (DEPRECATED - use read_server_documentation_action or read_client_documentation_action)
 pub fn read_base_stack_docs_action() -> ActionDefinition {
     ActionDefinition {
         name: "read_base_stack_docs".to_string(),
@@ -1304,6 +1326,78 @@ pub fn read_base_stack_docs_action() -> ActionDefinition {
         example: json!({
             "type": "read_base_stack_docs",
             "protocol": "tor"
+        }),
+    }
+}
+
+/// Get server protocol documentation action definition
+pub fn read_server_documentation_action() -> ActionDefinition {
+    // Get all available server protocols from registry
+    let registry = crate::protocol::server_registry::registry();
+    let all_protocols: Vec<String> = registry
+        .all_protocols()
+        .into_iter()
+        .filter(|(_, protocol)| {
+            registry
+                .metadata(protocol.protocol_name())
+                .map(|m| m.is_available_to_llm())
+                .unwrap_or(true)
+        })
+        .map(|(name, _)| name)
+        .collect();
+
+    let protocol_list = if all_protocols.is_empty() {
+        "No server protocols available".to_string()
+    } else {
+        all_protocols.join(", ")
+    };
+
+    ActionDefinition {
+        name: "read_server_documentation".to_string(),
+        description: format!(
+            "Get detailed documentation for a specific server protocol. Returns comprehensive information including description, startup parameters, examples, and keywords. Use this before calling open_server to understand protocol configuration options. Available server protocols: {}",
+            protocol_list
+        ),
+        parameters: vec![Parameter {
+            name: "protocol".to_string(),
+            type_hint: "string".to_string(),
+            description: "Server protocol name (e.g., 'HTTP', 'SSH', 'TOR', 'DNS'). Use uppercase.".to_string(),
+            required: true,
+        }],
+        example: json!({
+            "type": "read_server_documentation",
+            "protocol": "HTTP"
+        }),
+    }
+}
+
+/// Get client protocol documentation action definition
+pub fn read_client_documentation_action() -> ActionDefinition {
+    // Get all available client protocols from registry
+    let client_registry = &crate::protocol::client_registry::CLIENT_REGISTRY;
+    let all_protocols: Vec<String> = client_registry.list_protocols();
+
+    let protocol_list = if all_protocols.is_empty() {
+        "No client protocols available".to_string()
+    } else {
+        all_protocols.join(", ")
+    };
+
+    ActionDefinition {
+        name: "read_client_documentation".to_string(),
+        description: format!(
+            "Get detailed documentation for a specific client protocol. Returns comprehensive information including description, startup parameters, examples, and keywords. Use this before calling open_client to understand protocol configuration options. Available client protocols: {}",
+            protocol_list
+        ),
+        parameters: vec![Parameter {
+            name: "protocol".to_string(),
+            type_hint: "string".to_string(),
+            description: "Client protocol name (e.g., 'http', 'ssh', 'tor', 'dns'). Use lowercase.".to_string(),
+            required: true,
+        }],
+        example: json!({
+            "type": "read_client_documentation",
+            "protocol": "http"
         }),
     }
 }
@@ -1397,7 +1491,8 @@ pub fn get_all_tool_actions(
     let mut actions = vec![
         generate_random_action(), // Put first - LLMs need this for mock data
         read_file_action(),
-        read_base_stack_docs_action(),
+        read_server_documentation_action(),
+        read_client_documentation_action(),
         list_network_interfaces_action(),
         list_models_action(),
     ];
@@ -1580,6 +1675,8 @@ pub async fn execute_tool(
             }
         }
         ToolAction::ReadBaseStackDocs { protocol } => execute_read_base_stack_docs(protocol).await,
+        ToolAction::ReadServerDocumentation { protocol } => execute_read_server_documentation(protocol).await,
+        ToolAction::ReadClientDocumentation { protocol } => execute_read_client_documentation(protocol).await,
         ToolAction::ListNetworkInterfaces => execute_list_network_interfaces().await,
         ToolAction::ListModels => execute_list_models().await,
         ToolAction::GenerateRandom {
@@ -1612,71 +1709,256 @@ async fn execute_read_base_stack_docs(protocol: &str) -> ToolResult {
     info!("🔧 Tool: read_base_stack_docs - protocol=\"{}\"", protocol);
     debug!("Getting documentation for protocol: {}", protocol);
 
-    // Use the common module's function to generate docs for a single protocol
-    match super::common::generate_single_protocol_documentation(protocol) {
-        Ok(docs) => {
-            debug!(
-                "Successfully retrieved documentation for protocol '{}' ({} bytes)",
-                protocol,
-                docs.len()
-            );
-            info!(
-                "  ✓ Retrieved docs for '{}' ({} bytes)",
-                protocol,
-                docs.len()
-            );
-
-            // Append open_server action description to inform LLM it's now enabled
-            let mut result = docs;
-            result.push_str("\n\n---\n\n");
-            result.push_str("## open_server Action (Now Enabled)\n\n");
-            result.push_str("The `open_server` action is now enabled. You can use it to start a server with this protocol.\n\n");
-            result.push_str("**Action:** `open_server`\n\n");
-            result.push_str(
-                "**Description:** Start a new server with the protocol you just read about.\n\n",
-            );
-            result.push_str("**Required Parameters:**\n");
-            result.push_str("- `port` (number): Port number to listen on\n");
-            result.push_str("- `base_stack` (string): Protocol stack to use (e.g., the protocol you just read about)\n");
-            result.push_str(
-                "- `instruction` (string): Detailed instructions for handling network events\n\n",
-            );
-            result.push_str("**Optional Parameters:**\n");
-            result.push_str("- `send_first` (boolean): True if server sends data first (FTP, SMTP), false if it waits for client (HTTP)\n");
-            result.push_str("- `initial_memory` (string): Initial memory as a string for persistent context across connections\n");
-            result.push_str("- `startup_params` (object): Protocol-specific startup parameters (see protocol documentation above)\n");
-            result.push_str(
-                "- `scheduled_tasks` (array): Scheduled tasks to create with this server\n",
-            );
-            result.push_str("- Script-related parameters (if scripting is enabled)\n\n");
-            result.push_str("**Example:**\n");
-            result.push_str("```json\n");
-            result.push_str("{\n");
-            result.push_str("  \"type\": \"open_server\",\n");
-            result.push_str("  \"port\": 8080,\n");
-            result.push_str(&format!(
-                "  \"base_stack\": \"{}\",\n",
-                protocol.to_lowercase()
-            ));
-            result.push_str(
-                "  \"instruction\": \"Handle requests according to protocol specification\"\n",
-            );
-            result.push_str("}\n");
-            result.push_str("```\n");
-
-            ToolResult::success("read_base_stack_docs", protocol.to_string(), result)
-        }
+    // Get structured documentation data
+    let doc_data = match super::common::generate_single_protocol_doc_data(protocol) {
+        Ok(data) => data,
         Err(e) => {
             warn!(
                 "Failed to get documentation for protocol '{}': {}",
                 protocol, e
             );
             info!("  ✗ Protocol '{}' not found: {}", protocol, e);
-            ToolResult::error(
+            return ToolResult::error(
                 "read_base_stack_docs",
                 protocol.to_string(),
                 format!("Protocol not found or unavailable: {}", e),
-            )
+            );
         }
+    };
+
+    // Render documentation using the template
+    let template_engine = &crate::llm::template_engine::TEMPLATE_ENGINE;
+    let rendered = match template_engine.render(
+        "shared/partials/base_stack_docs",
+        &serde_json::json!({ "base_stack_docs": doc_data }),
+    ) {
+        Ok(docs) => docs,
+        Err(e) => {
+            error!("Failed to render base stack docs template: {}", e);
+            return ToolResult::error(
+                "read_base_stack_docs",
+                protocol.to_string(),
+                format!("Failed to render documentation: {}", e),
+            );
+        }
+    };
+
+    debug!(
+        "Successfully retrieved documentation for protocol '{}' ({} bytes)",
+        protocol,
+        rendered.len()
+    );
+    info!(
+        "  ✓ Retrieved docs for '{}' ({} bytes)",
+        protocol,
+        rendered.len()
+    );
+
+    // Append open_server action description to inform LLM it's now enabled
+    let mut result = rendered;
+    result.push_str("\n\n---\n\n");
+    result.push_str("## open_server Action (Now Enabled)\n\n");
+    result.push_str("The `open_server` action is now enabled. You can use it to start a server with this protocol.\n\n");
+    result.push_str("**Action:** `open_server`\n\n");
+    result.push_str(
+        "**Description:** Start a new server with the protocol you just read about.\n\n",
+    );
+    result.push_str("**Required Parameters:**\n");
+    result.push_str("- `port` (number): Port number to listen on\n");
+    result.push_str("- `base_stack` (string): Protocol stack to use (e.g., the protocol you just read about)\n");
+    result.push_str(
+        "- `instruction` (string): Detailed instructions for handling network events\n\n",
+    );
+    result.push_str("**Optional Parameters:**\n");
+    result.push_str("- `send_first` (boolean): True if server sends data first (FTP, SMTP), false if it waits for client (HTTP)\n");
+    result.push_str("- `initial_memory` (string): Initial memory as a string for persistent context across connections\n");
+    result.push_str("- `startup_params` (object): Protocol-specific startup parameters (see protocol documentation above)\n");
+    result.push_str(
+        "- `scheduled_tasks` (array): Scheduled tasks to create with this server\n",
+    );
+    result.push_str("- Script-related parameters (if scripting is enabled)\n\n");
+    result.push_str("**Example:**\n");
+    result.push_str("```json\n");
+    result.push_str("{\n");
+    result.push_str("  \"type\": \"open_server\",\n");
+    result.push_str("  \"port\": 8080,\n");
+    result.push_str(&format!(
+        "  \"base_stack\": \"{}\",\n",
+        protocol.to_lowercase()
+    ));
+    result.push_str(
+        "  \"instruction\": \"Handle requests according to protocol specification\"\n",
+    );
+    result.push_str("}\n");
+    result.push_str("```\n");
+
+    ToolResult::success("read_base_stack_docs", protocol.to_string(), result)
+}
+
+/// Execute read_server_documentation tool
+async fn execute_read_server_documentation(protocol: &str) -> ToolResult {
+    use tracing::info;
+
+    info!("🔧 Tool: read_server_documentation - protocol=\"{}\"", protocol);
+    debug!("Getting server documentation for protocol: {}", protocol);
+
+    // Get server protocol from registry
+    let registry = crate::protocol::server_registry::registry();
+    let server_protocol = match registry.get(protocol) {
+        Some(p) => p,
+        None => {
+            warn!("Server protocol '{}' not found", protocol);
+            info!("  ✗ Server protocol '{}' not found", protocol);
+            return ToolResult::error(
+                "read_server_documentation",
+                protocol.to_string(),
+                format!("Server protocol '{}' not found. Use read_server_documentation to see available server protocols.", protocol),
+            );
+        }
+    };
+
+    // Build documentation from protocol
+    let metadata = server_protocol.metadata();
+    let startup_params = server_protocol.get_startup_parameters();
+
+    let mut result = String::new();
+    result.push_str(&format!("# Server Protocol: {}\n\n", protocol));
+    result.push_str(&format!("**Stack:** {}\n", server_protocol.stack_name()));
+    result.push_str(&format!("**Group:** {}\n", server_protocol.group_name()));
+    result.push_str(&format!("**State:** {:?}\n\n", metadata.state));
+
+    result.push_str("## Description\n\n");
+    result.push_str(&format!("{}\n\n", server_protocol.description()));
+
+    if !startup_params.is_empty() {
+        result.push_str("## Startup Parameters\n\n");
+        for param in &startup_params {
+            result.push_str(&format!("- **{}** ({}): {}\n", param.name, param.type_hint, param.description));
+            if param.required {
+                result.push_str("  - Required: Yes\n");
+            }
+        }
+        result.push_str("\n");
     }
+
+    result.push_str("## Example Prompt\n\n");
+    result.push_str(&format!("{}\n\n", server_protocol.example_prompt()));
+
+    if !server_protocol.keywords().is_empty() {
+        result.push_str("## Keywords\n\n");
+        result.push_str(&format!("{}\n\n", server_protocol.keywords().join(", ")));
+    }
+
+    if let Some(notes) = metadata.notes {
+        result.push_str("## Notes\n\n");
+        result.push_str(&format!("{}\n\n", notes));
+    }
+
+    debug!(
+        "Successfully retrieved server documentation for protocol '{}' ({} bytes)",
+        protocol,
+        result.len()
+    );
+    info!(
+        "  ✓ Retrieved server docs for '{}' ({} bytes)",
+        protocol,
+        result.len()
+    );
+
+    // Append open_server action description to inform LLM it's now enabled
+    result.push_str("\n\n---\n\n");
+    result.push_str("## open_server Action (Now Enabled)\n\n");
+    result.push_str("The `open_server` action is now enabled for this protocol.\n\n");
+    result.push_str("**Example:**\n```json\n{\n");
+    result.push_str("  \"type\": \"open_server\",\n");
+    result.push_str("  \"port\": 8080,\n");
+    result.push_str(&format!("  \"base_stack\": \"{}\",\n", protocol));
+    result.push_str("  \"instruction\": \"Handle requests according to protocol specification\"\n");
+    result.push_str("}\n```\n");
+
+    ToolResult::success("read_server_documentation", protocol.to_string(), result)
+}
+
+/// Execute read_client_documentation tool
+async fn execute_read_client_documentation(protocol: &str) -> ToolResult {
+    use tracing::info;
+
+    info!("🔧 Tool: read_client_documentation - protocol=\"{}\"", protocol);
+    debug!("Getting client documentation for protocol: {}", protocol);
+
+    // Get client protocol from registry
+    let client_registry = &crate::protocol::client_registry::CLIENT_REGISTRY;
+    let client_protocol = match client_registry.get(protocol) {
+        Some(p) => p,
+        None => {
+            warn!("Client protocol '{}' not found", protocol);
+            info!("  ✗ Client protocol '{}' not found", protocol);
+            return ToolResult::error(
+                "read_client_documentation",
+                protocol.to_string(),
+                format!("Client protocol '{}' not found. Use read_client_documentation to see available client protocols.", protocol),
+            );
+        }
+    };
+
+    // Build documentation from protocol
+    let metadata = client_protocol.metadata();
+    let startup_params = client_protocol.get_startup_parameters();
+
+    let mut result = String::new();
+    result.push_str(&format!("# Client Protocol: {}\n\n", protocol));
+    result.push_str(&format!("**Stack:** {}\n", client_protocol.stack_name()));
+    result.push_str(&format!("**Group:** {}\n", client_protocol.group_name()));
+    result.push_str(&format!("**State:** {:?}\n\n", metadata.state));
+
+    result.push_str("## Description\n\n");
+    result.push_str(&format!("{}\n\n", client_protocol.description()));
+
+    if !startup_params.is_empty() {
+        result.push_str("## Startup Parameters\n\n");
+        for param in &startup_params {
+            result.push_str(&format!("- **{}** ({}): {}\n", param.name, param.type_hint, param.description));
+            if param.required {
+                result.push_str("  - Required: Yes\n");
+            }
+        }
+        result.push_str("\n");
+    }
+
+    result.push_str("## Example Prompt\n\n");
+    result.push_str(&format!("{}\n\n", client_protocol.example_prompt()));
+
+    if !client_protocol.keywords().is_empty() {
+        result.push_str("## Keywords\n\n");
+        result.push_str(&format!("{}\n\n", client_protocol.keywords().join(", ")));
+    }
+
+    if let Some(notes) = metadata.notes {
+        result.push_str("## Notes\n\n");
+        result.push_str(&format!("{}\n\n", notes));
+    }
+
+    debug!(
+        "Successfully retrieved client documentation for protocol '{}' ({} bytes)",
+        protocol,
+        result.len()
+    );
+    info!(
+        "  ✓ Retrieved client docs for '{}' ({} bytes)",
+        protocol,
+        result.len()
+    );
+
+    // Append open_client action description to inform LLM it's now enabled
+    result.push_str("\n\n---\n\n");
+    result.push_str("## open_client Action (Now Enabled)\n\n");
+    result.push_str("The `open_client` action is now enabled for this protocol.\n\n");
+    result.push_str("**Example:**\n```json\n{\n");
+    result.push_str("  \"type\": \"open_client\",\n");
+    result.push_str(&format!("  \"protocol\": \"{}\",\n", protocol));
+    result.push_str("  \"remote_addr\": \"example.com:80\",\n");
+    result.push_str("  \"instruction\": \"Connect and interact with the remote server\"\n");
+    result.push_str("}\n```\n");
+
+    ToolResult::success("read_client_documentation", protocol.to_string(), result)
 }

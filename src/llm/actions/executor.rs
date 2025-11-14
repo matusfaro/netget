@@ -116,8 +116,9 @@ async fn execute_common_action(
     result: &mut ExecutionResult,
 ) -> Result<()> {
     match action {
-        CommonAction::ShowMessage { message } => {
-            result.add_message(message);
+        CommonAction::ShowMessage { .. } => {
+            // ShowMessage is handled by the caller (event handler) to avoid duplicate output
+            // This match arm exists to satisfy exhaustiveness checking
         }
 
         CommonAction::OpenServer { .. } => {

@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// This describes a startup parameter that a protocol accepts,
 /// including its name, type, description, and an example value.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ParameterDefinition {
     /// Parameter name (e.g., "certificate_mode", "max_connections")
     pub name: String,

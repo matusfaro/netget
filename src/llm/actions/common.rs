@@ -186,7 +186,7 @@ pub fn open_server_action(
     let mut description = "Start a new server.".to_string();
 
     if !is_enabled {
-        description.push_str(" ⚠️ DISABLED: You must call read_base_stack_docs tool call first to enable this action. This tool provides detailed protocol documentation and startup parameters required for server configuration.");
+        description.push_str(" ⚠️ DISABLED: You must first read protocol documentation using the read_server_documentation tool (for server protocols) or read_client_documentation tool (for client protocols). These tools list all available protocols and provide detailed configuration information.");
         return ActionDefinition {
             name,
             description,
@@ -314,12 +314,12 @@ pub fn open_client_action(
     let mut description = "Connect to a remote server as a client.".to_string();
 
     if !is_enabled {
-        description.push_str(" ⚠️ DISABLED: You must call read_base_stack_docs tool call first to enable this action. This tool provides detailed protocol documentation and startup parameters required for client configuration.");
+        description.push_str(" ⚠️ DISABLED: You must first read protocol documentation using the read_client_documentation tool (for client protocols) or read_server_documentation tool (for server protocols). These tools list all available protocols and provide detailed configuration information.");
         return ActionDefinition {
             name,
             description,
             parameters: vec![],
-            example: json!({}),
+            example: serde_json::Value::Null,
         };
     }
 
@@ -919,7 +919,29 @@ pub fn generate_base_stack_documentation(include_disabled: bool) -> String {
     doc
 }
 
-/// Generate documentation for a single protocol
+/// Structured protocol documentation data for templates
+#[derive(Debug, serde::Serialize)]
+pub struct ProtocolDocData {
+    pub protocol_name: String,
+    pub both_modes: bool,
+    pub server: Option<ProtocolModeData>,
+    pub client: Option<ProtocolModeData>,
+}
+
+/// Documentation for a single mode (server or client)
+#[derive(Debug, serde::Serialize)]
+pub struct ProtocolModeData {
+    pub stack_name: String,
+    pub group_name: String,
+    pub description: String,
+    pub example_prompt: String,
+    pub keywords: Vec<String>,
+    pub startup_params: Vec<super::ParameterDefinition>,
+    pub state: String,
+    pub notes: Option<String>,
+}
+
+/// Generate structured documentation data for a single protocol
 ///
 /// This is used by the read_base_stack_docs tool to provide detailed information
 /// about a specific protocol on demand. Includes both server and client capabilities
@@ -929,9 +951,9 @@ pub fn generate_base_stack_documentation(include_disabled: bool) -> String {
 /// * `protocol_name` - Name of the protocol (e.g., "http", "ssh", "tor")
 ///
 /// # Returns
-/// * `Ok(String)` - Documentation for the protocol (server and/or client)
+/// * `Ok(ProtocolDocData)` - Structured documentation for the protocol (server and/or client)
 /// * `Err(_)` - If protocol not found in either registry
-pub fn generate_single_protocol_documentation(protocol_name: &str) -> anyhow::Result<String> {
+pub fn generate_single_protocol_doc_data(protocol_name: &str) -> anyhow::Result<ProtocolDocData> {
     let server_registry = crate::protocol::server_registry::registry();
     let client_registry = &crate::protocol::client_registry::CLIENT_REGISTRY;
 
@@ -951,143 +973,42 @@ pub fn generate_single_protocol_documentation(protocol_name: &str) -> anyhow::Re
         ));
     }
 
-    let mut doc = String::new();
+    let both_modes = server_protocol.is_some() && client_protocol.is_some();
 
-    // Protocol header
-    doc.push_str(&format!(
-        "# {} Protocol Documentation\n\n",
-        protocol_name.to_uppercase()
-    ));
-
-    // Show which modes are available
-    if server_protocol.is_some() && client_protocol.is_some() {
-        doc.push_str("**Available as:** Server and Client\n\n");
-    } else if server_protocol.is_some() {
-        doc.push_str("**Available as:** Server only\n\n");
-    } else {
-        doc.push_str("**Available as:** Client only\n\n");
-    }
-
-    // Server documentation
-    if let Some(protocol) = server_protocol {
-        doc.push_str("## Server Mode\n\n");
-
-        // Full stack name
-        doc.push_str(&format!("**Full name:** {}\n\n", protocol.stack_name()));
-
-        // Group
-        doc.push_str(&format!("**Category:** {}\n\n", protocol.group_name()));
-
-        // Description
-        doc.push_str(&format!("**Description:** {}\n\n", protocol.description()));
-
-        // Example prompt
-        doc.push_str(&format!(
-            "**Example usage:** \"{}\"\n\n",
-            protocol.example_prompt()
-        ));
-
-        // Keywords
-        let keywords = protocol.keywords();
-        if !keywords.is_empty() {
-            doc.push_str(&format!("**Keywords:** {}\n\n", keywords.join(", ")));
-        }
-
-        // Startup parameters
-        let params = protocol.get_startup_parameters();
-        if !params.is_empty() {
-            doc.push_str("### Startup Parameters for `open_server`\n\n");
-            doc.push_str("These parameters can be included in the `startup_params` field when calling `open_server`:\n\n");
-            for param in params {
-                doc.push_str(&format!(
-                    "- **{}** ({}): {}\n",
-                    param.name,
-                    if param.required {
-                        "required"
-                    } else {
-                        "optional"
-                    },
-                    param.description
-                ));
-                doc.push_str(&format!("  - Type: {}\n", param.type_hint));
-                doc.push_str(&format!(
-                    "  - Example: {}\n",
-                    serde_json::to_string(&param.example).unwrap_or_default()
-                ));
-                doc.push('\n');
-            }
-        } else {
-            doc.push_str("### Startup Parameters for `open_server`\n\nThis server does not require any startup parameters.\n\n");
-        }
-
-        // Metadata (state)
+    // Build server mode data
+    let server = server_protocol.map(|protocol| {
         let metadata = protocol.metadata();
-        doc.push_str(&format!("**Development state:** {:?}\n", metadata.state));
-        if let Some(notes) = metadata.notes {
-            doc.push_str(&format!("**Notes:** {}\n", notes));
+        ProtocolModeData {
+            stack_name: protocol.stack_name().to_string(),
+            group_name: protocol.group_name().to_string(),
+            description: protocol.description().to_string(),
+            example_prompt: protocol.example_prompt().to_string(),
+            keywords: protocol.keywords().iter().map(|s| s.to_string()).collect(),
+            startup_params: protocol.get_startup_parameters(),
+            state: format!("{:?}", metadata.state),
+            notes: metadata.notes.map(|s| s.to_string()),
         }
-        doc.push('\n');
-    }
+    });
 
-    // Client documentation
-    if let Some(client) = client_protocol {
-        doc.push_str("## Client Mode\n\n");
-
-        // Full stack name
-        doc.push_str(&format!("**Full name:** {}\n\n", client.stack_name()));
-
-        // Group
-        doc.push_str(&format!("**Category:** {}\n\n", client.group_name()));
-
-        // Description
-        doc.push_str(&format!("**Description:** {}\n\n", client.description()));
-
-        // Example prompt
-        doc.push_str(&format!(
-            "**Example usage:** \"{}\"\n\n",
-            client.example_prompt()
-        ));
-
-        // Keywords
-        let keywords = client.keywords();
-        if !keywords.is_empty() {
-            doc.push_str(&format!("**Keywords:** {}\n\n", keywords.join(", ")));
+    // Build client mode data
+    let client = client_protocol.map(|protocol| {
+        let metadata = protocol.metadata();
+        ProtocolModeData {
+            stack_name: protocol.stack_name().to_string(),
+            group_name: protocol.group_name().to_string(),
+            description: protocol.description().to_string(),
+            example_prompt: protocol.example_prompt().to_string(),
+            keywords: protocol.keywords().iter().map(|s| s.to_string()).collect(),
+            startup_params: protocol.get_startup_parameters(),
+            state: format!("{:?}", metadata.state),
+            notes: metadata.notes.map(|s| s.to_string()),
         }
+    });
 
-        // Startup parameters
-        let params = client.get_startup_parameters();
-        if !params.is_empty() {
-            doc.push_str("### Startup Parameters for `open_client`\n\n");
-            doc.push_str("These parameters can be included in the `startup_params` field when calling `open_client`:\n\n");
-            for param in params {
-                doc.push_str(&format!(
-                    "- **{}** ({}): {}\n",
-                    param.name,
-                    if param.required {
-                        "required"
-                    } else {
-                        "optional"
-                    },
-                    param.description
-                ));
-                doc.push_str(&format!("  - Type: {}\n", param.type_hint));
-                doc.push_str(&format!(
-                    "  - Example: {}\n",
-                    serde_json::to_string(&param.example).unwrap_or_default()
-                ));
-                doc.push('\n');
-            }
-        } else {
-            doc.push_str("### Startup Parameters for `open_client`\n\nThis client does not require any startup parameters.\n\n");
-        }
-
-        // Metadata (state)
-        let metadata = client.metadata();
-        doc.push_str(&format!("**Development state:** {:?}\n", metadata.state));
-        if let Some(notes) = metadata.notes {
-            doc.push_str(&format!("**Notes:** {}\n", notes));
-        }
-    }
-
-    Ok(doc)
+    Ok(ProtocolDocData {
+        protocol_name: protocol_name.to_uppercase(),
+        both_modes,
+        server,
+        client,
+    })
 }

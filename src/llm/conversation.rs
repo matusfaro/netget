@@ -73,8 +73,14 @@ pub struct ConversationHandler {
     /// Index of last logged message (to avoid re-logging entire conversation)
     last_logged_index: usize,
 
-    /// Whether protocol documentation has been read in this conversation (enables open_server)
+    /// Whether protocol documentation has been read in this conversation (enables open_server and open_client)
     protocol_docs_read: bool,
+
+    /// Whether server documentation has been read in this conversation (enables open_server)
+    server_docs_read: bool,
+
+    /// Whether client documentation has been read in this conversation (enables open_client)
+    client_docs_read: bool,
 
     /// Application state (for conversation tracking)
     state: Option<AppState>,
@@ -112,6 +118,8 @@ impl ConversationHandler {
             status_tx: None,
             last_logged_index: 0, // No messages logged yet
             protocol_docs_read: false,
+            server_docs_read: false,
+            client_docs_read: false,
             state: None,
             source: None,
             details: None,
@@ -201,6 +209,24 @@ impl ConversationHandler {
         // The actions will remain disabled in this iteration, but the next iteration will
         // have them enabled because the conversation will have a new set of actions built
         // with the enabled flags.
+
+        // Rebuild the actions section in the system prompt
+        self.update_actions_section(available_actions);
+    }
+
+    /// Mark server documentation as read in this conversation (enables open_server)
+    fn mark_server_docs_read(&mut self, available_actions: &[ActionDefinition]) {
+        self.server_docs_read = true;
+        debug!("Server documentation read in conversation - open_server action is now enabled");
+
+        // Rebuild the actions section in the system prompt
+        self.update_actions_section(available_actions);
+    }
+
+    /// Mark client documentation as read in this conversation (enables open_client)
+    fn mark_client_docs_read(&mut self, available_actions: &[ActionDefinition]) {
+        self.client_docs_read = true;
+        debug!("Client documentation read in conversation - open_client action is now enabled");
 
         // Rebuild the actions section in the system prompt
         self.update_actions_section(available_actions);
@@ -411,6 +437,8 @@ impl ConversationHandler {
                                 ToolAction::ReadFile { .. } => "read_file",
                                 ToolAction::WebSearch { .. } => "web_search",
                                 ToolAction::ReadBaseStackDocs { .. } => "read_base_stack_docs",
+                                ToolAction::ReadServerDocumentation { .. } => "read_server_documentation",
+                                ToolAction::ReadClientDocumentation { .. } => "read_client_documentation",
                                 ToolAction::ListNetworkInterfaces => "list_network_interfaces",
                                 ToolAction::ListModels => "list_models",
                                 ToolAction::GenerateRandom { .. } => "generate_random",
@@ -418,8 +446,12 @@ impl ConversationHandler {
                             state.add_tool_call(tool_name.to_string(), tool_action.describe());
                         }
 
-                        // Check if this is read_base_stack_docs tool
-                        let is_read_docs =
+                        // Check if this is a doc reading tool
+                        let is_read_server_docs =
+                            matches!(tool_action, ToolAction::ReadServerDocumentation { .. });
+                        let is_read_client_docs =
+                            matches!(tool_action, ToolAction::ReadClientDocumentation { .. });
+                        let is_read_base_docs =
                             matches!(tool_action, ToolAction::ReadBaseStackDocs { .. });
 
                         let result =
@@ -428,8 +460,9 @@ impl ConversationHandler {
                         info!("  Result: {}", result.summary());
 
                         // Mark protocol docs as read if the tool succeeded
-                        // This will update the system prompt to enable open_server action
-                        if is_read_docs && result.success {
+                        // This will update the system prompt to enable open_server/open_client actions
+                        // For now, all doc reading tools enable both open_server and open_client
+                        if result.success && (is_read_server_docs || is_read_client_docs || is_read_base_docs) {
                             self.mark_protocol_docs_read(&available_actions);
                         }
 

@@ -1081,6 +1081,9 @@ impl EventHandler {
                 let _ = status_tx.send(format!("[CLIENT] New instruction: {}", instruction));
                 let _ = status_tx.send("__UPDATE_UI__".to_string());
             }
+            CommonAction::ShowMessage { message } => {
+                let _ = status_tx.send(format!("[CLIENT] {}", message));
+            }
         }
 
         Ok(())
