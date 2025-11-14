@@ -395,8 +395,8 @@ mod redis_server_tests {
         let mut con = client.get_multiplexed_async_connection().await?;
 
         // Test invalid command (should return error)
-        let result: Result<String, redis::RedisError> =
-            with_client_timeout(redis::cmd("INVALID").query_async(&mut con)).await;
+        let result =
+            with_client_timeout(redis::cmd("INVALID").query_async::<String>(&mut con)).await;
 
         match result {
             Ok(_) => {
