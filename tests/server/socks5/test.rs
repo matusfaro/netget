@@ -216,21 +216,14 @@ async fn test_socks5_basic_connect() -> E2EResult<()> {
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    // Mock 1: Server startup (user command)
-                    .on_any()
+                    // Mock specific events first (most specific to least specific)
+                    // Mock 1: SOCKS5 CONNECT request
+                    .on_event("socks5_connect_request")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "SOCKS5",
-                            "instruction": "Allow all connections without authentication. When clients send CONNECT requests, establish the connection to the target",
-                            "startup_params": {
-                                "auth_methods": ["no_auth"]
-                            }
+                            "type": "allow_socks5_connect"
                         }
                     ]))
-                    // NOTE: .expect_calls() disabled - call counts don't work across process boundary
-                    // .expect_calls(1)
                     .and()
                     // Mock 2: SOCKS5 handshake completed
                     .on_event("socks5_handshake")
@@ -239,18 +232,20 @@ async fn test_socks5_basic_connect() -> E2EResult<()> {
                             "type": "wait_for_more"
                         }
                     ]))
-                    // NOTE: .expect_calls() disabled
-                    // .expect_calls(1)
                     .and()
-                    // Mock 3: SOCKS5 CONNECT request
-                    .on_event("socks5_connect")
+                    // Mock 3: Server startup (user command) - catch-all for non-event calls
+                    .on_any()
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "allow_connect"
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "SOCKS5",
+                            "instruction": "Allow all connections without authentication. When clients send CONNECT requests, establish the connection to the target",
+                            "startup_params": {
+                                "auth_methods": ["none"]
+                            }
                         }
                     ]))
-                    // NOTE: .expect_calls() disabled
-                    // .expect_calls(1)
                     .and()
             })
     ).await?;
@@ -350,18 +345,18 @@ async fn test_socks5_with_authentication() -> E2EResult<()> {
                     // .expect_calls(1)
                     .and()
                     // Mock 2: Authentication attempt
-                    .on_event("socks5_auth")
+                    .on_event("socks5_auth_request")
                     .and_event_data_contains("username", "testuser")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "allow_auth"
+                            "type": "allow_socks5_auth"
                         }
                     ]))
                     // NOTE: .expect_calls() disabled
                     // .expect_calls(1)
                     .and()
                     // Mock 3: CONNECT request
-                    .on_event("socks5_connect")
+                    .on_event("socks5_connect_request")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "allow_connect"
@@ -437,7 +432,7 @@ async fn test_socks5_connection_rejection() -> E2EResult<()> {
                             "base_stack": "SOCKS5",
                             "instruction": "Deny any connection attempts to port 9999. Allow all other connections",
                             "startup_params": {
-                                "auth_methods": ["no_auth"]
+                                "auth_methods": ["none"]
                             }
                         }
                     ]))
@@ -455,11 +450,11 @@ async fn test_socks5_connection_rejection() -> E2EResult<()> {
                     // .expect_calls(1)
                     .and()
                     // Mock 3: CONNECT to blocked port 9999
-                    .on_event("socks5_connect")
+                    .on_event("socks5_connect_request")
                     .and_event_data_contains("port", "9999")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "deny_connect",
+                            "type": "deny_socks5_connect",
                             "reason": "Connection to port 9999 not allowed"
                         }
                     ]))
@@ -527,7 +522,7 @@ async fn test_socks5_domain_name() -> E2EResult<()> {
                             "base_stack": "SOCKS5",
                             "instruction": "Accept domain names in CONNECT requests. Allow connections to localhost",
                             "startup_params": {
-                                "auth_methods": ["no_auth"]
+                                "auth_methods": ["none"]
                             }
                         }
                     ]))
@@ -545,7 +540,7 @@ async fn test_socks5_domain_name() -> E2EResult<()> {
                     // .expect_calls(1)
                     .and()
                     // Mock 3: CONNECT with domain name
-                    .on_event("socks5_connect")
+                    .on_event("socks5_connect_request")
                     .and_event_data_contains("target", "localhost")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -638,7 +633,7 @@ async fn test_socks5_mitm_inspection() -> E2EResult<()> {
                     // .expect_calls(1)
                     .and()
                     // Mock 3: CONNECT request
-                    .on_event("socks5_connect")
+                    .on_event("socks5_connect_request")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "allow_connect"

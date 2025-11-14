@@ -141,6 +141,7 @@ mod tests {
                     .and()
                     // Mock 2: PutItem request
                     .on_event("dynamo_request")
+                    .and_event_data_contains("operation", "PutItem")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_dynamo_response",
@@ -152,6 +153,7 @@ mod tests {
                     .and()
                     // Mock 3: GetItem request
                     .on_event("dynamo_request")
+                    .and_event_data_contains("operation", "GetItem")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_dynamo_response",
@@ -250,6 +252,7 @@ mod tests {
                     .and()
                     // Mock 2: PutItem request
                     .on_event("dynamo_request")
+                    .and_event_data_contains("operation", "PutItem")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_dynamo_response",
@@ -261,6 +264,7 @@ mod tests {
                     .and()
                     // Mock 3: UpdateItem request
                     .on_event("dynamo_request")
+                    .and_event_data_contains("operation", "UpdateItem")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_dynamo_response",
@@ -346,6 +350,7 @@ mod tests {
                     .and()
                     // Mock 2: PutItem request
                     .on_event("dynamo_request")
+                    .and_event_data_contains("operation", "PutItem")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_dynamo_response",
@@ -357,6 +362,7 @@ mod tests {
                     .and()
                     // Mock 3: DeleteItem request
                     .on_event("dynamo_request")
+                    .and_event_data_contains("operation", "DeleteItem")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_dynamo_response",
@@ -443,6 +449,7 @@ mod tests {
                     .and()
                     // Mock 2: PutItem request
                     .on_event("dynamo_request")
+                    .and_event_data_contains("operation", "PutItem")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_dynamo_response",
@@ -454,6 +461,7 @@ mod tests {
                     .and()
                     // Mock 3: Query request
                     .on_event("dynamo_request")
+                    .and_event_data_contains("operation", "Query")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_dynamo_response",
@@ -548,6 +556,7 @@ mod tests {
                     .and()
                     // Mock 2: PutItem request
                     .on_event("dynamo_request")
+                    .and_event_data_contains("operation", "PutItem")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_dynamo_response",
@@ -559,6 +568,7 @@ mod tests {
                     .and()
                     // Mock 3: Scan request
                     .on_event("dynamo_request")
+                    .and_event_data_contains("operation", "Scan")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_dynamo_response",
