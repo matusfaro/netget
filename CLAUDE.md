@@ -71,6 +71,24 @@ This is a strict project policy. Unlike standard Rust convention:
 ./cargo-isolated.sh test --no-default-features --features <protocol> --test server::<protocol>::e2e_test
 ```
 
+**CRITICAL - Parallel Execution (NO EXCEPTIONS):**
+- **ALWAYS** use `--test-threads=100` for ALL test runs
+- **NEVER** run tests with `--test-threads=1` (single-threaded)
+- **NEVER** omit `--test-threads` (defaults to single-threaded in some environments)
+- Single-threaded execution is 10-20x slower and wastes developer time
+- If tests hang or freeze, fix the hanging tests, DO NOT run single-threaded
+
+```bash
+# CORRECT: Parallel execution with cargo-isolated.sh
+./cargo-isolated.sh test --all-features --no-fail-fast -- --test-threads=100
+
+# WRONG: Single-threaded (NEVER DO THIS)
+./cargo-isolated.sh test --all-features --no-fail-fast -- --test-threads=1
+
+# WRONG: No thread specification (NEVER DO THIS)
+./cargo-isolated.sh test --all-features --no-fail-fast
+```
+
 ### E2E Test Efficiency (CRITICAL)
 
 **Minimize LLM calls** (< 10 per suite): Reuse servers, use scripting mode, bundle scenarios. **Setup**: `./cargo-isolated.sh build --release --all-features`. **Privacy**: Localhost only (127.0.0.1/::1), no external endpoints.
