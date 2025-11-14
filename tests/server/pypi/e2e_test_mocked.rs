@@ -25,7 +25,7 @@ mod pypi_server_tests {
                     {
                         "type": "open_server",
                         "port": 0,
-                        "base_stack": "HTTP",
+                        "base_stack": "PyPI",
                         "instruction": "PyPI server - serve package index"
                     }
                 ]))
@@ -86,7 +86,7 @@ mod pypi_server_tests {
                     {
                         "type": "open_server",
                         "port": 0,
-                        "base_stack": "HTTP",
+                        "base_stack": "PyPI",
                         "instruction": "PyPI server - serve hello-world package"
                     }
                 ]))
@@ -147,7 +147,7 @@ mod pypi_server_tests {
                     {
                         "type": "open_server",
                         "port": 0,
-                        "base_stack": "HTTP",
+                        "base_stack": "PyPI",
                         "instruction": "PyPI server - return 404 for unknown packages"
                     }
                 ]))
