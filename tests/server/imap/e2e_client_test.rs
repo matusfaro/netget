@@ -54,6 +54,16 @@ mod e2e_imap_client {
                 ]))
                 .expect_calls(1)
                 .and()
+                // Mock: Connection greeting
+                .on_event("imap_connection")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "response": "* OK IMAP4rev1 Server Ready"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
                 // Mock: Login success event
                 .on_event("imap_auth")
                 .respond_with_actions(serde_json::json!([
@@ -129,6 +139,15 @@ mod e2e_imap_client {
                 ]))
                 .expect_calls(1)
                 .and()
+                .on_event("imap_connection")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_imap_response",
+                        "response": "* OK IMAP4rev1 Server Ready"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
                 .on_event("imap_auth")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -184,8 +203,13 @@ mod e2e_imap_client {
                 ]))
                 .expect_calls(1)
                 .and()
-                .on_event("imap_command")
-                .and_event_data_contains("command", "LOGIN")
+                .on_event("imap_connection")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "send_imap_response", "response": "* OK IMAP4rev1 Server Ready"}
+                ]))
+                .expect_calls(1)
+                .and()
+                .on_event("imap_auth")
                 .respond_with_actions(serde_json::json!([
                     {"type": "send_imap_response", "tag": "A001", "status": "OK", "message": "LOGIN completed"}
                 ]))
@@ -261,7 +285,10 @@ mod e2e_imap_client {
             mock.on_instruction_containing("imap").respond_with_actions(serde_json::json!([
                 {"type": "open_server", "port": 0, "base_stack": "imap", "instruction": "INBOX has 5 messages"}
             ])).expect_calls(1).and()
-            .on_event("imap_command").and_event_data_contains("command", "LOGIN").respond_with_actions(serde_json::json!([
+            .on_event("imap_connection").respond_with_actions(serde_json::json!([
+                {"type": "send_imap_response", "response": "* OK IMAP4rev1 Server Ready"}
+            ])).expect_calls(1).and()
+            .on_event("imap_auth").respond_with_actions(serde_json::json!([
                 {"type": "send_imap_response", "tag": "A001", "status": "OK", "message": "LOGIN OK"}
             ])).expect_calls(1).and()
             .on_event("imap_command").and_event_data_contains("command", "SELECT").respond_with_actions(serde_json::json!([
@@ -316,7 +343,10 @@ mod e2e_imap_client {
             mock.on_instruction_containing("imap").respond_with_actions(serde_json::json!([
                 {"type": "open_server", "port": 0, "base_stack": "imap", "instruction": "INBOX has 3 messages"}
             ])).expect_calls(1).and()
-            .on_event("imap_command").and_event_data_contains("command", "LOGIN").respond_with_actions(serde_json::json!([
+            .on_event("imap_connection").respond_with_actions(serde_json::json!([
+                {"type": "send_imap_response", "response": "* OK IMAP4rev1 Server Ready"}
+            ])).expect_calls(1).and()
+            .on_event("imap_auth").respond_with_actions(serde_json::json!([
                 {"type": "send_imap_response", "tag": "A001", "status": "OK", "message": "LOGIN OK"}
             ])).expect_calls(1).and()
             .on_event("imap_command").and_event_data_contains("command", "SELECT").respond_with_actions(serde_json::json!([
@@ -388,7 +418,10 @@ mod e2e_imap_client {
             mock.on_instruction_containing("imap").respond_with_actions(serde_json::json!([
                 {"type": "open_server", "port": 0, "base_stack": "imap", "instruction": "5 messages, search alice"}
             ])).expect_calls(1).and()
-            .on_event("imap_command").and_event_data_contains("command", "LOGIN").respond_with_actions(serde_json::json!([
+            .on_event("imap_connection").respond_with_actions(serde_json::json!([
+                {"type": "send_imap_response", "response": "* OK IMAP4rev1 Server Ready"}
+            ])).expect_calls(1).and()
+            .on_event("imap_auth").respond_with_actions(serde_json::json!([
                 {"type": "send_imap_response", "tag": "A001", "status": "OK", "message": "LOGIN OK"}
             ])).expect_calls(1).and()
             .on_event("imap_command").and_event_data_contains("command", "SELECT").respond_with_actions(serde_json::json!([
@@ -449,17 +482,17 @@ mod e2e_imap_client {
                 mock.on_instruction_containing("imap")
                     .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "IMAP", "instruction": "IMAP server"}]))
                     .expect_calls(1).and()
-                    .on_event("imap_connection_established")
-                    .respond_with_actions(serde_json::json!([{"type": "imap_greeting", "message": "* OK Server"}]))
+                    .on_event("imap_connection")
+                    .respond_with_actions(serde_json::json!([{"type": "send_imap_response", "response": "* OK Server"}]))
                     .expect_calls(1).and()
                     .on_event("imap_command")
-                    .respond_with_actions(serde_json::json!([{"type": "imap_response", "response": "A001 OK LOGIN"}]))
+                    .respond_with_actions(serde_json::json!([{"type": "send_imap_response", "response": "A001 OK LOGIN"}]))
                     .expect_calls(1).and()
                     .on_event("imap_command")
-                    .respond_with_actions(serde_json::json!([{"type": "imap_response", "response": "* CAPABILITY IMAP4rev1 IDLE NAMESPACE\r\nA002 OK CAPABILITY"}]))
+                    .respond_with_actions(serde_json::json!([{"type": "send_imap_response", "response": "* CAPABILITY IMAP4rev1 IDLE NAMESPACE\r\nA002 OK CAPABILITY"}]))
                     .expect_calls(1).and()
                     .on_event("imap_command")
-                    .respond_with_actions(serde_json::json!([{"type": "imap_response", "response": "* BYE\r\nA003 OK LOGOUT"}]))
+                    .respond_with_actions(serde_json::json!([{"type": "send_imap_response", "response": "* BYE\r\nA003 OK LOGOUT"}]))
                     .expect_calls(1).and()
             })
         ).await?;
@@ -508,17 +541,17 @@ mod e2e_imap_client {
                 mock.on_instruction_containing("imap")
                     .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "IMAP", "instruction": "IMAP server"}]))
                     .expect_calls(1).and()
-                    .on_event("imap_connection_established")
-                    .respond_with_actions(serde_json::json!([{"type": "imap_greeting", "message": "* OK Server"}]))
+                    .on_event("imap_connection")
+                    .respond_with_actions(serde_json::json!([{"type": "send_imap_response", "response": "* OK Server"}]))
                     .expect_calls(1).and()
                     .on_event("imap_command")
-                    .respond_with_actions(serde_json::json!([{"type": "imap_response", "response": "A001 OK LOGIN"}]))
+                    .respond_with_actions(serde_json::json!([{"type": "send_imap_response", "response": "A001 OK LOGIN"}]))
                     .expect_calls(1).and()
                     .on_event("imap_command")
-                    .respond_with_actions(serde_json::json!([{"type": "imap_response", "response": "* FLAGS ()\r\n* 10 EXISTS\r\n* 0 RECENT\r\nA002 OK [READ-ONLY] EXAMINE"}]))
+                    .respond_with_actions(serde_json::json!([{"type": "send_imap_response", "response": "* FLAGS ()\r\n* 10 EXISTS\r\n* 0 RECENT\r\nA002 OK [READ-ONLY] EXAMINE"}]))
                     .expect_calls(1).and()
                     .on_event("imap_command")
-                    .respond_with_actions(serde_json::json!([{"type": "imap_response", "response": "* BYE\r\nA003 OK LOGOUT"}]))
+                    .respond_with_actions(serde_json::json!([{"type": "send_imap_response", "response": "* BYE\r\nA003 OK LOGOUT"}]))
                     .expect_calls(1).and()
             })
         ).await?;
@@ -562,7 +595,10 @@ mod e2e_imap_client {
             mock.on_instruction_containing("imap").respond_with_actions(serde_json::json!([
                 {"type": "open_server", "port": 0, "base_stack": "imap", "instruction": "Sent has 20 messages, 5 unseen"}
             ])).expect_calls(1).and()
-            .on_event("imap_command").and_event_data_contains("command", "LOGIN").respond_with_actions(serde_json::json!([
+            .on_event("imap_connection").respond_with_actions(serde_json::json!([
+                {"type": "send_imap_response", "response": "* OK IMAP4rev1 Server Ready"}
+            ])).expect_calls(1).and()
+            .on_event("imap_auth").respond_with_actions(serde_json::json!([
                 {"type": "send_imap_response", "tag": "A001", "status": "OK", "message": "LOGIN OK"}
             ])).expect_calls(1).and()
             .on_event("imap_command").and_event_data_contains("command", "STATUS").respond_with_actions(serde_json::json!([
@@ -618,17 +654,17 @@ mod e2e_imap_client {
                 mock.on_instruction_containing("imap")
                     .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "IMAP", "instruction": "IMAP server"}]))
                     .expect_calls(1).and()
-                    .on_event("imap_connection_established")
-                    .respond_with_actions(serde_json::json!([{"type": "imap_greeting", "message": "* OK Server"}]))
+                    .on_event("imap_connection")
+                    .respond_with_actions(serde_json::json!([{"type": "send_imap_response", "response": "* OK Server"}]))
                     .expect_calls(3).and()
                     .on_event("imap_command")
-                    .respond_with_actions(serde_json::json!([{"type": "imap_response", "response": "A001 OK LOGIN"}]))
+                    .respond_with_actions(serde_json::json!([{"type": "send_imap_response", "response": "A001 OK LOGIN"}]))
                     .expect_calls(3).and()
                     .on_event("imap_command")
-                    .respond_with_actions(serde_json::json!([{"type": "imap_response", "response": "* FLAGS ()\r\n* 5 EXISTS\r\n* 0 RECENT\r\nA002 OK SELECT"}]))
+                    .respond_with_actions(serde_json::json!([{"type": "send_imap_response", "response": "* FLAGS ()\r\n* 5 EXISTS\r\n* 0 RECENT\r\nA002 OK SELECT"}]))
                     .expect_calls(3).and()
                     .on_event("imap_command")
-                    .respond_with_actions(serde_json::json!([{"type": "imap_response", "response": "* BYE\r\nA003 OK LOGOUT"}]))
+                    .respond_with_actions(serde_json::json!([{"type": "send_imap_response", "response": "* BYE\r\nA003 OK LOGOUT"}]))
                     .expect_calls(3).and()
             })
         ).await?;
@@ -697,7 +733,10 @@ mod e2e_imap_client {
             mock.on_instruction_containing("imap").respond_with_actions(serde_json::json!([
                 {"type": "open_server", "port": 0, "base_stack": "imap", "instruction": "Support NOOP"}
             ])).expect_calls(1).and()
-            .on_event("imap_command").and_event_data_contains("command", "LOGIN").respond_with_actions(serde_json::json!([
+            .on_event("imap_connection").respond_with_actions(serde_json::json!([
+                {"type": "send_imap_response", "response": "* OK IMAP4rev1 Server Ready"}
+            ])).expect_calls(1).and()
+            .on_event("imap_auth").respond_with_actions(serde_json::json!([
                 {"type": "send_imap_response", "tag": "A001", "status": "OK", "message": "LOGIN OK"}
             ])).expect_calls(1).and()
             .on_event("imap_command").and_event_data_contains("command", "NOOP").respond_with_actions(serde_json::json!([

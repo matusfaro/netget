@@ -387,9 +387,8 @@ async fn test_imap_select_mailbox() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 3: LOGIN command
-                .on_event("imap_command")
-                .and_event_data_contains("command", "LOGIN")
+                // Mock 3: LOGIN auth
+                .on_event("imap_auth")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_imap_response",
@@ -485,9 +484,8 @@ async fn test_imap_list_mailboxes() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 3: LOGIN command
-                .on_event("imap_command")
-                .and_event_data_contains("command", "LOGIN")
+                // Mock 3: LOGIN auth
+                .on_event("imap_auth")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_imap_response",
@@ -591,9 +589,8 @@ async fn test_imap_fetch_message() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 3: LOGIN command
-                .on_event("imap_command")
-                .and_event_data_contains("command", "LOGIN")
+                // Mock 3: LOGIN auth
+                .on_event("imap_auth")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_imap_response",
@@ -701,9 +698,8 @@ async fn test_imap_search() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 3: LOGIN command
-                .on_event("imap_command")
-                .and_event_data_contains("command", "LOGIN")
+                // Mock 3: LOGIN auth
+                .on_event("imap_auth")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_imap_response",
@@ -884,9 +880,8 @@ async fn test_imap_noop() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 3: LOGIN command
-                .on_event("imap_command")
-                .and_event_data_contains("command", "LOGIN")
+                // Mock 3: LOGIN auth
+                .on_event("imap_auth")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_imap_response",
@@ -969,9 +964,8 @@ async fn test_imap_status() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 3: LOGIN command
-                .on_event("imap_command")
-                .and_event_data_contains("command", "LOGIN")
+                // Mock 3: LOGIN auth
+                .on_event("imap_auth")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_imap_response",
