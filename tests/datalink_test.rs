@@ -1,3 +1,4 @@
+#[cfg(feature = "datalink")]
 use netget::server::datalink::DataLinkServer;
 
 #[test]

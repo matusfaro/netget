@@ -238,25 +238,29 @@ fn test_stack_name_as_keyword() {
     // Test that full stack names are recognized as valid keywords
     // This verifies that build_keyword_map() correctly adds stack_name() as a keyword
 
-    // Test various protocols with their full stack names
+    // Test various protocols with their full stack names (feature-gated)
+    #[cfg(feature = "http")]
     assert_eq!(
         registry().parse_from_str("ETH>IP>TCP>HTTP"),
         Some("HTTP".to_string()),
         "Full HTTP stack name should be recognized"
     );
 
+    #[cfg(feature = "dns")]
     assert_eq!(
         registry().parse_from_str("eth>ip>udp>dns"), // Test case-insensitivity
         Some("DNS".to_string()),
         "DNS stack name should be recognized (case-insensitive)"
     );
 
+    #[cfg(feature = "ssh")]
     assert_eq!(
         registry().parse_from_str("ETH>IP>TCP>SSH"),
         Some("SSH".to_string()),
         "Full SSH stack name should be recognized"
     );
 
+    #[cfg(feature = "smtp")]
     assert_eq!(
         registry().parse_from_str("ETH>IP>TCP>SMTP"),
         Some("SMTP".to_string()),
