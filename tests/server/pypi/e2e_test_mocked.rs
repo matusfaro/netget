@@ -31,12 +31,12 @@ mod pypi_server_tests {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: HTTP request for /simple/
-                .on_event("http_request")
+                // Mock 2: PyPI request for /simple/
+                .on_event("pypi_request")
                 .and_event_data_contains("path", "/simple")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_http_response",
+                        "type": "send_pypi_response",
                         "status": 200,
                         "headers": {
                             "Content-Type": "text/html"
@@ -51,6 +51,15 @@ mod pypi_server_tests {
         let mut server = start_netget_server(server_config).await?;
 
         tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Make HTTP request to trigger pypi_request event
+        let url = format!("http://127.0.0.1:{}/simple/", server.port);
+        let _ = std::process::Command::new("curl")
+            .arg("-s")
+            .arg(&url)
+            .output();
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
 
         println!("✅ PyPI server served package index with mocks");
 
@@ -83,12 +92,12 @@ mod pypi_server_tests {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: HTTP request for package page
-                .on_event("http_request")
+                // Mock 2: PyPI request for package page
+                .on_event("pypi_request")
                 .and_event_data_contains("path", "hello-world")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_http_response",
+                        "type": "send_pypi_response",
                         "status": 200,
                         "headers": {
                             "Content-Type": "text/html"
@@ -103,6 +112,15 @@ mod pypi_server_tests {
         let mut server = start_netget_server(server_config).await?;
 
         tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Make HTTP request to trigger pypi_request event
+        let url = format!("http://127.0.0.1:{}/simple/hello-world/", server.port);
+        let _ = std::process::Command::new("curl")
+            .arg("-s")
+            .arg(&url)
+            .output();
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
 
         println!("✅ PyPI server served package page with mocks");
 
@@ -135,12 +153,12 @@ mod pypi_server_tests {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: HTTP request for non-existent package
-                .on_event("http_request")
+                // Mock 2: PyPI request for non-existent package
+                .on_event("pypi_request")
                 .and_event_data_contains("path", "nonexistent")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_http_response",
+                        "type": "send_pypi_response",
                         "status": 404,
                         "body": "Not Found"
                     }
@@ -152,6 +170,15 @@ mod pypi_server_tests {
         let mut server = start_netget_server(server_config).await?;
 
         tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Make HTTP request to trigger pypi_request event
+        let url = format!("http://127.0.0.1:{}/simple/nonexistent-package/", server.port);
+        let _ = std::process::Command::new("curl")
+            .arg("-s")
+            .arg(&url)
+            .output();
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
 
         println!("✅ PyPI server returned 404 for non-existent package with mocks");
 

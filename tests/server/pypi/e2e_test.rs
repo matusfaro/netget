@@ -74,12 +74,12 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
             ]))
             .expect_calls(1)
             .and()
-            // Mock 2-6: HTTP requests (use on_any to match all HTTP requests)
-            .on_event("http_request_received")
+            // Mock 2-6: PyPI requests
+            .on_event("pypi_request")
             .respond_with_actions(serde_json::json!([
                 {
-                    "type": "send_http_response",
-                    "status_code": 200,
+                    "type": "send_pypi_response",
+                    "status": 200,
                     "headers": {"Content-Type": "text/html"},
                     "body": "<!DOCTYPE html><html><body><a href=\"hello-world/\">hello-world</a><br><a href=\"example-pkg/\">example-pkg</a></body></html>"
                 }
@@ -267,12 +267,12 @@ Use scripting mode for zero LLM calls after setup.
             ]))
             .expect_calls(1)
             .and()
-            // Mock 2: HTTP request
-            .on_event("http_request_received")
+            // Mock 2: PyPI request
+            .on_event("pypi_request")
             .respond_with_actions(serde_json::json!([
                 {
-                    "type": "send_http_response",
-                    "status_code": 200,
+                    "type": "send_pypi_response",
+                    "status": 200,
                     "headers": {"Content-Type": "text/html"},
                     "body": "<!DOCTYPE html><html><body><a href=\"test-pkg/\">test-pkg</a></body></html>"
                 }
