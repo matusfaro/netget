@@ -580,10 +580,10 @@ async fn wait_for_netget_startup_with_capture(
                 }
             }
 
-            // Parse server listening confirmation and update port
-            if line.contains("listening on") {
-                // Extract port from "listening on ADDR:PORT"
-                if let Some(addr_start) = line.find("on ") {
+            // Parse server listening/ready confirmation and update port
+            if line.contains("listening on") || line.contains("ready on") {
+                // Extract port from "listening on ADDR:PORT" or "ready on ADDR:PORT"
+                if let Some(addr_start) = line.rfind("on ") {
                     let addr_part = &line[addr_start + 3..];
                     if let Some(colon_pos) = addr_part.rfind(':') {
                         let port_str: String = addr_part[colon_pos + 1..]
@@ -654,9 +654,9 @@ async fn wait_for_netget_startup_with_capture(
                                     println!("[DEBUG] NetGet output (extended): {}", line);
                                     output_lines.lock().await.push(line.clone());
 
-                                    // Try to parse "listening on" message
-                                    if line.contains("listening on") {
-                                        if let Some(addr_start) = line.find("on ") {
+                                    // Try to parse "listening on" or "ready on" message
+                                    if line.contains("listening on") || line.contains("ready on") {
+                                        if let Some(addr_start) = line.rfind("on ") {
                                             let addr_part = &line[addr_start + 3..];
                                             if let Some(colon_pos) = addr_part.rfind(':') {
                                                 let port_str: String = addr_part[colon_pos + 1..]
