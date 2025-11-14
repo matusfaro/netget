@@ -51,11 +51,13 @@ impl SmtpServer {
                 "SMTPS server (TLS, action-based) listening on {}",
                 local_addr
             );
+            let _ = status_tx.send(format!("[INFO] SMTPS server listening on {}", local_addr));
         } else {
             info!(
                 "SMTP server (plain, action-based) listening on {}",
                 local_addr
             );
+            let _ = status_tx.send(format!("[INFO] SMTP server listening on {}", local_addr));
         }
 
         let protocol = Arc::new(SmtpProtocol::new());

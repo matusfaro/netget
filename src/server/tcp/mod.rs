@@ -55,6 +55,7 @@ impl TcpServer {
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         info!("TCP server (action-based) listening on {}", local_addr);
+        let _ = status_tx.send(format!("[INFO] TCP server listening on {}", local_addr));
 
         let connections = Arc::new(Mutex::new(HashMap::new()));
         let protocol = Arc::new(TcpProtocol::new());

@@ -637,8 +637,64 @@ async fn wait_for_netget_startup_with_capture(
                     || line.contains("Ready")
                     || !server_confirmations.is_empty()
                 {
-                    // Give a short time to capture any remaining startup messages
-                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    // Check if any servers still have port 0 (waiting for actual port assignment)
+                    let has_port_zero = servers.iter().any(|s| s.port == 0);
+
+                    if has_port_zero {
+                        // Continue reading for up to 2 more seconds to catch "listening on" messages
+                        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+                        while tokio::time::Instant::now() < deadline {
+                            match tokio::time::timeout(
+                                Duration::from_millis(100),
+                                reader.next_line(),
+                            )
+                            .await
+                            {
+                                Ok(Ok(Some(line))) => {
+                                    println!("[DEBUG] NetGet output (extended): {}", line);
+                                    output_lines.lock().await.push(line.clone());
+
+                                    // Try to parse "listening on" message
+                                    if line.contains("listening on") {
+                                        if let Some(addr_start) = line.find("on ") {
+                                            let addr_part = &line[addr_start + 3..];
+                                            if let Some(colon_pos) = addr_part.rfind(':') {
+                                                let port_str: String = addr_part[colon_pos + 1..]
+                                                    .chars()
+                                                    .take_while(|c| c.is_ascii_digit())
+                                                    .collect();
+                                                if let Ok(port) = port_str.parse::<u16>() {
+                                                    println!(
+                                                        "[DEBUG] Parsed listening confirmation: port={}",
+                                                        port
+                                                    );
+                                                    // Update the most recent server with port 0
+                                                    if let Some(server) = servers.iter_mut().rev().find(|s| s.port == 0) {
+                                                        println!(
+                                                            "[DEBUG] Updating server #{} port from 0 to {}",
+                                                            server.id, port
+                                                        );
+                                                        server.port = port;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Break early if all port-0 servers are updated
+                                    if !servers.iter().any(|s| s.port == 0) {
+                                        break;
+                                    }
+                                }
+                                _ => {
+                                    // Timeout or error reading, continue waiting
+                                }
+                            }
+                        }
+                    } else {
+                        // Give a short time to capture any remaining startup messages
+                        tokio::time::sleep(Duration::from_millis(200)).await;
+                    }
                     break;
                 }
             }
