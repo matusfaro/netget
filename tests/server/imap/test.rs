@@ -23,34 +23,51 @@ async fn send_imap_command(
     stream.write_all(cmd.as_bytes()).await?;
     stream.flush().await?;
 
-    // Read responses until we get the tagged response
-    let mut reader = BufReader::new(stream);
-    let mut responses = Vec::new();
+    // Read responses with timeout to prevent indefinite hangs
+    let result = timeout(Duration::from_secs(10), async {
+        let mut reader = BufReader::new(stream);
+        let mut responses = Vec::new();
 
-    loop {
-        let mut line = String::new();
-        let n = reader.read_line(&mut line).await?;
-        if n == 0 {
-            break; // EOF
+        loop {
+            let mut line = String::new();
+            let n = reader.read_line(&mut line).await?;
+            if n == 0 {
+                break; // EOF
+            }
+
+            responses.push(line.trim().to_string());
+
+            // Check if this is the tagged response (A001 OK, A001 NO, A001 BAD)
+            if line.starts_with(tag) {
+                break;
+            }
         }
 
-        responses.push(line.trim().to_string());
+        Ok::<Vec<String>, std::io::Error>(responses)
+    })
+    .await
+    .map_err(|_| {
+        std::io::Error::new(std::io::ErrorKind::TimedOut, "Timeout reading IMAP response after 10 seconds")
+    })??;
 
-        // Check if this is the tagged response (A001 OK, A001 NO, A001 BAD)
-        if line.starts_with(tag) {
-            break;
-        }
-    }
-
-    Ok(responses)
+    Ok(result)
 }
 
 /// Helper to read greeting (untagged OK response)
 async fn read_greeting(stream: &mut TcpStream) -> E2EResult<String> {
-    let mut reader = BufReader::new(stream);
-    let mut line = String::new();
-    reader.read_line(&mut line).await?;
-    Ok(line.trim().to_string())
+    // Read greeting with timeout to prevent indefinite hangs
+    let result = timeout(Duration::from_secs(10), async {
+        let mut reader = BufReader::new(stream);
+        let mut line = String::new();
+        reader.read_line(&mut line).await?;
+        Ok::<String, std::io::Error>(line.trim().to_string())
+    })
+    .await
+    .map_err(|_| {
+        std::io::Error::new(std::io::ErrorKind::TimedOut, "Timeout reading IMAP greeting after 10 seconds")
+    })??;
+
+    Ok(result)
 }
 
 #[tokio::test]
