@@ -146,8 +146,8 @@ pub async fn generate_and_stream_ascii_banner(
                             content_started = true;
                         }
 
-                        // Track maximum line length
-                        max_line_length = max_line_length.max(line.len());
+                        // Track maximum line length (excluding trailing whitespace)
+                        max_line_length = max_line_length.max(line.trim_end().len());
 
                         // Send the line to TUI (ignore send errors - silent failure)
                         let _ = status_tx.send(line);
@@ -171,7 +171,7 @@ pub async fn generate_and_stream_ascii_banner(
     if !line_buffer.is_empty() && lines_sent < MAX_LINES {
         // Skip if it contains triple backticks
         if !line_buffer.contains("```") {
-            max_line_length = max_line_length.max(line_buffer.len());
+            max_line_length = max_line_length.max(line_buffer.trim_end().len());
             let _ = status_tx.send(line_buffer);
         }
     }

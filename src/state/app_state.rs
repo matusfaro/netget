@@ -1693,7 +1693,7 @@ impl AppState {
             .collect()
     }
 
-    /// Get conversations for the "Inputs" column (User + Global tasks)
+    /// Get conversations for the "Running" column (User + Global tasks)
     pub async fn get_input_conversations(&self) -> Vec<ConversationInfo> {
         let all_convs = self.get_active_conversations().await;
         all_convs

@@ -9,7 +9,7 @@ use super::{
 };
 use crate::state::app_state::AppState;
 use anyhow::{Context as AnyhowContext, Result};
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 /// Result of executing all actions
 pub struct ExecutionResult {
@@ -117,8 +117,7 @@ async fn execute_common_action(
 ) -> Result<()> {
     match action {
         CommonAction::ShowMessage { message } => {
-            info!("LLM message: {}", message);
-            result.add_message(format!("[INFO] {}", message));
+            result.add_message(message);
         }
 
         CommonAction::OpenServer { .. } => {

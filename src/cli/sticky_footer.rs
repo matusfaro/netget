@@ -751,7 +751,7 @@ impl StickyFooter {
                         SetForegroundColor(self.palette.separator),
                         Print("┌──── "),
                         ResetColor,
-                        Print("Inputs")
+                        Print("Running")
                     )?;
                 } else {
                     // Content line

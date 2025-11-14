@@ -147,12 +147,7 @@ pub async fn start_server_by_id(
             state
                 .update_server_status(server_id, ServerStatus::Running)
                 .await;
-            let _ = status_tx.send(format!(
-                "[SERVER] {} server #{} listening on {}",
-                protocol_name,
-                server_id.as_u32(),
-                actual_addr
-            ));
+            // Note: "listening on" message is sent by the protocol's spawn method
             let _ = status_tx.send("__UPDATE_UI__".to_string());
         }
         Err(e) => {

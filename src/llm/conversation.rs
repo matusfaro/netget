@@ -84,6 +84,9 @@ pub struct ConversationHandler {
 
     /// Details text for UI display
     details: Option<String>,
+
+    /// Whether this conversation has been registered (to avoid duplicate registration)
+    registered: bool,
 }
 
 impl ConversationHandler {
@@ -112,6 +115,7 @@ impl ConversationHandler {
             state: None,
             source: None,
             details: None,
+            registered: false,
         }
     }
 
@@ -307,17 +311,20 @@ impl ConversationHandler {
         web_search_mode: WebSearchMode,
         available_actions: Vec<ActionDefinition>,
     ) -> Result<Vec<serde_json::Value>> {
-        // Register conversation if tracking is enabled
-        if let (Some(state), Some(source), Some(details)) =
-            (&self.state, &self.source, &self.details)
-        {
-            state
-                .register_conversation(
-                    self.conversation_id.clone(),
-                    source.clone(),
-                    details.clone(),
-                )
-                .await;
+        // Register conversation if tracking is enabled and not already registered
+        if !self.registered {
+            if let (Some(state), Some(source), Some(details)) =
+                (&self.state, &self.source, &self.details)
+            {
+                state
+                    .register_conversation(
+                        self.conversation_id.clone(),
+                        source.clone(),
+                        details.clone(),
+                    )
+                    .await;
+                self.registered = true;
+            }
         }
 
         let mut all_actions = Vec::new();
@@ -782,6 +789,16 @@ impl ConversationHandler {
     /// Get the number of messages in the conversation
     pub fn message_count(&self) -> usize {
         self.messages.len()
+    }
+
+    /// Get the conversation ID
+    pub fn conversation_id(&self) -> &str {
+        &self.conversation_id
+    }
+
+    /// Mark this conversation as already registered (to prevent duplicate registration)
+    pub fn mark_registered(&mut self) {
+        self.registered = true;
     }
 
     /// Update the "Current State" section in the system message

@@ -218,8 +218,6 @@ impl EventHandler {
     ) -> Result<()> {
         use crate::llm::{ConversationHandler, PromptBuilder};
 
-        let _ = status_tx.send(format!("[INFO] Interpreting: {input}"));
-
         // Get protocol async actions if available
         let protocol_async_actions = if let Some(ref proto) = protocol {
             proto.get_async_actions(&self.state)
@@ -277,13 +275,6 @@ impl EventHandler {
         available_actions.extend(get_all_tool_actions(web_search_mode));
         available_actions.extend(protocol_async_actions);
 
-        // Create conversation handler with tracking
-        let truncated_input = if input.len() > 60 {
-            format!("LLM \"{}...\"", &input[..57])
-        } else {
-            format!("LLM \"{}\"", input)
-        };
-
         // Get or create persistent conversation state
         let conversation_state = self.state.get_or_create_user_conversation_state().await;
 
@@ -293,12 +284,24 @@ impl EventHandler {
                 .with_tracking(
                     self.state.clone(),
                     crate::state::app_state::ConversationSource::User,
-                    truncated_input,
+                    input.clone(),
                 )
                 .with_conversation_state(conversation_state);
 
+        // Register conversation immediately so it shows in UI
+        self.state
+            .register_conversation(
+                conversation.conversation_id().to_string(),
+                crate::state::app_state::ConversationSource::User,
+                input.clone(),
+            )
+            .await;
+
+        // Mark as registered to prevent duplicate registration in generate_with_tools_and_retry
+        conversation.mark_registered();
+
         // Add user input as a separate user message
-        conversation.add_user_message(input.clone());
+        conversation.add_user_message(input);
 
         // Retry loop for execution-time errors (e.g., port conflicts)
         const MAX_EXECUTION_RETRIES: usize = 1;
@@ -485,14 +488,8 @@ impl EventHandler {
                     }
                 }
 
-                let _ = status_tx.send(format!(
-                    "[SERVER] Opening server #{} on port {} with protocol {}",
-                    server_id.as_u32(),
-                    port,
-                    protocol_name
-                ));
-
                 // Spawn the server directly (no more message passing!)
+                // Note: "Starting server" message is sent by start_server_by_id
                 // Propagate port conflict errors for retry, but continue for other errors
                 match server_startup::start_server_by_id(
                     &self.state,
@@ -658,9 +655,6 @@ impl EventHandler {
 
                 // Signal main loop to update UI
                 let _ = status_tx.send("__UPDATE_UI__".to_string());
-            }
-            CommonAction::ShowMessage { message } => {
-                let _ = status_tx.send(message);
             }
             // Memory actions need server_id context
             CommonAction::SetMemory { value } => {
