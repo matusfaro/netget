@@ -5,7 +5,7 @@
 
 #[cfg(all(test, feature = "cassandra", feature = "cassandra"))]
 mod e2e_cassandra {
-    use crate::server::helpers::{start_netget_server, E2EResult, NetGetConfig};
+    use crate::server::helpers::{start_netget_server, E2EResult, NetGetConfig, with_client_timeout};
     use std::time::Duration;
     use tokio::time::sleep;
 
@@ -57,11 +57,13 @@ mod e2e_cassandra {
         let uri = format!("127.0.0.1:{}", server.port);
         println!("  [TEST] Connecting to {}", uri);
 
-        let session: Session = SessionBuilder::new()
-            .known_node(&uri)
-            .build()
-            .await
-            .expect("Failed to connect to Cassandra");
+        let session: Session = with_client_timeout(
+            SessionBuilder::new()
+                .known_node(&uri)
+                .build()
+        )
+        .await
+        .expect("Failed to connect to Cassandra");
 
         println!("  [TEST] ✓ Connection successful");
 
@@ -142,22 +144,26 @@ mod e2e_cassandra {
         let uri = format!("127.0.0.1:{}", server.port);
         println!("  [TEST] Connecting to {}", uri);
 
-        let session: Session = SessionBuilder::new()
-            .known_node(&uri)
-            .build()
-            .await
-            .expect("Failed to connect to Cassandra");
+        let session: Session = with_client_timeout(
+            SessionBuilder::new()
+                .known_node(&uri)
+                .build()
+        )
+        .await
+        .expect("Failed to connect to Cassandra");
 
         println!("  [TEST] ✓ Connected successfully");
 
         // Execute SELECT query
         println!("  [TEST] Executing: SELECT * FROM users");
-        let rows = session
-            .query_unpaged("SELECT * FROM users", &[])
-            .await
-            .expect("Query failed")
-            .into_rows_result()
-            .expect("Should have rows");
+        let rows = with_client_timeout(
+            session
+                .query_unpaged("SELECT * FROM users", &[])
+        )
+        .await
+        .expect("Query failed")
+        .into_rows_result()
+        .expect("Should have rows");
 
         println!(
             "  [TEST] ✓ Query executed, {} rows returned",
@@ -236,19 +242,23 @@ mod e2e_cassandra {
         let uri = format!("127.0.0.1:{}", server.port);
         println!("  [TEST] Connecting to {}", uri);
 
-        let session: Session = SessionBuilder::new()
-            .known_node(&uri)
-            .build()
-            .await
-            .expect("Failed to connect to Cassandra");
+        let session: Session = with_client_timeout(
+            SessionBuilder::new()
+                .known_node(&uri)
+                .build()
+        )
+        .await
+        .expect("Failed to connect to Cassandra");
 
         println!("  [TEST] ✓ Connected successfully");
 
         // Execute query that should fail
         println!("  [TEST] Executing: SELECT * FROM nonexistent");
-        let result = session
-            .query_unpaged("SELECT * FROM nonexistent", &[])
-            .await;
+        let result = with_client_timeout(
+            session
+                .query_unpaged("SELECT * FROM nonexistent", &[])
+        )
+        .await;
 
         // Should receive an error
         assert!(result.is_err(), "Query should fail with error");
@@ -343,34 +353,40 @@ mod e2e_cassandra {
         let uri = format!("127.0.0.1:{}", server.port);
         println!("  [TEST] Connecting to {}", uri);
 
-        let session: Session = SessionBuilder::new()
-            .known_node(&uri)
-            .build()
-            .await
-            .expect("Failed to connect to Cassandra");
+        let session: Session = with_client_timeout(
+            SessionBuilder::new()
+                .known_node(&uri)
+                .build()
+        )
+        .await
+        .expect("Failed to connect to Cassandra");
 
         println!("  [TEST] ✓ Connected successfully");
 
         // First query
         println!("  [TEST] Executing: SELECT count(*) FROM users");
-        let rows1 = session
-            .query_unpaged("SELECT count(*) FROM users", &[])
-            .await
-            .expect("First query failed")
-            .into_rows_result()
-            .expect("Should have rows");
+        let rows1 = with_client_timeout(
+            session
+                .query_unpaged("SELECT count(*) FROM users", &[])
+        )
+        .await
+        .expect("First query failed")
+        .into_rows_result()
+        .expect("Should have rows");
 
         assert!(rows1.rows_num() > 0, "Should receive count result");
         println!("  [TEST] ✓ First query successful");
 
         // Second query
         println!("  [TEST] Executing: SELECT * FROM users WHERE id=1");
-        let rows2 = session
-            .query_unpaged("SELECT * FROM users WHERE id=1", &[])
-            .await
-            .expect("Second query failed")
-            .into_rows_result()
-            .expect("Should have rows");
+        let rows2 = with_client_timeout(
+            session
+                .query_unpaged("SELECT * FROM users WHERE id=1", &[])
+        )
+        .await
+        .expect("Second query failed")
+        .into_rows_result()
+        .expect("Should have rows");
 
         assert!(rows2.rows_num() > 0, "Should receive user data");
         println!("  [TEST] ✓ Second query successful");
@@ -452,18 +468,22 @@ mod e2e_cassandra {
         for i in 0..3 {
             let uri_clone = uri.clone();
             let handle = tokio::spawn(async move {
-                let session: Session = SessionBuilder::new()
-                    .known_node(&uri_clone)
-                    .build()
-                    .await
-                    .expect("Failed to connect");
+                let session: Session = with_client_timeout(
+                    SessionBuilder::new()
+                        .known_node(&uri_clone)
+                        .build()
+                )
+                .await
+                .expect("Failed to connect");
 
-                let rows = session
-                    .query_unpaged("SELECT value", &[])
-                    .await
-                    .expect("Query failed")
-                    .into_rows_result()
-                    .expect("Should have rows");
+                let rows = with_client_timeout(
+                    session
+                        .query_unpaged("SELECT value", &[])
+                )
+                .await
+                .expect("Query failed")
+                .into_rows_result()
+                .expect("Should have rows");
 
                 assert!(rows.rows_num() > 0, "Should receive result");
                 println!("  [TEST] ✓ Connection {} completed successfully", i + 1);
@@ -564,31 +584,37 @@ mod e2e_cassandra {
         let uri = format!("127.0.0.1:{}", server.port);
         println!("  [TEST] Connecting to {}", uri);
 
-        let session: Session = SessionBuilder::new()
-            .known_node(&uri)
-            .build()
-            .await
-            .expect("Failed to connect to Cassandra");
+        let session: Session = with_client_timeout(
+            SessionBuilder::new()
+                .known_node(&uri)
+                .build()
+        )
+        .await
+        .expect("Failed to connect to Cassandra");
 
         println!("  [TEST] ✓ Connected successfully");
 
         // Prepare statement
         println!("  [TEST] Preparing: SELECT * FROM users WHERE id = ?");
-        let prepared = session
-            .prepare("SELECT * FROM users WHERE id = ?")
-            .await
-            .expect("Failed to prepare statement");
+        let prepared = with_client_timeout(
+            session
+                .prepare("SELECT * FROM users WHERE id = ?")
+        )
+        .await
+        .expect("Failed to prepare statement");
 
         println!("  [TEST] ✓ Statement prepared");
 
         // Execute with parameter
         println!("  [TEST] Executing with parameter: 1");
-        let rows = session
-            .execute_unpaged(&prepared, (1,))
-            .await
-            .expect("Execute failed")
-            .into_rows_result()
-            .expect("Should have rows");
+        let rows = with_client_timeout(
+            session
+                .execute_unpaged(&prepared, (1,))
+        )
+        .await
+        .expect("Execute failed")
+        .into_rows_result()
+        .expect("Should have rows");
 
         println!("  [TEST] ✓ Executed, {} rows returned", rows.rows_num());
 
@@ -705,46 +731,56 @@ mod e2e_cassandra {
 
         // Prepare first statement
         println!("  [TEST] Preparing statement 1: SELECT * FROM users WHERE id = ?");
-        let prepared1 = session
-            .prepare("SELECT * FROM users WHERE id = ?")
-            .await
-            .expect("Failed to prepare first statement");
+        let prepared1 = with_client_timeout(
+            session
+                .prepare("SELECT * FROM users WHERE id = ?")
+        )
+        .await
+        .expect("Failed to prepare first statement");
 
         println!("  [TEST] ✓ Statement 1 prepared");
 
         // Prepare second statement
         println!("  [TEST] Preparing statement 2: SELECT count(*) FROM users");
-        let prepared2 = session
-            .prepare("SELECT count(*) FROM users")
-            .await
-            .expect("Failed to prepare second statement");
+        let prepared2 = with_client_timeout(
+            session
+                .prepare("SELECT count(*) FROM users")
+        )
+        .await
+        .expect("Failed to prepare second statement");
 
         println!("  [TEST] ✓ Statement 2 prepared");
 
         // Execute first statement
         println!("  [TEST] Executing statement 1 with param: 1");
-        let _rows1 = session
-            .execute_unpaged(&prepared1, (1,))
-            .await
-            .expect("Execute 1 failed");
+        let _rows1 = with_client_timeout(
+            session
+                .execute_unpaged(&prepared1, (1,))
+        )
+        .await
+        .expect("Execute 1 failed");
 
         println!("  [TEST] ✓ Statement 1 executed");
 
         // Execute second statement
         println!("  [TEST] Executing statement 2");
-        let _rows2 = session
-            .execute_unpaged(&prepared2, ())
-            .await
-            .expect("Execute 2 failed");
+        let _rows2 = with_client_timeout(
+            session
+                .execute_unpaged(&prepared2, ())
+        )
+        .await
+        .expect("Execute 2 failed");
 
         println!("  [TEST] ✓ Statement 2 executed");
 
         // Execute first statement again with different param
         println!("  [TEST] Executing statement 1 again with param: 2");
-        let _rows3 = session
-            .execute_unpaged(&prepared1, (2,))
-            .await
-            .expect("Execute 3 failed");
+        let _rows3 = with_client_timeout(
+            session
+                .execute_unpaged(&prepared1, (2,))
+        )
+        .await
+        .expect("Execute 3 failed");
 
         println!("  [TEST] ✓ Statement 1 re-executed with different parameter");
 
@@ -836,16 +872,21 @@ mod e2e_cassandra {
 
         // Prepare statement with 2 parameters
         println!("  [TEST] Preparing: SELECT * FROM users WHERE id = ? AND name = ?");
-        let prepared = session
-            .prepare("SELECT * FROM users WHERE id = ? AND name = ?")
-            .await
-            .expect("Failed to prepare statement");
+        let prepared = with_client_timeout(
+            session
+                .prepare("SELECT * FROM users WHERE id = ? AND name = ?")
+        )
+        .await
+        .expect("Failed to prepare statement");
 
         println!("  [TEST] ✓ Statement prepared");
 
         // Try to execute with only 1 parameter (should fail)
         println!("  [TEST] Executing with wrong parameter count (1 instead of 2)");
-        let result = session.execute_unpaged(&prepared, (1,)).await;
+        let result = with_client_timeout(
+            session.execute_unpaged(&prepared, (1,))
+        )
+        .await;
 
         // Should receive an error
         assert!(

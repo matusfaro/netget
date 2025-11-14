@@ -133,25 +133,25 @@ mod e2e_rip {
                     .expect_calls(1)
                     .and()
                     // Mock 2: RIP request received
-                    .on_event("rip_request_received")
+                    .on_event("rip_request")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_rip_response",
                             "routes": [
                                 {
-                                    "ip": "192.168.1.0",
+                                    "ip_address": "192.168.1.0",
                                     "subnet_mask": "255.255.255.0",
                                     "next_hop": "0.0.0.0",
                                     "metric": 1
                                 },
                                 {
-                                    "ip": "10.0.0.0",
+                                    "ip_address": "10.0.0.0",
                                     "subnet_mask": "255.0.0.0",
                                     "next_hop": "0.0.0.0",
                                     "metric": 5
                                 },
                                 {
-                                    "ip": "172.16.0.0",
+                                    "ip_address": "172.16.0.0",
                                     "subnet_mask": "255.240.0.0",
                                     "next_hop": "192.168.1.1",
                                     "metric": 3
@@ -253,19 +253,19 @@ mod e2e_rip {
                     .expect_calls(1)
                     .and()
                     // Mock 2: RIP request received
-                    .on_event("rip_request_received")
+                    .on_event("rip_request")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_rip_response",
                             "routes": [
                                 {
-                                    "ip": "10.20.30.0",
+                                    "ip_address": "10.20.30.0",
                                     "subnet_mask": "255.255.255.0",
                                     "next_hop": "0.0.0.0",
                                     "metric": 1
                                 },
                                 {
-                                    "ip": "172.30.0.0",
+                                    "ip_address": "172.30.0.0",
                                     "subnet_mask": "255.255.0.0",
                                     "next_hop": "0.0.0.0",
                                     "metric": 8
@@ -364,31 +364,31 @@ mod e2e_rip {
                     .expect_calls(1)
                     .and()
                     // Mock 2: RIP request received
-                    .on_event("rip_request_received")
+                    .on_event("rip_request")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_rip_response",
                             "routes": [
                                 {
-                                    "ip": "192.168.100.0",
+                                    "ip_address": "192.168.100.0",
                                     "subnet_mask": "255.255.255.0",
                                     "next_hop": "0.0.0.0",
                                     "metric": 1
                                 },
                                 {
-                                    "ip": "10.10.0.0",
+                                    "ip_address": "10.10.0.0",
                                     "subnet_mask": "255.255.0.0",
                                     "next_hop": "0.0.0.0",
                                     "metric": 5
                                 },
                                 {
-                                    "ip": "172.20.0.0",
+                                    "ip_address": "172.20.0.0",
                                     "subnet_mask": "255.255.0.0",
                                     "next_hop": "0.0.0.0",
                                     "metric": 15
                                 },
                                 {
-                                    "ip": "192.168.99.0",
+                                    "ip_address": "192.168.99.0",
                                     "subnet_mask": "255.255.255.0",
                                     "next_hop": "0.0.0.0",
                                     "metric": 16
