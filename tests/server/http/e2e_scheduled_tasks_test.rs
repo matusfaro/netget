@@ -54,11 +54,11 @@ Initialize the heartbeat counter to 0 when the server starts."#;
                     .expect_calls(1)
                     .and()
                     // Mock 2: GET /heartbeat request
-                    .on_event("http_request_received")
+                    .on_event("http_request")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "http_response",
-                            "status_code": 200,
+                            "type": "send_http_response",
+                            "status": 200,
                             "body": "Heartbeat count: 3"
                         }
                     ]))
@@ -167,11 +167,11 @@ Initialize the ready flag to false when the server starts."#;
                     .expect_calls(1)
                     .and()
                     // Mock 2: GET /status before task (initializing)
-                    .on_event("http_request_received")
+                    .on_event("http_request")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "http_response",
-                            "status_code": 200,
+                            "type": "send_http_response",
+                            "status": 200,
                             "body": "initializing"
                         }
                     ]))
@@ -183,11 +183,11 @@ Initialize the ready flag to false when the server starts."#;
                     .expect_calls(1)
                     .and()
                     // Mock 4: GET /status after task (ready)
-                    .on_event("http_request_received")
+                    .on_event("http_request")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "http_response",
-                            "status_code": 200,
+                            "type": "send_http_response",
+                            "status": 200,
                             "body": "ready"
                         }
                     ]))
@@ -297,11 +297,11 @@ Initialize metrics counter to 0 and initialized flag to false."#;
                     .expect_calls(1)
                     .and()
                     // Mock 2: GET /initialized before delay
-                    .on_event("http_request_received")
+                    .on_event("http_request")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "http_response",
-                            "status_code": 200,
+                            "type": "send_http_response",
+                            "status": 200,
                             "body": "no"
                         }
                     ]))
@@ -318,22 +318,22 @@ Initialize metrics counter to 0 and initialized flag to false."#;
                     .expect_calls(1)
                     .and()
                     // Mock 5: GET /metrics after tasks
-                    .on_event("http_request_received")
+                    .on_event("http_request")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "http_response",
-                            "status_code": 200,
+                            "type": "send_http_response",
+                            "status": 200,
                             "body": "Metrics: 2"
                         }
                     ]))
                     .expect_calls(1)
                     .and()
                     // Mock 6: GET /initialized after delay
-                    .on_event("http_request_received")
+                    .on_event("http_request")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "http_response",
-                            "status_code": 200,
+                            "type": "send_http_response",
+                            "status": 200,
                             "body": "yes"
                         }
                     ]))
