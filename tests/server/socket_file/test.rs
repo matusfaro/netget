@@ -31,7 +31,7 @@ async fn test_socket_echo() -> E2EResult<()> {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "SocketFile",
+                            "base_stack": "SOCKET_FILE",
                             "instruction": "When you receive any data, reply with 'ACK: ' followed by the received data",
                             "startup_params": {
                                 "socket_path": "./tmp/netget-test-echo.sock"
@@ -41,11 +41,12 @@ async fn test_socket_echo() -> E2EResult<()> {
                     .expect_calls(1)
                     .and()
                     // Mock 2: Data received on socket
-                    .on_event("socket_data_received")
+                    .on_event("socket_file_data_received")
+                    .and_event_data_contains("data", "Hello, Socket!")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_socket_data",
-                            "data": "41434b3a2048656c6c6f2c20536f636b657421" // "ACK: Hello, Socket!" in hex
+                            "data": "ACK: Hello, Socket!"
                         }
                     ]))
                     .expect_calls(1)
@@ -125,7 +126,7 @@ async fn test_socket_ping_pong() -> E2EResult<()> {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "SocketFile",
+                            "base_stack": "SOCKET_FILE",
                             "instruction": "When you receive 'PING', respond with 'PONG\\n'",
                             "startup_params": {
                                 "socket_path": "./tmp/netget-test-ping.sock"
@@ -135,12 +136,12 @@ async fn test_socket_ping_pong() -> E2EResult<()> {
                     .expect_calls(1)
                     .and()
                     // Mock 2: PING received
-                    .on_event("socket_data_received")
-                    .and_event_data_contains("data", "50494e47") // "PING" in hex
+                    .on_event("socket_file_data_received")
+                    .and_event_data_contains("data", "PING")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_socket_data",
-                            "data": "504f4e470a" // "PONG\n" in hex
+                            "data": "PONG\n"
                         }
                     ]))
                     .expect_calls(1)
@@ -211,7 +212,7 @@ async fn test_socket_line_protocol() -> E2EResult<()> {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "SocketFile",
+                            "base_stack": "SOCKET_FILE",
                             "instruction": "When you receive a line ending with \\n, respond with 'OK: <line>\\n'",
                             "startup_params": {
                                 "socket_path": "./tmp/netget-test-line.sock"
@@ -221,12 +222,12 @@ async fn test_socket_line_protocol() -> E2EResult<()> {
                     .expect_calls(1)
                     .and()
                     // Mock 2: Line received
-                    .on_event("socket_data_received")
-                    .and_event_data_contains("data", "54455354") // "TEST" in hex (partial match)
+                    .on_event("socket_file_data_received")
+                    .and_event_data_contains("data", "TEST COMMAND")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_socket_data",
-                            "data": "4f4b3a2054455354 20434f4d4d414e440a" // "OK: TEST COMMAND\n" in hex
+                            "data": "OK: TEST COMMAND\n"
                         }
                     ]))
                     .expect_calls(1)

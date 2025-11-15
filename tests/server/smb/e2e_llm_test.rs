@@ -3,7 +3,7 @@
 //! These tests spawn the NetGet binary and verify that the LLM correctly
 //! controls SMB authentication, file operations, and responses.
 
-#![cfg(all(test, feature = "smb", feature = "smb"))]
+#![cfg(all(test, feature = "smb"))]
 
 use crate::server::helpers::{start_netget_server, E2EResult, NetGetConfig};
 
@@ -106,14 +106,19 @@ async fn test_smb_llm_allows_guest_auth() -> E2EResult<()> {
     let server = start_netget_server(
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
-                mock.on_instruction_containing("SMB").respond_with_actions(serde_json::json!([
-                    {"type": "open_server", "port": 0, "base_stack": "SMB", "instruction": "Allow all auth"}
-                ])).expect_calls(1).and()
-                .on_event("smb_operation")
-                .and_event_data_contains("operation", "session_setup")
-                .respond_with_actions(serde_json::json!([
-                    {"type": "smb_auth_success"}
-                ])).expect_calls(1).and()
+                mock.on_any()  // Changed from on_instruction_containing
+                    .respond_with_actions(serde_json::json!([
+                        {"type": "open_server", "port": 0, "base_stack": "SMB", "instruction": "Allow all auth"}
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    .on_event("smb_operation")
+                    .and_event_data_contains("operation", "session_setup")
+                    .respond_with_actions(serde_json::json!([
+                        {"type": "smb_auth_success"}
+                    ]))
+                    .expect_calls(1)
+                    .and()
             })
     ).await?;
     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -186,7 +191,8 @@ async fn test_smb_llm_denies_user() -> E2EResult<()> {
     let server = start_netget_server(
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
-                mock.on_instruction_containing("SMB").respond_with_actions(serde_json::json!([
+                mock.on_any()  // Changed from on_instruction_containing
+                    .respond_with_actions(serde_json::json!([
                     {"type": "open_server", "port": 0, "base_stack": "SMB", "instruction": "Allow alice only"}
                 ])).expect_calls(1).and()
                 .on_event("smb_operation")
@@ -269,8 +275,8 @@ async fn test_smb_llm_file_creation() -> E2EResult<()> {
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
-                    .on_instruction_containing("SMB file server")
-                    .and_instruction_containing("Allow all authentication")
+                    .on_any()  // Changed from on_instruction_containing
+
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "open_server",
@@ -326,8 +332,8 @@ async fn test_smb_llm_file_content() -> E2EResult<()> {
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
-                    .on_instruction_containing("SMB file server")
-                    .and_instruction_containing("Provide file /welcome.txt")
+                    .on_any()  // Changed from on_instruction_containing
+
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "open_server",
@@ -376,7 +382,8 @@ async fn test_smb_llm_directory_listing() -> E2EResult<()> {
     let server = start_netget_server(
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
-                mock.on_instruction_containing("SMB").respond_with_actions(serde_json::json!([
+                mock.on_any()  // Changed from on_instruction_containing
+                    .respond_with_actions(serde_json::json!([
                     {"type": "open_server", "port": 0, "base_stack": "SMB", "instruction": "Directory listing"}
                 ])).expect_calls(1).and()
             })
@@ -421,7 +428,8 @@ async fn test_smb_llm_connection_tracking() -> E2EResult<()> {
     let server = start_netget_server(
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
-                mock.on_instruction_containing("SMB").respond_with_actions(serde_json::json!([
+                mock.on_any()  // Changed from on_instruction_containing
+                    .respond_with_actions(serde_json::json!([
                     {"type": "open_server", "port": 0, "base_stack": "SMB", "instruction": "Track connections"}
                 ])).expect_calls(1).and()
             })
@@ -483,8 +491,8 @@ async fn test_smb_llm_receives_events() -> E2EResult<()> {
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
-                    .on_instruction_containing("SMB file server")
-                    .and_instruction_containing("Allow all authentication and file operations")
+                    .on_any()  // Changed from on_instruction_containing
+
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "open_server",

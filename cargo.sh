@@ -71,49 +71,46 @@ if [[ -z "$CARGO_TARGET_DIR" ]]; then
 fi
 BUILD_MODE="Shared"
 
-# Check for sccache (disabled to avoid installation issues in Claude Code for Web)
-# if [[ "$RUSTC_WRAPPER" == "sccache" ]]; then
-#     # RUSTC_WRAPPER is set to sccache - verify it's installed
-#     if ! command -v sccache &> /dev/null; then
-#         echo "⚠️  RUSTC_WRAPPER is set to sccache, but sccache is not installed" >&2
-#         echo "Installing sccache automatically..." >&2
-#         echo "" >&2
-#
-#         # Install sccache
-#         if cargo install sccache; then
-#             echo "" >&2
-#             echo "✓ sccache installed successfully" >&2
-#             echo "" >&2
-#         else
-#             echo "" >&2
-#             echo "❌ Failed to install sccache" >&2
-#             echo "Build may fail. To fix manually:" >&2
-#             echo "  cargo install sccache" >&2
-#             echo "Or disable sccache for this session:" >&2
-#             echo "  unset RUSTC_WRAPPER" >&2
-#             echo "" >&2
-#             exit 1
-#         fi
-#     fi
-# elif [[ -z "$RUSTC_WRAPPER" || "$RUSTC_WRAPPER" != "sccache" ]]; then
-#     # sccache not configured - show optional warning
-#     echo "⚠️  WARNING: RUSTC_WRAPPER is not set to sccache" >&2
-#     echo "" >&2
-#     echo "To speed up builds, install sccache:" >&2
-#     echo "  cargo install sccache" >&2
-#     echo "" >&2
-#     echo "Then add to your ~/.bashrc, ~/.zshrc, or shell config:" >&2
-#     echo "  export RUSTC_WRAPPER=sccache" >&2
-#     echo "  export SCCACHE_CACHE_SIZE=50G" >&2
-#     echo "" >&2
-#     echo "Or set it for this session:" >&2
-#     echo "  export RUSTC_WRAPPER=sccache" >&2
-#     echo "  export SCCACHE_CACHE_SIZE=50G" >&2
-#     echo "" >&2
-# fi
+# Check for sccache
+if [[ "$RUSTC_WRAPPER" == "sccache" ]]; then
+    # RUSTC_WRAPPER is set to sccache - verify it's installed
+    if ! command -v sccache &> /dev/null; then
+        echo "⚠️  RUSTC_WRAPPER is set to sccache, but sccache is not installed" >&2
+        echo "Installing sccache automatically..." >&2
+        echo "" >&2
 
-# Unset RUSTC_WRAPPER to avoid sccache issues
-unset RUSTC_WRAPPER
+        # Install sccache (temporarily disable RUSTC_WRAPPER to avoid circular dependency)
+        if (unset RUSTC_WRAPPER && cargo install sccache); then
+            echo "" >&2
+            echo "✓ sccache installed successfully" >&2
+            echo "" >&2
+        else
+            echo "" >&2
+            echo "❌ Failed to install sccache" >&2
+            echo "Build may fail. To fix manually:" >&2
+            echo "  unset RUSTC_WRAPPER && cargo install sccache" >&2
+            echo "Or disable sccache for this session:" >&2
+            echo "  unset RUSTC_WRAPPER" >&2
+            echo "" >&2
+            exit 1
+        fi
+    fi
+elif [[ -z "$RUSTC_WRAPPER" || "$RUSTC_WRAPPER" != "sccache" ]]; then
+    # sccache not configured - show optional warning
+    echo "⚠️  WARNING: RUSTC_WRAPPER is not set to sccache" >&2
+    echo "" >&2
+    echo "To speed up builds, install sccache:" >&2
+    echo "  cargo install sccache" >&2
+    echo "" >&2
+    echo "Then add to your ~/.bashrc, ~/.zshrc, or shell config:" >&2
+    echo "  export RUSTC_WRAPPER=sccache" >&2
+    echo "  export SCCACHE_CACHE_SIZE=50G" >&2
+    echo "" >&2
+    echo "Or set it for this session:" >&2
+    echo "  export RUSTC_WRAPPER=sccache" >&2
+    echo "  export SCCACHE_CACHE_SIZE=50G" >&2
+    echo "" >&2
+fi
 
 # Create tmp directory for logs
 mkdir -p "${PROJECT_ROOT}/tmp"
