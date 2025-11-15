@@ -33,6 +33,7 @@ impl UdpServer {
         let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
         let local_addr = socket.local_addr()?;
         info!("UDP server listening on {} (action-based)", local_addr);
+        let _ = status_tx.send(format!("UDP server listening on {}", local_addr));
 
         let protocol = Arc::new(UdpProtocol::with_socket(socket.clone()));
 

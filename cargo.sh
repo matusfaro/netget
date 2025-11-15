@@ -79,8 +79,8 @@ if [[ "$RUSTC_WRAPPER" == "sccache" ]]; then
         echo "Installing sccache automatically..." >&2
         echo "" >&2
 
-        # Install sccache
-        if cargo install sccache; then
+        # Install sccache (temporarily disable RUSTC_WRAPPER to avoid circular dependency)
+        if (unset RUSTC_WRAPPER && cargo install sccache); then
             echo "" >&2
             echo "✓ sccache installed successfully" >&2
             echo "" >&2
@@ -88,7 +88,7 @@ if [[ "$RUSTC_WRAPPER" == "sccache" ]]; then
             echo "" >&2
             echo "❌ Failed to install sccache" >&2
             echo "Build may fail. To fix manually:" >&2
-            echo "  cargo install sccache" >&2
+            echo "  unset RUSTC_WRAPPER && cargo install sccache" >&2
             echo "Or disable sccache for this session:" >&2
             echo "  unset RUSTC_WRAPPER" >&2
             echo "" >&2
