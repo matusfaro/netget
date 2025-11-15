@@ -106,19 +106,29 @@ impl SshServer {
 
         let russh_config = Arc::new(russh_config);
 
-        info!(
-            "SSH server starting on {} (shell: {}, sftp: {})",
-            listen_addr, server.config.shell_enabled, server.config.sftp_enabled
-        );
+        // Bind TCP listener first to resolve port 0 to actual port
+        // Use reusable socket to allow immediate rebinding
+        let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let actual_addr = listener.local_addr()?;
+        drop(listener); // Close the temporary listener
 
-        // Start the russh server
+        info!(
+            "SSH server listening on {} (shell: {}, sftp: {})",
+            actual_addr, server.config.shell_enabled, server.config.sftp_enabled
+        );
+        let _ = status_tx.send(format!(
+            "[INFO] SSH server listening on {}",
+            actual_addr
+        ));
+
+        // Start the russh server with the resolved address
         tokio::spawn(async move {
-            if let Err(e) = server.run_on_address(russh_config, listen_addr).await {
+            if let Err(e) = server.run_on_address(russh_config, actual_addr).await {
                 error!("SSH server error: {}", e);
             }
         });
 
-        Ok(listen_addr)
+        Ok(actual_addr)
     }
 
     /// Spawn SSH server with action-based LLM integration
