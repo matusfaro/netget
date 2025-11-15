@@ -35,32 +35,31 @@ local LLM models. Implements the OpenAI API specification for model listing and 
 
 ### LLM Integration Approach
 
-**Direct Ollama Delegation** - The OpenAI server acts as a thin translation layer:
+**Event/Action System** - The OpenAI server uses NetGet's event/action pattern:
 
-1. Receives OpenAI-format requests
-2. Translates to Ollama API calls
-3. Converts Ollama responses back to OpenAI format
+1. Receives OpenAI-format HTTP requests
+2. Emits `openai_request` event with method, path, and body
+3. LLM generates appropriate actions (openai_chat_response, openai_models_response, etc.)
+4. Actions build OpenAI-compatible responses
 
 This approach provides:
 
-- Real LLM responses (not simulated)
-- Zero configuration - no prompting needed
-- Full OpenAI SDK compatibility
+- Full LLM control over responses
+- Consistent with other NetGet protocols
+- Extensible action system
 
-### Response Format Translation
+### Actions and Events
 
-**Models List** (`/v1/models`):
+**Event**: `openai_request`
+- Parameters: `method`, `path`, `body`
+- Emitted for all OpenAI API requests
 
-- Calls `llm_client.list_models()` to get Ollama models
-- Transforms to OpenAI format: `{object: "list", data: [{id, object: "model", created, owned_by}]}`
-- Static timestamp used (not significant for compatibility)
+**Actions**:
+- `openai_models_response`: Returns model list in OpenAI format
+- `openai_chat_response`: Returns chat completion in OpenAI format
+- `openai_error_response`: Returns error in OpenAI format
 
-**Chat Completions** (`/v1/chat/completions`):
-
-- Extracts messages array from OpenAI request
-- Builds simple prompt format: `"user: <message>\nassistant: "`
-- Calls `llm_client.generate()` with Ollama
-- Wraps response in OpenAI completion format with choices array
+The LLM receives the request event and decides which action to return based on the path and method.
 
 ### Connection Management
 
