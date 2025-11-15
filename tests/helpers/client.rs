@@ -24,6 +24,9 @@ pub struct NetGetClient {
     pub output_lines: std::sync::Arc<tokio::sync::Mutex<Vec<String>>>,
     /// Mock configuration (if mocks were used)
     mock_config: Option<MockLlmConfig>,
+    /// Abort handles for background reader tasks
+    stdout_reader_handle: tokio::task::JoinHandle<()>,
+    stderr_reader_handle: tokio::task::JoinHandle<()>,
 }
 
 impl NetGetClient {
@@ -37,6 +40,8 @@ impl NetGetClient {
         local_addr: Option<String>,
         output_lines: std::sync::Arc<tokio::sync::Mutex<Vec<String>>>,
         mock_config: Option<MockLlmConfig>,
+        stdout_reader_handle: tokio::task::JoinHandle<()>,
+        stderr_reader_handle: tokio::task::JoinHandle<()>,
     ) -> Self {
         Self {
             child,
@@ -46,6 +51,8 @@ impl NetGetClient {
             local_addr,
             output_lines,
             mock_config,
+            stdout_reader_handle,
+            stderr_reader_handle,
         }
     }
 
@@ -68,14 +75,29 @@ impl NetGetClient {
             self.child.wait().await
         };
 
-        match tokio::time::timeout(Duration::from_secs(5), shutdown).await {
+        let result = match tokio::time::timeout(Duration::from_secs(5), shutdown).await {
             Ok(Ok(_)) => Ok(()),
             _ => {
                 // Force kill if graceful shutdown failed
                 self.child.kill().await?;
                 Ok(())
             }
-        }
+        };
+
+        // Abort background reader tasks to prevent hanging
+        self.stdout_reader_handle.abort();
+        self.stderr_reader_handle.abort();
+
+        // Wait briefly for tasks to abort
+        let _ = tokio::time::timeout(
+            Duration::from_millis(100),
+            async {
+                let _ = (&mut self.stdout_reader_handle).await;
+                let _ = (&mut self.stderr_reader_handle).await;
+            }
+        ).await;
+
+        result
     }
 
     /// Check if the client is still running
@@ -247,6 +269,10 @@ impl NetGetClient {
 
 impl Drop for NetGetClient {
     fn drop(&mut self) {
+        // Abort background reader tasks to prevent hanging
+        self.stdout_reader_handle.abort();
+        self.stderr_reader_handle.abort();
+
         if let Some(ref mock_config) = self.mock_config {
             if !mock_config.is_verified() {
                 eprintln!("\n⚠️  WARNING: Client dropped without calling .verify_mocks()!");
@@ -280,16 +306,22 @@ pub async fn start_netget_client(config: NetGetConfig) -> E2EResult<NetGetClient
         .into());
     }
 
-    let client = instance.clients.into_iter().next().unwrap();
+    // Use ManuallyDrop to prevent Drop from running when we move fields out
+    let mut instance = std::mem::ManuallyDrop::new(instance);
+    let client = instance.clients.drain(..).next().unwrap();
 
+    // SAFETY: We're manually managing the lifecycle. The fields are moved to NetGetClient
+    // which has its own Drop implementation that will clean them up.
     Ok(NetGetClient::new(
-        instance.child,
+        unsafe { std::ptr::read(&instance.child) },
         client.id,
         client.protocol,
         client.remote_addr,
         client.local_addr,
-        instance.output_lines,
-        instance.mock_config,
+        instance.output_lines.clone(),
+        unsafe { std::ptr::read(&instance.mock_config) },
+        unsafe { std::ptr::read(&instance.stdout_reader_handle) },
+        unsafe { std::ptr::read(&instance.stderr_reader_handle) },
     ))
 }
 

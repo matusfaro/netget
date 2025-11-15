@@ -614,46 +614,39 @@ fn extract_context_from_prompt(prompt: &str) -> LlmContext {
             }
         } else {
             debug!("🔧 Instruction extraction: no markers found, trying fallback");
-            // Fallback: Look for the LAST substantial line that looks like a command
-            // Common patterns: "listen", "start", "create", "open", "run", "spawn"
-            // We use the last match because system prompts contain examples, but the
-            // actual user command is at the end.
+            // Fallback: User input is typically at the END of the prompt (after all system instructions)
+            // Look for the LAST substantial non-empty line as the user input
             let lines: Vec<&str> = prompt.lines().collect();
-            let mut last_match: Option<String> = None;
-            for line in lines.iter() {
+            let mut found = false;
+
+            // Search from the end backwards to find the user input
+            for line in lines.iter().rev() {
                 let trimmed = line.trim();
-                let lower = trimmed.to_lowercase();
                 if !trimmed.is_empty()
                     && trimmed.len() > 5
                     && !trimmed.starts_with('#')
+                    && !trimmed.starts_with('-')
                     && !trimmed.starts_with("You ")
                     && !trimmed.starts_with("Your ")
                     && !trimmed.starts_with("Please ")
                     && !trimmed.contains("```")
                     && !trimmed.starts_with("Use `/")
-                    && (lower.starts_with("listen")
-                        || lower.starts_with("start")
-                        || lower.starts_with("create")
-                        || lower.starts_with("open")
-                        || lower.starts_with("run")
-                        || lower.starts_with("spawn")
-                        || lower.starts_with("connect")
-                    )
+                    && !trimmed.ends_with(":")
+                    && !trimmed.contains("CRITICAL:")
+                    && !trimmed.contains("**")
                 {
-                    last_match = Some(trimmed.to_string());
+                    debug!("🔧 Extracted instruction from end of prompt: '{}'", trimmed);
+                    context.instruction = trimmed.to_string();
+                    found = true;
+                    break;
                 }
             }
-            let found = if let Some(instruction) = last_match {
-                debug!("🔧 Extracted instruction (fallback - last command match): '{}'", instruction);
-                context.instruction = instruction;
-                true
-            } else {
-                false
-            };
-            // If no command-like line found, use the first non-empty line as last resort
+
+            // If still not found, try the old forward search as last resort
             if !found {
                 for line in lines.iter() {
                     let trimmed = line.trim();
+                    let lower = trimmed.to_lowercase();
                     if !trimmed.is_empty()
                         && trimmed.len() > 5
                         && !trimmed.starts_with('#')
@@ -662,9 +655,18 @@ fn extract_context_from_prompt(prompt: &str) -> LlmContext {
                         && !trimmed.starts_with("Please ")
                         && !trimmed.contains("```")
                         && !trimmed.starts_with("Use `/")
+                        && (lower.starts_with("listen")
+                            || lower.starts_with("start")
+                            || lower.starts_with("create")
+                            || lower.starts_with("open")
+                            || lower.starts_with("run")
+                            || lower.starts_with("spawn")
+                            || lower.starts_with("connect")
+                        )
                     {
-                        debug!("🔧 Extracted instruction (last resort fallback): '{}'", trimmed);
+                        debug!("🔧 Extracted instruction (forward fallback): '{}'", trimmed);
                         context.instruction = trimmed.to_string();
+                        found = true;
                         break;
                     }
                 }

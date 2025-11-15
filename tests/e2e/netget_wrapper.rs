@@ -27,6 +27,8 @@ pub struct NetGetWrapper {
     stdin: Option<tokio::process::ChildStdin>,
     output_buffer: Arc<Mutex<String>>,
     binary_path: PathBuf,
+    stdout_reader_handle: Option<tokio::task::JoinHandle<()>>,
+    stderr_reader_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl NetGetWrapper {
@@ -44,6 +46,8 @@ impl NetGetWrapper {
             stdin: None,
             output_buffer: Arc::new(Mutex::new(String::new())),
             binary_path,
+            stdout_reader_handle: None,
+            stderr_reader_handle: None,
         }
     }
 
@@ -81,7 +85,7 @@ impl NetGetWrapper {
         // Start output reader tasks
         if let Some(stdout) = child.stdout.take() {
             let buffer = self.output_buffer.clone();
-            tokio::spawn(async move {
+            self.stdout_reader_handle = Some(tokio::spawn(async move {
                 let reader = BufReader::new(stdout);
                 let mut lines = reader.lines();
                 while let Ok(Some(line)) = lines.next_line().await {
@@ -89,12 +93,12 @@ impl NetGetWrapper {
                     buf.push_str(&line);
                     buf.push('\n');
                 }
-            });
+            }));
         }
 
         if let Some(stderr) = child.stderr.take() {
             let buffer = self.output_buffer.clone();
-            tokio::spawn(async move {
+            self.stderr_reader_handle = Some(tokio::spawn(async move {
                 let reader = BufReader::new(stderr);
                 let mut lines = reader.lines();
                 while let Ok(Some(line)) = lines.next_line().await {
@@ -103,7 +107,7 @@ impl NetGetWrapper {
                     buf.push_str(&line);
                     buf.push('\n');
                 }
-            });
+            }));
         }
 
         self.process = Some(child);
@@ -250,6 +254,14 @@ impl NetGetWrapper {
                 .context("Failed to wait for process exit")?;
         }
 
+        // Abort background reader tasks
+        if let Some(handle) = self.stdout_reader_handle.take() {
+            handle.abort();
+        }
+        if let Some(handle) = self.stderr_reader_handle.take() {
+            handle.abort();
+        }
+
         Ok(())
     }
 
@@ -273,6 +285,14 @@ impl NetGetWrapper {
 
 impl Drop for NetGetWrapper {
     fn drop(&mut self) {
+        // Abort background reader tasks to prevent hanging
+        if let Some(handle) = self.stdout_reader_handle.take() {
+            handle.abort();
+        }
+        if let Some(handle) = self.stderr_reader_handle.take() {
+            handle.abort();
+        }
+
         // Try to clean up the process
         if let Some(mut process) = self.process.take() {
             let _ = process.start_kill();
