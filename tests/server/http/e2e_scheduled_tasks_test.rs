@@ -69,7 +69,9 @@ Initialize the heartbeat counter to 0 when the server starts."#;
                     // Task instruction is "Increment the internal heartbeat counter by 1"
                     // Task runs every 2s, we wait 7s, so expect ~3-4 executions
                     .on_instruction_containing("Increment the internal heartbeat counter")
-                    .respond_with_actions(serde_json::json!([]))
+                    .respond_with_actions(serde_json::json!({
+                        "actions": []
+                    }))
                     .expect_at_least(2)  // At least 2 executions (lenient for timing variance)
                     .and()
             })
@@ -186,7 +188,9 @@ Initialize the ready flag to false when the server starts."#;
                     // Mock 3: One-shot task execution
                     // Task runs once after 3s delay, we wait 5s total
                     .on_instruction_containing("Set the internal ready flag")
-                    .respond_with_actions(serde_json::json!([]))
+                    .respond_with_actions(serde_json::json!({
+                        "actions": []
+                    }))
                     .expect_calls(1)  // Exactly 1 execution for one-shot task
                     .and()
             })
@@ -310,13 +314,17 @@ Initialize metrics counter to 0 and initialized flag to false."#;
                     // Mock 4: Recurring metrics task executions
                     // Task runs every 2s, we wait 5s, so expect ~2-3 executions
                     .on_instruction_containing("metrics counter")
-                    .respond_with_actions(serde_json::json!([]))
+                    .respond_with_actions(serde_json::json!({
+                        "actions": []
+                    }))
                     .expect_at_least(1)  // At least 1 execution (lenient for timing variance)
                     .and()
                     // Mock 5: One-shot init task execution
                     // Task runs once after 3s delay, we wait 5s total
                     .on_instruction_containing("initialized flag")
-                    .respond_with_actions(serde_json::json!([]))
+                    .respond_with_actions(serde_json::json!({
+                        "actions": []
+                    }))
                     .expect_calls(1)  // Exactly 1 execution for one-shot task
                     .and()
             })
