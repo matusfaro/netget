@@ -103,33 +103,51 @@ pub async fn run_non_interactive(
     // Create status channel for messages from spawned servers
     let (status_tx, mut status_rx) = mpsc::unbounded_channel::<String>();
 
+    // Spawn a background task to forward status messages to stdout in real-time
+    // This ensures the test helper can see server startup messages as they happen
+    let status_forwarder = tokio::spawn(async move {
+        use std::io::{self, Write};
+        while let Some(msg) = status_rx.recv().await {
+            // Skip internal control messages
+            if !msg.starts_with("__") {
+                let clean_msg = msg
+                    .strip_prefix("[INFO] ")
+                    .unwrap_or(&msg)
+                    .strip_prefix("[ERROR] ")
+                    .unwrap_or(&msg)
+                    .strip_prefix("[WARN] ")
+                    .unwrap_or(&msg)
+                    .strip_prefix("[DEBUG] ")
+                    .unwrap_or(&msg);
+                println!("{clean_msg}");
+                // Explicitly flush stdout to ensure message is visible immediately
+                let _ = io::stdout().flush();
+            }
+        }
+    });
+
+    // Yield to allow the forwarder task to start
+    tokio::task::yield_now().await;
+
     // Call handler directly - no need for separate task!
     // The handler will spawn servers directly now
     event_handler
         .handle_interpret_with_actions(prompt, status_tx.clone(), None)
         .await?;
 
-    // Print any status messages that were sent
-    while let Ok(msg) = status_rx.try_recv() {
-        // Skip internal control messages (shouldn't have any now, but just in case)
-        if !msg.starts_with("__") {
-            let clean_msg = msg
-                .strip_prefix("[INFO] ")
-                .unwrap_or(&msg)
-                .strip_prefix("[ERROR] ")
-                .unwrap_or(&msg)
-                .strip_prefix("[WARN] ")
-                .unwrap_or(&msg)
-                .strip_prefix("[DEBUG] ")
-                .unwrap_or(&msg);
-            println!("{clean_msg}");
-        }
+    // Give spawned servers a moment to finish sending their startup messages
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Flush stdout to ensure all messages are visible to test helper
+    {
+        use std::io::Write;
+        std::io::stdout().flush().ok();
     }
 
     // Check if we're in server mode
     if state.get_mode().await == Mode::Server {
-        // Run the server
-        return run_server(&state, llm, status_rx).await;
+        // Run the server (creates its own status channel internally)
+        return run_server(&state, llm).await;
     }
 
     Ok(())
@@ -187,6 +205,9 @@ async fn run_server(
                         println!("[STATUS] {msg}");
                     }
                 }
+
+                // Sleep briefly to avoid busy waiting
+                tokio::time::sleep(Duration::from_millis(100)).await;
 
                 // Process server status messages
                 while let Ok(msg) = server_status_rx.try_recv() {
@@ -371,7 +392,7 @@ pub async fn run_with_actions(
     // Check if we're in server mode
     if state.get_mode().await == Mode::Server {
         // Run the server
-        return run_server(&state, llm, status_rx).await;
+        return run_server(&state, llm).await;
     }
 
     Ok(())

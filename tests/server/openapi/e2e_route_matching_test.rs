@@ -33,6 +33,7 @@ async fn test_openapi_route_matching_comprehensive() -> E2EResult<()> {
                     "type": "open_server",
                     "port": 0,
                     "base_stack": "openapi",
+                    "instruction": "OpenAPI server for route matching test",
                     "startup_params": {
                         "spec": "{{FILE_CONTENT}}"
                     }
@@ -40,12 +41,13 @@ async fn test_openapi_route_matching_comprehensive() -> E2EResult<()> {
             ]))
             .expect_calls(1)
             .and()
-            .on_event("http_request_received")
+            .on_event("openapi_request")
             .respond_with_actions(serde_json::json!([
                 {
-                    "type": "send_http_response",
-                    "status": 200,
-                    "body": {"users": [{"id": 1, "name": "Test User"}]}
+                    "type": "send_openapi_response",
+                    "status_code": 200,
+                    "headers": {"Content-Type": "application/json"},
+                    "body": serde_json::json!({"users": [{"id": 1, "name": "Test User"}]}).to_string()
                 }
             ]))
             .expect_at_least(1)
@@ -222,6 +224,7 @@ async fn test_openapi_llm_on_invalid_override() -> E2EResult<()> {
                     "type": "open_server",
                     "port": 0,
                     "base_stack": "openapi",
+                    "instruction": "OpenAPI server for route matching test",
                     "startup_params": {
                         "spec": "{{FILE_CONTENT}}"
                     }
@@ -229,7 +232,7 @@ async fn test_openapi_llm_on_invalid_override() -> E2EResult<()> {
             ]))
             .expect_calls(1)
             .and()
-            .on_event("http_request_received")
+            .on_event("openapi_request")
             .respond_with_actions(serde_json::json!([
                 {
                     "type": "send_http_response",
