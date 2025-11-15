@@ -400,7 +400,7 @@ pub static IPP_JOB_ATTRIBUTES_ACTION: LazyLock<ActionDefinition> =
 
 /// IPP request event - triggered when client sends an IPP request
 pub static IPP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("ipp_request", "IPP request received from client")
+    EventType::new("ipp_request_received", "IPP request received from client")
         .with_parameters(vec![
             Parameter {
                 name: "method".to_string(),
