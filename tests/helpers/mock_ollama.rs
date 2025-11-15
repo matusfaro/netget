@@ -614,10 +614,12 @@ fn extract_context_from_prompt(prompt: &str) -> LlmContext {
             }
         } else {
             debug!("🔧 Instruction extraction: no markers found, trying fallback");
-            // Fallback: Look for the FIRST substantial line that looks like a command
+            // Fallback: Look for the LAST substantial line that looks like a command
             // Common patterns: "listen", "start", "create", "open", "run", "spawn"
+            // We use the last match because system prompts contain examples, but the
+            // actual user command is at the end.
             let lines: Vec<&str> = prompt.lines().collect();
-            let mut found = false;
+            let mut last_match: Option<String> = None;
             for line in lines.iter() {
                 let trimmed = line.trim();
                 let lower = trimmed.to_lowercase();
@@ -638,12 +640,16 @@ fn extract_context_from_prompt(prompt: &str) -> LlmContext {
                         || lower.starts_with("connect")
                     )
                 {
-                    debug!("🔧 Extracted instruction (fallback): '{}'", trimmed);
-                    context.instruction = trimmed.to_string();
-                    found = true;
-                    break;
+                    last_match = Some(trimmed.to_string());
                 }
             }
+            let found = if let Some(instruction) = last_match {
+                debug!("🔧 Extracted instruction (fallback - last command match): '{}'", instruction);
+                context.instruction = instruction;
+                true
+            } else {
+                false
+            };
             // If no command-like line found, use the first non-empty line as last resort
             if !found {
                 for line in lines.iter() {

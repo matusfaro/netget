@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info};
 
-use crate::llm::call_llm_with_protocol;
+use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
@@ -245,22 +245,13 @@ async fn handle_tags_list_v2(
     // Create event for models request
     let event = Event::new(&OLLAMA_MODELS_REQUEST_EVENT, json!({}));
 
-    // Get instruction for this server
-    let instruction = app_state
-        .get_instruction(server_id)
-        .await
-        .unwrap_or_else(|| "Respond to Ollama API requests".to_string());
-
-    // Build event description from instruction and event type
-    let event_description = format!("{} - {}", instruction, event.event_type.description);
-
-    // Call LLM
-    match call_llm_with_protocol(
+    // Call LLM with event (includes Event ID for mock compatibility)
+    match call_llm(
         &llm_client,
         &app_state,
         server_id,
         Some(connection_id),
-        &event_description,
+        &event,
         protocol.as_ref(),
     )
     .await
@@ -397,22 +388,13 @@ async fn handle_generate_v2(
         }),
     );
 
-    // Get instruction
-    let instruction = app_state
-        .get_instruction(server_id)
-        .await
-        .unwrap_or_else(|| "Respond to Ollama API requests".to_string());
-
-    // Build event description from instruction and event type
-    let event_description = format!("{} - {}", instruction, event.event_type.description);
-
-    // Call LLM
-    match call_llm_with_protocol(
+    // Call LLM with event (includes Event ID for mock compatibility)
+    match call_llm(
         &llm_client,
         &app_state,
         server_id,
         Some(connection_id),
-        &event_description,
+        &event,
         protocol.as_ref(),
     )
     .await
@@ -538,22 +520,13 @@ async fn handle_chat_v2(
         }),
     );
 
-    // Get instruction
-    let instruction = app_state
-        .get_instruction(server_id)
-        .await
-        .unwrap_or_else(|| "Respond to Ollama API requests".to_string());
-
-    // Build event description from instruction and event type
-    let event_description = format!("{} - {}", instruction, event.event_type.description);
-
-    // Call LLM
-    match call_llm_with_protocol(
+    // Call LLM with event (includes Event ID for mock compatibility)
+    match call_llm(
         &llm_client,
         &app_state,
         server_id,
         Some(connection_id),
-        &event_description,
+        &event,
         protocol.as_ref(),
     )
     .await
