@@ -34,38 +34,28 @@ mod tests {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: HTTP request received (search query)
-                    .on_event("http_request_received")
-                    .and_event_data_contains("path", "/_search")
+                    // Mock 2: Elasticsearch search request
+                    .on_event("elasticsearch_request")
+                    .and_event_data_contains("path", "/products/_search")
                     .respond_with_actions(json!([
                         {
-                            "type": "http_response",
-                            "status_code": 200,
-                            "headers": {
-                                "Content-Type": "application/json",
-                                "X-elastic-product": "Elasticsearch"
-                            },
-                            "body": json!({
-                                "took": 1,
-                                "timed_out": false,
-                                "hits": {
-                                    "total": {"value": 2, "relation": "eq"},
-                                    "hits": [
-                                        {
-                                            "_index": "products",
-                                            "_id": "1",
-                                            "_score": 1.0,
-                                            "_source": {"name": "Widget", "price": 19.99}
-                                        },
-                                        {
-                                            "_index": "products",
-                                            "_id": "2",
-                                            "_score": 1.0,
-                                            "_source": {"name": "Gadget", "price": 29.99}
-                                        }
-                                    ]
+                            "type": "send_search_response",
+                            "hits": [
+                                {
+                                    "_index": "products",
+                                    "_id": "1",
+                                    "_score": 1.0,
+                                    "_source": {"name": "Widget", "price": 19.99}
+                                },
+                                {
+                                    "_index": "products",
+                                    "_id": "2",
+                                    "_score": 1.0,
+                                    "_source": {"name": "Gadget", "price": 29.99}
                                 }
-                            }).to_string()
+                            ],
+                            "total": 2,
+                            "took": 1
                         }
                     ]))
                     .expect_calls(1)
@@ -80,7 +70,7 @@ mod tests {
 
         // Verify stack
         assert!(
-            server.stack.contains("ELASTICSEARCH"),
+            server.stack.to_uppercase().contains("ELASTICSEARCH"),
             "Expected ELASTICSEARCH stack, got: {}",
             server.stack
         );
@@ -153,23 +143,16 @@ mod tests {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: HTTP PUT request to index document
-                    .on_event("http_request_received")
+                    // Mock 2: Elasticsearch index document request
+                    .on_event("elasticsearch_request")
                     .and_event_data_contains("method", "PUT")
                     .and_event_data_contains("path", "/_doc/")
                     .respond_with_actions(json!([
                         {
-                            "type": "http_response",
-                            "status_code": 200,
-                            "headers": {
-                                "Content-Type": "application/json"
-                            },
-                            "body": json!({
-                                "_index": "products",
-                                "_id": "1",
-                                "_version": 1,
-                                "result": "created"
-                            }).to_string()
+                            "type": "send_index_response",
+                            "index": "products",
+                            "id": "1",
+                            "result": "created"
                         }
                     ]))
                     .expect_calls(1)
@@ -248,27 +231,20 @@ mod tests {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: HTTP GET request for document
-                    .on_event("http_request_received")
+                    // Mock 2: Elasticsearch get document request
+                    .on_event("elasticsearch_request")
                     .and_event_data_contains("method", "GET")
                     .and_event_data_contains("path", "/_doc/123")
                     .respond_with_actions(json!([
                         {
-                            "type": "http_response",
-                            "status_code": 200,
-                            "headers": {
-                                "Content-Type": "application/json"
-                            },
-                            "body": json!({
-                                "_index": "products",
-                                "_id": "123",
-                                "_version": 1,
-                                "found": true,
-                                "_source": {
-                                    "name": "Product 123",
-                                    "price": 99.99
-                                }
-                            }).to_string()
+                            "type": "send_get_response",
+                            "found": true,
+                            "index": "products",
+                            "id": "123",
+                            "source": {
+                                "name": "Product 123",
+                                "price": 99.99
+                            }
                         }
                     ]))
                     .expect_calls(1)
@@ -339,41 +315,30 @@ mod tests {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: HTTP POST to /_bulk
-                    .on_event("http_request_received")
+                    // Mock 2: Elasticsearch bulk request
+                    .on_event("elasticsearch_request")
                     .and_event_data_contains("method", "POST")
                     .and_event_data_contains("path", "/_bulk")
                     .respond_with_actions(json!([
                         {
-                            "type": "http_response",
-                            "status_code": 200,
-                            "headers": {
-                                "Content-Type": "application/json"
-                            },
-                            "body": json!({
-                                "took": 2,
-                                "errors": false,
-                                "items": [
-                                    {
-                                        "index": {
-                                            "_index": "products",
-                                            "_id": "1",
-                                            "_version": 1,
-                                            "result": "created",
-                                            "status": 201
-                                        }
-                                    },
-                                    {
-                                        "index": {
-                                            "_index": "products",
-                                            "_id": "2",
-                                            "_version": 1,
-                                            "result": "created",
-                                            "status": 201
-                                        }
+                            "type": "send_bulk_response",
+                            "items": [
+                                {
+                                    "index": {
+                                        "_index": "products",
+                                        "_id": "1",
+                                        "status": 201
                                     }
-                                ]
-                            }).to_string()
+                                },
+                                {
+                                    "index": {
+                                        "_index": "products",
+                                        "_id": "2",
+                                        "status": 201
+                                    }
+                                }
+                            ],
+                            "errors": false
                         }
                     ]))
                     .expect_calls(1)
@@ -454,16 +419,13 @@ mod tests {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: HTTP GET to /_cluster/health
-                    .on_event("http_request_received")
+                    // Mock 2: Elasticsearch cluster health request
+                    .on_event("elasticsearch_request")
                     .and_event_data_contains("path", "/_cluster/health")
                     .respond_with_actions(json!([
                         {
-                            "type": "http_response",
+                            "type": "send_elasticsearch_response",
                             "status_code": 200,
-                            "headers": {
-                                "Content-Type": "application/json"
-                            },
                             "body": json!({
                                 "cluster_name": "netget-cluster",
                                 "status": "green",
@@ -544,31 +506,15 @@ mod tests {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: HTTP GET to / (root endpoint)
-                    .on_event("http_request_received")
+                    // Mock 2: Elasticsearch root endpoint request
+                    .on_event("elasticsearch_request")
                     .and_event_data_contains("path", "/")
                     .respond_with_actions(json!([
                         {
-                            "type": "http_response",
-                            "status_code": 200,
-                            "headers": {
-                                "Content-Type": "application/json",
-                                "X-elastic-product": "Elasticsearch"
-                            },
-                            "body": json!({
-                                "name": "netget-node",
-                                "cluster_name": "netget-cluster",
-                                "cluster_uuid": "test-uuid-1234",
-                                "version": {
-                                    "number": "8.11.0",
-                                    "build_flavor": "default",
-                                    "build_type": "tar",
-                                    "build_hash": "test",
-                                    "build_date": "2024-01-01T00:00:00.000Z",
-                                    "lucene_version": "9.8.0"
-                                },
-                                "tagline": "You Know, for Search"
-                            }).to_string()
+                            "type": "send_cluster_info",
+                            "cluster_name": "netget-cluster",
+                            "status": "green",
+                            "version": "8.11.0"
                         }
                     ]))
                     .expect_calls(1)
@@ -649,17 +595,14 @@ mod tests {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: HTTP DELETE request
-                    .on_event("http_request_received")
+                    // Mock 2: Elasticsearch delete document request
+                    .on_event("elasticsearch_request")
                     .and_event_data_contains("method", "DELETE")
                     .and_event_data_contains("path", "/_doc/999")
                     .respond_with_actions(json!([
                         {
-                            "type": "http_response",
+                            "type": "send_elasticsearch_response",
                             "status_code": 200,
-                            "headers": {
-                                "Content-Type": "application/json"
-                            },
                             "body": json!({
                                 "_index": "products",
                                 "_id": "999",
