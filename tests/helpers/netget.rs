@@ -528,7 +528,7 @@ async fn wait_for_netget_startup_with_capture(
     reader: &mut tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
     output_lines: std::sync::Arc<tokio::sync::Mutex<Vec<String>>>,
 ) -> E2EResult<(Vec<NetGetServer>, Vec<NetGetClient>)> {
-    let wait_future = async {
+    let wait_future = async move {
         let mut servers = Vec::new();
         let mut clients: std::collections::HashMap<String, NetGetClient> =
             std::collections::HashMap::new();
@@ -704,7 +704,16 @@ async fn wait_for_netget_startup_with_capture(
         }
 
         if !had_any_startup {
-            return Err("No servers or clients started in netget".into());
+            let captured_output = output_lines.lock().await;
+            let output_str = if captured_output.is_empty() {
+                "(no output captured)".to_string()
+            } else {
+                captured_output.join("\n")
+            };
+            return Err(format!(
+                "No servers or clients started in netget\n\nCaptured output:\n{}",
+                output_str
+            ).into());
         }
 
         let final_servers = servers;
