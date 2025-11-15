@@ -32,17 +32,13 @@ async fn test_openai_list_models() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: Models list request (GET /v1/models)
-                .on_event("http_request_received")
+                // Mock 2: OpenAI request event for GET /v1/models
+                .on_event("openai_request")
                 .and_event_data_contains("path", "/v1/models")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_http_response",
-                        "status": 200,
-                        "headers": {
-                            "Content-Type": "application/json"
-                        },
-                        "body": "{\"object\":\"list\",\"data\":[{\"id\":\"qwen2.5-coder:0.5b\",\"object\":\"model\",\"created\":1704067200,\"owned_by\":\"ollama\"}]}"
+                        "type": "openai_models_response",
+                        "models": ["qwen2.5-coder:0.5b", "qwen3-coder:30b"]
                     }
                 ]))
                 .expect_calls(1)
@@ -147,17 +143,14 @@ async fn test_openai_chat_completion() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: Chat completion request (POST /v1/chat/completions)
-                .on_event("http_request_received")
+                // Mock 2: OpenAI request event for POST /v1/chat/completions
+                .on_event("openai_request")
                 .and_event_data_contains("path", "/v1/chat/completions")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_http_response",
-                        "status": 200,
-                        "headers": {
-                            "Content-Type": "application/json"
-                        },
-                        "body": "{\"id\":\"chatcmpl-123\",\"object\":\"chat.completion\",\"created\":1704067200,\"model\":\"qwen2.5-coder:0.5b\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"Hello from NetGet\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}"
+                        "type": "openai_chat_response",
+                        "content": "Hello from NetGet",
+                        "model": "qwen2.5-coder:0.5b"
                     }
                 ]))
                 .expect_calls(1)
@@ -325,17 +318,15 @@ async fn test_openai_invalid_endpoint() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: Invalid endpoint request
-                .on_event("http_request_received")
+                // Mock 2: OpenAI request event for invalid endpoint
+                .on_event("openai_request")
                 .and_event_data_contains("path", "/v1/invalid")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_http_response",
-                        "status": 404,
-                        "headers": {
-                            "Content-Type": "application/json"
-                        },
-                        "body": "{\"error\":{\"message\":\"Not found\",\"type\":\"invalid_request_error\",\"code\":\"not_found\"}}"
+                        "type": "openai_error_response",
+                        "message": "Not Found",
+                        "error_type": "invalid_request_error",
+                        "status": 404
                     }
                 ]))
                 .expect_calls(1)
@@ -421,32 +412,25 @@ async fn test_openai_with_rust_client() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: List models request
-                .on_event("http_request_received")
+                // Mock 2: OpenAI request event for GET /v1/models
+                .on_event("openai_request")
                 .and_event_data_contains("path", "/v1/models")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_http_response",
-                        "status": 200,
-                        "headers": {
-                            "Content-Type": "application/json"
-                        },
-                        "body": "{\"object\":\"list\",\"data\":[{\"id\":\"qwen2.5-coder:0.5b\",\"object\":\"model\",\"created\":1704067200,\"owned_by\":\"ollama\"}]}"
+                        "type": "openai_models_response",
+                        "models": ["qwen2.5-coder:0.5b"]
                     }
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 3: Chat completion request
-                .on_event("http_request_received")
+                // Mock 3: OpenAI request event for POST /v1/chat/completions
+                .on_event("openai_request")
                 .and_event_data_contains("path", "/v1/chat/completions")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_http_response",
-                        "status": 200,
-                        "headers": {
-                            "Content-Type": "application/json"
-                        },
-                        "body": "{\"id\":\"chatcmpl-456\",\"object\":\"chat.completion\",\"created\":1704067200,\"model\":\"qwen2.5-coder:0.5b\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"Test response from NetGet OpenAI\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":6,\"total_tokens\":18}}"
+                        "type": "openai_chat_response",
+                        "content": "Test response from NetGet OpenAI",
+                        "model": "qwen2.5-coder:0.5b"
                     }
                 ]))
                 .expect_calls(1)

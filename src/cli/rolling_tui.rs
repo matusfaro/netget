@@ -625,6 +625,15 @@ fn print_output_line(line: &str, footer: &mut StickyFooter, palette: &ColorPalet
     Ok(())
 }
 
+/// Execute all tasks that are due (public wrapper for non-interactive mode)
+pub async fn execute_due_tasks_public(
+    state: &AppState,
+    llm_client: &OllamaClient,
+    status_tx: &mpsc::UnboundedSender<String>,
+) {
+    execute_due_tasks(state, llm_client, status_tx).await
+}
+
 /// Execute all tasks that are due
 async fn execute_due_tasks(
     state: &AppState,

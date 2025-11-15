@@ -20,10 +20,12 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace};
 
-use crate::llm::actions::protocol_trait::{ActionResult, Protocol, Server};
+use crate::llm::action_helper::call_llm;
+use crate::llm::actions::protocol_trait::{ActionResult, Server};
 use crate::llm::ollama_client::OllamaClient;
+use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
-use crate::server::jsonrpc::actions::JsonRpcProtocol;
+use crate::server::jsonrpc::actions::{JsonRpcProtocol, JSONRPC_METHOD_CALL_EVENT};
 use crate::state::app_state::AppState;
 use crate::{console_error, console_info};
 
@@ -411,90 +413,43 @@ async fn call_llm_for_method(
     app_state: &Arc<AppState>,
     status_tx: &mpsc::UnboundedSender<String>,
     protocol: &Arc<JsonRpcProtocol>,
-    _connection_id: ConnectionId,
-    _server_id: crate::state::ServerId,
+    connection_id: ConnectionId,
+    server_id: crate::state::ServerId,
 ) -> anyhow::Result<Value> {
-    // Get available actions for JSON-RPC
-    let sync_actions = protocol.get_sync_actions();
-
-    // Build prompt for LLM
-    let model = app_state.get_ollama_model().await;
-
-    // Build action descriptions
-    let mut actions_desc = String::from("Available actions:\n");
-    for action in &sync_actions {
-        actions_desc.push_str(&format!("\n{}\n", action.to_prompt_text()));
-    }
-
-    let params_str = if let Some(p) = params {
-        serde_json::to_string_pretty(p).unwrap_or_else(|_| "null".to_string())
+    // Create JSON-RPC method call event
+    let event_data = if let Some(params_val) = params {
+        json!({
+            "method": method,
+            "params": params_val,
+            "id": request_id
+        })
     } else {
-        "null".to_string()
+        json!({
+            "method": method,
+            "id": request_id
+        })
     };
 
-    let prompt = format!(
-        r#"You are handling a JSON-RPC 2.0 method call.
-
-Method: {}
-Parameters: {}
-
-{}
-
-You MUST respond with a JSON object containing an "actions" array with exactly ONE action.
-Use either "jsonrpc_success" to return a result, or "jsonrpc_error" to return an error.
-
-Response format:
-{{
-  "actions": [
-    {{
-      "type": "jsonrpc_success",
-      "result": <any JSON value>,
-      "id": 1
-    }}
-  ]
-}}
-
-OR for errors:
-{{
-  "actions": [
-    {{
-      "type": "jsonrpc_error",
-      "code": <error code>,
-      "message": "<error message>",
-      "id": 1
-    }}
-  ]
-}}
-
-Handle this method call and respond appropriately."#,
-        method, params_str, actions_desc
-    );
+    let event = Event::new(&JSONRPC_METHOD_CALL_EVENT, event_data);
 
     debug!("Calling LLM for JSON-RPC method: {}", method);
     let _ = status_tx.send(format!("[DEBUG] Calling LLM for method: {}", method));
 
-    // Call LLM with retry
-    let model_str = crate::llm::ensure_model_selected(model).await?;
-    let llm_response = llm_client
-        .generate_with_retry(
-            &model_str,
-            &prompt,
-            r#"[{"type": "jsonrpc_success" or "jsonrpc_error", ...}]"#,
-        )
-        .await?;
+    // Call LLM with event
+    let llm_result = call_llm(
+        llm_client,
+        app_state,
+        server_id,
+        Some(connection_id),
+        &event,
+        protocol.as_ref(),
+    )
+    .await?;
 
-    trace!("LLM response for JSON-RPC: {}", llm_response);
-    let _ = status_tx.send(format!("[TRACE] LLM response: {}", llm_response));
-
-    // Parse LLM response as actions
-    let actions_result = serde_json::from_str::<Value>(&llm_response)?;
-    let actions = actions_result
-        .get("actions")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| anyhow::anyhow!("LLM response missing 'actions' array"))?;
+    trace!("LLM actions for JSON-RPC: {:?}", llm_result.raw_actions.len());
 
     // Execute the first action
-    if let Some(action) = actions.first() {
+    if let Some(action) = llm_result.raw_actions.first() {
         // Clone the action so we can modify it
         let mut action = action.clone();
 

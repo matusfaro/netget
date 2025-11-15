@@ -36,20 +36,22 @@ Following NetGet testing best practices:
 - 1 DeleteMessage request
 - 1 GetQueueAttributes request
 
-**Test 2: Message Visibility** (~3-4 LLM calls)
+**Test 2: Message Visibility** (~3 LLM calls in mock mode)
 
 - 1 server startup
 - 1 CreateQueue request
 - 1 SendMessage request
-- 2 ReceiveMessage requests (test visibility timeout)
+- 2 ReceiveMessage requests (combined in mock mode - visibility timeout is LLM-specific)
 - 1 DeleteMessage request
+
+Note: The visibility timeout behavior (message should not appear on second ReceiveMessage) can only be properly tested with real Ollama. In mock mode, both ReceiveMessage calls have identical parameters and use the same mock response.
 
 **Test 3: Error Handling** (~2 LLM calls)
 
 - 1 server startup
 - 1 SendMessage to non-existent queue (error response)
 
-**Total Budget**: 10-11 LLM calls (at budget target)
+**Total Budget**: 9-10 LLM calls (at budget target, less in mock mode)
 
 **Note**: Actual call count may vary by ±1-2 depending on LLM prompt interpretation and scripting effectiveness.
 
@@ -198,10 +200,11 @@ let client = Client::new(&sdk_config);
 - Receipt handles are unique per receive operation
 - Deleted messages never appear again
 
-**Known Flakiness**:
+**Known Limitations**:
 
-- Visibility timeout enforcement depends on LLM understanding
-- Second ReceiveMessage check may be inconsistent
+- Visibility timeout enforcement depends on LLM understanding (only testable with real Ollama)
+- In mock mode, both ReceiveMessage calls are identical and cannot be differentiated
+- The test passes in mock mode but doesn't validate visibility timeout behavior
 
 ### 3. Error Handling (`test_sqs_queue_not_found`)
 

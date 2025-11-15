@@ -8,6 +8,7 @@
 use super::super::helpers::{self, E2EResult, NetGetConfig};
 use std::time::Duration;
 use tokio::time::sleep;
+use uuid;
 
 /// Simple helper to create a test protobuf schema
 fn create_test_proto_schema() -> String {
@@ -46,11 +47,11 @@ fn compile_proto_to_fds(proto_text: &str) -> E2EResult<Vec<u8>> {
     use std::process::Command;
 
     // Write proto text to temporary file
-    // Use PID to avoid conflicts when running tests concurrently
+    // Use UUID to avoid conflicts when running tests concurrently (PID is not unique across tests)
     let temp_dir = std::env::temp_dir();
-    let pid = std::process::id();
-    let proto_file = temp_dir.join(format!("test_grpc_{}.proto", pid));
-    let descriptor_file = temp_dir.join(format!("test_grpc_descriptor_{}.pb", pid));
+    let unique_id = uuid::Uuid::new_v4();
+    let proto_file = temp_dir.join(format!("test_grpc_{}.proto", unique_id));
+    let descriptor_file = temp_dir.join(format!("test_grpc_descriptor_{}.pb", unique_id));
 
     std::fs::write(&proto_file, proto_text)?;
 
@@ -121,7 +122,9 @@ When you receive GetUser requests, respond with a User message containing the re
                         "port": 0,
                         "base_stack": "gRPC",
                         "instruction": "Respond to GetUser with id, name Alice, email alice@example.com",
-                        "proto_schema": proto_text
+                        "startup_params": {
+                            "proto_schema": proto_text
+                        }
                     }
                 ]))
                 .expect_calls(1)
@@ -260,7 +263,9 @@ When you receive CreateUser requests, respond with a User message having id=456 
                         "port": 0,
                         "base_stack": "gRPC",
                         "instruction": "Respond to CreateUser with id=456, copy name and email from request",
-                        "proto_file_path": proto_file.display().to_string()
+                        "startup_params": {
+                            "proto_schema": proto_file.display().to_string()
+                        }
                     }
                 ]))
                 .expect_calls(1)
@@ -333,7 +338,9 @@ When you receive GetUser requests, respond with a User message containing the re
                         "port": 0,
                         "base_stack": "gRPC",
                         "instruction": "Respond to GetUser with id, name Bob, email bob@test.com",
-                        "proto_schema": proto_text
+                        "startup_params": {
+                            "proto_schema": proto_text
+                        }
                     }
                 ]))
                 .expect_calls(1)
@@ -405,7 +412,9 @@ When you receive GetUser requests:
                         "port": 0,
                         "base_stack": "gRPC",
                         "instruction": "If id=0 return NOT_FOUND error, else return User with id, name Charlie, email charlie@test.com",
-                        "proto_schema": proto_text
+                        "startup_params": {
+                            "proto_schema": proto_text
+                        }
                     }
                 ]))
                 .expect_calls(1)
@@ -528,7 +537,9 @@ When you receive GetUser requests, respond with a User message where the id matc
                         "port": 0,
                         "base_stack": "gRPC",
                         "instruction": "Respond to GetUser with id from request, name User<id>, email user<id>@test.com",
-                        "proto_schema": proto_text
+                        "startup_params": {
+                            "proto_schema": proto_text
+                        }
                     }
                 ]))
                 .expect_calls(1)

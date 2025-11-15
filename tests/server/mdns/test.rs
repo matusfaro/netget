@@ -28,6 +28,7 @@ async fn test_mdns_service_advertisement() -> E2EResult<()> {
                     "type": "open_server",
                     "port": 0,
                     "base_stack": "mdns",
+                    "instruction": "mDNS service advertisement",
                     "startup_params": {
                         "service_type": "_http._tcp.local.",
                         "service_name": "NetGet Test Server",
@@ -142,6 +143,7 @@ async fn test_mdns_multiple_services() -> E2EResult<()> {
                     "type": "open_server",
                     "port": 0,
                     "base_stack": "mdns",
+                    "instruction": "mDNS multiple services",
                     "startup_params": {
                         "services": [
                             {"service_type": "_http._tcp.local.", "service_name": "Web Service"},
@@ -235,6 +237,7 @@ async fn test_mdns_service_with_properties() -> E2EResult<()> {
                     "type": "open_server",
                     "port": 0,
                     "base_stack": "mdns",
+                    "instruction": "mDNS service with properties",
                     "startup_params": {
                         "service_type": "_http._tcp.local.",
                         "service_name": "Property Test",
@@ -322,6 +325,7 @@ async fn test_mdns_custom_service_type() -> E2EResult<()> {
                     "type": "open_server",
                     "port": 0,
                     "base_stack": "mdns",
+                    "instruction": "mDNS custom service type",
                     "startup_params": {
                         "service_type": "_netget._tcp.local.",
                         "service_name": "Custom NetGet Service"

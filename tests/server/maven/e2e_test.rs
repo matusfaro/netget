@@ -48,60 +48,66 @@ For other artifacts, return 404.
                 .and()
                 // Mock 2: POM request
                 .on_event("maven_artifact_request")
-                .and_event_data_contains("path", ".pom")
+                .and_event_data_contains("extension", "pom")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_http_response",
+                        "type": "send_maven_artifact",
                         "status": 200,
+                        "content_type": "application/xml",
                         "body": "<?xml version=\"1.0\"?>\n<project>\n  <modelVersion>4.0.0</modelVersion>\n  <groupId>com.example</groupId>\n  <artifactId>hello-world</artifactId>\n  <version>1.0.0</version>\n</project>"
                     }
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 3: JAR request
+                // Mock 3: SHA-1 checksum request (must come before JAR to match first)
                 .on_event("maven_artifact_request")
-                .and_event_data_contains("path", ".jar")
+                .and_event_data_contains("checksum_type", "sha1")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_http_response",
+                        "type": "send_maven_artifact",
                         "status": 200,
-                        "body": "Hello from Maven JAR"
+                        "content_type": "text/plain",
+                        "body": "abc123"
                     }
                 ]))
                 .expect_calls(1)
                 .and()
                 // Mock 4: maven-metadata.xml request
                 .on_event("maven_artifact_request")
-                .and_event_data_contains("path", "maven-metadata.xml")
+                .and_event_data_contains("extension", "xml")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_http_response",
-                        "status": 200,
-                        "body": "<?xml version=\"1.0\"?>\n<metadata>\n  <groupId>com.example</groupId>\n  <artifactId>hello-world</artifactId>\n  <versioning>\n    <latest>1.0.0</latest>\n    <versions><version>1.0.0</version></versions>\n  </versioning>\n</metadata>"
+                        "type": "send_maven_metadata",
+                        "group_id": "com.example",
+                        "artifact_id": "hello-world",
+                        "versions": ["1.0.0"],
+                        "latest": "1.0.0",
+                        "release": "1.0.0"
                     }
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 5: SHA-1 checksum request
+                // Mock 5: 404 for non-existent artifact (must come before JAR to match first)
                 .on_event("maven_artifact_request")
-                .and_event_data_contains("path", ".sha1")
+                .and_event_data_contains("artifact_id", "nonexistent")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_http_response",
-                        "status": 200,
-                        "body": "abc123"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 6: 404 for non-existent artifact
-                .on_event("maven_artifact_request")
-                .and_event_data_contains("path", "nonexistent")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_http_response",
+                        "type": "send_maven_error",
                         "status": 404,
-                        "body": "Not Found"
+                        "message": "Not Found"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 6: JAR request (generic, matches last)
+                .on_event("maven_artifact_request")
+                .and_event_data_contains("extension", "jar")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_maven_artifact",
+                        "status": 200,
+                        "content_type": "application/java-archive",
+                        "body": "Hello from Maven JAR"
                     }
                 ]))
                 .expect_calls(1)
@@ -253,23 +259,28 @@ For other artifacts, return 404.
                 .and()
                 // Mock 2: maven-metadata.xml request
                 .on_event("maven_artifact_request")
-                .and_event_data_contains("path", "maven-metadata.xml")
+                .and_event_data_contains("extension", "xml")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_http_response",
-                        "status": 200,
-                        "body": "<?xml version=\"1.0\"?>\n<metadata>\n  <groupId>com.example</groupId>\n  <artifactId>mylib</artifactId>\n  <versioning>\n    <latest>1.1.0</latest>\n    <versions>\n      <version>1.0.0</version>\n      <version>1.0.1</version>\n      <version>1.1.0</version>\n    </versions>\n  </versioning>\n</metadata>"
+                        "type": "send_maven_metadata",
+                        "group_id": "com.example",
+                        "artifact_id": "mylib",
+                        "versions": ["1.0.0", "1.0.1", "1.1.0"],
+                        "latest": "1.1.0",
+                        "release": "1.1.0"
                     }
                 ]))
                 .expect_calls(1)
                 .and()
                 // Mock 3: JAR request for version 1.0.0
                 .on_event("maven_artifact_request")
-                .and_event_data_contains("path", "1.0.0/mylib-1.0.0.jar")
+                .and_event_data_contains("extension", "jar")
+                .and_event_data_contains("version", "1.0.0")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_http_response",
+                        "type": "send_maven_artifact",
                         "status": 200,
+                        "content_type": "application/java-archive",
                         "body": "mylib version 1.0.0"
                     }
                 ]))
@@ -277,11 +288,13 @@ For other artifacts, return 404.
                 .and()
                 // Mock 4: JAR request for version 1.0.1
                 .on_event("maven_artifact_request")
-                .and_event_data_contains("path", "1.0.1/mylib-1.0.1.jar")
+                .and_event_data_contains("extension", "jar")
+                .and_event_data_contains("version", "1.0.1")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_http_response",
+                        "type": "send_maven_artifact",
                         "status": 200,
+                        "content_type": "application/java-archive",
                         "body": "mylib version 1.0.1"
                     }
                 ]))
@@ -289,11 +302,13 @@ For other artifacts, return 404.
                 .and()
                 // Mock 5: JAR request for version 1.1.0
                 .on_event("maven_artifact_request")
-                .and_event_data_contains("path", "1.1.0/mylib-1.1.0.jar")
+                .and_event_data_contains("extension", "jar")
+                .and_event_data_contains("version", "1.1.0")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_http_response",
+                        "type": "send_maven_artifact",
                         "status": 200,
+                        "content_type": "application/java-archive",
                         "body": "mylib version 1.1.0"
                     }
                 ]))
@@ -383,38 +398,43 @@ Return 404 for other artifacts.
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: Main JAR request (no classifier)
+                // Mock 2: Sources JAR request (must come first to match before non-classifier JAR)
                 .on_event("maven_artifact_request")
-                .and_event_data_contains("path", "toolkit-2.0.0.jar")
+                .and_event_data_contains("extension", "jar")
+                .and_event_data_contains("classifier", "sources")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_http_response",
+                        "type": "send_maven_artifact",
                         "status": 200,
-                        "body": "Toolkit main code"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: Sources JAR request (-sources classifier)
-                .on_event("maven_artifact_request")
-                .and_event_data_contains("path", "toolkit-2.0.0-sources.jar")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_http_response",
-                        "status": 200,
+                        "content_type": "application/java-archive",
                         "body": "Toolkit source code"
                     }
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 4: Javadoc JAR request (-javadoc classifier)
+                // Mock 3: Javadoc JAR request
                 .on_event("maven_artifact_request")
-                .and_event_data_contains("path", "toolkit-2.0.0-javadoc.jar")
+                .and_event_data_contains("extension", "jar")
+                .and_event_data_contains("classifier", "javadoc")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_http_response",
+                        "type": "send_maven_artifact",
                         "status": 200,
+                        "content_type": "application/java-archive",
                         "body": "Toolkit documentation"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 4: Main JAR request (no classifier - matches last)
+                .on_event("maven_artifact_request")
+                .and_event_data_contains("extension", "jar")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_maven_artifact",
+                        "status": 200,
+                        "content_type": "application/java-archive",
+                        "body": "Toolkit main code"
                     }
                 ]))
                 .expect_calls(1)
