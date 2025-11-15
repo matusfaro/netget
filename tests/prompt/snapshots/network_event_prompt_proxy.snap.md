@@ -65,19 +65,7 @@ Example:
 {"type":"read_file","path":"schema.json","mode":"full"}
 ```
 
-## 2. read_base_stack_docs
-
-Get detailed documentation for a specific network protocol. Returns comprehensive information including description, startup parameters, examples, and keywords. Use this before starting a server to understand protocol configuration options.
-
-Parameters:
-- `protocol` (string, required): Protocol name (e.g., 'http', 'ssh', 'tor', 'dns'). Use lowercase.
-
-Example:
-```json
-{"type":"read_base_stack_docs","protocol":"tor"}
-```
-
-## 3. list_network_interfaces
+## 2. list_network_interfaces
 
 List all available network interfaces on the system. Returns interface names (e.g., eth0, en0, wlan0) and descriptions. Use this when starting DataLink or IP-layer protocols to discover which interfaces are available for packet capture or transmission.
 
@@ -87,7 +75,7 @@ Example:
 {"type":"list_network_interfaces"}
 ```
 
-## 4. list_models
+## 3. list_models
 
 List all available Ollama models that can be used for LLM generation. Returns a list of model names that can be used with the change_model action. Use this to discover which models are available before switching models.
 
@@ -97,7 +85,7 @@ Example:
 {"type":"list_models"}
 ```
 
-## 5. web_search
+## 4. web_search
 
 Fetch web pages or search the web. If query starts with http:// or https://, fetches that URL directly and returns the page content as text. Otherwise, searches DuckDuckGo and returns top 5 results. Use this to read RFCs, protocol specifications, or documentation. Note: This makes external network requests.
 
@@ -267,6 +255,30 @@ Example:
 {"type":"handle_https_connection_block","reason":"Destination blocked by security policy"}
 ```
 
+## 12. read_server_documentation
+
+Get detailed documentation for a specific server protocol. Returns comprehensive information including description, startup parameters, examples, and keywords. Use this before calling open_server to understand protocol configuration options. Available server protocols: HTTP, Proxy, TCP
+
+Parameters:
+- `protocol` (string, required): Server protocol name (e.g., 'HTTP', 'SSH', 'TOR', 'DNS'). Use uppercase.
+
+Example:
+```json
+{"type":"read_server_documentation","protocol":"HTTP"}
+```
+
+## 13. read_client_documentation
+
+Get detailed documentation for a specific client protocol. Returns comprehensive information including description, startup parameters, examples, and keywords. Use this before calling open_client to understand protocol configuration options. Available client protocols: HTTP, TCP
+
+Parameters:
+- `protocol` (string, required): Client protocol name (e.g., 'http', 'ssh', 'tor', 'dns'). Use lowercase.
+
+Example:
+```json
+{"type":"read_client_documentation","protocol":"http"}
+```
+
 
 ## Understanding Memory
 
@@ -378,9 +390,9 @@ requests_intercepted: 5
 
 ## System Capabilities
 
-- **Privileged ports (<1024)**: ✗ Not available — Warn user if they request port <1024
+- **Privileged ports (<1024)**: ✓ Available
 
-- **Raw socket access**: ✗ Not available — DataLink protocol unavailable
+- **Raw socket access**: ✓ Available
 
 
 Trigger: Event: Intercepted HTTP request:
