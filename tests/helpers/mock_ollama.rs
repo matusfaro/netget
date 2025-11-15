@@ -544,34 +544,24 @@ fn extract_context_from_prompt(prompt: &str) -> LlmContext {
         // Find the end of the capabilities section (usually ends with "DataLink protocol unavailable" or similar)
         if let Some(end_idx) = after_cap.find("DataLink protocol unavailable") {
             let after_system = &after_cap[end_idx + "DataLink protocol unavailable".len()..];
-            // Look for the first substantial non-empty line after the system section
-            let lines: Vec<&str> = after_system.lines().collect();
-            let mut found_instruction = false;
-            for line in lines.iter() {
-                let trimmed = line.trim();
-                if !trimmed.is_empty() && trimmed.len() > 5 {
-                    // Check if this is a "Trigger: User input:" or "User input:" line
-                    if let Some(after_marker) = trimmed.strip_prefix("Trigger: User input:") {
-                        let instruction = after_marker.trim().trim_matches('"').trim_matches('\'');
-                        debug!("🔧 Extracted instruction from Trigger: User input: '{}'", instruction);
-                        context.instruction = instruction.to_string();
-                        found_instruction = true;
-                        break;
-                    } else if let Some(after_marker) = trimmed.strip_prefix("User input:") {
-                        let instruction = after_marker.trim().trim_matches('"').trim_matches('\'');
-                        debug!("🔧 Extracted instruction from User input: '{}'", instruction);
-                        context.instruction = instruction.to_string();
-                        found_instruction = true;
-                        break;
-                    } else {
-                        debug!("🔧 Extracted instruction from end of prompt: '{}'", trimmed);
-                        context.instruction = trimmed.to_string();
-                        found_instruction = true;
-                        break;
-                    }
-                }
+            // Collect ALL non-empty lines after the system section as the instruction
+            // (not just the first line, to support multi-line instructions)
+            let instruction_text = after_system
+                .lines()
+                .skip_while(|line| line.trim().is_empty())
+                .collect::<Vec<&str>>()
+                .join("\n")
+                .trim()
+                .to_string();
+
+            if !instruction_text.is_empty() {
+                debug!("🔧 Extracted instruction from end of prompt (first 200 chars): '{}'",
+                    &instruction_text[..instruction_text.len().min(200)]);
+                context.instruction = instruction_text;
+                true
+            } else {
+                false
             }
-            found_instruction
         } else {
             false
         }
