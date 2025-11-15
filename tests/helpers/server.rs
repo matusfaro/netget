@@ -28,6 +28,9 @@ pub struct NetGetServer {
     /// IMPORTANT: Must NOT have underscore prefix - field must be kept alive for entire test duration
     #[allow(dead_code)]
     mock_temp_file: Option<tempfile::TempPath>,
+    /// Abort handles for background reader tasks
+    stdout_reader_handle: tokio::task::JoinHandle<()>,
+    stderr_reader_handle: tokio::task::JoinHandle<()>,
 }
 
 impl NetGetServer {
@@ -40,6 +43,8 @@ impl NetGetServer {
         mock_ollama_server: Option<super::mock_ollama::MockOllamaServer>,
         mock_config: Option<MockLlmConfig>,
         mock_temp_file: Option<tempfile::TempPath>,
+        stdout_reader_handle: tokio::task::JoinHandle<()>,
+        stderr_reader_handle: tokio::task::JoinHandle<()>,
     ) -> Self {
         Self {
             child,
@@ -49,6 +54,8 @@ impl NetGetServer {
             mock_ollama_server,
             mock_config,
             mock_temp_file,
+            stdout_reader_handle,
+            stderr_reader_handle,
         }
     }
 
@@ -71,14 +78,29 @@ impl NetGetServer {
             self.child.wait().await
         };
 
-        match tokio::time::timeout(Duration::from_secs(5), shutdown).await {
+        let result = match tokio::time::timeout(Duration::from_secs(5), shutdown).await {
             Ok(Ok(_)) => Ok(()),
             _ => {
                 // Force kill if graceful shutdown failed
                 self.child.kill().await?;
                 Ok(())
             }
-        }
+        };
+
+        // Abort background reader tasks to prevent hanging
+        self.stdout_reader_handle.abort();
+        self.stderr_reader_handle.abort();
+
+        // Wait briefly for tasks to abort
+        let _ = tokio::time::timeout(
+            Duration::from_millis(100),
+            async {
+                let _ = (&mut self.stdout_reader_handle).await;
+                let _ = (&mut self.stderr_reader_handle).await;
+            }
+        ).await;
+
+        result
     }
 
     /// Check if the server is still running
@@ -275,6 +297,10 @@ impl NetGetServer {
 
 impl Drop for NetGetServer {
     fn drop(&mut self) {
+        // Abort background reader tasks to prevent hanging
+        self.stdout_reader_handle.abort();
+        self.stderr_reader_handle.abort();
+
         if let Some(ref mock_config) = self.mock_config {
             // Check if verify was called
             if !mock_config.is_verified() {
@@ -327,16 +353,22 @@ pub async fn start_netget_server(config: ServerConfig) -> E2EResult<NetGetServer
         .into());
     }
 
-    let server = instance.servers.into_iter().next().unwrap();
+    // Use ManuallyDrop to prevent Drop from running when we move fields out
+    let mut instance = std::mem::ManuallyDrop::new(instance);
+    let server = instance.servers.drain(..).next().unwrap();
 
+    // SAFETY: We're manually managing the lifecycle. The fields are moved to NetGetServer
+    // which has its own Drop implementation that will clean them up.
     Ok(NetGetServer::new(
-        instance.child,
+        unsafe { std::ptr::read(&instance.child) },
         server.port,
         server.stack,
-        instance.output_lines,
-        instance.mock_ollama_server,
-        instance.mock_config,
-        instance.mock_temp_file,
+        instance.output_lines.clone(),
+        unsafe { std::ptr::read(&instance.mock_ollama_server) },
+        unsafe { std::ptr::read(&instance.mock_config) },
+        unsafe { std::ptr::read(&instance.mock_temp_file) },
+        unsafe { std::ptr::read(&instance.stdout_reader_handle) },
+        unsafe { std::ptr::read(&instance.stderr_reader_handle) },
     ))
 }
 

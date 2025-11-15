@@ -10,12 +10,12 @@ mod telnet_client_tests {
     use std::time::Duration;
 
     /// Test Telnet client connection to a Telnet server with mocks
-    /// LLM calls: 4 (server startup, client startup, connection, data received)
+    /// LLM calls: 4 (server startup, client startup, connection, greeting sent)
     #[tokio::test]
     async fn test_telnet_client_connect_to_server() -> E2EResult<()> {
         // Start a Telnet server with mocks
         let server_config = NetGetConfig::new(
-            "Listen on port {AVAILABLE_PORT} via Telnet. When client connects, send 'Welcome!\r\n' prompt."
+            "Listen on port {AVAILABLE_PORT} via Telnet. When you receive a greeting, respond with 'Welcome!\r\n'."
         )
         .with_mock(|mock| {
             mock
@@ -27,17 +27,18 @@ mod telnet_client_tests {
                         "type": "open_server",
                         "port": 0,
                         "base_stack": "Telnet",
-                        "instruction": "Send welcome prompt on connection"
+                        "instruction": "Send welcome when client sends greeting"
                     }
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock: Client connected event
-                .on_event("telnet_connection_received")
+                // Mock: Client sent greeting message
+                .on_event("telnet_message_received")
+                .and_event_data_contains("message", "hello")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_text",
-                        "text": "Welcome!\r\n"
+                        "type": "send_telnet_line",
+                        "line": "Welcome!"
                     }
                 ]))
                 .expect_calls(1)
@@ -48,9 +49,9 @@ mod telnet_client_tests {
 
         tokio::time::sleep(Duration::from_millis(500)).await;
 
-        // Start Telnet client with mocks
+        // Start Telnet client with mocks - client sends greeting first to trigger server response
         let client_config = NetGetConfig::new(format!(
-            "Connect to 127.0.0.1:{} via Telnet. Wait for welcome message.",
+            "Connect to 127.0.0.1:{} via Telnet. Send 'hello' as greeting, then wait for server response.",
             server.port
         ))
         .with_mock(|mock| {
@@ -63,16 +64,17 @@ mod telnet_client_tests {
                         "type": "open_client",
                         "remote_addr": format!("127.0.0.1:{}", server.port),
                         "protocol": "Telnet",
-                        "instruction": "Wait for welcome message"
+                        "instruction": "Send greeting and wait for response"
                     }
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock: Connection established
+                // Mock: Connection established - send greeting
                 .on_event("telnet_connected")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "wait_for_more"
+                        "type": "send_command",
+                        "command": "hello"
                     }
                 ]))
                 .expect_calls(1)
@@ -127,11 +129,12 @@ mod telnet_client_tests {
                 .expect_calls(1)
                 .and()
                 // Mock: Text received from client
-                .on_event("telnet_data_received")
+                .on_event("telnet_message_received")
+                .and_event_data_contains("message", "hello")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_text",
-                        "text": "hello\r\n"
+                        "type": "send_telnet_line",
+                        "line": "hello"
                     }
                 ]))
                 .expect_calls(1)
