@@ -8,10 +8,12 @@ mod e2e_cassandra {
     use crate::helpers::{start_netget_server, E2EResult, NetGetConfig, with_cassandra_timeout};
     use std::time::Duration;
     use tokio::time::sleep;
+    use std::num::NonZeroUsize;
 
     // Import Scylla types from their module paths
     use scylla::client::session::Session;
     use scylla::client::session_builder::SessionBuilder;
+    use scylla::client::PoolSize;
 
     /// Test basic Cassandra connection and OPTIONS
     #[tokio::test]
@@ -37,23 +39,23 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: OPTIONS frame during connection (connection pool creates 2 connections)
+                    // Mock 2: OPTIONS frame during connection (Scylla client creates multiple connections for topology discovery)
                     .on_event("cassandra_options")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_supported"
                         }
                     ]))
-                    .expect_calls(2)
+                    .expect_calls(10)
                     .and()
-                    // Mock 3: STARTUP frame to complete connection (2 connections)
+                    // Mock 3: STARTUP frame to complete connection (multiple connections)
                     .on_event("cassandra_startup")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_ready"
                         }
                     ]))
-                    .expect_calls(2)
+                    .expect_calls(10)
                     .and()
             });
 
@@ -69,6 +71,7 @@ mod e2e_cassandra {
         let session: Session = with_cassandra_timeout(
             SessionBuilder::new()
                 .known_node(&uri)
+                .pool_size(PoolSize::PerHost(NonZeroUsize::new(1).unwrap()))
                 .build()
         )
         .await
@@ -114,23 +117,23 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: OPTIONS frame during connection (connection pool creates 2 connections)
+                    // Mock 2: OPTIONS frame during connection (Scylla client creates multiple connections for topology discovery)
                     .on_event("cassandra_options")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_supported"
                         }
                     ]))
-                    .expect_calls(2)
+                    .expect_calls(10)
                     .and()
-                    // Mock 3: STARTUP frame to complete connection (2 connections)
+                    // Mock 3: STARTUP frame to complete connection (multiple connections)
                     .on_event("cassandra_startup")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_ready"
                         }
                     ]))
-                    .expect_calls(2)
+                    .expect_calls(10)
                     .and()
                     // Mock 4: Actual user query (specific match first)
                     .on_event("cassandra_query_received")
@@ -176,6 +179,7 @@ mod e2e_cassandra {
         let session: Session = with_cassandra_timeout(
             SessionBuilder::new()
                 .known_node(&uri)
+                .pool_size(PoolSize::PerHost(NonZeroUsize::new(1).unwrap()))
                 .build()
         )
         .await
@@ -239,23 +243,23 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: OPTIONS frame during connection (connection pool creates 2 connections)
+                    // Mock 2: OPTIONS frame during connection (Scylla client creates multiple connections for topology discovery)
                     .on_event("cassandra_options")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_supported"
                         }
                     ]))
-                    .expect_calls(2)
+                    .expect_calls(10)
                     .and()
-                    // Mock 3: STARTUP frame to complete connection (2 connections)
+                    // Mock 3: STARTUP frame to complete connection (multiple connections)
                     .on_event("cassandra_startup")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_ready"
                         }
                     ]))
-                    .expect_calls(2)
+                    .expect_calls(10)
                     .and()
                     // Mock 4: Error query received (specific match first)
                     .on_event("cassandra_query_received")
@@ -294,6 +298,7 @@ mod e2e_cassandra {
         let session: Session = with_cassandra_timeout(
             SessionBuilder::new()
                 .known_node(&uri)
+                .pool_size(PoolSize::PerHost(NonZeroUsize::new(1).unwrap()))
                 .build()
         )
         .await
@@ -349,23 +354,23 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: OPTIONS frame during connection (connection pool creates 2 connections)
+                    // Mock 2: OPTIONS frame during connection (Scylla client creates multiple connections for topology discovery)
                     .on_event("cassandra_options")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_supported"
                         }
                     ]))
-                    .expect_calls(2)
+                    .expect_calls(10)
                     .and()
-                    // Mock 3: STARTUP frame to complete connection (2 connections)
+                    // Mock 3: STARTUP frame to complete connection (multiple connections)
                     .on_event("cassandra_startup")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_ready"
                         }
                     ]))
-                    .expect_calls(2)
+                    .expect_calls(10)
                     .and()
                     // Mock 4: First query (count - specific match)
                     .on_event("cassandra_query_received")
@@ -425,6 +430,7 @@ mod e2e_cassandra {
         let session: Session = with_cassandra_timeout(
             SessionBuilder::new()
                 .known_node(&uri)
+                .pool_size(PoolSize::PerHost(NonZeroUsize::new(1).unwrap()))
                 .build()
         )
         .await
@@ -496,23 +502,23 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: OPTIONS frame during connection (3 clients * 2 connections each = 6 total)
+                    // Mock 2: OPTIONS frame during connection (3 concurrent clients × ~7 connections each)
                     .on_event("cassandra_options")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_supported"
                         }
                     ]))
-                    .expect_calls(6)
+                    .expect_calls(30)
                     .and()
-                    // Mock 3: STARTUP frame to complete connection (3 clients * 2 connections each = 6 total)
+                    // Mock 3: STARTUP frame to complete connection (3 concurrent clients × multiple connections)
                     .on_event("cassandra_startup")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_ready"
                         }
                     ]))
-                    .expect_calls(6)
+                    .expect_calls(30)
                     .and()
                     // Mock 4: Actual queries (will be called 3 times for concurrent connections - specific match first)
                     .on_event("cassandra_query_received")
@@ -530,7 +536,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(3)
                     .and()
-                    // Mock 5: Catch-all for system queries (up to 20 for 6 connections)
+                    // Mock 5: Catch-all for system queries (3 clients)
                     .on_event("cassandra_query_received")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -539,7 +545,7 @@ mod e2e_cassandra {
                             "rows": []
                         }
                     ]))
-                    .expect_calls(20)
+                    .expect_calls(10)
                     .and()
             });
 
@@ -560,6 +566,7 @@ mod e2e_cassandra {
                 let session: Session = with_cassandra_timeout(
                     SessionBuilder::new()
                         .known_node(&uri_clone)
+                        .pool_size(PoolSize::PerHost(NonZeroUsize::new(1).unwrap()))
                         .build()
                 )
                 .await
@@ -623,23 +630,23 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: OPTIONS frame during connection (connection pool creates 2 connections)
+                    // Mock 2: OPTIONS frame during connection (Scylla client creates multiple connections for topology discovery)
                     .on_event("cassandra_options")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_supported"
                         }
                     ]))
-                    .expect_calls(2)
+                    .expect_calls(10)
                     .and()
-                    // Mock 3: STARTUP frame to complete connection (2 connections)
+                    // Mock 3: STARTUP frame to complete connection (multiple connections)
                     .on_event("cassandra_startup")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_ready"
                         }
                     ]))
-                    .expect_calls(2)
+                    .expect_calls(10)
                     .and()
                     // Mock 4: PREPARE received
                     .on_event("cassandra_prepare_received")
@@ -696,6 +703,7 @@ mod e2e_cassandra {
         let session: Session = with_cassandra_timeout(
             SessionBuilder::new()
                 .known_node(&uri)
+                .pool_size(PoolSize::PerHost(NonZeroUsize::new(1).unwrap()))
                 .build()
         )
         .await
@@ -768,23 +776,23 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: OPTIONS frame during connection (connection pool creates 2 connections)
+                    // Mock 2: OPTIONS frame during connection (Scylla client creates multiple connections for topology discovery)
                     .on_event("cassandra_options")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_supported"
                         }
                     ]))
-                    .expect_calls(2)
+                    .expect_calls(10)
                     .and()
-                    // Mock 3: STARTUP frame to complete connection (2 connections)
+                    // Mock 3: STARTUP frame to complete connection (multiple connections)
                     .on_event("cassandra_startup")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_ready"
                         }
                     ]))
-                    .expect_calls(2)
+                    .expect_calls(10)
                     .and()
                     // Mock 4: First PREPARE
                     .on_event("cassandra_prepare_received")
@@ -852,6 +860,7 @@ mod e2e_cassandra {
 
         let session: Session = SessionBuilder::new()
             .known_node(&uri)
+            .pool_size(PoolSize::PerHost(NonZeroUsize::new(1).unwrap()))
             .build()
             .await
             .expect("Failed to connect");
@@ -949,23 +958,23 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: OPTIONS frame during connection (connection pool creates 2 connections)
+                    // Mock 2: OPTIONS frame during connection (Scylla client creates multiple connections for topology discovery)
                     .on_event("cassandra_options")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_supported"
                         }
                     ]))
-                    .expect_calls(2)
+                    .expect_calls(10)
                     .and()
-                    // Mock 3: STARTUP frame to complete connection (2 connections)
+                    // Mock 3: STARTUP frame to complete connection (multiple connections)
                     .on_event("cassandra_startup")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_ready"
                         }
                     ]))
-                    .expect_calls(2)
+                    .expect_calls(10)
                     .and()
                     // Mock 4: PREPARE received
                     .on_event("cassandra_prepare_received")
@@ -1013,6 +1022,7 @@ mod e2e_cassandra {
 
         let session: Session = SessionBuilder::new()
             .known_node(&uri)
+            .pool_size(PoolSize::PerHost(NonZeroUsize::new(1).unwrap()))
             .build()
             .await
             .expect("Failed to connect");
