@@ -6,7 +6,7 @@ use super::mock_config::{MockLlmConfig, MockResponse, MockRule, SerializedMatche
 use super::mock_matcher::{
     AnyMatcher, CombinedMatcher, EventDataMatcher, EventTypeMatcher,
     InstructionContainsMatcher, InstructionRegexMatcher, IterationMatcher, MessageRoleMatcher,
-    MockMatcher,
+    MockMatcher, PromptContainsMatcher,
 };
 
 /// Builder for creating mock LLM configurations
@@ -55,6 +55,20 @@ impl MockLlmBuilder {
         MockRuleBuilder::new(
             self,
             Box::new(InstructionRegexMatcher::new(regex)),
+            serialized,
+        )
+    }
+
+    /// Match on full prompt substring
+    pub fn on_prompt_containing(self, substring: impl Into<String>) -> MockRuleBuilder {
+        let substring = substring.into();
+        let mut serialized = SerializedMatcher::new();
+        // Store in prompt_contains field
+        serialized.prompt_contains.push(substring.clone());
+
+        MockRuleBuilder::new(
+            self,
+            Box::new(PromptContainsMatcher::new(substring)),
             serialized,
         )
     }
@@ -124,6 +138,21 @@ impl MockRuleBuilder {
 
         // Add to serialized
         self.serialized_matcher.instruction_contains.push(substring);
+
+        self
+    }
+
+    /// Add full prompt matching criteria
+    pub fn and_prompt_containing(mut self, substring: impl Into<String>) -> Self {
+        let substring = substring.into();
+
+        // Add to combined matcher
+        let mut combined = CombinedMatcher::new(vec![self.matcher]);
+        combined.add(Box::new(PromptContainsMatcher::new(substring.clone())));
+        self.matcher = Box::new(combined);
+
+        // Add to serialized
+        self.serialized_matcher.prompt_contains.push(substring);
 
         self
     }
