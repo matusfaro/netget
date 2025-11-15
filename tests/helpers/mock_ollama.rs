@@ -614,11 +614,12 @@ fn extract_context_from_prompt(prompt: &str) -> LlmContext {
             }
         } else {
             debug!("🔧 Instruction extraction: no markers found, trying fallback");
-            // Fallback: Look for the FIRST substantial line that looks like a command
+            // Fallback: Look for the LAST substantial line that looks like a command (iterate in reverse)
             // Common patterns: "listen", "start", "create", "open", "run", "spawn"
+            // User commands appear at the END of the prompt, so we search backwards
             let lines: Vec<&str> = prompt.lines().collect();
             let mut found = false;
-            for line in lines.iter() {
+            for line in lines.iter().rev() {
                 let trimmed = line.trim();
                 let lower = trimmed.to_lowercase();
                 if !trimmed.is_empty()
