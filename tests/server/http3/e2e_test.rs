@@ -13,38 +13,60 @@ use tokio::time::timeout;
 /// Test HTTP3 echo server - send data and receive it back
 #[tokio::test]
 async fn test_http3_echo() -> E2EResult<()> {
-    let prompt = "listen on port {AVAILABLE_PORT} via http3. When you receive data on any stream, echo it back exactly as received.";
-
-    let server_config = NetGetConfig::new(prompt.to_string())
+    let config = NetGetConfig::new("Start an HTTP3 server on port 0")
+        .with_log_level("debug")
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
-                .on_instruction_containing("listen on port")
-                .and_instruction_containing("http3")
+                .on_instruction_containing("HTTP3 server")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
                         "port": 0,
                         "base_stack": "HTTP3",
-                        "instruction": "Echo back data received on streams"
+                        "instruction": "Echo back all data received"
                     }
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: Server receives stream data
-                .on_event("http3_stream_data_received")
+                // Mock 2: Connection opened - just acknowledge
+                .on_event("http3_connection_opened")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "message",
+                        "text": "Connection opened"
+                    }
+                ]))
+                .and()
+                // Mock 3: Stream opened - just acknowledge
+                .on_event("http3_stream_opened")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "message",
+                        "text": "Stream opened"
+                    }
+                ]))
+                .and()
+                // Mock 4: LLM receives data and echoes it back
+                .on_event("http3_data_received")
+                .and_event_data_contains("data", "Hello")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_http3_data",
-                        "data": "48656c6c6f2c20485454502f3321"  // "Hello, HTTP/3!" in hex
+                        "data": "Hello, HTTP3!"
                     }
                 ]))
                 .expect_calls(1)
                 .and()
         });
 
-    let mut server = helpers::start_netget_server(server_config).await?;
+    let server = helpers::start_netget_server(config).await?;
     let port = server.port;
+
+    println!("✓ HTTP3 server started on port {}", port);
+
+    // Install rustls crypto provider for client
+    let _ = rustls::crypto::ring::default_provider().install_default();
 
     // Configure HTTP3 client to skip certificate validation (self-signed cert)
     let mut roots = rustls::RootCertStore::empty();
@@ -71,16 +93,16 @@ async fn test_http3_echo() -> E2EResult<()> {
     endpoint.set_default_client_config(client_config);
 
     // Connect to HTTP3 server
-    let connecting = endpoint.connect(format!("127.0.0.1:{}", port).parse().unwrap(), "localhost")
+    let connecting = endpoint
+        .connect(format!("127.0.0.1:{}", port).parse().unwrap(), "localhost")
         .expect("Failed to start connection");
 
-    let connection = timeout(
-        Duration::from_secs(10),
-        connecting,
-    )
-    .await
-    .expect("Connection timeout")
-    .expect("Failed to complete connection");
+    let connection = timeout(Duration::from_secs(10), connecting)
+        .await
+        .expect("Connection timeout")
+        .expect("Failed to complete connection");
+
+    println!("✓ Connected to HTTP3 server");
 
     // Open bidirectional stream
     let (mut send, mut recv) = timeout(Duration::from_secs(10), connection.open_bi())
@@ -95,14 +117,22 @@ async fn test_http3_echo() -> E2EResult<()> {
         .expect("Failed to send data");
     send.finish().expect("Failed to finish stream");
 
-    // Read echo response
-    let response = timeout(Duration::from_secs(10), recv.read_to_end(1024))
+    println!("✓ Sent data to HTTP3 server");
+
+    // Read response from LLM
+    let response = timeout(Duration::from_secs(5), recv.read_to_end(1024))
         .await
         .expect("Read timeout")
         .expect("Failed to read response");
 
+    println!("✓ Received response: {} bytes", response.len());
+
     // Verify echo
-    assert_eq!(response, test_data, "Expected echo of sent data");
+    assert_eq!(
+        response,
+        test_data.to_vec(),
+        "Expected echo of sent data"
+    );
 
     // Cleanup
     connection.close(0u32.into(), b"done");
@@ -119,14 +149,12 @@ async fn test_http3_echo() -> E2EResult<()> {
 /// Test HTTP3 custom response - send command and receive specific response
 #[tokio::test]
 async fn test_http3_custom_response() -> E2EResult<()> {
-    let prompt = "listen on port {AVAILABLE_PORT} via http3. When you receive 'PING' on a stream, respond with 'PONG' and close the stream.";
-
-    let server_config = NetGetConfig::new(prompt.to_string())
+    let config = NetGetConfig::new("Start an HTTP3 server on port 0")
+        .with_log_level("debug")
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
-                .on_instruction_containing("listen on port")
-                .and_instruction_containing("http3")
+                .on_instruction_containing("HTTP3 server")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -137,24 +165,47 @@ async fn test_http3_custom_response() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: Server receives PING
-                .on_event("http3_stream_data_received")
+                // Mock 2: Connection opened - just acknowledge
+                .on_event("http3_connection_opened")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "message",
+                        "text": "Connection opened"
+                    }
+                ]))
+                .and()
+                // Mock 3: Stream opened - just acknowledge
+                .on_event("http3_stream_opened")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "message",
+                        "text": "Stream opened"
+                    }
+                ]))
+                .and()
+                // Mock 4: LLM receives PING and responds with PONG
+                .on_event("http3_data_received")
                 .and_event_data_contains("data", "PING")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_http3_data",
-                        "data": "504f4e47"  // "PONG" in hex
+                        "data": "PONG"
                     },
                     {
-                        "type": "close_stream"
+                        "type": "close_this_stream"
                     }
                 ]))
                 .expect_calls(1)
                 .and()
         });
 
-    let mut server = helpers::start_netget_server(server_config).await?;
+    let server = helpers::start_netget_server(config).await?;
     let port = server.port;
+
+    println!("✓ HTTP3 server started on port {}", port);
+
+    // Install rustls crypto provider for client
+    let _ = rustls::crypto::ring::default_provider().install_default();
 
     // Configure HTTP3 client (same as above)
     let mut roots = rustls::RootCertStore::empty();
@@ -180,16 +231,16 @@ async fn test_http3_custom_response() -> E2EResult<()> {
     endpoint.set_default_client_config(client_config);
 
     // Connect to HTTP3 server
-    let connecting = endpoint.connect(format!("127.0.0.1:{}", port).parse().unwrap(), "localhost")
+    let connecting = endpoint
+        .connect(format!("127.0.0.1:{}", port).parse().unwrap(), "localhost")
         .expect("Failed to start connection");
 
-    let connection = timeout(
-        Duration::from_secs(10),
-        connecting,
-    )
-    .await
-    .expect("Connection timeout")
-    .expect("Failed to complete connection");
+    let connection = timeout(Duration::from_secs(10), connecting)
+        .await
+        .expect("Connection timeout")
+        .expect("Failed to complete connection");
+
+    println!("✓ Connected to HTTP3 server");
 
     // Open bidirectional stream
     let (mut send, mut recv) = timeout(Duration::from_secs(10), connection.open_bi())
@@ -201,17 +252,21 @@ async fn test_http3_custom_response() -> E2EResult<()> {
     send.write_all(b"PING").await.expect("Failed to send data");
     send.finish().expect("Failed to finish stream");
 
-    // Read PONG response
-    let response = timeout(Duration::from_secs(10), recv.read_to_end(1024))
+    println!("✓ Sent PING to HTTP3 server");
+
+    // Read PONG response from LLM
+    let response = timeout(Duration::from_secs(5), recv.read_to_end(1024))
         .await
         .expect("Read timeout")
         .expect("Failed to read response");
 
     let response_str = String::from_utf8_lossy(&response);
-    assert!(
-        response_str.contains("PONG"),
-        "Expected response to contain 'PONG', got: {}",
-        response_str
+    println!("✓ Received response: {}", response_str);
+
+    assert_eq!(
+        response_str,
+        "PONG",
+        "Expected PONG response"
     );
 
     // Cleanup
@@ -229,14 +284,12 @@ async fn test_http3_custom_response() -> E2EResult<()> {
 /// Test HTTP3 multiple streams - verify stream multiplexing
 #[tokio::test]
 async fn test_http3_multiple_streams() -> E2EResult<()> {
-    let prompt = "listen on port {AVAILABLE_PORT} via http3. Echo back all data received on each stream. Handle multiple streams concurrently.";
-
-    let server_config = NetGetConfig::new(prompt.to_string())
+    let config = NetGetConfig::new("Start an HTTP3 server on port 0")
+        .with_log_level("debug")
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
-                .on_instruction_containing("listen on port")
-                .and_instruction_containing("http3")
+                .on_instruction_containing("HTTP3 server")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -247,20 +300,48 @@ async fn test_http3_multiple_streams() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2-4: Three stream data received events (echo back Stream 0, Stream 1, Stream 2)
-                .on_event("http3_stream_data_received")
+                // Mock 2: Connection opened - just acknowledge
+                .on_event("http3_connection_opened")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_http3_data",
-                        "data": "Stream"  // Will echo back the stream data
+                        "type": "message",
+                        "text": "Connection opened"
                     }
                 ]))
+                .and()
+                // Mock 3: Stream opened - just acknowledge
+                .on_event("http3_stream_opened")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "message",
+                        "text": "Stream opened"
+                    }
+                ]))
+                .and()
+                // Mock 4: LLM receives data and echoes it back (matches any stream)
+                .on_event("http3_data_received")
+                .and_event_data_contains("data", "Stream")
+                .respond_with_actions_from_event(|event_data| {
+                    // Extract the data from the event and echo it back
+                    let data = event_data["data"].as_str().unwrap_or("Stream");
+                    serde_json::json!([
+                        {
+                            "type": "send_http3_data",
+                            "data": data
+                        }
+                    ])
+                })
                 .expect_calls(3)  // Expecting 3 streams
                 .and()
         });
 
-    let mut server = helpers::start_netget_server(server_config).await?;
+    let server = helpers::start_netget_server(config).await?;
     let port = server.port;
+
+    println!("✓ HTTP3 server started on port {}", port);
+
+    // Install rustls crypto provider for client
+    let _ = rustls::crypto::ring::default_provider().install_default();
 
     // Configure HTTP3 client
     let mut roots = rustls::RootCertStore::empty();
@@ -286,16 +367,16 @@ async fn test_http3_multiple_streams() -> E2EResult<()> {
     endpoint.set_default_client_config(client_config);
 
     // Connect to HTTP3 server
-    let connecting = endpoint.connect(format!("127.0.0.1:{}", port).parse().unwrap(), "localhost")
+    let connecting = endpoint
+        .connect(format!("127.0.0.1:{}", port).parse().unwrap(), "localhost")
         .expect("Failed to start connection");
 
-    let connection = timeout(
-        Duration::from_secs(10),
-        connecting,
-    )
-    .await
-    .expect("Connection timeout")
-    .expect("Failed to complete connection");
+    let connection = timeout(Duration::from_secs(10), connecting)
+        .await
+        .expect("Connection timeout")
+        .expect("Failed to complete connection");
+
+    println!("✓ Connected to HTTP3 server");
 
     // Open 3 streams concurrently
     let mut handles = vec![];
@@ -310,18 +391,24 @@ async fn test_http3_multiple_streams() -> E2EResult<()> {
                 .expect("Failed to send");
             send.finish().expect("Failed to finish");
 
-            let response = recv.read_to_end(1024).await.expect("Failed to read");
+            // Read response from LLM
+            let response = timeout(Duration::from_secs(5), recv.read_to_end(1024))
+                .await
+                .expect("Read timeout")
+                .expect("Failed to read");
             (test_data, String::from_utf8_lossy(&response).to_string())
         });
         handles.push(handle);
     }
 
-    // Wait for all streams to complete
+    // Wait for all streams to complete and verify echoes
     for handle in handles {
         let (sent, received) = timeout(Duration::from_secs(15), handle)
             .await
             .expect("Stream timeout")
             .expect("Stream task failed");
+
+        println!("✓ Stream test - sent: {}, received: {}", sent, received);
         assert_eq!(sent, received, "Expected echo on stream");
     }
 

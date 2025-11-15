@@ -355,25 +355,18 @@ impl Http3Server {
                         console_trace!(status_tx, "HTTP3 data (hex): {}", hex_str);
                     }
 
-                    // Handle data in separate task
-                    let llm_clone = llm_client.clone();
-                    let state_clone = app_state.clone();
-                    let status_clone = status_tx.clone();
-                    let streams_clone = streams.clone();
-                    let protocol_clone = protocol.clone();
-                    tokio::spawn(async move {
-                        Self::handle_data_with_actions(
-                            stream_id,
-                            server_id,
-                            data,
-                            llm_clone,
-                            state_clone,
-                            status_clone,
-                            streams_clone,
-                            protocol_clone,
-                        )
-                        .await;
-                    });
+                    // Handle data directly (await to ensure processing completes before stream removal)
+                    Self::handle_data_with_actions(
+                        stream_id,
+                        server_id,
+                        data,
+                        llm_client.clone(),
+                        app_state.clone(),
+                        status_tx.clone(),
+                        streams.clone(),
+                        protocol.clone(),
+                    )
+                    .await;
                 }
                 Ok(None) => {
                     // Stream finished

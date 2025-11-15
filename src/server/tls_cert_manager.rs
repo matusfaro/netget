@@ -120,6 +120,10 @@ pub fn create_rustls_server_config(
     let key_der_owned = PrivateKeyDer::try_from(key_der_vec)
         .map_err(|e| anyhow::anyhow!("Failed to parse private key DER: {}", e))?;
 
+    // Install the default crypto provider (ring) for rustls if not already installed
+    // This is required for ServerConfig::builder() to work
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     // Build rustls ServerConfig
     let config = ServerConfig::builder()
         .with_no_client_auth()
