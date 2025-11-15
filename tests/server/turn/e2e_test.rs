@@ -3,10 +3,17 @@
 //! These tests verify TURN server functionality by starting NetGet with TURN prompts
 //! and using raw UDP sockets to send TURN allocate/refresh/permission requests.
 //!
-//! KNOWN ISSUE: UDP packets are not being received by the TURN server in test environment.
-//! The mock for server startup works, but the event mock for turn_allocate_request never
-//! triggers because the UDP recv_from loop is not receiving packets. This affects all
-//! UDP-based protocols (TURN, STUN, etc.). Root cause under investigation.
+//! ROOT CAUSE IDENTIFIED: Tests use std::net::UdpSocket (sync/blocking) which
+//! cannot properly communicate with tokio::net::UdpSocket (async) in the test environment.
+//! The BOOTP tests work because they use tokio::net::UdpSocket (async).
+//!
+//! SOLUTION: Convert all TURN tests to use `tokio::net::UdpSocket` with async/await:
+//! - Change import: `use tokio::net::UdpSocket;`
+//! - Add `.await` to: `bind()`, `send_to()`, `recv_from()`
+//! - Replace `set_read_timeout()` with `tokio::time::timeout()`
+//! - Update match arms: `Ok((len, from))` → `Ok(Ok((len, from)))` + `Err(_)` for timeout
+//!
+//! See BOOTP tests (tests/server/bootp/e2e_test.rs) for working async UDP examples.
 
 #![cfg(feature = "turn")]
 
