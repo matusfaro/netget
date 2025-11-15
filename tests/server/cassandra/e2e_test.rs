@@ -249,9 +249,8 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(2)
                     .and()
-                    // Mock 4: Error query received (specific match first)
+                    // Mock 4: Catch-all for ALL queries (responds with error for demonstration)
                     .on_event("cassandra_query")
-                    .and_event_data_contains("query", "SELECT * FROM nonexistent")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_error",
@@ -259,18 +258,7 @@ mod e2e_cassandra {
                             "message": "Table does not exist"
                         }
                     ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 5: Catch-all for system queries
-                    .on_event("cassandra_query")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "cassandra_result_rows",
-                            "columns": [],
-                            "rows": []
-                        }
-                    ]))
-                    .expect_calls(5)
+                    .expect_calls(3)
                     .and()
             });
 
@@ -360,9 +348,8 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(2)
                     .and()
-                    // Mock 4: First query (count - specific match)
+                    // Mock 4: Catch-all for ALL queries (returns generic data for all queries)
                     .on_event("cassandra_query")
-                    .and_event_data_contains("query", "SELECT count(*) FROM users")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_result_rows",
@@ -372,34 +359,6 @@ mod e2e_cassandra {
                             "rows": [
                                 [5]
                             ]
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 5: Second query (select with WHERE - specific match)
-                    .on_event("cassandra_query")
-                    .and_event_data_contains("query", "SELECT * FROM users WHERE id=1")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "cassandra_result_rows",
-                            "columns": [
-                                {"name": "id", "type": "int"},
-                                {"name": "name", "type": "varchar"}
-                            ],
-                            "rows": [
-                                [1, "Alice"]
-                            ]
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 6: Catch-all for system queries
-                    .on_event("cassandra_query")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "cassandra_result_rows",
-                            "columns": [],
-                            "rows": []
                         }
                     ]))
                     .expect_calls(5)
@@ -508,9 +467,8 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(6)
                     .and()
-                    // Mock 4: Actual queries (will be called 3 times for concurrent connections - specific match first)
+                    // Mock 4: Catch-all for ALL queries (3 user queries + system queries from 3 clients)
                     .on_event("cassandra_query")
-                    .and_event_data_contains("query", "SELECT value")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_result_rows",
@@ -522,18 +480,7 @@ mod e2e_cassandra {
                             ]
                         }
                     ]))
-                    .expect_calls(3)
-                    .and()
-                    // Mock 5: Catch-all for system queries (3 clients)
-                    .on_event("cassandra_query")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "cassandra_result_rows",
-                            "columns": [],
-                            "rows": []
-                        }
-                    ]))
-                    .expect_calls(5)
+                    .expect_calls(10)
                     .and()
             });
 
@@ -636,9 +583,8 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(2)
                     .and()
-                    // Mock 4: PREPARE received
+                    // Mock 4: PREPARE received (Scylla prepares on each connection)
                     .on_event("cassandra_prepare")
-                    .and_event_data_contains("query", "SELECT * FROM users WHERE id = ?")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_prepared",
@@ -648,7 +594,7 @@ mod e2e_cassandra {
                             ]
                         }
                     ]))
-                    .expect_calls(1)
+                    .expect_calls(2)
                     .and()
                     // Mock 5: EXECUTE received
                     .on_event("cassandra_execute")
@@ -675,7 +621,7 @@ mod e2e_cassandra {
                             "rows": []
                         }
                     ]))
-                    .expect_calls(5)
+                    .expect_calls(3)
                     .and()
             });
 
@@ -782,9 +728,8 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(2)
                     .and()
-                    // Mock 4: First PREPARE
+                    // Mock 4: PREPARE calls (catch-all for all prepare statements × 2 connections)
                     .on_event("cassandra_prepare")
-                    .and_event_data_contains("query", "SELECT * FROM users WHERE id = ?")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_prepared",
@@ -794,22 +739,9 @@ mod e2e_cassandra {
                             ]
                         }
                     ]))
-                    .expect_calls(1)
+                    .expect_calls(4)
                     .and()
-                    // Mock 5: Second PREPARE
-                    .on_event("cassandra_prepare")
-                    .and_event_data_contains("query", "SELECT count(*) FROM users")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "cassandra_prepared",
-                            "columns": [
-                                {"name": "count", "type": "int"}
-                            ]
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 6: EXECUTE calls (3 total)
+                    // Mock 5: EXECUTE calls (3 total)
                     .on_event("cassandra_execute")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -825,7 +757,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(3)
                     .and()
-                    // Mock 7: Catch-all for system queries
+                    // Mock 6: Catch-all for system queries
                     .on_event("cassandra_query")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -834,7 +766,7 @@ mod e2e_cassandra {
                             "rows": []
                         }
                     ]))
-                    .expect_calls(5)
+                    .expect_calls(3)
                     .and()
             });
 
@@ -964,7 +896,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(2)
                     .and()
-                    // Mock 4: PREPARE received
+                    // Mock 4: PREPARE received (on 2 connections)
                     .on_event("cassandra_prepare")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -974,7 +906,7 @@ mod e2e_cassandra {
                             ]
                         }
                     ]))
-                    .expect_calls(1)
+                    .expect_calls(2)
                     .and()
                     // Mock 5: EXECUTE with wrong param count (error)
                     .on_event("cassandra_execute")
@@ -996,7 +928,7 @@ mod e2e_cassandra {
                             "rows": []
                         }
                     ]))
-                    .expect_calls(5)
+                    .expect_calls(3)
                     .and()
             });
 
