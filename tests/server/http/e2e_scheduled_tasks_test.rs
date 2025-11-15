@@ -6,8 +6,6 @@
 #![cfg(feature = "http")]
 
 use super::super::super::helpers::{self, E2EResult, NetGetConfig};
-use std::time::Duration;
-use tokio::time::sleep;
 
 #[tokio::test]
 async fn test_http_with_recurring_task() -> E2EResult<()> {
@@ -85,9 +83,17 @@ Initialize the heartbeat counter to 0 when the server starts."#;
         server.stack
     );
 
-    // Wait for task to be created and execute a few times
-    println!("Waiting for scheduled task to execute...");
-    sleep(Duration::from_secs(7)).await; // Allow ~3 executions (at 0s, 2s, 4s, 6s)
+    // Wait for task to be created
+    println!("Waiting for task creation...");
+    server.wait_for_log("[TASK] Created recurring task 'heartbeat_counter'", 10).await?;
+
+    // Wait for task to execute at least 2 times (interval is 2s)
+    println!("Waiting for task executions...");
+    server.wait_for_log_count("[TASK] Executing task 'heartbeat_counter'", 2, 10).await?;
+
+    // Wait for completions to ensure LLM calls finish
+    println!("Waiting for task completions...");
+    server.wait_for_log_count("[TASK] Task 'heartbeat_counter' completed successfully", 2, 5).await?;
 
     // VALIDATION: Check that heartbeat count has increased
     let client = reqwest::Client::new();
@@ -120,12 +126,6 @@ Initialize the heartbeat counter to 0 when the server starts."#;
     );
 
     println!("✓ Recurring task executed and counter incremented");
-
-    // Wait for spawned task executions to complete their LLM calls
-    // (tasks are spawned with tokio::spawn and run asynchronously)
-    // Use a short delay to avoid allowing tasks to execute multiple times
-    println!("Waiting for spawned tasks to complete...");
-    sleep(Duration::from_millis(500)).await;
 
     server.verify_mocks().await?;
     server.stop().await?;
@@ -210,18 +210,22 @@ Initialize the ready flag to false when the server starts."#;
         server.stack
     );
 
+    // Wait for task to be created
+    println!("Waiting for task creation...");
+    server.wait_for_log("[TASK] Created one-shot task 'set_ready_flag'", 10).await?;
+
+    // Wait for task to execute (delay is 3s)
+    println!("Waiting for task execution...");
+    server.wait_for_log("[TASK] Executing task 'set_ready_flag'", 10).await?;
+
+    // Wait for completion to ensure LLM call finishes
+    println!("Waiting for task completion...");
+    server.wait_for_log("[TASK] Task 'set_ready_flag' completed successfully", 5).await?;
+
+    // VALIDATION: Check status endpoint responds correctly
     let client = reqwest::Client::new();
     let url = format!("http://127.0.0.1:{}/status", server.port);
 
-    // Note: With static mocks, we can't validate state changes before/after task execution
-    // The mock returns "ready" for all calls since it's stateless
-    // Real LLM would maintain state and return different responses
-
-    // Wait for one-shot task to execute
-    println!("Waiting for one-shot task to be created...");
-    sleep(Duration::from_secs(2)).await;
-
-    // VALIDATION: Check status endpoint responds correctly
     println!("Checking status endpoint...");
     let response = client.get(&url).send().await?;
     assert_eq!(response.status(), 200);
@@ -236,12 +240,6 @@ Initialize the ready flag to false when the server starts."#;
     );
 
     println!("✓ One-shot task executed and flag was set");
-
-    // Wait for spawned task executions to complete their LLM calls
-    // (tasks are spawned with tokio::spawn and run asynchronously)
-    // Use a short delay to avoid allowing tasks to execute multiple times
-    println!("Waiting for spawned tasks to complete...");
-    sleep(Duration::from_millis(500)).await;
 
     server.verify_mocks().await?;
     server.stop().await?;
@@ -350,17 +348,25 @@ Initialize metrics counter to 0 and initialized flag to false."#;
         server.stack
     );
 
-    let client = reqwest::Client::new();
+    // Wait for both tasks to be created
+    println!("Waiting for recurring task creation...");
+    server.wait_for_log("[TASK] Created recurring task 'update_metrics'", 10).await?;
+    println!("Waiting for one-shot task creation...");
+    server.wait_for_log("[TASK] Created one-shot task 'delayed_init'", 10).await?;
 
-    // Note: With static mocks, we can't validate state changes across time
-    // Mocks return fixed responses regardless of task execution
-    // Real LLM would track state and return different values before/after task execution
+    // Wait for at least one execution of the recurring task
+    println!("Waiting for recurring task execution...");
+    server.wait_for_log("[TASK] Executing task 'update_metrics'", 10).await?;
+    server.wait_for_log("[TASK] Task 'update_metrics' completed successfully", 5).await?;
 
-    // Wait for tasks to be created
-    println!("Waiting for tasks to be created...");
-    sleep(Duration::from_secs(2)).await;
+    // Wait for one-shot task to execute (delay is 3s)
+    println!("Waiting for one-shot task execution...");
+    server.wait_for_log("[TASK] Executing task 'delayed_init'", 10).await?;
+    server.wait_for_log("[TASK] Task 'delayed_init' completed successfully", 5).await?;
 
     // VALIDATION: Check endpoints respond correctly
+    let client = reqwest::Client::new();
+
     println!("Checking metrics endpoint...");
     let url_metrics = format!("http://127.0.0.1:{}/metrics", server.port);
     let response = client.get(&url_metrics).send().await?;
@@ -397,12 +403,6 @@ Initialize metrics counter to 0 and initialized flag to false."#;
     );
 
     println!("✓ Server-attached tasks executed successfully");
-
-    // Wait for spawned task executions to complete their LLM calls
-    // (tasks are spawned with tokio::spawn and run asynchronously)
-    // Use a short delay to avoid allowing tasks to execute multiple times
-    println!("Waiting for spawned tasks to complete...");
-    sleep(Duration::from_millis(500)).await;
 
     server.verify_mocks().await?;
     server.stop().await?;
