@@ -344,6 +344,18 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
     let output_lines = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let output_lines_clone = output_lines.clone();
 
+    // IMPORTANT: Start stderr reader BEFORE waiting for startup
+    // If netget crashes with an error on stderr during startup, we need to capture it!
+    let output_lines_stderr = output_lines.clone();
+    let stderr_reader_handle = tokio::spawn(async move {
+        let mut stderr_reader = BufReader::new(stderr).lines();
+        while let Some(line) = stderr_reader.next_line().await.ok().flatten() {
+            println!("[STDERR] {}", line);
+            output_lines_stderr.lock().await.push(line);
+        }
+        println!("[DEBUG] stderr reader task finished");
+    });
+
     // Wait for startup and parse both servers and clients
     let (servers, clients) =
         wait_for_netget_startup_with_capture(&mut reader, output_lines_clone.clone()).await?;
@@ -356,17 +368,6 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
             output_lines_clone.lock().await.push(line);
         }
         println!("[DEBUG] stdout reader task finished");
-    });
-
-    // Also spawn a task to read stderr and capture it
-    let output_lines_stderr = output_lines.clone();
-    let stderr_reader_handle = tokio::spawn(async move {
-        let mut stderr_reader = BufReader::new(stderr).lines();
-        while let Some(line) = stderr_reader.next_line().await.ok().flatten() {
-            println!("[STDERR] {}", line);
-            output_lines_stderr.lock().await.push(line);
-        }
-        println!("[DEBUG] stderr reader task finished");
     });
 
     Ok(NetGetInstance {
