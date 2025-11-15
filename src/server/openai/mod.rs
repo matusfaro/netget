@@ -14,17 +14,20 @@ use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
-use hyper::{Method, Request, Response, StatusCode};
+use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use serde_json::{json, Value};
+use serde_json::json;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info};
 
+use crate::llm::action_helper::call_llm;
+use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
+use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
-use crate::server::openai::actions::OpenAiProtocol;
+use crate::server::openai::actions::{OpenAiProtocol, OPENAI_REQUEST_EVENT};
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error, console_info, console_trace};
+use crate::{console_error, console_info};
 
 /// OpenAI-compatible API server that delegates to LLM/Ollama
 pub struct OpenAiServer;
@@ -145,125 +148,29 @@ impl OpenAiServer {
     }
 }
 
-/// Handle a single OpenAI API request
+/// Handle a single OpenAI API request with LLM actions
 async fn handle_openai_request(
     req: Request<Incoming>,
-    _connection_id: ConnectionId,
+    connection_id: ConnectionId,
     llm_client: OllamaClient,
     app_state: Arc<AppState>,
     status_tx: mpsc::UnboundedSender<String>,
-    _protocol: Arc<OpenAiProtocol>,
-    _server_id: crate::state::ServerId,
+    protocol: Arc<OpenAiProtocol>,
+    server_id: crate::state::ServerId,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    let method = req.method().clone();
+    let method = req.method().to_string();
     let uri = req.uri().clone();
-    let path = uri.path();
+    let path = uri.path().to_string();
 
     debug!("OpenAI API request: {} {}", method, path);
     let _ = status_tx.send(format!("[DEBUG] OpenAI API {} {}", method, path));
 
-    // Route the request
-    match (method.clone(), path) {
-        (Method::GET, "/v1/models") => handle_models_list(llm_client, status_tx).await,
-        (Method::POST, "/v1/chat/completions") => {
-            handle_chat_completions(req, llm_client, app_state, status_tx).await
-        }
-        _ => {
-            console_debug!(
-                status_tx,
-                "OpenAI API: Unknown endpoint {} {}",
-                method,
-                path
-            );
-            Ok(Response::builder()
-                .status(StatusCode::NOT_FOUND)
-                .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(
-                    json!({
-                        "error": {
-                            "message": "Not Found",
-                            "type": "invalid_request_error",
-                            "code": "not_found"
-                        }
-                    })
-                    .to_string(),
-                )))
-                .unwrap())
-        }
-    }
-}
-
-/// Handle GET /v1/models - List available models from Ollama
-async fn handle_models_list(
-    llm_client: OllamaClient,
-    status_tx: mpsc::UnboundedSender<String>,
-) -> Result<Response<Full<Bytes>>, Infallible> {
-    debug!("OpenAI API: Listing models from Ollama");
-    let _ = status_tx.send("[DEBUG] OpenAI API: Listing models from Ollama".to_string());
-
-    // Get models from Ollama
-    match llm_client.list_models().await {
-        Ok(models) => {
-            trace!("Ollama models: {:?}", models);
-            let _ = status_tx.send(format!("[TRACE] Found {} models from Ollama", models.len()));
-
-            // Convert to OpenAI format
-            let openai_models: Vec<Value> = models
-                .iter()
-                .map(|model| {
-                    json!({
-                        "id": model,
-                        "object": "model",
-                        "created": 1686935002, // Static timestamp
-                        "owned_by": "ollama"
-                    })
-                })
-                .collect();
-
-            let response = json!({
-                "object": "list",
-                "data": openai_models
-            });
-
-            Ok(Response::builder()
-                .status(StatusCode::OK)
-                .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(response.to_string())))
-                .unwrap())
-        }
-        Err(e) => {
-            console_error!(status_tx, "Failed to list Ollama models: {}", e);
-
-            Ok(Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(
-                    json!({
-                        "error": {
-                            "message": format!("Failed to list models: {}", e),
-                            "type": "server_error",
-                            "code": "internal_error"
-                        }
-                    })
-                    .to_string(),
-                )))
-                .unwrap())
-        }
-    }
-}
-
-/// Handle POST /v1/chat/completions - Generate chat completion
-async fn handle_chat_completions(
-    req: Request<Incoming>,
-    llm_client: OllamaClient,
-    app_state: Arc<AppState>,
-    status_tx: mpsc::UnboundedSender<String>,
-) -> Result<Response<Full<Bytes>>, Infallible> {
     // Read request body
     let body_bytes = match req.collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
-            console_error!(status_tx, "Failed to read request body: {}", e);
+            error!("Failed to read request body: {}", e);
+            let _ = status_tx.send(format!("[ERROR] Failed to read request body: {}", e));
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .header("Content-Type", "application/json")
@@ -280,99 +187,43 @@ async fn handle_chat_completions(
         }
     };
 
-    // Parse JSON
-    let request_json: Value = match serde_json::from_slice(&body_bytes) {
-        Ok(json) => json,
-        Err(e) => {
-            console_error!(status_tx, "Failed to parse JSON: {}", e);
-            return Ok(Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(
-                    json!({
-                        "error": {
-                            "message": "Invalid JSON",
-                            "type": "invalid_request_error"
-                        }
-                    })
-                    .to_string(),
-                )))
-                .unwrap());
-        }
-    };
+    let body_text = String::from_utf8_lossy(&body_bytes);
 
-    console_trace!(
-        status_tx,
-        "Chat completion request: {}",
-        serde_json::to_string_pretty(&request_json).unwrap_or_default()
+    // Create OpenAI request event
+    let event = Event::new(
+        &OPENAI_REQUEST_EVENT,
+        json!({
+            "method": method,
+            "path": path,
+            "body": if body_text.is_empty() { "" } else { body_text.as_ref() }
+        }),
     );
 
-    // Extract model and messages
-    let model = match request_json.get("model").and_then(|v| v.as_str()) {
-        Some(m) => m.to_string(),
-        None => app_state
-            .get_ollama_model()
-            .await
-            .unwrap_or_else(|| "qwen2.5-coder:32b".to_string()),
-    };
+    // Call LLM to generate OpenAI response
+    match call_llm(
+        &llm_client,
+        &app_state,
+        server_id,
+        Some(connection_id),
+        &event,
+        protocol.as_ref(),
+    )
+    .await
+    {
+        Ok(execution_result) => {
+            debug!("LLM OpenAI response received");
 
-    let messages = request_json
-        .get("messages")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
+            // Display messages
+            for msg in execution_result.messages {
+                let _ = status_tx.send(msg);
+            }
 
-    console_debug!(
-        status_tx,
-        "Chat completion: model={}, {} messages",
-        model,
-        messages.len()
-    );
-
-    // Convert messages to Ollama format and generate response
-    match generate_chat_response(&llm_client, &model, messages, &request_json, &status_tx).await {
-        Ok(response_text) => {
-            // Build OpenAI-compatible response
-            let created = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
-            let completion_id = format!("chatcmpl-{}", created);
-
-            let response = json!({
-                "id": completion_id,
-                "object": "chat.completion",
-                "created": created,
-                "model": model,
-                "choices": [{
-                    "index": 0,
-                    "message": {
-                        "role": "assistant",
-                        "content": response_text
-                    },
-                    "finish_reason": "stop"
-                }],
-                "usage": {
-                    "prompt_tokens": 0,
-                    "completion_tokens": 0,
-                    "total_tokens": 0
-                }
-            });
-
-            trace!(
-                "Chat completion response: {}",
-                serde_json::to_string_pretty(&response).unwrap_or_default()
-            );
-            let _ = status_tx.send("[TRACE] Chat completion response generated".to_string());
-
-            Ok(Response::builder()
-                .status(StatusCode::OK)
-                .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(response.to_string())))
-                .unwrap())
+            // Build HTTP response from action results
+            build_openai_response(execution_result.protocol_results, &method, &path, &status_tx)
         }
         Err(e) => {
-            console_error!(status_tx, "Failed to generate chat response: {}", e);
+            error!("LLM call failed: {}", e);
+            let _ = status_tx.send(format!("[ERROR] LLM call failed: {}", e));
 
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -380,7 +231,7 @@ async fn handle_chat_completions(
                 .body(Full::new(Bytes::from(
                     json!({
                         "error": {
-                            "message": format!("Failed to generate response: {}", e),
+                            "message": format!("Internal error: {}", e),
                             "type": "server_error",
                             "code": "internal_error"
                         }
@@ -392,38 +243,69 @@ async fn handle_chat_completions(
     }
 }
 
-/// Generate chat response using Ollama
-async fn generate_chat_response(
-    llm_client: &OllamaClient,
-    model: &str,
-    messages: Vec<Value>,
-    request_json: &Value,
+/// Build HTTP response from OpenAI action results
+fn build_openai_response(
+    protocol_results: Vec<ActionResult>,
+    method: &str,
+    path: &str,
     status_tx: &mpsc::UnboundedSender<String>,
-) -> anyhow::Result<String> {
-    // Extract parameters
-    let temperature = request_json.get("temperature").and_then(|v| v.as_f64());
-    let max_tokens = request_json.get("max_tokens").and_then(|v| v.as_u64());
-    let top_p = request_json.get("top_p").and_then(|v| v.as_f64());
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    // Find openai_response result
+    for result in &protocol_results {
+        if let ActionResult::Custom { name, data } = result {
+            if name == "openai_response" {
+                // Extract response data
+                let status = data
+                    .get("status")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(200) as u16;
 
-    debug!(
-        "Generating response with model={}, temp={:?}, max_tokens={:?}, top_p={:?}",
-        model, temperature, max_tokens, top_p
-    );
-    let _ = status_tx.send(format!("[DEBUG] Generating response with model={}", model));
+                let headers = data
+                    .get("headers")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
 
-    // Build prompt from messages
-    let mut prompt = String::new();
-    for msg in messages {
-        let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("user");
-        let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
-        prompt.push_str(&format!("{}: {}\n", role, content));
+                let body = data.get("body").and_then(|v| v.as_str()).unwrap_or("{}");
+
+                let _ = status_tx.send(format!("[DEBUG] OpenAI {} {} -> {}", method, path, status));
+
+                // Build response
+                let mut response_builder = Response::builder().status(status);
+
+                // Add headers
+                for header in headers {
+                    if let (Some(name_val), Some(value_val)) = (
+                        header.get(0).and_then(|v| v.as_str()),
+                        header.get(1).and_then(|v| v.as_str()),
+                    ) {
+                        response_builder = response_builder.header(name_val, value_val);
+                    }
+                }
+
+                return Ok(response_builder
+                    .body(Full::new(Bytes::from(body.to_string())))
+                    .unwrap());
+            }
+        }
     }
-    prompt.push_str("assistant: ");
 
-    debug!("Calling Ollama with prompt length: {}", prompt.len());
+    // No openai_response action found - return error
+    error!("No openai_response action in LLM results");
+    let _ = status_tx.send("[ERROR] LLM did not return openai_response action".to_string());
 
-    // Call Ollama
-    let response = llm_client.generate(model, &prompt).await?;
-
-    Ok(response)
+    Ok(Response::builder()
+        .status(StatusCode::INTERNAL_SERVER_ERROR)
+        .header("Content-Type", "application/json")
+        .body(Full::new(Bytes::from(
+            json!({
+                "error": {
+                    "message": "LLM did not return valid response",
+                    "type": "server_error",
+                    "code": "internal_error"
+                }
+            })
+            .to_string(),
+        )))
+        .unwrap())
 }

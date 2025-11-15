@@ -1334,7 +1334,7 @@ pub fn read_base_stack_docs_action() -> ActionDefinition {
 pub fn read_server_documentation_action() -> ActionDefinition {
     // Get all available server protocols from registry
     let registry = crate::protocol::server_registry::registry();
-    let all_protocols: Vec<String> = registry
+    let mut all_protocols: Vec<String> = registry
         .all_protocols()
         .into_iter()
         .filter(|(_, protocol)| {
@@ -1345,6 +1345,9 @@ pub fn read_server_documentation_action() -> ActionDefinition {
         })
         .map(|(name, _)| name)
         .collect();
+
+    // Sort protocols alphabetically for deterministic output
+    all_protocols.sort();
 
     let protocol_list = if all_protocols.is_empty() {
         "No server protocols available".to_string()
@@ -1375,7 +1378,10 @@ pub fn read_server_documentation_action() -> ActionDefinition {
 pub fn read_client_documentation_action() -> ActionDefinition {
     // Get all available client protocols from registry
     let client_registry = &crate::protocol::client_registry::CLIENT_REGISTRY;
-    let all_protocols: Vec<String> = client_registry.list_protocols();
+    let mut all_protocols: Vec<String> = client_registry.list_protocols();
+
+    // Sort protocols alphabetically for deterministic output
+    all_protocols.sort();
 
     let protocol_list = if all_protocols.is_empty() {
         "No client protocols available".to_string()

@@ -156,8 +156,25 @@ impl MockOllamaServer {
             }
         });
 
-        // Give server a moment to start
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        // Wait for server to be ready by making HTTP requests
+        let max_retries = 20; // 20 retries * 50ms = 1 second max
+        let mut ready = false;
+        for attempt in 1..=max_retries {
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+            // Try to make an HTTP request to the server (GET /api/version)
+            let client = reqwest::Client::new();
+            let url = format!("http://127.0.0.1:{}/api/version", port);
+            if client.get(&url).timeout(tokio::time::Duration::from_millis(100)).send().await.is_ok() {
+                ready = true;
+                info!("🔧 Mock Ollama server ready after {}ms", attempt * 50);
+                break;
+            }
+        }
+
+        if !ready {
+            return Err(format!("Mock Ollama server failed to become ready on port {}", port).into());
+        }
 
         info!("✅ Mock Ollama server ready on port {}", port);
 
@@ -340,10 +357,11 @@ async fn handle_generate(
     // DEBUG: Log extracted context
     eprintln!("🔍🔍🔍 Mock generate context extracted:");
     eprintln!("  event_type: {:?}", context.event_type);
-    eprintln!("  instruction: {}", &context.instruction[..context.instruction.len().min(200)]);
+    eprintln!("  instruction: {}", &context.instruction[..context.instruction.floor_char_boundary(context.instruction.len().min(200))]);
     eprintln!("  prompt length: {} chars", request.prompt.len());
-    eprintln!("  prompt first 500 chars: {}", &request.prompt[..request.prompt.len().min(500)]);
-    eprintln!("  prompt last 500 chars: {}", &request.prompt[request.prompt.len().saturating_sub(500)..]);
+    eprintln!("  prompt first 500 chars: {}", &request.prompt[..request.prompt.floor_char_boundary(request.prompt.len().min(500))]);
+    let preview_start = request.prompt.floor_char_boundary(request.prompt.len().saturating_sub(500));
+    eprintln!("  prompt last 500 chars: {}", &request.prompt[preview_start..]);
 
     // Get mock response
     let config = state.config.lock().await;
@@ -458,24 +476,47 @@ fn extract_context(request: &OllamaChatRequest) -> LlmContext {
         }
     } else {
         debug!("🔧 Instruction extraction: no 'instruction:' line found, trying fallback");
-        // Fallback: Look for the last substantial non-empty line (likely the user message)
+        // Fallback: Collect all contiguous user input lines at the end of the prompt
         let lines: Vec<&str> = prompt.lines().collect();
+        let mut user_lines = Vec::new();
+
         for line in lines.iter().rev() {
             let trimmed = line.trim();
-            // Skip empty lines, very short lines, and lines that look like headers or system text
-            if !trimmed.is_empty()
-                && trimmed.len() > 5
-                && !trimmed.starts_with('#')
-                && !trimmed.starts_with("You ")
-                && !trimmed.starts_with("Your ")
-                && !trimmed.starts_with("Please ")
-                && !trimmed.contains("```")
-                && !trimmed.starts_with("Use `/")
+
+            // Stop at empty lines or system text headers
+            if trimmed.is_empty()
+                || trimmed.starts_with('#')
+                || trimmed.starts_with("## ")
+                || trimmed.starts_with("You are")
+                || trimmed.starts_with("Your task")
+                || trimmed.starts_with("Please ")
+                || trimmed.contains("```")
+                || trimmed.starts_with("Use `/")
+                || trimmed.contains("System Capabilities")
+                || trimmed.contains("Current State")
+                || trimmed.contains("No servers currently running")
+                || trimmed.contains("Privileged ports")
+                || trimmed.contains("Raw socket access")
             {
-                debug!("🔧 Extracted instruction (fallback): '{}'", trimmed);
-                context.instruction = trimmed.to_string();
-                break;
+                // If we've already collected some lines, stop here
+                if !user_lines.is_empty() {
+                    break;
+                }
+                // Otherwise keep looking
+                continue;
             }
+
+            // This looks like a user input line, add it
+            user_lines.push(trimmed);
+        }
+
+        // Reverse to get original order and join
+        if !user_lines.is_empty() {
+            user_lines.reverse();
+            let full_instruction = user_lines.join("\n");
+            debug!("🔧 Extracted instruction (fallback, {} lines): '{}'", user_lines.len(),
+                   &full_instruction[..full_instruction.len().min(200)]);
+            context.instruction = full_instruction;
         }
     }
 
@@ -516,12 +557,14 @@ fn extract_context_from_prompt(prompt: &str) -> LlmContext {
 
     // Try to extract event type from prompt
     // First look for "Event ID:" format (preferred for mock testing)
+    let mut is_event_prompt = false;
     if let Some(event_id_line) = prompt.lines().find(|line| line.contains("Event ID:")) {
         if let Some(event_id) = event_id_line.split("Event ID:").nth(1) {
             let event_id = event_id.trim();
             if !event_id.is_empty() {
                 debug!("🔧 Extracted event type from Event ID: '{}'", event_id);
                 context.event_type = Some(event_id.to_string());
+                is_event_prompt = true;
             }
         }
     } else if let Some(event_line) = prompt.lines().find(|line| line.contains("Event:")) {
@@ -531,22 +574,118 @@ fn extract_context_from_prompt(prompt: &str) -> LlmContext {
             if !event_type.is_empty() {
                 debug!("🔧 Extracted event type from Event: '{}'", event_type);
                 context.event_type = Some(event_type.to_string());
+                is_event_prompt = true;
             }
         }
     }
 
+    // Also detect event prompts by presence of "## Event-Specific Instructions"
+    // (task execution prompts don't have "Event ID:" but do have this section)
+    if !is_event_prompt && prompt.contains("## Event-Specific Instructions") {
+        is_event_prompt = true;
+        debug!("🔧 Detected event prompt from '## Event-Specific Instructions' section");
+    }
+
     // Try to extract instruction - look for patterns
-    // First, try to find the user input section at the end of the prompt
-    // User input typically appears after system capabilities or markers like "## System Capabilities"
-    let has_user_message = if let Some(cap_idx) = prompt.find("## System Capabilities").or_else(|| prompt.find("# Current State")) {
+    // PRIORITY 0: For event prompts, extract from "## Global Instructions" or "## Event-Specific Instructions"
+    let has_user_message = if is_event_prompt {
+        // For events, look for instruction sections in the system message
+        if let Some(global_inst_idx) = prompt.find("## Global Instructions") {
+            let after_header = &prompt[global_inst_idx + "## Global Instructions".len()..];
+            let lines: Vec<&str> = after_header.lines().collect();
+            let mut found = false;
+            for line in lines.iter() {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() && trimmed.len() > 5 && !trimmed.starts_with('#') {
+                    debug!("🔧 Extracted instruction from Global Instructions: '{}'", trimmed);
+                    context.instruction = trimmed.to_string();
+                    found = true;
+                    break;
+                }
+            }
+            found
+        } else if let Some(event_inst_idx) = prompt.find("## Event-Specific Instructions") {
+            let after_header = &prompt[event_inst_idx + "## Event-Specific Instructions".len()..];
+
+            // Find the end of this section (next ## header or "## Network Event Instructions")
+            let section_end = after_header.find("\n##")
+                .or_else(|| after_header.find("## Network Event Instructions"))
+                .unwrap_or(after_header.len());
+            let section = &after_header[..section_end];
+
+            // Collect all non-empty, non-header lines and join them
+            let mut instruction_parts = Vec::new();
+            for line in section.lines() {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                    instruction_parts.push(trimmed);
+                }
+            }
+
+            if !instruction_parts.is_empty() {
+                let combined = instruction_parts.join("\n");
+                debug!("🔧 Extracted instruction from Event-Specific Instructions: '{}'", combined);
+                context.instruction = combined;
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    }
+    // PRIORITY 1: User input appears at the END of the prompt (after system message)
+    // The conversation structure is: [system message]\n\n[user input]\n\n
+    // So we look for the last substantial line that looks like user input
+    // First try: Look after "# Current State" section and find the last substantial line
+    else if let Some(current_state_idx) = prompt.find("# Current State") {
+        let after_current_state = &prompt[current_state_idx..];
+
+        // Find lines after the last system capability
+        if let Some(last_cap_idx) = after_current_state.rfind("- **Raw socket access**")
+            .or_else(|| after_current_state.rfind("- **Privileged ports"))
+        {
+            let after_caps = &after_current_state[last_cap_idx..];
+
+            // Split into lines and find the first substantial non-empty line
+            let lines: Vec<&str> = after_caps.lines().collect();
+            let mut found_instruction = false;
+
+            // Search forward from the beginning to find the user input
+            for line in lines.iter() {
+                let trimmed = line.trim();
+                // Look for substantial lines that don't look like system text
+                if !trimmed.is_empty()
+                    && trimmed.len() > 5
+                    && !trimmed.starts_with('-')  // Not a bullet point
+                    && !trimmed.starts_with('#')  // Not a header
+                    && !trimmed.contains("**")    // Not bold formatting
+                    && !trimmed.starts_with("✓")  // Not a checkmark
+                    && !trimmed.starts_with("✗")  // Not an X mark
+                {
+                    debug!("🔧 Extracted instruction from end of prompt: '{}'", trimmed);
+                    context.instruction = trimmed.to_string();
+                    found_instruction = true;
+                    break;
+                }
+            }
+            found_instruction
+        } else {
+            false
+        }
+    }
+    // PRIORITY 2: Look for System Capabilities section (older format)
+    else if let Some(cap_idx) = prompt.find("## System Capabilities") {
         // Extract everything after the capabilities section
         let after_cap = &prompt[cap_idx..];
         // Find the end of the capabilities section (usually ends with "DataLink protocol unavailable" or similar)
         if let Some(end_idx) = after_cap.find("DataLink protocol unavailable") {
             let after_system = &after_cap[end_idx + "DataLink protocol unavailable".len()..];
-            // Look for the first substantial non-empty line after the system section
+            // Collect all user input lines from the end of the prompt
             let lines: Vec<&str> = after_system.lines().collect();
+            let mut user_lines = Vec::new();
             let mut found_instruction = false;
+
             for line in lines.iter() {
                 let trimmed = line.trim();
                 if !trimmed.is_empty() && trimmed.len() > 5 {
@@ -563,13 +702,26 @@ fn extract_context_from_prompt(prompt: &str) -> LlmContext {
                         context.instruction = instruction.to_string();
                         found_instruction = true;
                         break;
-                    } else {
-                        debug!("🔧 Extracted instruction from end of prompt: '{}'", trimmed);
-                        context.instruction = trimmed.to_string();
-                        found_instruction = true;
-                        break;
+                    } else if !trimmed.starts_with("## ")
+                        && !trimmed.starts_with("- **")
+                        && !trimmed.contains("System Capabilities")
+                        && !trimmed.contains("Current State")
+                        && !trimmed.contains("Privileged ports")
+                        && !trimmed.contains("Raw socket access")
+                    {
+                        // This looks like user input, collect it
+                        user_lines.push(trimmed);
                     }
                 }
+            }
+
+            // If we collected multiple lines, join them
+            if !found_instruction && !user_lines.is_empty() {
+                let full_instruction = user_lines.join("\n");
+                debug!("🔧 Extracted instruction from end of prompt ({} lines): '{}'",
+                       user_lines.len(), &full_instruction[..full_instruction.len().min(200)]);
+                context.instruction = full_instruction;
+                found_instruction = true;
             }
             found_instruction
         } else {
@@ -614,52 +766,51 @@ fn extract_context_from_prompt(prompt: &str) -> LlmContext {
             }
         } else {
             debug!("🔧 Instruction extraction: no markers found, trying fallback");
-            // Fallback: User input is typically at the END of the prompt (after all system instructions)
-            // Look for the LAST substantial non-empty line as the user input
+            // Fallback: Collect all contiguous user input lines at the end of the prompt
             let lines: Vec<&str> = prompt.lines().collect();
-            let mut found = false;
+            let mut user_lines = Vec::new();
 
-            // Search from the end backwards to find the user input
-            // Priority 1: Look for "listen" command (highest priority - main server command)
-            for line in lines.iter() {
+            // Search from the end backwards to collect user input
+            for line in lines.iter().rev() {
                 let trimmed = line.trim();
-                let lower = trimmed.to_lowercase();
-                if !trimmed.is_empty()
-                    && trimmed.len() > 5
-                    && !trimmed.starts_with('#')
-                    && lower.starts_with("listen")
-                {
-                    debug!("🔧 Extracted instruction (listen command): '{}'", trimmed);
-                    context.instruction = trimmed.to_string();
-                    found = true;
-                    break;
-                }
-            }
 
-            // Priority 2: If no action verb found, look for any substantial line
-            if !found {
-                for line in lines.iter().rev() {
-                    let trimmed = line.trim();
-                    if !trimmed.is_empty()
-                        && trimmed.len() > 5
-                        && !trimmed.starts_with('#')
-                        && !trimmed.starts_with('-')
-                        && !trimmed.starts_with("You ")
-                        && !trimmed.starts_with("Your ")
-                        && !trimmed.starts_with("Please ")
-                        && !trimmed.contains("```")
-                        && !trimmed.starts_with("Use `/")
-                        && !trimmed.ends_with(":")
-                        && !trimmed.contains("CRITICAL:")
-                        && !trimmed.contains("**")
-                        && !trimmed.to_lowercase().starts_with("initialize")
-                    {
-                        debug!("🔧 Extracted instruction from end of prompt: '{}'", trimmed);
-                        context.instruction = trimmed.to_string();
-                        found = true;
+                // Stop at empty lines or system text headers
+                if trimmed.is_empty()
+                    || trimmed.starts_with('#')
+                    || trimmed.starts_with("## ")
+                    || trimmed.starts_with("You are")
+                    || trimmed.starts_with("Your task")
+                    || trimmed.starts_with("Please ")
+                    || trimmed.contains("```")
+                    || trimmed.starts_with("Use `/")
+                    || trimmed.contains("System Capabilities")
+                    || trimmed.contains("Current State")
+                    || trimmed.contains("No servers currently running")
+                    || trimmed.contains("Privileged ports")
+                    || trimmed.contains("Raw socket access")
+                    || trimmed.starts_with("- **")
+                {
+                    // If we've already collected some lines, stop here
+                    if !user_lines.is_empty() {
                         break;
                     }
+                    // Otherwise keep looking
+                    continue;
                 }
+
+                // This looks like a user input line, add it
+                user_lines.push(trimmed);
+            }
+
+            // Reverse to get original order and join
+            let mut found = false;
+            if !user_lines.is_empty() {
+                user_lines.reverse();
+                let full_instruction = user_lines.join("\n");
+                debug!("🔧 Extracted instruction (fallback, {} lines): '{}'", user_lines.len(),
+                       &full_instruction[..full_instruction.len().min(200)]);
+                context.instruction = full_instruction;
+                found = true;
             }
 
             // If still not found, try the old forward search as last resort

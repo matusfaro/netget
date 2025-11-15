@@ -33,6 +33,7 @@ impl MdnsServer {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
+        startup_params: Option<crate::protocol::StartupParams>,
     ) -> Result<SocketAddr> {
         use mdns_sd::{ServiceDaemon, ServiceInfo};
 
@@ -46,12 +47,67 @@ impl MdnsServer {
             .map_err(|e| anyhow::anyhow!("Failed to create mDNS daemon: {}", e))?;
         info!("mDNS daemon created");
 
-        // Create mDNS server startup event
-        let event = Event::new(&MDNS_SERVER_STARTUP_EVENT, serde_json::json!({}));
+        // Track if we successfully processed startup_params
+        let mut used_startup_params = false;
 
-        // Get LLM's service registration instructions
-        // mDNS manually processes register_mdns_service actions using raw_actions
-        if let Ok(execution_result) = call_llm(
+        // If startup_params are provided, register services directly
+        if let Some(ref params) = startup_params {
+            // Check for multiple services array
+            if let Some(services) = params.get_optional_array("services") {
+                info!("Registering {} services from startup_params", services.len());
+                used_startup_params = true;
+                for service in services {
+                    if let Some(service_obj) = service.as_object() {
+                        let service_type = service_obj
+                            .get("service_type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("_http._tcp.local.");
+                        let service_name = service_obj
+                            .get("service_name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Service");
+                        let properties = service_obj
+                            .get("properties")
+                            .and_then(|v| v.as_object())
+                            .map(|obj| {
+                                obj.iter()
+                                    .filter_map(|(k, v)| v.as_str().map(|s| (k.as_str(), s)))
+                                    .collect::<Vec<_>>()
+                            })
+                            .unwrap_or_default();
+
+                        // Don't fail server startup if registration fails
+                        let _ = register_service(&mdns, service_type, service_name, 0, &properties, &status_tx);
+                    }
+                }
+            }
+            // Check for single service parameters
+            else if let Some(service_type) = params.get_optional_string("service_type") {
+                info!("Registering single service from startup_params");
+                used_startup_params = true;
+                let service_name = params.get_optional_string("service_name")
+                    .unwrap_or_else(|| "Service".to_string());
+                let properties = params.get_optional_object("properties")
+                    .map(|obj| {
+                        obj.iter()
+                            .filter_map(|(k, v)| v.as_str().map(|s| (k.as_str(), s)))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+
+                // Don't fail server startup if registration fails
+                let _ = register_service(&mdns, &service_type, &service_name, 0, &properties, &status_tx);
+            }
+        }
+
+        // Only call LLM if we didn't use startup_params
+        if !used_startup_params {
+            // Create mDNS server startup event
+            let event = Event::new(&MDNS_SERVER_STARTUP_EVENT, serde_json::json!({}));
+
+            // Get LLM's service registration instructions
+            // mDNS manually processes register_mdns_service actions using raw_actions
+            if let Ok(execution_result) = call_llm(
             &llm_client,
             &app_state,
             server_id,
@@ -137,6 +193,7 @@ impl MdnsServer {
                 }
             }
         }
+        } // Close if !used_startup_params
 
         // Keep daemon running
         tokio::spawn(async move {
@@ -170,6 +227,61 @@ fn get_local_ip() -> Option<String> {
     None
 }
 
+#[cfg(feature = "mdns")]
+fn register_service(
+    mdns: &mdns_sd::ServiceDaemon,
+    service_type: &str,
+    instance_name: &str,
+    port: u16,
+    properties: &[(&str, &str)],
+    status_tx: &mpsc::UnboundedSender<String>,
+) -> Result<()> {
+    use mdns_sd::ServiceInfo;
+
+    let local_ip = get_local_ip().unwrap_or_else(|| "127.0.0.1".to_string());
+    let host_name = format!("{}.local.", instance_name.replace(" ", "-"));
+
+    // Create ServiceInfo
+    match ServiceInfo::new(
+        service_type,
+        instance_name,
+        &host_name,
+        &local_ip,
+        port,
+        properties,
+    ) {
+        Ok(service_info) => {
+            // Register service
+            match mdns.register(service_info) {
+                Ok(_) => {
+                    info!(
+                        "mDNS registered service: {} ({}:{})",
+                        instance_name, local_ip, port
+                    );
+                    let _ = status_tx.send(format!(
+                        "[INFO] → mDNS registered service: {} ({}:{})",
+                        instance_name, local_ip, port
+                    ));
+                    Ok(())
+                }
+                Err(e) => {
+                    error!("Failed to register mDNS service: {}", e);
+                    let _ = status_tx.send(format!(
+                        "[ERROR] ✗ Failed to register mDNS service: {}",
+                        e
+                    ));
+                    Err(anyhow::anyhow!("Failed to register mDNS service: {}", e))
+                }
+            }
+        }
+        Err(e) => {
+            error!("Failed to create ServiceInfo: {}", e);
+            let _ = status_tx.send(format!("[ERROR] ✗ Failed to create ServiceInfo: {}", e));
+            Err(anyhow::anyhow!("Failed to create ServiceInfo: {}", e))
+        }
+    }
+}
+
 #[cfg(not(feature = "mdns"))]
 impl MdnsServer {
     pub async fn spawn_with_llm_actions(
@@ -178,6 +290,7 @@ impl MdnsServer {
         _app_state: Arc<AppState>,
         _status_tx: mpsc::UnboundedSender<String>,
         _server_id: crate::state::ServerId,
+        _startup_params: Option<crate::protocol::StartupParams>,
     ) -> Result<SocketAddr> {
         anyhow::bail!("mDNS feature not enabled")
     }

@@ -72,19 +72,7 @@ Example:
 {"type":"read_file","path":"schema.json","mode":"full"}
 ```
 
-## 2. read_base_stack_docs
-
-Get detailed documentation for a specific network protocol. Returns comprehensive information including description, startup parameters, examples, and keywords. Use this before starting a server to understand protocol configuration options.
-
-Parameters:
-- `protocol` (string, required): Protocol name (e.g., 'http', 'ssh', 'tor', 'dns'). Use lowercase.
-
-Example:
-```json
-{"type":"read_base_stack_docs","protocol":"tor"}
-```
-
-## 3. list_network_interfaces
+## 2. list_network_interfaces
 
 List all available network interfaces on the system. Returns interface names (e.g., eth0, en0, wlan0) and descriptions. Use this when starting DataLink or IP-layer protocols to discover which interfaces are available for packet capture or transmission.
 
@@ -94,7 +82,7 @@ Example:
 {"type":"list_network_interfaces"}
 ```
 
-## 4. list_models
+## 3. list_models
 
 List all available Ollama models that can be used for LLM generation. Returns a list of model names that can be used with the change_model action. Use this to discover which models are available before switching models.
 
@@ -104,7 +92,7 @@ Example:
 {"type":"list_models"}
 ```
 
-## 5. web_search
+## 4. web_search
 
 Fetch web pages or search the web. If query starts with http:// or https://, fetches that URL directly and returns the page content as text. Otherwise, searches DuckDuckGo and returns top 5 results. Use this to read RFCs, protocol specifications, or documentation. Note: This makes external network requests.
 
@@ -126,12 +114,21 @@ so you may include multiple actions in a single response.
 
 ## 0. open_server
 
-Start a new server. ⚠️ DISABLED: You must call read_base_stack_docs tool call first to enable this action. This tool provides detailed protocol documentation and startup parameters required for server configuration.
+Start a new server.
 
+Parameters:
+- `port` (number, required): Port number to listen on. Use 0 to automatically find an available port.
+- `base_stack` (string, required): Protocol stack to use. Choose the best stack for the task. Available: HTTP, Proxy, TCP
+- `send_first` (boolean): True if server sends data first (FTP, SMTP), false if it waits for client (HTTP)
+- `initial_memory` (string): Optional initial memory as a string. Use for storing persistent context across connections. Example: "user_count: 0"
+- `instruction` (string, required): Detailed instructions for handling network events
+- `startup_params` (object): Optional protocol-specific startup parameters. See protocol documentation for available parameters.
+- `scheduled_tasks` (array): Optional: Array of scheduled tasks to create with this server. Each task will be attached to the server and execute at specified intervals or delays. Tasks are automatically cleaned up when the server stops. Each task has: task_id, recurring (boolean), delay_secs (for one-shot or initial delay), interval_secs (for recurring), max_executions (optional), instruction, context (optional).
+- `event_handlers` (array): Optional: Array of event handlers to configure how events are processed. You can configure different handlers for different events. Each handler specifies an event_pattern (specific event ID or "*" for all events) and a handler type (script, static, or llm). Handlers are matched in order - first match wins.\n\nEach handler has:\n- event_pattern: Event ID to match (e.g., \"tcp_data_received\") or \"*\" for all events\n- handler: Object with:\n  - type: \"script\" (inline code), \"static\" (predefined actions), or \"llm\" (dynamic processing)\n  - For script: language (Python (Python 3.11.0), Node.js (v20.0.0), Go (go version go1.21.0), Perl (perl 5.38.0)), code (inline script)\n  - For static: actions (array of action objects)\n\nExample script handler: {\"event_pattern\": \"ssh_auth\", \"handler\": {\"type\": \"script\", \"language\": \"python\", \"code\": \"import json,sys;data=json.load(sys.stdin);print(json.dumps({'actions':[{'type':'send_data','data':'OK'}]}))\"}}\n\nExample static handler: {\"event_pattern\": \"*\", \"handler\": {\"type\": \"static\", \"actions\": [{\"type\": \"send_data\", \"data\": \"Welcome\"}]}}\n\nExample LLM handler: {\"event_pattern\": \"http_request\", \"handler\": {\"type\": \"llm\"}}
 
 Example:
 ```json
-{}
+{"type":"open_server","port":21,"base_stack":"tcp","send_first":true,"initial_memory":"login_count: 0\nfiles: data.txt,readme.md","instruction":"You are an FTP server. Respond to FTP commands like USER, PASS, LIST, RETR, QUIT with appropriate FTP response codes."}
 ```
 
 ## 1. close_server
@@ -158,12 +155,20 @@ Example:
 
 ## 3. open_client
 
-Connect to a remote server as a client. ⚠️ DISABLED: You must call read_base_stack_docs tool call first to enable this action. This tool provides detailed protocol documentation and startup parameters required for client configuration.
+Connect to a remote server as a client.
 
+Parameters:
+- `protocol` (string, required): Protocol to use for connection (e.g., 'tcp', 'http', 'redis', 'ssh')
+- `remote_addr` (string, required): Remote server address as 'hostname:port' or 'IP:port' (e.g., 'example.com:80', '192.168.1.1:6379', 'localhost:8080')
+- `instruction` (string, required): Detailed instructions for controlling the client (how to send data, interpret responses, make decisions)
+- `initial_memory` (string): Optional initial memory as a string. Use for storing persistent context. Example: "auth_token: abc123\nrequest_count: 0"
+- `startup_params` (object): Optional protocol-specific startup parameters. For example, HTTP clients may accept default headers or user agent settings.
+- `scheduled_tasks` (array): Optional: Array of scheduled tasks to create with this client. Each task will be attached to the client and execute at specified intervals or delays. Tasks are automatically cleaned up when the client disconnects.
+- `event_handlers` (array): Optional: Array of event handlers to configure how client events are processed. You can configure different handlers for different client events. Each handler specifies an event_pattern (specific event ID or "*" for all events) and a handler type (script, static, or llm). Handlers are matched in order - first match wins.\n\nEach handler has:\n- event_pattern: Event ID to match (e.g., \"http_response_received\") or \"*\" for all events\n- handler: Object with:\n  - type: \"script\" (inline code), \"static\" (predefined actions), or \"llm\" (dynamic processing)\n  - For script: language (Python (Python 3.11.0), Node.js (v20.0.0), Go (go version go1.21.0), Perl (perl 5.38.0)), code (inline script)\n  - For static: actions (array of action objects)\n\nExample script handler: {\"event_pattern\": \"redis_response_received\", \"handler\": {\"type\": \"script\", \"language\": \"python\", \"code\": \"import json,sys;data=json.load(sys.stdin);print(json.dumps({'actions':[{'type':'execute_redis_command','command':'PING'}]}))\"}}\n\nExample static handler: {\"event_pattern\": \"*\", \"handler\": {\"type\": \"static\", \"actions\": [{\"type\": \"send_http_request\", \"method\": \"GET\", \"path\": \"/\"}]}}
 
 Example:
 ```json
-{}
+{"type":"open_client","protocol":"http","remote_addr":"example.com:80","instruction":"Send a GET request to /api/status and log the response code."}
 ```
 
 ## 4. close_client
@@ -342,6 +347,30 @@ Parameters:
 Example:
 ```json
 {"type":"append_to_log","output_name":"access_logs","content":"127.0.0.1 - - [29/Oct/2025:12:34:56 +0000] \"GET /index.html HTTP/1.1\" 200 1234"}
+```
+
+## 18. read_server_documentation
+
+Get detailed documentation for a specific server protocol. Returns comprehensive information including description, startup parameters, examples, and keywords. Use this before calling open_server to understand protocol configuration options. Available server protocols: HTTP, Proxy, TCP
+
+Parameters:
+- `protocol` (string, required): Server protocol name (e.g., 'HTTP', 'SSH', 'TOR', 'DNS'). Use uppercase.
+
+Example:
+```json
+{"type":"read_server_documentation","protocol":"HTTP"}
+```
+
+## 19. read_client_documentation
+
+Get detailed documentation for a specific client protocol. Returns comprehensive information including description, startup parameters, examples, and keywords. Use this before calling open_client to understand protocol configuration options. Available client protocols: HTTP, TCP
+
+Parameters:
+- `protocol` (string, required): Client protocol name (e.g., 'http', 'ssh', 'tor', 'dns'). Use lowercase.
+
+Example:
+```json
+{"type":"read_client_documentation","protocol":"http"}
 ```
 
 
@@ -590,9 +619,9 @@ No servers currently running.
 
 ## System Capabilities
 
-- **Privileged ports (<1024)**: ✗ Not available — Warn user if they request port <1024
+- **Privileged ports (<1024)**: ✓ Available
 
-- **Raw socket access**: ✗ Not available — DataLink protocol unavailable
+- **Raw socket access**: ✓ Available
 
 
 Trigger: Scheduled task 'periodic_backup' triggered (created 1m ago)
