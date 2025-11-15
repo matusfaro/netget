@@ -37,21 +37,7 @@ Set Content-Type header appropriately (text/plain for /, application/json for /a
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: GET / request
-                .on_event("http2_request")
-                .and_event_data_contains("uri", "/")
-                .and_event_data_contains("method", "GET")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_http2_response",
-                        "status": 200,
-                        "headers": {"Content-Type": "text/plain"},
-                        "body": "Welcome to HTTP/2"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: GET /api/users request
+                // Mock 2: GET /api/users request (most specific first)
                 .on_event("http2_request")
                 .and_event_data_contains("uri", "/api/users")
                 .and_event_data_contains("method", "GET")
@@ -65,7 +51,7 @@ Set Content-Type header appropriately (text/plain for /, application/json for /a
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 4: GET /api/status request
+                // Mock 3: GET /api/status request
                 .on_event("http2_request")
                 .and_event_data_contains("uri", "/api/status")
                 .and_event_data_contains("method", "GET")
@@ -79,7 +65,7 @@ Set Content-Type header appropriately (text/plain for /, application/json for /a
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 5: GET /nonexistent request (404)
+                // Mock 4: GET /nonexistent request (404)
                 .on_event("http2_request")
                 .and_event_data_contains("uri", "/nonexistent")
                 .and_event_data_contains("method", "GET")
@@ -89,6 +75,22 @@ Set Content-Type header appropriately (text/plain for /, application/json for /a
                         "status": 404,
                         "headers": {"Content-Type": "text/plain"},
                         "body": "Not Found"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 5: GET / request (use custom exact match to avoid catching other paths)
+                .on_custom(|ctx| {
+                    ctx.event_type.as_deref() == Some("http2_request") &&
+                    ctx.event_data.get("uri").and_then(|v| v.as_str()) == Some("/") &&
+                    ctx.event_data.get("method").and_then(|v| v.as_str()) == Some("GET")
+                })
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http2_response",
+                        "status": 200,
+                        "headers": {"Content-Type": "text/plain"},
+                        "body": "Welcome to HTTP/2"
                     }
                 ]))
                 .expect_calls(1)
