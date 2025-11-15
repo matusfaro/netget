@@ -39,23 +39,23 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: OPTIONS frame during connection (Scylla client creates multiple connections for topology discovery)
+                    // Mock 2: OPTIONS frame during connection (Scylla client creates 2 connections)
                     .on_event("cassandra_options")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_supported"
                         }
                     ]))
-                    .expect_calls(10)
+                    .expect_calls(2)
                     .and()
-                    // Mock 3: STARTUP frame to complete connection (multiple connections)
+                    // Mock 3: STARTUP frame to complete connection (2 connections)
                     .on_event("cassandra_startup")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_ready"
                         }
                     ]))
-                    .expect_calls(10)
+                    .expect_calls(2)
                     .and()
             });
 
@@ -117,27 +117,26 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: OPTIONS frame during connection (Scylla client creates multiple connections for topology discovery)
+                    // Mock 2: OPTIONS frame during connection (Scylla client creates 2 connections)
                     .on_event("cassandra_options")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_supported"
                         }
                     ]))
-                    .expect_calls(10)
+                    .expect_calls(2)
                     .and()
-                    // Mock 3: STARTUP frame to complete connection (multiple connections)
+                    // Mock 3: STARTUP frame to complete connection (2 connections)
                     .on_event("cassandra_startup")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_ready"
                         }
                     ]))
-                    .expect_calls(10)
+                    .expect_calls(2)
                     .and()
-                    // Mock 4: Actual user query (specific match first)
-                    .on_event("cassandra_query_received")
-                    .and_event_data_contains("query", "SELECT * FROM users")
+                    // Mock 4: Catch-all for ALL queries (system queries + user query)
+                    .on_event("cassandra_query")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_result_rows",
@@ -152,18 +151,7 @@ mod e2e_cassandra {
                             ]
                         }
                     ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 5: Catch-all for system queries (system.peers, system.local, etc. - up to 10 queries)
-                    .on_event("cassandra_query_received")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "cassandra_result_rows",
-                            "columns": [],
-                            "rows": []
-                        }
-                    ]))
-                    .expect_calls(10)
+                    .expect_calls(3)
                     .and()
             });
 
@@ -243,26 +231,26 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: OPTIONS frame during connection (Scylla client creates multiple connections for topology discovery)
+                    // Mock 2: OPTIONS frame during connection (Scylla client creates 2 connections)
                     .on_event("cassandra_options")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_supported"
                         }
                     ]))
-                    .expect_calls(10)
+                    .expect_calls(2)
                     .and()
-                    // Mock 3: STARTUP frame to complete connection (multiple connections)
+                    // Mock 3: STARTUP frame to complete connection (2 connections)
                     .on_event("cassandra_startup")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_ready"
                         }
                     ]))
-                    .expect_calls(10)
+                    .expect_calls(2)
                     .and()
                     // Mock 4: Error query received (specific match first)
-                    .on_event("cassandra_query_received")
+                    .on_event("cassandra_query")
                     .and_event_data_contains("query", "SELECT * FROM nonexistent")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -274,7 +262,7 @@ mod e2e_cassandra {
                     .expect_calls(1)
                     .and()
                     // Mock 5: Catch-all for system queries
-                    .on_event("cassandra_query_received")
+                    .on_event("cassandra_query")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_result_rows",
@@ -282,7 +270,7 @@ mod e2e_cassandra {
                             "rows": []
                         }
                     ]))
-                    .expect_calls(10)
+                    .expect_calls(5)
                     .and()
             });
 
@@ -354,26 +342,26 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: OPTIONS frame during connection (Scylla client creates multiple connections for topology discovery)
+                    // Mock 2: OPTIONS frame during connection (Scylla client creates 2 connections)
                     .on_event("cassandra_options")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_supported"
                         }
                     ]))
-                    .expect_calls(10)
+                    .expect_calls(2)
                     .and()
-                    // Mock 3: STARTUP frame to complete connection (multiple connections)
+                    // Mock 3: STARTUP frame to complete connection (2 connections)
                     .on_event("cassandra_startup")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_ready"
                         }
                     ]))
-                    .expect_calls(10)
+                    .expect_calls(2)
                     .and()
                     // Mock 4: First query (count - specific match)
-                    .on_event("cassandra_query_received")
+                    .on_event("cassandra_query")
                     .and_event_data_contains("query", "SELECT count(*) FROM users")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -389,7 +377,7 @@ mod e2e_cassandra {
                     .expect_calls(1)
                     .and()
                     // Mock 5: Second query (select with WHERE - specific match)
-                    .on_event("cassandra_query_received")
+                    .on_event("cassandra_query")
                     .and_event_data_contains("query", "SELECT * FROM users WHERE id=1")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -406,7 +394,7 @@ mod e2e_cassandra {
                     .expect_calls(1)
                     .and()
                     // Mock 6: Catch-all for system queries
-                    .on_event("cassandra_query_received")
+                    .on_event("cassandra_query")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_result_rows",
@@ -414,7 +402,7 @@ mod e2e_cassandra {
                             "rows": []
                         }
                     ]))
-                    .expect_calls(10)
+                    .expect_calls(5)
                     .and()
             });
 
@@ -502,26 +490,26 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: OPTIONS frame during connection (3 concurrent clients × ~7 connections each)
+                    // Mock 2: OPTIONS frame during connection (3 concurrent clients × 2 connections each = 6)
                     .on_event("cassandra_options")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_supported"
                         }
                     ]))
-                    .expect_calls(30)
+                    .expect_calls(6)
                     .and()
-                    // Mock 3: STARTUP frame to complete connection (3 concurrent clients × multiple connections)
+                    // Mock 3: STARTUP frame to complete connection (3 concurrent clients × 2 connections = 6)
                     .on_event("cassandra_startup")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_ready"
                         }
                     ]))
-                    .expect_calls(30)
+                    .expect_calls(6)
                     .and()
                     // Mock 4: Actual queries (will be called 3 times for concurrent connections - specific match first)
-                    .on_event("cassandra_query_received")
+                    .on_event("cassandra_query")
                     .and_event_data_contains("query", "SELECT value")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -537,7 +525,7 @@ mod e2e_cassandra {
                     .expect_calls(3)
                     .and()
                     // Mock 5: Catch-all for system queries (3 clients)
-                    .on_event("cassandra_query_received")
+                    .on_event("cassandra_query")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_result_rows",
@@ -545,7 +533,7 @@ mod e2e_cassandra {
                             "rows": []
                         }
                     ]))
-                    .expect_calls(10)
+                    .expect_calls(5)
                     .and()
             });
 
@@ -630,26 +618,26 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: OPTIONS frame during connection (Scylla client creates multiple connections for topology discovery)
+                    // Mock 2: OPTIONS frame during connection (Scylla client creates 2 connections)
                     .on_event("cassandra_options")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_supported"
                         }
                     ]))
-                    .expect_calls(10)
+                    .expect_calls(2)
                     .and()
-                    // Mock 3: STARTUP frame to complete connection (multiple connections)
+                    // Mock 3: STARTUP frame to complete connection (2 connections)
                     .on_event("cassandra_startup")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_ready"
                         }
                     ]))
-                    .expect_calls(10)
+                    .expect_calls(2)
                     .and()
                     // Mock 4: PREPARE received
-                    .on_event("cassandra_prepare_received")
+                    .on_event("cassandra_prepare")
                     .and_event_data_contains("query", "SELECT * FROM users WHERE id = ?")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -663,7 +651,7 @@ mod e2e_cassandra {
                     .expect_calls(1)
                     .and()
                     // Mock 5: EXECUTE received
-                    .on_event("cassandra_execute_received")
+                    .on_event("cassandra_execute")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_result_rows",
@@ -679,7 +667,7 @@ mod e2e_cassandra {
                     .expect_calls(1)
                     .and()
                     // Mock 6: Catch-all for system queries
-                    .on_event("cassandra_query_received")
+                    .on_event("cassandra_query")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_result_rows",
@@ -687,7 +675,7 @@ mod e2e_cassandra {
                             "rows": []
                         }
                     ]))
-                    .expect_calls(10)
+                    .expect_calls(5)
                     .and()
             });
 
@@ -776,26 +764,26 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: OPTIONS frame during connection (Scylla client creates multiple connections for topology discovery)
+                    // Mock 2: OPTIONS frame during connection (Scylla client creates 2 connections)
                     .on_event("cassandra_options")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_supported"
                         }
                     ]))
-                    .expect_calls(10)
+                    .expect_calls(2)
                     .and()
-                    // Mock 3: STARTUP frame to complete connection (multiple connections)
+                    // Mock 3: STARTUP frame to complete connection (2 connections)
                     .on_event("cassandra_startup")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_ready"
                         }
                     ]))
-                    .expect_calls(10)
+                    .expect_calls(2)
                     .and()
                     // Mock 4: First PREPARE
-                    .on_event("cassandra_prepare_received")
+                    .on_event("cassandra_prepare")
                     .and_event_data_contains("query", "SELECT * FROM users WHERE id = ?")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -809,7 +797,7 @@ mod e2e_cassandra {
                     .expect_calls(1)
                     .and()
                     // Mock 5: Second PREPARE
-                    .on_event("cassandra_prepare_received")
+                    .on_event("cassandra_prepare")
                     .and_event_data_contains("query", "SELECT count(*) FROM users")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -822,7 +810,7 @@ mod e2e_cassandra {
                     .expect_calls(1)
                     .and()
                     // Mock 6: EXECUTE calls (3 total)
-                    .on_event("cassandra_execute_received")
+                    .on_event("cassandra_execute")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_result_rows",
@@ -838,7 +826,7 @@ mod e2e_cassandra {
                     .expect_calls(3)
                     .and()
                     // Mock 7: Catch-all for system queries
-                    .on_event("cassandra_query_received")
+                    .on_event("cassandra_query")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_result_rows",
@@ -846,7 +834,7 @@ mod e2e_cassandra {
                             "rows": []
                         }
                     ]))
-                    .expect_calls(10)
+                    .expect_calls(5)
                     .and()
             });
 
@@ -958,26 +946,26 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: OPTIONS frame during connection (Scylla client creates multiple connections for topology discovery)
+                    // Mock 2: OPTIONS frame during connection (Scylla client creates 2 connections)
                     .on_event("cassandra_options")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_supported"
                         }
                     ]))
-                    .expect_calls(10)
+                    .expect_calls(2)
                     .and()
-                    // Mock 3: STARTUP frame to complete connection (multiple connections)
+                    // Mock 3: STARTUP frame to complete connection (2 connections)
                     .on_event("cassandra_startup")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_ready"
                         }
                     ]))
-                    .expect_calls(10)
+                    .expect_calls(2)
                     .and()
                     // Mock 4: PREPARE received
-                    .on_event("cassandra_prepare_received")
+                    .on_event("cassandra_prepare")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_prepared",
@@ -989,7 +977,7 @@ mod e2e_cassandra {
                     .expect_calls(1)
                     .and()
                     // Mock 5: EXECUTE with wrong param count (error)
-                    .on_event("cassandra_execute_received")
+                    .on_event("cassandra_execute")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_error",
@@ -1000,7 +988,7 @@ mod e2e_cassandra {
                     .expect_calls(1)
                     .and()
                     // Mock 6: Catch-all for system queries
-                    .on_event("cassandra_query_received")
+                    .on_event("cassandra_query")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_result_rows",
@@ -1008,7 +996,7 @@ mod e2e_cassandra {
                             "rows": []
                         }
                     ]))
-                    .expect_calls(10)
+                    .expect_calls(5)
                     .and()
             });
 
