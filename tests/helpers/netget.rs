@@ -344,6 +344,18 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
     let output_lines = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let output_lines_clone = output_lines.clone();
 
+    // IMPORTANT: Start stderr reader BEFORE waiting for startup
+    // If netget crashes with an error on stderr during startup, we need to capture it!
+    let output_lines_stderr = output_lines.clone();
+    let stderr_reader_handle = tokio::spawn(async move {
+        let mut stderr_reader = BufReader::new(stderr).lines();
+        while let Some(line) = stderr_reader.next_line().await.ok().flatten() {
+            println!("[STDERR] {}", line);
+            output_lines_stderr.lock().await.push(line);
+        }
+        println!("[DEBUG] stderr reader task finished");
+    });
+
     // Wait for startup and parse both servers and clients
     let (servers, clients) =
         wait_for_netget_startup_with_capture(&mut reader, output_lines_clone.clone()).await?;
@@ -356,17 +368,6 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
             output_lines_clone.lock().await.push(line);
         }
         println!("[DEBUG] stdout reader task finished");
-    });
-
-    // Also spawn a task to read stderr and capture it
-    let output_lines_stderr = output_lines.clone();
-    let stderr_reader_handle = tokio::spawn(async move {
-        let mut stderr_reader = BufReader::new(stderr).lines();
-        while let Some(line) = stderr_reader.next_line().await.ok().flatten() {
-            println!("[STDERR] {}", line);
-            output_lines_stderr.lock().await.push(line);
-        }
-        println!("[DEBUG] stderr reader task finished");
     });
 
     Ok(NetGetInstance {
@@ -528,7 +529,7 @@ async fn wait_for_netget_startup_with_capture(
     reader: &mut tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
     output_lines: std::sync::Arc<tokio::sync::Mutex<Vec<String>>>,
 ) -> E2EResult<(Vec<NetGetServer>, Vec<NetGetClient>)> {
-    let wait_future = async {
+    let wait_future = async move {
         let mut servers = Vec::new();
         let mut clients: std::collections::HashMap<String, NetGetClient> =
             std::collections::HashMap::new();
@@ -704,7 +705,16 @@ async fn wait_for_netget_startup_with_capture(
         }
 
         if !had_any_startup {
-            return Err("No servers or clients started in netget".into());
+            let captured_output = output_lines.lock().await;
+            let output_str = if captured_output.is_empty() {
+                "(no output captured)".to_string()
+            } else {
+                captured_output.join("\n")
+            };
+            return Err(format!(
+                "No servers or clients started in netget\n\nCaptured output:\n{}",
+                output_str
+            ).into());
         }
 
         let final_servers = servers;
@@ -824,6 +834,76 @@ impl NetGetInstance {
 
         println!("✅ All mock expectations verified successfully");
         Ok(())
+    }
+
+    /// Wait for a specific log pattern to appear in the output
+    /// Returns when the pattern is found or times out
+    #[allow(dead_code)]
+    pub async fn wait_for_log(&self, pattern: &str, timeout_secs: u64) -> E2EResult<()> {
+        let start = std::time::Instant::now();
+        let timeout_duration = Duration::from_secs(timeout_secs);
+
+        loop {
+            // Check if pattern exists in current output
+            {
+                let lines = self.output_lines.lock().await;
+                if lines.iter().any(|line| line.contains(pattern)) {
+                    println!("[DEBUG] Found log pattern: '{}'", pattern);
+                    return Ok(());
+                }
+            }
+
+            // Check timeout
+            if start.elapsed() > timeout_duration {
+                let lines = self.output_lines.lock().await;
+                return Err(format!(
+                    "Timeout waiting for log pattern '{}' after {}s\nCaptured output:\n{}",
+                    pattern,
+                    timeout_secs,
+                    lines.join("\n")
+                )
+                .into());
+            }
+
+            // Sleep briefly before checking again
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    /// Wait for a log pattern to appear N times
+    #[allow(dead_code)]
+    pub async fn wait_for_log_count(&self, pattern: &str, min_count: usize, timeout_secs: u64) -> E2EResult<()> {
+        let start = std::time::Instant::now();
+        let timeout_duration = Duration::from_secs(timeout_secs);
+
+        loop {
+            // Count occurrences in current output
+            {
+                let lines = self.output_lines.lock().await;
+                let count = lines.iter().filter(|line| line.contains(pattern)).count();
+                if count >= min_count {
+                    println!("[DEBUG] Found log pattern '{}' {} times (needed {})", pattern, count, min_count);
+                    return Ok(());
+                }
+            }
+
+            // Check timeout
+            if start.elapsed() > timeout_duration {
+                let lines = self.output_lines.lock().await;
+                let count = lines.iter().filter(|line| line.contains(pattern)).count();
+                return Err(format!(
+                    "Timeout waiting for log pattern '{}' to appear {} times (found {} times) after {}s",
+                    pattern,
+                    min_count,
+                    count,
+                    timeout_secs
+                )
+                .into());
+            }
+
+            // Sleep briefly before checking again
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
     }
 
     /// Stop the NetGet instance gracefully

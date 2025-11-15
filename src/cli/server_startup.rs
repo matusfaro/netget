@@ -43,13 +43,6 @@ pub async fn start_server_by_id(
         .map_err(|e| ActionExecutionError::Fatal(anyhow::anyhow!("Invalid address: {}", e)))?;
 
     let protocol_name = server.protocol_name.clone();
-    let msg = format!(
-        "[SERVER] Starting server #{} ({}) on {}",
-        server_id.as_u32(),
-        protocol_name,
-        listen_addr
-    );
-    let _ = status_tx.send(msg.clone());
 
     // Actually spawn the server using the registry
     use crate::state::server::ServerStatus;
@@ -142,12 +135,31 @@ pub async fn start_server_by_id(
     // Spawn the server using the protocol's spawn method
     match protocol.spawn(spawn_ctx).await {
         Ok(actual_addr) => {
+            // Send startup message with actual port
+            let msg = format!(
+                "[SERVER] Starting server #{} ({}) on {}",
+                server_id.as_u32(),
+                protocol_name,
+                actual_addr
+            );
+            let _ = status_tx.send(msg);
+
             // Update server with actual listen address
             state.update_server_local_addr(server_id, actual_addr).await;
             state
                 .update_server_status(server_id, ServerStatus::Running)
                 .await;
-            // Note: "listening on" message is sent by the protocol's spawn method
+            // Send update message with actual bound address (for tests that use port 0)
+            if server.port == 0 || server.port != actual_addr.port() {
+                let update_msg = format!(
+                    "[SERVER] Server #{} ({}) listening on {}",
+                    server_id.as_u32(),
+                    protocol_name,
+                    actual_addr
+                );
+                let _ = status_tx.send(update_msg);
+            }
+            // Note: protocol-specific "listening on" message is also sent by the protocol's spawn method to tracing
             let _ = status_tx.send("__UPDATE_UI__".to_string());
         }
         Err(e) => {

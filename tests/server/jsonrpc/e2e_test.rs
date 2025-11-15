@@ -29,8 +29,7 @@ async fn test_jsonrpc_basic_method_call() -> E2EResult<()> {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "HTTP",
-                            "protocol": "JSON-RPC",
+                            "base_stack": "jsonrpc",
                             "instruction": "JSON-RPC 2.0 server with add and greet methods"
                         }
                     ]))
@@ -158,8 +157,7 @@ async fn test_jsonrpc_notification() -> E2EResult<()> {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "HTTP",
-                            "protocol": "JSON-RPC",
+                            "base_stack": "jsonrpc",
                             "instruction": "JSON-RPC 2.0 server handling notifications"
                         }
                     ]))
@@ -244,52 +242,32 @@ async fn test_jsonrpc_batch_request() -> E2EResult<()> {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "HTTP",
-                            "protocol": "JSON-RPC",
+                            "base_stack": "jsonrpc",
                             "instruction": "JSON-RPC 2.0 server with batch support and echo method"
                         }
                     ]))
                     .expect_calls(1)
                     .and()
                     // Mock 2-4: Three batch requests (jsonrpc_method_call event x3)
-                    // First batch item: id=1, params=["first"]
+                    // Note: ID matching - the id field is a JSON number, so we just match on method
                     .on_event("jsonrpc_method_call")
                     .and_event_data_contains("method", "echo")
-                    .and_event_data_contains("id", "1")
-                    .respond_with_actions(serde_json::json!([
-                        {
+                    .respond_with_actions_from_event(|event_data| {
+                        let id = event_data["id"].as_u64().unwrap_or(0);
+                        let params = &event_data["params"];
+                        let result = if let Some(arr) = params.as_array() {
+                            arr.first().cloned().unwrap_or(json!(""))
+                        } else {
+                            json!("")
+                        };
+
+                        serde_json::json!([{
                             "type": "jsonrpc_success",
-                            "result": "first",
-                            "id": 1
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Second batch item: id=2, params=["second"]
-                    .on_event("jsonrpc_method_call")
-                    .and_event_data_contains("method", "echo")
-                    .and_event_data_contains("id", "2")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "jsonrpc_success",
-                            "result": "second",
-                            "id": 2
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Third batch item: id=3, params=["third"]
-                    .on_event("jsonrpc_method_call")
-                    .and_event_data_contains("method", "echo")
-                    .and_event_data_contains("id", "3")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "jsonrpc_success",
-                            "result": "third",
-                            "id": 3
-                        }
-                    ]))
-                    .expect_calls(1)
+                            "result": result,
+                            "id": id
+                        }])
+                    })
+                    .expect_calls(3)
                     .and()
             })
     ).await?;
@@ -372,8 +350,7 @@ async fn test_jsonrpc_method_not_found() -> E2EResult<()> {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "HTTP",
-                            "protocol": "JSON-RPC",
+                            "base_stack": "jsonrpc",
                             "instruction": "JSON-RPC 2.0 server that returns error for unknown methods"
                         }
                     ]))
