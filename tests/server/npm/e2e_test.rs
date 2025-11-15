@@ -50,12 +50,12 @@ For any other package, return a 404 error with: {"error": "Package not found"}"#
                 .expect_calls(1)
                 .and()
                 // Mock 2: HTTP request for express package
-                .on_event("http_request_received")
-                .and_event_data_contains("path", "/express")
+                .on_event("http_request")
+                .and_event_data_contains("uri", "/express")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_http_response",
-                        "status_code": 200,
+                        "status": 200,
                         "headers": {"Content-Type": "application/json"},
                         "body": json!({
                             "name": "express",
@@ -167,11 +167,11 @@ When a client requests any package, return a 404 error with JSON: {"error": "Pac
                 .expect_calls(1)
                 .and()
                 // Mock 2: HTTP request for non-existent package
-                .on_event("http_request_received")
+                .on_event("http_request")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_http_response",
-                        "status_code": 404,
+                        "status": 404,
                         "headers": {"Content-Type": "application/json"},
                         "body": json!({"error": "Package not found"}).to_string()
                     }
@@ -324,12 +324,12 @@ For any other package, return 404 error."#,
                 .expect_calls(1)
                 .and()
                 // Mock 2: Package metadata request
-                .on_event("http_request_received")
-                .and_event_data_contains("path", "/netget-test-pkg")
+                .on_event("http_request")
+                .and_event_data_contains("uri", "/netget-test-pkg")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_http_response",
-                        "status_code": 200,
+                        "status": 200,
                         "headers": {"Content-Type": "application/json"},
                         "body": json!({
                             "name": "netget-test-pkg",
@@ -345,12 +345,12 @@ For any other package, return 404 error."#,
                 .expect_at_most(1)
                 .and()
                 // Mock 3: Tarball download request
-                .on_event("http_request_received")
-                .and_event_data_contains("path", ".tgz")
+                .on_event("http_request")
+                .and_event_data_contains("uri", ".tgz")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_http_response",
-                        "status_code": 200,
+                        "status": 200,
                         "headers": {"Content-Type": "application/octet-stream"},
                         "body": tarball_base64.clone()
                     }
@@ -515,12 +515,12 @@ For any other search query, return empty results: {"objects": [], "total": 0}"#;
                 .expect_calls(1)
                 .and()
                 // Mock 2: Search request
-                .on_event("http_request_received")
-                .and_event_data_contains("path", "/search")
+                .on_event("http_request")
+                .and_event_data_contains("uri", "/search")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_http_response",
-                        "status_code": 200,
+                        "status": 200,
                         "headers": {"Content-Type": "application/json"},
                         "body": json!({
                             "objects": [
