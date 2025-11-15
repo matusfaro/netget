@@ -118,10 +118,10 @@ mod tests {
                     .expect_calls(1)
                     .and()
                     // Mock 2: Receive OSPF Hello packet
-                    .on_event("udp_data_received")
+                    .on_event("udp_datagram_received")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "send_udp_data",
+                            "type": "send_udp_response",
                             "data": hex::encode(build_ospf_hello_response())
                         }
                     ]))
@@ -207,10 +207,10 @@ mod tests {
                     .expect_calls(1)
                     .and()
                     // Mock 2-3: Multiple Hello exchanges
-                    .on_event("udp_data_received")
+                    .on_event("udp_datagram_received")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "send_udp_data",
+                            "type": "send_udp_response",
                             "data": hex::encode(build_ospf_hello_response())
                         }
                     ]))
@@ -284,10 +284,10 @@ mod tests {
                     .expect_calls(1)
                     .and()
                     // Mock 2-4: Multiple Hello packets from different routers
-                    .on_event("udp_data_received")
+                    .on_event("udp_datagram_received")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "send_udp_data",
+                            "type": "send_udp_response",
                             "data": hex::encode(build_ospf_hello_response())
                         }
                     ]))

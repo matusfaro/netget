@@ -22,6 +22,40 @@ impl MdnsProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for MdnsProtocol {
+    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        use crate::llm::actions::ParameterDefinition;
+        vec![
+            ParameterDefinition {
+                name: "service_type".to_string(),
+                type_hint: "string".to_string(),
+                description: "Service type (e.g., '_http._tcp.local.')".to_string(),
+                required: false,
+                example: json!("_http._tcp.local."),
+            },
+            ParameterDefinition {
+                name: "service_name".to_string(),
+                type_hint: "string".to_string(),
+                description: "Service instance name".to_string(),
+                required: false,
+                example: json!("My Web Server"),
+            },
+            ParameterDefinition {
+                name: "properties".to_string(),
+                type_hint: "object".to_string(),
+                description: "TXT record properties (key-value pairs)".to_string(),
+                required: false,
+                example: json!({"path": "/", "version": "1.0"}),
+            },
+            ParameterDefinition {
+                name: "services".to_string(),
+                type_hint: "array".to_string(),
+                description: "Array of service definitions (each with service_type, service_name, properties)"
+                    .to_string(),
+                required: false,
+                example: json!([{"service_type": "_http._tcp.local.", "service_name": "Web", "properties": {"path": "/"}}]),
+            },
+        ]
+    }
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![register_mdns_service_action()]
     }
@@ -79,6 +113,7 @@ impl Server for MdnsProtocol {
                 ctx.state,
                 ctx.status_tx,
                 ctx.server_id,
+                ctx.startup_params,
             )
             .await
         })

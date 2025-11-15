@@ -8,7 +8,7 @@
 // Helper module imported from parent
 
 use super::super::super::helpers::{self, E2EResult};
-use std::net::UdpSocket;
+use tokio::net::UdpSocket;
 use std::time::Duration;
 
 /// Create a basic DHCP DISCOVER message
@@ -131,8 +131,9 @@ async fn test_dhcp_discover_offer() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 2: Server receives DHCP DISCOVER (dhcp_request event)
+                // Note: dhcproto outputs message types in PascalCase like "Discover"
                 .on_event("dhcp_request")
-                .and_event_data_contains("message_type", "DISCOVER")
+                .and_event_data_contains("message_type", "Discover")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_dhcp_offer",
@@ -151,21 +152,29 @@ async fn test_dhcp_discover_offer() -> E2EResult<()> {
     println!("DHCP server started on port {}", server.port);
 
     // Wait for DHCP server to fully initialize (needs LLM call)
+    // Give the server's receive loop time to start
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
     // VALIDATION: Send DHCP DISCOVER
-    let socket = UdpSocket::bind("0.0.0.0:0")?;
-    socket.set_read_timeout(Some(Duration::from_secs(5)))?;
-    socket.set_broadcast(true)?;
+    let socket = UdpSocket::bind("127.0.0.1:0").await?;
+    let server_addr: std::net::SocketAddr = format!("127.0.0.1:{}", server.port).parse()?;
 
     let discover_packet = create_dhcp_discover(0x12345678);
-    println!("Sending DHCP DISCOVER ({} bytes)...", discover_packet.len());
+    println!("Sending DHCP DISCOVER ({} bytes) to {}...", discover_packet.len(), server_addr);
+    println!("Client socket bound to: {}", socket.local_addr()?);
 
-    socket.send_to(&discover_packet, format!("127.0.0.1:{}", server.port))?;
+    let sent_bytes = socket.send_to(&discover_packet, server_addr).await?;
+    println!("Successfully sent {} bytes", sent_bytes);
 
     // Wait for DHCP OFFER response
     let mut buffer = vec![0u8; 1024];
-    match socket.recv_from(&mut buffer) {
-        Ok((n, from_addr)) => {
+    let timeout_result = tokio::time::timeout(
+        Duration::from_secs(5),
+        socket.recv_from(&mut buffer)
+    ).await;
+
+    match timeout_result {
+        Ok(Ok((n, from_addr))) => {
             println!("Received {} bytes from {}", n, from_addr);
 
             // Try to parse the message type
@@ -179,9 +188,12 @@ async fn test_dhcp_discover_offer() -> E2EResult<()> {
                 println!("  ✓ DHCP server responded with {} bytes", n);
             }
         }
-        Err(e) => {
-            println!("Note: DHCP OFFER may not be fully implemented yet: {}", e);
-            println!("  This is expected - testing that server accepts DHCP messages");
+        Ok(Err(e)) => {
+            println!("Note: Socket error: {}", e);
+        }
+        Err(_) => {
+            println!("Note: DHCP OFFER timed out after 5 seconds");
+            println!("  This may be expected - testing that server accepts DHCP messages");
         }
     }
 
@@ -220,8 +232,9 @@ async fn test_dhcp_request_ack() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 2: Server receives DHCP REQUEST
+                //Note: dhcproto outputs message types in PascalCase like "Request"
                 .on_event("dhcp_request")
-                .and_event_data_contains("message_type", "REQUEST")
+                .and_event_data_contains("message_type", "Request")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_dhcp_ack",
@@ -239,10 +252,12 @@ async fn test_dhcp_request_ack() -> E2EResult<()> {
     let server = helpers::start_netget_server(config).await?;
     println!("DHCP server started on port {}", server.port);
 
+    // Give the server's receive loop time to start
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
     // VALIDATION: Send DHCP REQUEST (simplified - usually follows DISCOVER/OFFER)
-    let socket = UdpSocket::bind("0.0.0.0:0")?;
-    socket.set_read_timeout(Some(Duration::from_secs(5)))?;
-    socket.set_broadcast(true)?;
+    let socket = UdpSocket::bind("127.0.0.1:0").await?;
+    let server_addr: std::net::SocketAddr = format!("127.0.0.1:{}", server.port).parse()?;
 
     // Create a DHCP REQUEST packet (similar to DISCOVER but with message type 3)
     let mut request_packet = create_dhcp_discover(0x87654321);
@@ -255,13 +270,18 @@ async fn test_dhcp_request_ack() -> E2EResult<()> {
         }
     }
 
-    println!("Sending DHCP REQUEST ({} bytes)...", request_packet.len());
-    socket.send_to(&request_packet, format!("127.0.0.1:{}", server.port))?;
+    println!("Sending DHCP REQUEST ({} bytes) to {}...", request_packet.len(), server_addr);
+    socket.send_to(&request_packet, server_addr).await?;
 
     // Wait for DHCP ACK response
     let mut buffer = vec![0u8; 1024];
-    match socket.recv_from(&mut buffer) {
-        Ok((n, from_addr)) => {
+    let timeout_result = tokio::time::timeout(
+        Duration::from_secs(5),
+        socket.recv_from(&mut buffer)
+    ).await;
+
+    match timeout_result {
+        Ok(Ok((n, from_addr))) => {
             println!("Received {} bytes from {}", n, from_addr);
 
             if let Some(msg_type) = parse_dhcp_message_type(&buffer[..n]) {
@@ -271,9 +291,12 @@ async fn test_dhcp_request_ack() -> E2EResult<()> {
                 println!("  ✓ DHCP server responded with {} bytes", n);
             }
         }
-        Err(e) => {
-            println!("Note: DHCP ACK may not be fully implemented yet: {}", e);
-            println!("  This is expected - testing protocol handling");
+        Ok(Err(e)) => {
+            println!("Note: Socket error: {}", e);
+        }
+        Err(_) => {
+            println!("Note: DHCP ACK timed out after 5 seconds");
+            println!("  This may be expected - testing protocol handling");
         }
     }
 
@@ -330,18 +353,26 @@ async fn test_dhcp_lease_options() -> E2EResult<()> {
     let server = helpers::start_netget_server(config).await?;
     println!("DHCP server started on port {}", server.port);
 
+    // Give the server's receive loop time to start
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
     // VALIDATION: Send DHCP DISCOVER and check for options in response
-    let socket = UdpSocket::bind("0.0.0.0:0")?;
-    socket.set_read_timeout(Some(Duration::from_secs(5)))?;
+    let socket = UdpSocket::bind("127.0.0.1:0").await?;
+    let server_addr: std::net::SocketAddr = format!("127.0.0.1:{}", server.port).parse()?;
 
     let discover_packet = create_dhcp_discover(0xAABBCCDD);
-    println!("Sending DHCP DISCOVER with options request...");
-    socket.send_to(&discover_packet, format!("127.0.0.1:{}", server.port))?;
+    println!("Sending DHCP DISCOVER with options request to {}...", server_addr);
+    socket.send_to(&discover_packet, server_addr).await?;
 
     // Wait for response
     let mut buffer = vec![0u8; 1024];
-    match socket.recv_from(&mut buffer) {
-        Ok((n, _)) => {
+    let timeout_result = tokio::time::timeout(
+        Duration::from_secs(5),
+        socket.recv_from(&mut buffer)
+    ).await;
+
+    match timeout_result {
+        Ok(Ok((n, _))) => {
             println!("Received DHCP response ({} bytes)", n);
 
             // The response should contain various DHCP options
@@ -349,11 +380,11 @@ async fn test_dhcp_lease_options() -> E2EResult<()> {
             // A full implementation would parse all options
             println!("  ✓ DHCP server responded with lease information");
         }
-        Err(e) => {
-            println!(
-                "Note: DHCP with options may not be fully implemented yet: {}",
-                e
-            );
+        Ok(Err(e)) => {
+            println!("Note: Socket error: {}", e);
+        }
+        Err(_) => {
+            println!("Note: DHCP with options timed out after 5 seconds");
         }
     }
 

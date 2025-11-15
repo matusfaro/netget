@@ -149,7 +149,17 @@ pub async fn start_server_by_id(
             state
                 .update_server_status(server_id, ServerStatus::Running)
                 .await;
-            // Note: "listening on" message is sent by the protocol's spawn method
+            // Send update message with actual bound address (for tests that use port 0)
+            if server.port == 0 || server.port != actual_addr.port() {
+                let update_msg = format!(
+                    "[SERVER] Server #{} ({}) listening on {}",
+                    server_id.as_u32(),
+                    protocol_name,
+                    actual_addr
+                );
+                let _ = status_tx.send(update_msg);
+            }
+            // Note: protocol-specific "listening on" message is also sent by the protocol's spawn method to tracing
             let _ = status_tx.send("__UPDATE_UI__".to_string());
         }
         Err(e) => {
