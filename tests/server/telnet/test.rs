@@ -29,8 +29,7 @@ async fn test_telnet_echo() -> E2EResult<()> {
                 {
                     "type": "open_server",
                     "port": 0,
-                    "base_stack": "TCP",
-                    "protocol": "Telnet",
+                    "base_stack": "Telnet",
                     "instruction": "Echo server - respond with received message"
                 }
             ]))
@@ -124,8 +123,7 @@ async fn test_telnet_prompt() -> E2EResult<()> {
                 {
                     "type": "open_server",
                     "port": 0,
-                    "base_stack": "TCP",
-                    "protocol": "Telnet",
+                    "base_stack": "Telnet",
                     "instruction": "Interactive prompt server"
                 }
             ]))
@@ -212,8 +210,7 @@ async fn test_telnet_multiple_lines() -> E2EResult<()> {
                 {
                     "type": "open_server",
                     "port": 0,
-                    "base_stack": "TCP",
-                    "protocol": "Telnet",
+                    "base_stack": "Telnet",
                     "instruction": "Multi-line handler with line numbers"
                 }
             ]))
@@ -313,8 +310,7 @@ async fn test_telnet_concurrent_connections() -> E2EResult<()> {
                 {
                     "type": "open_server",
                     "port": 0,
-                    "base_stack": "TCP",
-                    "protocol": "Telnet",
+                    "base_stack": "Telnet",
                     "instruction": "Handle concurrent clients and echo messages"
                 }
             ]))
