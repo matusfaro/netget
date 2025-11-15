@@ -537,6 +537,38 @@ pub static STUN_BINDING_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         "stun_binding_request",
         "STUN binding request received from client",
     )
+    .with_parameters(vec![
+        Parameter {
+            name: "peer_addr".to_string(),
+            type_hint: "string".to_string(),
+            description: "Client's IP:port address (public address as seen by server)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "local_addr".to_string(),
+            type_hint: "string".to_string(),
+            description: "Server's listening IP:port address".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "transaction_id".to_string(),
+            type_hint: "string".to_string(),
+            description: "STUN transaction ID (hex-encoded, 12 bytes = 24 hex chars)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "message_type".to_string(),
+            type_hint: "string".to_string(),
+            description: "STUN message type (e.g., BindingRequest, BindingResponse)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "bytes_received".to_string(),
+            type_hint: "number".to_string(),
+            description: "Number of bytes in the STUN request".to_string(),
+            required: true,
+        },
+    ])
 });
 
 fn get_stun_event_types() -> Vec<EventType> {

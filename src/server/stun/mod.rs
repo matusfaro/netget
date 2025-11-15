@@ -33,6 +33,7 @@ impl StunServer {
         let local_addr = socket.local_addr()?;
         info!("STUN server (action-based) listening on {}", local_addr);
         let _ = status_tx.send(format!("[INFO] STUN server listening on {}", local_addr));
+        let _ = status_tx.send(format!("[DEBUG] STUN socket bound - requested: {}, actual: {}", listen_addr, local_addr));
 
         let protocol = Arc::new(StunProtocol::new());
 
@@ -43,8 +44,10 @@ impl StunServer {
 
             loop {
                 debug!("STUN calling recv_from...");
+                let _ = status_tx.send(format!("[TRACE] STUN about to call recv_from (iteration)"));
                 match socket.recv_from(&mut buffer).await {
                     Ok((n, peer_addr)) => {
+                        let _ = status_tx.send(format!("[TRACE] STUN recv_from returned OK: {} bytes from {}", n, peer_addr));
                         let data = buffer[..n].to_vec();
                         let connection_id =
                             ConnectionId::new(app_state.get_next_unified_id().await);

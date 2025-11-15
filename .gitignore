@@ -3,6 +3,7 @@ netget.log
 
 # Instance-specific build directories for concurrent Claude instances
 /target-claude/
+/target-test-*/
 /$(pwd)/
 
 # Local temporary directory (used instead of /tmp for project isolation)
