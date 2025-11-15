@@ -337,11 +337,18 @@ impl SmbServer {
                 let _ = status_tx.send("[DEBUG] SMB2 NEGOTIATE - offering SMB 2.1".to_string());
 
                 // Consume NEGOTIATE request body from the stream
-                // The body contains dialect list and negotiation contexts (typically ~38 bytes)
-                // We must consume this to prevent stream corruption on next read
-                let mut body_buf = vec![0u8; 512];
-                let bytes_read = _stream.read(&mut body_buf).await.unwrap_or(0);
-                trace!("NEGOTIATE body: {} bytes consumed", bytes_read);
+                // NEGOTIATE request body is 36 bytes (structure) + 2 bytes (dialect) = 38 bytes total
+                // We read exactly 38 bytes to prevent consuming part of the next message
+                let mut body_buf = [0u8; 38];
+                match _stream.read_exact(&mut body_buf).await {
+                    Ok(_) => {
+                        debug!("NEGOTIATE body: 38 bytes consumed");
+                    }
+                    Err(e) => {
+                        // If we can't read the body, log but don't fail - some clients might send less
+                        warn!("Error reading NEGOTIATE body: {} - continuing anyway", e);
+                    }
+                }
 
                 // Build SMB2 Negotiate Response
                 // For simplicity, we'll offer SMB 2.1 dialect (0x0210)
@@ -351,9 +358,17 @@ impl SmbServer {
             SMB2_SESSION_SETUP => {
                 debug!("SMB2 SESSION_SETUP request");
 
-                // Read SESSION_SETUP request body
-                let mut body_buf = vec![0u8; 512];
-                let bytes_read = _stream.read(&mut body_buf).await.unwrap_or(0);
+                // Read SESSION_SETUP request body (exactly 24 bytes for guest auth)
+                let mut body_buf = [0u8; 24];
+                match _stream.read_exact(&mut body_buf).await {
+                    Ok(_) => {
+                        debug!("SESSION_SETUP body: 24 bytes consumed");
+                    }
+                    Err(e) => {
+                        warn!("Error reading SESSION_SETUP body: {} - continuing anyway", e);
+                    }
+                }
+                let bytes_read = body_buf.len();
 
                 // Try to extract username from security blob (simplified)
                 // In real SMB2, this would be in the NTLMSSP blob
