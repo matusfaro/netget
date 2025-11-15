@@ -20,7 +20,9 @@ async fn test_openai_list_models() -> E2EResult<()> {
     let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
-                // Mock 1: User command to open OpenAI server
+                // Mock: User command to open OpenAI server
+                // Note: OpenAI server is hardcoded and directly calls Ollama API
+                // No http_request_received events are emitted
                 .on_instruction_containing("Open OpenAI")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -28,21 +30,6 @@ async fn test_openai_list_models() -> E2EResult<()> {
                         "port": 0,
                         "base_stack": "OpenAI",
                         "instruction": "Handle OpenAI API requests"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Models list request (GET /v1/models)
-                .on_event("http_request_received")
-                .and_event_data_contains("path", "/v1/models")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_http_response",
-                        "status": 200,
-                        "headers": {
-                            "Content-Type": "application/json"
-                        },
-                        "body": "{\"object\":\"list\",\"data\":[{\"id\":\"qwen2.5-coder:0.5b\",\"object\":\"model\",\"created\":1704067200,\"owned_by\":\"ollama\"}]}"
                     }
                 ]))
                 .expect_calls(1)
@@ -147,19 +134,10 @@ async fn test_openai_chat_completion() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: Chat completion request (POST /v1/chat/completions)
-                .on_event("http_request_received")
-                .and_event_data_contains("path", "/v1/chat/completions")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_http_response",
-                        "status": 200,
-                        "headers": {
-                            "Content-Type": "application/json"
-                        },
-                        "body": "{\"id\":\"chatcmpl-123\",\"object\":\"chat.completion\",\"created\":1704067200,\"model\":\"qwen2.5-coder:0.5b\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"Hello from NetGet\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}"
-                    }
-                ]))
+                // Mock 2: Ollama generate call for chat completion
+                // OpenAI server directly calls Ollama's /api/generate endpoint
+                .on_instruction_containing("Hello from NetGet")
+                .respond_with_raw("Hello from NetGet")
                 .expect_calls(1)
                 .and()
         });
@@ -313,7 +291,8 @@ async fn test_openai_invalid_endpoint() -> E2EResult<()> {
     let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
-                // Mock 1: User command to open OpenAI server
+                // Mock: User command to open OpenAI server
+                // Invalid endpoint returns hardcoded 404, no LLM calls
                 .on_instruction_containing("Open OpenAI")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -321,21 +300,6 @@ async fn test_openai_invalid_endpoint() -> E2EResult<()> {
                         "port": 0,
                         "base_stack": "OpenAI",
                         "instruction": "Handle OpenAI API with 404 for unknown"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Invalid endpoint request
-                .on_event("http_request_received")
-                .and_event_data_contains("path", "/v1/invalid")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_http_response",
-                        "status": 404,
-                        "headers": {
-                            "Content-Type": "application/json"
-                        },
-                        "body": "{\"error\":{\"message\":\"Not found\",\"type\":\"invalid_request_error\",\"code\":\"not_found\"}}"
                     }
                 ]))
                 .expect_calls(1)
@@ -421,34 +385,10 @@ async fn test_openai_with_rust_client() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: List models request
-                .on_event("http_request_received")
-                .and_event_data_contains("path", "/v1/models")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_http_response",
-                        "status": 200,
-                        "headers": {
-                            "Content-Type": "application/json"
-                        },
-                        "body": "{\"object\":\"list\",\"data\":[{\"id\":\"qwen2.5-coder:0.5b\",\"object\":\"model\",\"created\":1704067200,\"owned_by\":\"ollama\"}]}"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: Chat completion request
-                .on_event("http_request_received")
-                .and_event_data_contains("path", "/v1/chat/completions")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_http_response",
-                        "status": 200,
-                        "headers": {
-                            "Content-Type": "application/json"
-                        },
-                        "body": "{\"id\":\"chatcmpl-456\",\"object\":\"chat.completion\",\"created\":1704067200,\"model\":\"qwen2.5-coder:0.5b\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"Test response from NetGet OpenAI\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":6,\"total_tokens\":18}}"
-                    }
-                ]))
+                // Mock 2: Ollama generate call for chat completion
+                // Match on the user's message content
+                .on_instruction_containing("Hello from OpenAI Rust client")
+                .respond_with_raw("Test response from NetGet OpenAI")
                 .expect_calls(1)
                 .and()
         });
