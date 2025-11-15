@@ -23,25 +23,15 @@ async fn test_ibeacon_advertising() -> E2EResult<()> {
             NetGetConfig::new(prompt)
                 .with_mock(|mock| {
                     mock
-                        // Mock 1: Server startup
+                        // Mock 1: Server startup - use correct protocol name
                         .on_instruction_containing("iBeacon")
                         .and_instruction_containing("12345678-1234-5678-1234-567812345678")
                         .respond_with_actions(serde_json::json!([
                             {
                                 "type": "open_server",
                                 "port": 0,
-                                "base_stack": "BluetoothBLE",
-                                "instruction": "Create iBeacon with specified UUID, major, minor",
-                                "startup_params": {
-                                    "device_name": "NetGet-iBeacon",
-                                    "beacon_type": "ibeacon",
-                                    "beacon_data": {
-                                        "uuid": "12345678-1234-5678-1234-567812345678",
-                                        "major": 100,
-                                        "minor": 200,
-                                        "tx_power": -59
-                                    }
-                                }
+                                "base_stack": "BLUETOOTH_BLE_BEACON",
+                                "instruction": "Create iBeacon with specified UUID, major, minor"
                             }
                         ]))
                         .expect_calls(1)
@@ -79,23 +69,14 @@ async fn test_eddystone_uid_advertising() -> E2EResult<()> {
             NetGetConfig::new(prompt)
                 .with_mock(|mock| {
                     mock
-                        // Mock 1: Server startup
+                        // Mock 1: Server startup - use correct protocol name
                         .on_instruction_containing("Eddystone-UID")
                         .respond_with_actions(serde_json::json!([
                             {
                                 "type": "open_server",
                                 "port": 0,
-                                "base_stack": "BluetoothBLE",
-                                "instruction": "Create Eddystone-UID beacon",
-                                "startup_params": {
-                                    "device_name": "NetGet-Eddystone",
-                                    "beacon_type": "eddystone_uid",
-                                    "beacon_data": {
-                                        "namespace": "12345678901234567890",
-                                        "instance": "123456789012",
-                                        "tx_power": -20
-                                    }
-                                }
+                                "base_stack": "BLUETOOTH_BLE_BEACON",
+                                "instruction": "Create Eddystone-UID beacon"
                             }
                         ]))
                         .expect_calls(1)
@@ -132,23 +113,15 @@ async fn test_eddystone_url_advertising() -> E2EResult<()> {
             NetGetConfig::new(prompt)
                 .with_mock(|mock| {
                     mock
-                        // Mock 1: Server startup
+                        // Mock 1: Server startup - use correct protocol name
                         .on_instruction_containing("Eddystone-URL")
                         .and_instruction_containing("example.com")
                         .respond_with_actions(serde_json::json!([
                             {
                                 "type": "open_server",
                                 "port": 0,
-                                "base_stack": "BluetoothBLE",
-                                "instruction": "Create Eddystone-URL beacon",
-                                "startup_params": {
-                                    "device_name": "NetGet-URL",
-                                    "beacon_type": "eddystone_url",
-                                    "beacon_data": {
-                                        "url": "https://example.com",
-                                        "tx_power": -20
-                                    }
-                                }
+                                "base_stack": "BLUETOOTH_BLE_BEACON",
+                                "instruction": "Create Eddystone-URL beacon"
                             }
                         ]))
                         .expect_calls(1)
