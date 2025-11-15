@@ -34,14 +34,14 @@ async fn test_openapi_todo_list() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: HTTP GET /todos request
-                .on_event("http_request_received")
+                // Mock 2: OpenAPI GET /todos request
+                .on_event("openapi_request")
                 .and_event_data_contains("path", "/todos")
                 .and_event_data_contains("method", "GET")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_http_response",
-                        "status": 200,
+                        "type": "send_openapi_response",
+                        "status_code": 200,
                         "headers": {"Content-Type": "application/json"},
                         "body": serde_json::json!([
                             {"id": 1, "title": "Buy milk", "done": false},
@@ -156,14 +156,14 @@ async fn test_openapi_create_todo() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: HTTP POST /todos request
-                .on_event("http_request_received")
+                // Mock 2: OpenAPI POST /todos request
+                .on_event("openapi_request")
                 .and_event_data_contains("path", "/todos")
                 .and_event_data_contains("method", "POST")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_http_response",
-                        "status": 201,
+                        "type": "send_openapi_response",
+                        "status_code": 201,
                         "headers": {"Content-Type": "application/json"},
                         "body": serde_json::json!({
                             "id": 3,
@@ -382,13 +382,13 @@ async fn test_openapi_spec_compliant_flag() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock HTTP request - return intentional spec violation (201 instead of 200)
-                .on_event("http_request_received")
+                // Mock OpenAPI request - return intentional spec violation (201 instead of 200)
+                .on_event("openapi_request")
                 .and_event_data_contains("path", "/todos")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_http_response",
-                        "status": 201,  // Intentional violation - spec says 200
+                        "type": "send_openapi_response",
+                        "status_code": 201,  // Intentional violation - spec says 200
                         "headers": {"Content-Type": "application/json"},
                         "body": "[]"
                     }
