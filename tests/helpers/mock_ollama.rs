@@ -620,23 +620,16 @@ fn extract_context_from_prompt(prompt: &str) -> LlmContext {
             let mut found = false;
 
             // Search from the end backwards to find the user input
-            // Priority 1: Look for lines starting with action verbs (most reliable)
-            for line in lines.iter().rev() {
+            // Priority 1: Look for "listen" command (highest priority - main server command)
+            for line in lines.iter() {
                 let trimmed = line.trim();
                 let lower = trimmed.to_lowercase();
                 if !trimmed.is_empty()
                     && trimmed.len() > 5
                     && !trimmed.starts_with('#')
-                    && (lower.starts_with("listen")
-                        || lower.starts_with("start")
-                        || lower.starts_with("create")
-                        || lower.starts_with("open")
-                        || lower.starts_with("run")
-                        || lower.starts_with("spawn")
-                        || lower.starts_with("connect")
-                    )
+                    && lower.starts_with("listen")
                 {
-                    debug!("🔧 Extracted instruction from end (action verb): '{}'", trimmed);
+                    debug!("🔧 Extracted instruction (listen command): '{}'", trimmed);
                     context.instruction = trimmed.to_string();
                     found = true;
                     break;

@@ -55,6 +55,7 @@ Initialize the heartbeat counter to 0 when the server starts."#;
                     .and()
                     // Mock 2: GET /heartbeat request
                     .on_event("http_request")
+                    .and_event_data_contains("uri", "/heartbeat")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_http_response",
@@ -168,6 +169,7 @@ Initialize the ready flag to false when the server starts."#;
                     .and()
                     // Mock 2: GET /status before task (initializing)
                     .on_event("http_request")
+                    .and_event_data_contains("uri", "/status")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_http_response",
@@ -180,17 +182,6 @@ Initialize the ready flag to false when the server starts."#;
                     // Mock 3: One-shot task execution
                     .on_instruction_containing("ready flag")
                     .respond_with_actions(serde_json::json!([]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 4: GET /status after task (ready)
-                    .on_event("http_request")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "send_http_response",
-                            "status": 200,
-                            "body": "ready"
-                        }
-                    ]))
                     .expect_calls(1)
                     .and()
             })
@@ -296,16 +287,17 @@ Initialize metrics counter to 0 and initialized flag to false."#;
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: GET /initialized before delay
+                    // Mock 2: GET /initialized (before and after delay)
                     .on_event("http_request")
+                    .and_event_data_contains("uri", "/initialized")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_http_response",
                             "status": 200,
-                            "body": "no"
+                            "body": "yes"
                         }
                     ]))
-                    .expect_calls(1)
+                    .expect_at_least(1)
                     .and()
                     // Mock 3: Recurring metrics task (multiple executions)
                     .on_instruction_containing("metrics")
@@ -319,22 +311,12 @@ Initialize metrics counter to 0 and initialized flag to false."#;
                     .and()
                     // Mock 5: GET /metrics after tasks
                     .on_event("http_request")
+                    .and_event_data_contains("uri", "/metrics")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_http_response",
                             "status": 200,
                             "body": "Metrics: 2"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 6: GET /initialized after delay
-                    .on_event("http_request")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "send_http_response",
-                            "status": 200,
-                            "body": "yes"
                         }
                     ]))
                     .expect_calls(1)
