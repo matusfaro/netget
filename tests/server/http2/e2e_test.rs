@@ -25,9 +25,8 @@ Set Content-Type header appropriately (text/plain for /, application/json for /a
     let server_config = helpers::NetGetConfig::new(prompt.to_string())
         .with_mock(|mock| {
             mock
-                // Mock 1: Server startup
-                .on_instruction_containing("HTTP/2 server")
-                .and_instruction_containing("port")
+                // Mock 1: Server startup (matches on instruction pattern from user input)
+                .on_instruction_containing("Content-Type")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -39,12 +38,12 @@ Set Content-Type header appropriately (text/plain for /, application/json for /a
                 .expect_calls(1)
                 .and()
                 // Mock 2: GET / request
-                .on_event("http_request_received")
-                .and_event_data_contains("path", "/")
+                .on_event("http2_request")
+                .and_event_data_contains("uri", "/")
                 .and_event_data_contains("method", "GET")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_http_response",
+                        "type": "send_http2_response",
                         "status": 200,
                         "headers": {"Content-Type": "text/plain"},
                         "body": "Welcome to HTTP/2"
@@ -53,12 +52,12 @@ Set Content-Type header appropriately (text/plain for /, application/json for /a
                 .expect_calls(1)
                 .and()
                 // Mock 3: GET /api/users request
-                .on_event("http_request_received")
-                .and_event_data_contains("path", "/api/users")
+                .on_event("http2_request")
+                .and_event_data_contains("uri", "/api/users")
                 .and_event_data_contains("method", "GET")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_http_response",
+                        "type": "send_http2_response",
                         "status": 200,
                         "headers": {"Content-Type": "application/json"},
                         "body": "{\"users\": [\"Alice\", \"Bob\"]}"
@@ -67,12 +66,12 @@ Set Content-Type header appropriately (text/plain for /, application/json for /a
                 .expect_calls(1)
                 .and()
                 // Mock 4: GET /api/status request
-                .on_event("http_request_received")
-                .and_event_data_contains("path", "/api/status")
+                .on_event("http2_request")
+                .and_event_data_contains("uri", "/api/status")
                 .and_event_data_contains("method", "GET")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_http_response",
+                        "type": "send_http2_response",
                         "status": 200,
                         "headers": {"Content-Type": "application/json"},
                         "body": "{\"status\": \"ok\", \"protocol\": \"HTTP/2\"}"
@@ -81,12 +80,12 @@ Set Content-Type header appropriately (text/plain for /, application/json for /a
                 .expect_calls(1)
                 .and()
                 // Mock 5: GET /nonexistent request (404)
-                .on_event("http_request_received")
-                .and_event_data_contains("path", "/nonexistent")
+                .on_event("http2_request")
+                .and_event_data_contains("uri", "/nonexistent")
                 .and_event_data_contains("method", "GET")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_http_response",
+                        "type": "send_http2_response",
                         "status": 404,
                         "headers": {"Content-Type": "text/plain"},
                         "body": "Not Found"
@@ -216,9 +215,8 @@ Set Content-Type: application/json for all responses."#;
     let server_config = helpers::NetGetConfig::new(prompt.to_string())
         .with_mock(|mock| {
             mock
-                // Mock 1: Server startup
-                .on_instruction_containing("HTTP/2 server")
-                .and_instruction_containing("port")
+                // Mock 1: Server startup (matches on instruction pattern from user input)
+                .on_instruction_containing("Content-Type")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -230,12 +228,12 @@ Set Content-Type: application/json for all responses."#;
                 .expect_calls(1)
                 .and()
                 // Mock 2: POST /echo request
-                .on_event("http_request_received")
-                .and_event_data_contains("path", "/echo")
+                .on_event("http2_request")
+                .and_event_data_contains("uri", "/echo")
                 .and_event_data_contains("method", "POST")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_http_response",
+                        "type": "send_http2_response",
                         "status": 200,
                         "headers": {"Content-Type": "application/json"},
                         "body": "{\"body\": \"Hello HTTP/2\", \"method\": \"POST\"}"
@@ -244,12 +242,12 @@ Set Content-Type: application/json for all responses."#;
                 .expect_calls(1)
                 .and()
                 // Mock 3: POST /api/users request
-                .on_event("http_request_received")
-                .and_event_data_contains("path", "/api/users")
+                .on_event("http2_request")
+                .and_event_data_contains("uri", "/api/users")
                 .and_event_data_contains("method", "POST")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_http_response",
+                        "type": "send_http2_response",
                         "status": 201,
                         "headers": {"Content-Type": "application/json"},
                         "body": "{\"success\": true, \"message\": \"User Charlie created successfully\"}"
@@ -344,9 +342,8 @@ Set Content-Type: application/json."#;
     let server_config = helpers::NetGetConfig::new(prompt.to_string())
         .with_mock(|mock| {
             mock
-                // Mock 1: Server startup
-                .on_instruction_containing("HTTP/2 server")
-                .and_instruction_containing("port")
+                // Mock 1: Server startup (matches on instruction pattern from user input)
+                .on_instruction_containing("Content-Type")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -358,12 +355,12 @@ Set Content-Type: application/json."#;
                 .expect_calls(1)
                 .and()
                 // Mock 2-4: Three concurrent GET /data requests
-                .on_event("http_request_received")
-                .and_event_data_contains("path", "/data")
+                .on_event("http2_request")
+                .and_event_data_contains("uri", "/data")
                 .and_event_data_contains("method", "GET")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_http_response",
+                        "type": "send_http2_response",
                         "status": 200,
                         "headers": {"Content-Type": "application/json"},
                         "body": "{\"data\": \"test\", \"timestamp\": \"2025-01-01T00:00:00Z\"}"

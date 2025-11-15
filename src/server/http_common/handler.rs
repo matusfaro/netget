@@ -29,7 +29,11 @@ pub async fn extract_request_data(
 ) -> RequestData {
     // Extract request details first for logging
     let method = req.method().to_string();
-    let uri = req.uri().to_string();
+    // Only use path+query portion (not scheme/host) for event data
+    let uri = req.uri().path_and_query()
+        .map(|pq| pq.as_str())
+        .unwrap_or(req.uri().path())
+        .to_string();
     let version = format!("{:?}", req.version());
 
     // Extract headers
