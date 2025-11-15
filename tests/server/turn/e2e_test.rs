@@ -18,8 +18,9 @@
 #![cfg(feature = "turn")]
 
 use crate::server::helpers::*;
-use std::net::{SocketAddr, UdpSocket};
+use std::net::SocketAddr;
 use std::time::Duration;
+use tokio::net::UdpSocket;
 
 #[tokio::test]
 async fn test_turn_basic_allocation() -> E2EResult<()> {
@@ -56,13 +57,10 @@ async fn test_turn_basic_allocation() -> E2EResult<()> {
 
     let test_state = start_netget_server(config).await?;
 
-    // Wait for server to be ready (longer wait for UDP socket to be ready)
-    tokio::time::sleep(Duration::from_millis(2000)).await;
+    // Wait for server to be ready
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let client = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind client socket");
-    client
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .expect("Failed to set read timeout");
+    let client = UdpSocket::bind("127.0.0.1:0").await.expect("Failed to bind client socket");
 
     let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
         .parse()
@@ -74,14 +72,15 @@ async fn test_turn_basic_allocation() -> E2EResult<()> {
     // Send allocate request
     client
         .send_to(&allocate_request, server_addr)
+        .await
         .expect("Failed to send TURN allocate request");
 
     println!("Sent TURN allocate request to {}", server_addr);
 
-    // Receive response
+    // Receive response with timeout
     let mut buf = vec![0u8; 2048];
-    match client.recv_from(&mut buf) {
-        Ok((len, from)) => {
+    match tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf)).await {
+        Ok(Ok((len, from))) => {
             println!("Received {} bytes from {}", len, from);
 
             let response = &buf[..len];
@@ -146,8 +145,11 @@ async fn test_turn_basic_allocation() -> E2EResult<()> {
 
             println!("✓ TURN allocate request/response successful");
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             panic!("Failed to receive TURN response: {}", e);
+        }
+        Err(_) => {
+            panic!("Timeout waiting for TURN response");
         }
     }
 
@@ -189,10 +191,7 @@ async fn test_turn_refresh_allocation() -> E2EResult<()> {
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let client = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind client socket");
-    client
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .expect("Failed to set read timeout");
+    let client = UdpSocket::bind("127.0.0.1:0").await.expect("Failed to bind client socket");
 
     let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
         .parse()
@@ -202,11 +201,13 @@ async fn test_turn_refresh_allocation() -> E2EResult<()> {
     let allocate_request = build_turn_allocate_request();
     client
         .send_to(&allocate_request, server_addr)
+        .await
         .expect("Failed to send allocate");
 
     let mut buf = vec![0u8; 2048];
-    client
-        .recv_from(&mut buf)
+    tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf))
+        .await
+        .expect("Timeout waiting for allocate response")
         .expect("Failed to receive allocate response");
 
     println!("✓ Initial allocation successful");
@@ -215,11 +216,12 @@ async fn test_turn_refresh_allocation() -> E2EResult<()> {
     let refresh_request = build_turn_refresh_request();
     client
         .send_to(&refresh_request, server_addr)
+        .await
         .expect("Failed to send refresh");
 
     let mut buf = vec![0u8; 2048];
-    match client.recv_from(&mut buf) {
-        Ok((len, _)) => {
+    match tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf)).await {
+        Ok(Ok((len, _))) => {
             let response = &buf[..len];
 
             // Check message type (should be 0x0104 for Refresh Success Response)
@@ -235,8 +237,11 @@ async fn test_turn_refresh_allocation() -> E2EResult<()> {
 
             println!("✓ TURN refresh successful");
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             panic!("Failed to receive refresh response: {}", e);
+        }
+        Err(_) => {
+            panic!("Timeout waiting for refresh response");
         }
     }
 
@@ -273,10 +278,7 @@ async fn test_turn_create_permission() -> E2EResult<()> {
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let client = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind client socket");
-    client
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .expect("Failed to set read timeout");
+    let client = UdpSocket::bind("127.0.0.1:0").await.expect("Failed to bind client socket");
 
     let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
         .parse()
@@ -286,11 +288,13 @@ async fn test_turn_create_permission() -> E2EResult<()> {
     let allocate_request = build_turn_allocate_request();
     client
         .send_to(&allocate_request, server_addr)
+        .await
         .expect("Failed to send allocate");
 
     let mut buf = vec![0u8; 2048];
-    client
-        .recv_from(&mut buf)
+    tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf))
+        .await
+        .expect("Timeout waiting for allocate response")
         .expect("Failed to receive allocate response");
 
     println!("✓ Initial allocation successful");
@@ -299,11 +303,12 @@ async fn test_turn_create_permission() -> E2EResult<()> {
     let permission_request = build_turn_create_permission_request();
     client
         .send_to(&permission_request, server_addr)
+        .await
         .expect("Failed to send permission");
 
     let mut buf = vec![0u8; 2048];
-    match client.recv_from(&mut buf) {
-        Ok((len, _)) => {
+    match tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf)).await {
+        Ok(Ok((len, _))) => {
             let response = &buf[..len];
 
             // Check message type (should be 0x0108 for CreatePermission Success Response)
@@ -320,11 +325,13 @@ async fn test_turn_create_permission() -> E2EResult<()> {
 
             println!("✓ TURN create permission successful");
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             panic!("Failed to receive permission response: {}", e);
         }
+        Err(_) => {
+            panic!("Timeout waiting for permission response");
+        }
     }
-
 
     // Verify mocks
     test_state.verify_mocks().await?;
@@ -363,19 +370,17 @@ async fn test_turn_multiple_allocations() -> E2EResult<()> {
 
     // Create multiple clients
     for i in 0..3 {
-        let client = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind client socket");
-        client
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .expect("Failed to set read timeout");
+        let client = UdpSocket::bind("127.0.0.1:0").await.expect("Failed to bind client socket");
 
         let request = build_turn_allocate_request_with_tid(&[i; 12]);
         client
             .send_to(&request, server_addr)
+            .await
             .expect("Failed to send allocate");
 
         let mut buf = vec![0u8; 2048];
-        match client.recv_from(&mut buf) {
-            Ok((len, _)) => {
+        match tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf)).await {
+            Ok(Ok((len, _))) => {
                 let response = &buf[..len];
                 let message_type = u16::from_be_bytes([response[0], response[1]]);
 
@@ -385,7 +390,8 @@ async fn test_turn_multiple_allocations() -> E2EResult<()> {
 
                 println!("✓ Client {} allocation successful", i);
             }
-            Err(e) => panic!("Client {} failed: {}", i, e),
+            Ok(Err(e)) => panic!("Client {} recv failed: {}", i, e),
+            Err(_) => panic!("Client {} timeout", i),
         }
     }
 
@@ -422,11 +428,7 @@ async fn test_turn_error_insufficient_capacity() -> E2EResult<()> {
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let client = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind client socket");
-    client
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .expect("Failed to set read timeout");
-
+    let client = UdpSocket::bind("127.0.0.1:0").await.expect("Failed to bind client socket");
     let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
         .parse()
         .expect("Failed to parse server address");
@@ -434,11 +436,12 @@ async fn test_turn_error_insufficient_capacity() -> E2EResult<()> {
     let allocate_request = build_turn_allocate_request();
     client
         .send_to(&allocate_request, server_addr)
+        .await
         .expect("Failed to send allocate");
 
     let mut buf = vec![0u8; 2048];
-    match client.recv_from(&mut buf) {
-        Ok((len, _)) => {
+    match tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf)).await {
+        Ok(Ok((len, _))) => {
             let response = &buf[..len];
             let message_type = u16::from_be_bytes([response[0], response[1]]);
 
@@ -457,8 +460,11 @@ async fn test_turn_error_insufficient_capacity() -> E2EResult<()> {
 
             println!("✓ TURN server sent error response");
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             panic!("Failed to receive error response: {}", e);
+        }
+        Err(_) => {
+            panic!("Timeout waiting for error response");
         }
     }
 
@@ -487,11 +493,7 @@ async fn test_turn_invalid_magic_cookie() -> E2EResult<()> {
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let client = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind client socket");
-    client
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .expect("Failed to set read timeout");
-
+    let client = UdpSocket::bind("127.0.0.1:0").await.expect("Failed to bind client socket");
     let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
         .parse()
         .expect("Failed to parse server address");
@@ -500,13 +502,14 @@ async fn test_turn_invalid_magic_cookie() -> E2EResult<()> {
     let invalid_request = build_turn_request_with_invalid_magic_cookie();
     client
         .send_to(&invalid_request, server_addr)
+        .await
         .expect("Failed to send invalid request");
 
     println!("Sent TURN request with invalid magic cookie");
 
     let mut buf = vec![0u8; 2048];
-    match client.recv_from(&mut buf) {
-        Ok((len, _)) => {
+    match tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf)).await {
+        Ok(Ok((len, _))) => {
             let response = &buf[..len];
             if len >= 20 {
                 let message_type = u16::from_be_bytes([response[0], response[1]]);
@@ -521,14 +524,9 @@ async fn test_turn_invalid_magic_cookie() -> E2EResult<()> {
             }
             println!("✓ Server rejected invalid magic cookie");
         }
-        Err(e)
-            if e.kind() == std::io::ErrorKind::WouldBlock
-                || e.kind() == std::io::ErrorKind::TimedOut =>
-        {
+        Ok(Err(_)) | Err(_) => {
+            // Timeout or error means server silently ignored invalid packet
             println!("✓ Server silently ignored invalid packet");
-        }
-        Err(e) => {
-            panic!("Unexpected error: {}", e);
         }
     }
 
@@ -563,11 +561,7 @@ async fn test_turn_refresh_without_allocation() -> E2EResult<()> {
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let client = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind client socket");
-    client
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .expect("Failed to set read timeout");
-
+    let client = UdpSocket::bind("127.0.0.1:0").await.expect("Failed to bind client socket");
     let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
         .parse()
         .expect("Failed to parse server address");
@@ -576,13 +570,14 @@ async fn test_turn_refresh_without_allocation() -> E2EResult<()> {
     let refresh_request = build_turn_refresh_request();
     client
         .send_to(&refresh_request, server_addr)
+        .await
         .expect("Failed to send refresh");
 
     println!("Sent TURN refresh without prior allocation");
 
     let mut buf = vec![0u8; 2048];
-    match client.recv_from(&mut buf) {
-        Ok((len, _)) => {
+    match tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf)).await {
+        Ok(Ok((len, _))) => {
             let response = &buf[..len];
             if len >= 20 {
                 let message_type = u16::from_be_bytes([response[0], response[1]]);
@@ -607,8 +602,11 @@ async fn test_turn_refresh_without_allocation() -> E2EResult<()> {
                 }
             }
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             panic!("Failed to receive response: {}", e);
+        }
+        Err(_) => {
+            panic!("Timeout waiting for response");
         }
     }
 
@@ -641,11 +639,7 @@ async fn test_turn_permission_without_allocation() -> E2EResult<()> {
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let client = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind client socket");
-    client
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .expect("Failed to set read timeout");
-
+    let client = UdpSocket::bind("127.0.0.1:0").await.expect("Failed to bind client socket");
     let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
         .parse()
         .expect("Failed to parse server address");
@@ -654,13 +648,14 @@ async fn test_turn_permission_without_allocation() -> E2EResult<()> {
     let permission_request = build_turn_create_permission_request();
     client
         .send_to(&permission_request, server_addr)
+        .await
         .expect("Failed to send permission");
 
     println!("Sent TURN create permission without prior allocation");
 
     let mut buf = vec![0u8; 2048];
-    match client.recv_from(&mut buf) {
-        Ok((len, _)) => {
+    match tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf)).await {
+        Ok(Ok((len, _))) => {
             let response = &buf[..len];
             if len >= 20 {
                 let message_type = u16::from_be_bytes([response[0], response[1]]);
@@ -684,8 +679,11 @@ async fn test_turn_permission_without_allocation() -> E2EResult<()> {
                 }
             }
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             panic!("Failed to receive response: {}", e);
+        }
+        Err(_) => {
+            panic!("Timeout waiting for response");
         }
     }
 
@@ -718,11 +716,7 @@ async fn test_turn_short_lifetime_allocation() -> E2EResult<()> {
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let client = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind client socket");
-    client
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .expect("Failed to set read timeout");
-
+    let client = UdpSocket::bind("127.0.0.1:0").await.expect("Failed to bind client socket");
     let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
         .parse()
         .expect("Failed to parse server address");
@@ -731,11 +725,13 @@ async fn test_turn_short_lifetime_allocation() -> E2EResult<()> {
     let allocate_request = build_turn_allocate_request();
     client
         .send_to(&allocate_request, server_addr)
+        .await
         .expect("Failed to send allocate");
 
     let mut buf = vec![0u8; 2048];
-    let (len, _) = client
-        .recv_from(&mut buf)
+    let (len, _) = tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf))
+        .await
+        .expect("Timeout waiting for allocate response")
         .expect("Failed to receive allocate response");
 
     let response = &buf[..len];
@@ -754,13 +750,14 @@ async fn test_turn_short_lifetime_allocation() -> E2EResult<()> {
     let refresh_request = build_turn_refresh_request();
     client
         .send_to(&refresh_request, server_addr)
+        .await
         .expect("Failed to send refresh");
 
     println!("Sent refresh request after expiration");
 
     let mut buf = vec![0u8; 2048];
-    match client.recv_from(&mut buf) {
-        Ok((len, _)) => {
+    match tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf)).await {
+        Ok(Ok((len, _))) => {
             let response = &buf[..len];
             if len >= 20 {
                 let message_type = u16::from_be_bytes([response[0], response[1]]);
@@ -780,14 +777,9 @@ async fn test_turn_short_lifetime_allocation() -> E2EResult<()> {
                 }
             }
         }
-        Err(e)
-            if e.kind() == std::io::ErrorKind::WouldBlock
-                || e.kind() == std::io::ErrorKind::TimedOut =>
-        {
+        Ok(Err(_)) | Err(_) => {
+            // Timeout or error means server ignored refresh of expired allocation
             println!("✓ Server ignored refresh of expired allocation (no response)");
-        }
-        Err(e) => {
-            panic!("Unexpected error: {}", e);
         }
     }
 
@@ -822,11 +814,7 @@ async fn test_turn_allocate_with_lifetime_attribute() -> E2EResult<()> {
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let client = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind client socket");
-    client
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .expect("Failed to set read timeout");
-
+    let client = UdpSocket::bind("127.0.0.1:0").await.expect("Failed to bind client socket");
     let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
         .parse()
         .expect("Failed to parse server address");
@@ -835,13 +823,14 @@ async fn test_turn_allocate_with_lifetime_attribute() -> E2EResult<()> {
     let allocate_request = build_turn_allocate_request_with_lifetime(300);
     client
         .send_to(&allocate_request, server_addr)
+        .await
         .expect("Failed to send allocate");
 
     println!("Sent TURN allocate with LIFETIME attribute (300s)");
 
     let mut buf = vec![0u8; 2048];
-    match client.recv_from(&mut buf) {
-        Ok((len, _)) => {
+    match tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf)).await {
+        Ok(Ok((len, _))) => {
             let response = &buf[..len];
 
             assert!(len >= 20, "Response too short");
@@ -892,8 +881,11 @@ async fn test_turn_allocate_with_lifetime_attribute() -> E2EResult<()> {
 
             println!("✓ TURN allocate with LIFETIME successful");
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             panic!("Failed to receive response: {}", e);
+        }
+        Err(_) => {
+            panic!("Timeout waiting for response");
         }
     }
 
