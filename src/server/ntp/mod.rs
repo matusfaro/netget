@@ -32,6 +32,7 @@ impl NtpServer {
         let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
         let local_addr = socket.local_addr()?;
         info!("NTP server (action-based) listening on {}", local_addr);
+        let _ = status_tx.send(format!("[INFO] NTP server listening on {}", local_addr));
 
         let protocol = Arc::new(NtpProtocol::new());
 
