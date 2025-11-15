@@ -516,12 +516,14 @@ fn extract_context_from_prompt(prompt: &str) -> LlmContext {
 
     // Try to extract event type from prompt
     // First look for "Event ID:" format (preferred for mock testing)
+    let mut is_event_prompt = false;
     if let Some(event_id_line) = prompt.lines().find(|line| line.contains("Event ID:")) {
         if let Some(event_id) = event_id_line.split("Event ID:").nth(1) {
             let event_id = event_id.trim();
             if !event_id.is_empty() {
                 debug!("🔧 Extracted event type from Event ID: '{}'", event_id);
                 context.event_type = Some(event_id.to_string());
+                is_event_prompt = true;
             }
         }
     } else if let Some(event_line) = prompt.lines().find(|line| line.contains("Event:")) {
@@ -531,14 +533,89 @@ fn extract_context_from_prompt(prompt: &str) -> LlmContext {
             if !event_type.is_empty() {
                 debug!("🔧 Extracted event type from Event: '{}'", event_type);
                 context.event_type = Some(event_type.to_string());
+                is_event_prompt = true;
             }
         }
     }
 
     // Try to extract instruction - look for patterns
-    // First, try to find the user input section at the end of the prompt
-    // User input typically appears after system capabilities or markers like "## System Capabilities"
-    let has_user_message = if let Some(cap_idx) = prompt.find("## System Capabilities").or_else(|| prompt.find("# Current State")) {
+    // PRIORITY 0: For event prompts, extract from "## Global Instructions" or "## Event-Specific Instructions"
+    let has_user_message = if is_event_prompt {
+        // For events, look for instruction sections in the system message
+        if let Some(global_inst_idx) = prompt.find("## Global Instructions") {
+            let after_header = &prompt[global_inst_idx + "## Global Instructions".len()..];
+            let lines: Vec<&str> = after_header.lines().collect();
+            let mut found = false;
+            for line in lines.iter() {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() && trimmed.len() > 5 && !trimmed.starts_with('#') {
+                    debug!("🔧 Extracted instruction from Global Instructions: '{}'", trimmed);
+                    context.instruction = trimmed.to_string();
+                    found = true;
+                    break;
+                }
+            }
+            found
+        } else if let Some(event_inst_idx) = prompt.find("## Event-Specific Instructions") {
+            let after_header = &prompt[event_inst_idx + "## Event-Specific Instructions".len()..];
+            let lines: Vec<&str> = after_header.lines().collect();
+            let mut found = false;
+            for line in lines.iter() {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() && trimmed.len() > 5 && !trimmed.starts_with('#') {
+                    debug!("🔧 Extracted instruction from Event-Specific Instructions: '{}'", trimmed);
+                    context.instruction = trimmed.to_string();
+                    found = true;
+                    break;
+                }
+            }
+            found
+        } else {
+            false
+        }
+    }
+    // PRIORITY 1: User input appears at the END of the prompt (after system message)
+    // The conversation structure is: [system message]\n\n[user input]\n\n
+    // So we look for the last substantial line that looks like user input
+    // First try: Look after "# Current State" section and find the last substantial line
+    else if let Some(current_state_idx) = prompt.find("# Current State") {
+        let after_current_state = &prompt[current_state_idx..];
+
+        // Find lines after the last system capability
+        if let Some(last_cap_idx) = after_current_state.rfind("- **Raw socket access**")
+            .or_else(|| after_current_state.rfind("- **Privileged ports"))
+        {
+            let after_caps = &after_current_state[last_cap_idx..];
+
+            // Split into lines and find the first substantial non-empty line
+            let lines: Vec<&str> = after_caps.lines().collect();
+            let mut found_instruction = false;
+
+            // Search forward from the beginning to find the user input
+            for line in lines.iter() {
+                let trimmed = line.trim();
+                // Look for substantial lines that don't look like system text
+                if !trimmed.is_empty()
+                    && trimmed.len() > 5
+                    && !trimmed.starts_with('-')  // Not a bullet point
+                    && !trimmed.starts_with('#')  // Not a header
+                    && !trimmed.contains("**")    // Not bold formatting
+                    && !trimmed.starts_with("✓")  // Not a checkmark
+                    && !trimmed.starts_with("✗")  // Not an X mark
+                {
+                    debug!("🔧 Extracted instruction from end of prompt: '{}'", trimmed);
+                    context.instruction = trimmed.to_string();
+                    found_instruction = true;
+                    break;
+                }
+            }
+            found_instruction
+        } else {
+            false
+        }
+    }
+    // PRIORITY 2: Look for System Capabilities section (older format)
+    else if let Some(cap_idx) = prompt.find("## System Capabilities") {
         // Extract everything after the capabilities section
         let after_cap = &prompt[cap_idx..];
         // Find the end of the capabilities section (usually ends with "DataLink protocol unavailable" or similar)
