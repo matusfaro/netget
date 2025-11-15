@@ -292,6 +292,14 @@ impl CassandraServer {
                 self.handle_auth_response(frame, conn_state, stream, connection_id, status_tx)
                     .await
             }
+            Opcode::Register => {
+                // Client wants to register for server events
+                // We don't support server events, but respond with READY to acknowledge
+                debug!("Client registering for events (not supported, acknowledging anyway)");
+                let _ = status_tx.send("[DEBUG] Cassandra: Client registered for events (no-op)".to_string());
+                self.send_ready(frame.stream_id, stream, status_tx).await?;
+                Ok(true)
+            }
             _ => {
                 warn!("Unsupported Cassandra opcode: {:?}", frame.opcode);
                 let _ = status_tx.send(format!("[WARN] Unsupported opcode: {:?}", frame.opcode));

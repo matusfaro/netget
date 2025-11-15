@@ -3,10 +3,9 @@
 //! These tests spawn the NetGet binary and test Cassandra protocol operations
 //! using real Cassandra/ScyllaDB client (scylla crate).
 
-#[cfg(all(test, feature = "cassandra", feature = "cassandra"))]
+#[cfg(all(test, feature = "cassandra"))]
 mod e2e_cassandra {
-    use crate::server::helpers::{start_netget_server, E2EResult, NetGetConfig};
-    use crate::helpers::with_cassandra_timeout;
+    use crate::helpers::{start_netget_server, E2EResult, NetGetConfig, with_cassandra_timeout};
     use std::time::Duration;
     use tokio::time::sleep;
 
@@ -38,18 +37,27 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock: OPTIONS frame during connection
+                    // Mock 2: OPTIONS frame during connection (connection pool creates 2 connections)
                     .on_event("cassandra_options")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_supported"
                         }
                     ]))
-                    .expect_calls(1)
+                    .expect_calls(2)
+                    .and()
+                    // Mock 3: STARTUP frame to complete connection (2 connections)
+                    .on_event("cassandra_startup")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_ready"
+                        }
+                    ]))
+                    .expect_calls(2)
                     .and()
             });
 
-        let mut server = start_netget_server(config).await?;
+        let server = start_netget_server(config).await?;
 
         // Wait for server to be ready
         sleep(Duration::from_secs(2)).await;
@@ -106,16 +114,25 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: OPTIONS frame during connection
+                    // Mock 2: OPTIONS frame during connection (connection pool creates 2 connections)
                     .on_event("cassandra_options")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_supported"
                         }
                     ]))
-                    .expect_calls(1)
+                    .expect_calls(2)
                     .and()
-                    // Mock 3: Query received
+                    // Mock 3: STARTUP frame to complete connection (2 connections)
+                    .on_event("cassandra_startup")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_ready"
+                        }
+                    ]))
+                    .expect_calls(2)
+                    .and()
+                    // Mock 4: Query received
                     .on_event("cassandra_query_received")
                     .and_event_data_contains("query", "SELECT * FROM users")
                     .respond_with_actions(serde_json::json!([
@@ -136,7 +153,7 @@ mod e2e_cassandra {
                     .and()
             });
 
-        let mut server = start_netget_server(config).await?;
+        let server = start_netget_server(config).await?;
 
         // Wait for server to be ready
         sleep(Duration::from_secs(2)).await;
@@ -211,16 +228,25 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: OPTIONS frame during connection
+                    // Mock 2: OPTIONS frame during connection (connection pool creates 2 connections)
                     .on_event("cassandra_options")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_supported"
                         }
                     ]))
-                    .expect_calls(1)
+                    .expect_calls(2)
                     .and()
-                    // Mock 3: Error query received
+                    // Mock 3: STARTUP frame to complete connection (2 connections)
+                    .on_event("cassandra_startup")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_ready"
+                        }
+                    ]))
+                    .expect_calls(2)
+                    .and()
+                    // Mock 4: Error query received
                     .on_event("cassandra_query_received")
                     .and_event_data_contains("query", "SELECT * FROM nonexistent")
                     .respond_with_actions(serde_json::json!([
@@ -234,7 +260,7 @@ mod e2e_cassandra {
                     .and()
             });
 
-        let mut server = start_netget_server(config).await?;
+        let server = start_netget_server(config).await?;
 
         // Wait for server to be ready
         sleep(Duration::from_secs(2)).await;
@@ -301,16 +327,25 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: OPTIONS frame during connection
+                    // Mock 2: OPTIONS frame during connection (connection pool creates 2 connections)
                     .on_event("cassandra_options")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_supported"
                         }
                     ]))
-                    .expect_calls(1)
+                    .expect_calls(2)
                     .and()
-                    // Mock 3: First query (count)
+                    // Mock 3: STARTUP frame to complete connection (2 connections)
+                    .on_event("cassandra_startup")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_ready"
+                        }
+                    ]))
+                    .expect_calls(2)
+                    .and()
+                    // Mock 4: First query (count)
                     .on_event("cassandra_query_received")
                     .and_event_data_contains("query", "SELECT count(*) FROM users")
                     .respond_with_actions(serde_json::json!([
@@ -326,7 +361,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 4: Second query (select with WHERE)
+                    // Mock 5: Second query (select with WHERE)
                     .on_event("cassandra_query_received")
                     .and_event_data_contains("query", "SELECT * FROM users WHERE id=1")
                     .respond_with_actions(serde_json::json!([
@@ -345,7 +380,7 @@ mod e2e_cassandra {
                     .and()
             });
 
-        let mut server = start_netget_server(config).await?;
+        let server = start_netget_server(config).await?;
 
         // Wait for server to be ready
         sleep(Duration::from_secs(2)).await;
@@ -428,16 +463,25 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: OPTIONS frame during connection (3 connections)
+                    // Mock 2: OPTIONS frame during connection (3 clients * 2 connections each = 6 total)
                     .on_event("cassandra_options")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_supported"
                         }
                     ]))
-                    .expect_calls(3)
+                    .expect_calls(6)
                     .and()
-                    // Mock 3: Query received (will be called 3 times for concurrent connections)
+                    // Mock 3: STARTUP frame to complete connection (3 clients * 2 connections each = 6 total)
+                    .on_event("cassandra_startup")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_ready"
+                        }
+                    ]))
+                    .expect_calls(6)
+                    .and()
+                    // Mock 4: Query received (will be called 3 times for concurrent connections)
                     .on_event("cassandra_query_received")
                     .and_event_data_contains("query", "SELECT value")
                     .respond_with_actions(serde_json::json!([
@@ -455,7 +499,7 @@ mod e2e_cassandra {
                     .and()
             });
 
-        let mut server = start_netget_server(config).await?;
+        let server = start_netget_server(config).await?;
 
         // Wait for server to be ready
         sleep(Duration::from_secs(2)).await;
@@ -535,16 +579,25 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: OPTIONS frame during connection
+                    // Mock 2: OPTIONS frame during connection (connection pool creates 2 connections)
                     .on_event("cassandra_options")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_supported"
                         }
                     ]))
-                    .expect_calls(1)
+                    .expect_calls(2)
                     .and()
-                    // Mock 3: PREPARE received
+                    // Mock 3: STARTUP frame to complete connection (2 connections)
+                    .on_event("cassandra_startup")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_ready"
+                        }
+                    ]))
+                    .expect_calls(2)
+                    .and()
+                    // Mock 4: PREPARE received
                     .on_event("cassandra_prepare_received")
                     .and_event_data_contains("query", "SELECT * FROM users WHERE id = ?")
                     .respond_with_actions(serde_json::json!([
@@ -558,7 +611,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 4: EXECUTE received
+                    // Mock 5: EXECUTE received
                     .on_event("cassandra_execute_received")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -576,7 +629,7 @@ mod e2e_cassandra {
                     .and()
             });
 
-        let mut server = start_netget_server(config).await?;
+        let server = start_netget_server(config).await?;
 
         // Wait for server to be ready
         sleep(Duration::from_secs(2)).await;
@@ -660,16 +713,25 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: OPTIONS frame during connection
+                    // Mock 2: OPTIONS frame during connection (connection pool creates 2 connections)
                     .on_event("cassandra_options")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_supported"
                         }
                     ]))
-                    .expect_calls(1)
+                    .expect_calls(2)
                     .and()
-                    // Mock 3: First PREPARE
+                    // Mock 3: STARTUP frame to complete connection (2 connections)
+                    .on_event("cassandra_startup")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_ready"
+                        }
+                    ]))
+                    .expect_calls(2)
+                    .and()
+                    // Mock 4: First PREPARE
                     .on_event("cassandra_prepare_received")
                     .and_event_data_contains("query", "SELECT * FROM users WHERE id = ?")
                     .respond_with_actions(serde_json::json!([
@@ -683,7 +745,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 4: Second PREPARE
+                    // Mock 5: Second PREPARE
                     .on_event("cassandra_prepare_received")
                     .and_event_data_contains("query", "SELECT count(*) FROM users")
                     .respond_with_actions(serde_json::json!([
@@ -696,7 +758,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 5: EXECUTE calls (3 total)
+                    // Mock 6: EXECUTE calls (3 total)
                     .on_event("cassandra_execute_received")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -714,7 +776,7 @@ mod e2e_cassandra {
                     .and()
             });
 
-        let mut server = start_netget_server(config).await?;
+        let server = start_netget_server(config).await?;
 
         // Wait for server to be ready
         sleep(Duration::from_secs(2)).await;
@@ -821,16 +883,25 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: OPTIONS frame during connection
+                    // Mock 2: OPTIONS frame during connection (connection pool creates 2 connections)
                     .on_event("cassandra_options")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_supported"
                         }
                     ]))
-                    .expect_calls(1)
+                    .expect_calls(2)
                     .and()
-                    // Mock 3: PREPARE received
+                    // Mock 3: STARTUP frame to complete connection (2 connections)
+                    .on_event("cassandra_startup")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_ready"
+                        }
+                    ]))
+                    .expect_calls(2)
+                    .and()
+                    // Mock 4: PREPARE received
                     .on_event("cassandra_prepare_received")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -842,7 +913,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 4: EXECUTE with wrong param count (error)
+                    // Mock 5: EXECUTE with wrong param count (error)
                     .on_event("cassandra_execute_received")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -855,7 +926,7 @@ mod e2e_cassandra {
                     .and()
             });
 
-        let mut server = start_netget_server(config).await?;
+        let server = start_netget_server(config).await?;
 
         // Wait for server to be ready
         sleep(Duration::from_secs(2)).await;
