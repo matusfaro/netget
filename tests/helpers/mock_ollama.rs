@@ -541,37 +541,18 @@ fn extract_context_from_prompt(prompt: &str) -> LlmContext {
     let has_user_message = if let Some(cap_idx) = prompt.find("## System Capabilities").or_else(|| prompt.find("# Current State")) {
         // Extract everything after the capabilities section
         let after_cap = &prompt[cap_idx..];
-        // Find the end of the capabilities section (usually ends with "DataLink protocol unavailable" or similar)
-        if let Some(end_idx) = after_cap.find("DataLink protocol unavailable") {
-            let after_system = &after_cap[end_idx + "DataLink protocol unavailable".len()..];
-            // Look for the first substantial non-empty line after the system section
-            let lines: Vec<&str> = after_system.lines().collect();
-            let mut found_instruction = false;
-            for line in lines.iter() {
-                let trimmed = line.trim();
-                if !trimmed.is_empty() && trimmed.len() > 5 {
-                    // Check if this is a "Trigger: User input:" or "User input:" line
-                    if let Some(after_marker) = trimmed.strip_prefix("Trigger: User input:") {
-                        let instruction = after_marker.trim().trim_matches('"').trim_matches('\'');
-                        debug!("🔧 Extracted instruction from Trigger: User input: '{}'", instruction);
-                        context.instruction = instruction.to_string();
-                        found_instruction = true;
-                        break;
-                    } else if let Some(after_marker) = trimmed.strip_prefix("User input:") {
-                        let instruction = after_marker.trim().trim_matches('"').trim_matches('\'');
-                        debug!("🔧 Extracted instruction from User input: '{}'", instruction);
-                        context.instruction = instruction.to_string();
-                        found_instruction = true;
-                        break;
-                    } else {
-                        debug!("🔧 Extracted instruction from end of prompt: '{}'", trimmed);
-                        context.instruction = trimmed.to_string();
-                        found_instruction = true;
-                        break;
-                    }
-                }
+        // Find the end of the capabilities section - look for "Raw socket access" marker
+        if let Some(end_idx) = after_cap.find("- **Raw socket access**: ✓ Available") {
+            let after_system = &after_cap[end_idx + "- **Raw socket access**: ✓ Available".len()..];
+            // Extract ALL remaining text as the user instruction (may be multi-line)
+            let instruction = after_system.trim();
+            if !instruction.is_empty() {
+                debug!("🔧 Extracted instruction from end of prompt (full): '{}'", &instruction[..instruction.len().min(200)]);
+                context.instruction = instruction.to_string();
+                true
+            } else {
+                false
             }
-            found_instruction
         } else {
             false
         }

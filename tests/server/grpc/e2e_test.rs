@@ -121,7 +121,9 @@ When you receive GetUser requests, respond with a User message containing the re
                         "port": 0,
                         "base_stack": "gRPC",
                         "instruction": "Respond to GetUser with id, name Alice, email alice@example.com",
-                        "proto_schema": proto_text
+                        "startup_params": {
+                            "proto_schema": proto_text
+                        }
                     }
                 ]))
                 .expect_calls(1)
@@ -260,7 +262,9 @@ When you receive CreateUser requests, respond with a User message having id=456 
                         "port": 0,
                         "base_stack": "gRPC",
                         "instruction": "Respond to CreateUser with id=456, copy name and email from request",
-                        "proto_file_path": proto_file.display().to_string()
+                        "startup_params": {
+                            "proto_schema": proto_file.display().to_string()
+                        }
                     }
                 ]))
                 .expect_calls(1)
@@ -333,7 +337,9 @@ When you receive GetUser requests, respond with a User message containing the re
                         "port": 0,
                         "base_stack": "gRPC",
                         "instruction": "Respond to GetUser with id, name Bob, email bob@test.com",
-                        "proto_schema": proto_text
+                        "startup_params": {
+                            "proto_schema": proto_text
+                        }
                     }
                 ]))
                 .expect_calls(1)
@@ -405,7 +411,9 @@ When you receive GetUser requests:
                         "port": 0,
                         "base_stack": "gRPC",
                         "instruction": "If id=0 return NOT_FOUND error, else return User with id, name Charlie, email charlie@test.com",
-                        "proto_schema": proto_text
+                        "startup_params": {
+                            "proto_schema": proto_text
+                        }
                     }
                 ]))
                 .expect_calls(1)
@@ -528,7 +536,9 @@ When you receive GetUser requests, respond with a User message where the id matc
                         "port": 0,
                         "base_stack": "gRPC",
                         "instruction": "Respond to GetUser with id from request, name User<id>, email user<id>@test.com",
-                        "proto_schema": proto_text
+                        "startup_params": {
+                            "proto_schema": proto_text
+                        }
                     }
                 ]))
                 .expect_calls(1)
