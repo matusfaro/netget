@@ -179,16 +179,8 @@ async fn test_smb_session_setup() -> E2EResult<()> {
     let config = crate::helpers::NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
-                // Mock: Session setup event (match first, before non-event calls)
-                .on_event("smb_operation")
-                .and_event_data_contains("operation", "session_setup")
-                .respond_with_actions(serde_json::json!([
-                    {"type": "smb_auth_success"}
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock: Server startup (matches any non-event call)
-                .on_custom(|ctx| ctx.event_type.is_none())
+                // Mock: Server startup (first - matches non-event calls)
+                .on_custom(|ctx| ctx.event_type.is_none() && ctx.iteration == 0)
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -196,6 +188,13 @@ async fn test_smb_session_setup() -> E2EResult<()> {
                         "base_stack": "SMB",
                         "instruction": prompt
                     }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock: Session setup (second - matches any subsequent call)
+                .on_custom(|ctx| ctx.iteration > 0)
+                .respond_with_actions(serde_json::json!([
+                    {"type": "smb_auth_success"}
                 ]))
                 .expect_calls(1)
                 .and()
