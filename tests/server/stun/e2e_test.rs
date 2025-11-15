@@ -52,8 +52,11 @@ async fn test_stun_basic_binding_request() -> E2EResult<()> {
     // Extract server port
     let port = test_state.port;
 
-    // Wait for server to be ready
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // Wait for server receive loop to be ready
+    test_state.wait_for_log("STUN receive loop started", 5).await?;
+
+    // Give tokio time to register the socket with reactor
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Create UDP client socket
     let client = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind client socket");
@@ -68,12 +71,14 @@ async fn test_stun_basic_binding_request() -> E2EResult<()> {
     // Build STUN binding request
     let binding_request = build_stun_binding_request();
 
-    // Send binding request
-    client
-        .send_to(&binding_request, server_addr)
-        .expect("Failed to send STUN request");
-
-    println!("Sent STUN binding request to {}", server_addr);
+    // Send binding request multiple times to rule out packet loss
+    for i in 0..3 {
+        client
+            .send_to(&binding_request, server_addr)
+            .expect("Failed to send STUN request");
+        println!("Sent STUN binding request #{} to {}", i+1, server_addr);
+        std::thread::sleep(Duration::from_millis(50));
+    }
 
     // Receive response
     let mut buf = vec![0u8; 2048];
@@ -172,7 +177,11 @@ async fn test_stun_multiple_clients() -> E2EResult<()> {
     // Extract server port
     let port = test_state.port;
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // Wait for server receive loop to be ready
+    test_state.wait_for_log("STUN receive loop started", 5).await?;
+
+    // Give tokio time to register the socket with reactor
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
     let server_addr: SocketAddr = format!("127.0.0.1:{}", port)
         .parse()
@@ -253,7 +262,11 @@ async fn test_stun_xor_mapped_address() -> E2EResult<()> {
 
     let mut test_state = start_netget_server(config).await?;
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // Wait for server receive loop to be ready
+    test_state.wait_for_log("STUN receive loop started", 5).await?;
+
+    // Give tokio time to register the socket with reactor
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
     let client = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind client socket");
     client
@@ -331,7 +344,11 @@ async fn test_stun_invalid_magic_cookie() -> E2EResult<()> {
 
     let mut test_state = start_netget_server(config).await?;
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // Wait for server receive loop to be ready
+    test_state.wait_for_log("STUN receive loop started", 5).await?;
+
+    // Give tokio time to register the socket with reactor
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
     let client = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind client socket");
     client
@@ -401,7 +418,11 @@ async fn test_stun_malformed_short_packet() -> E2EResult<()> {
 
     let mut test_state = start_netget_server(config).await?;
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // Wait for server receive loop to be ready
+    test_state.wait_for_log("STUN receive loop started", 5).await?;
+
+    // Give tokio time to register the socket with reactor
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
     let client = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind client socket");
     client
@@ -480,7 +501,11 @@ async fn test_stun_request_with_attributes() -> E2EResult<()> {
 
     let mut test_state = start_netget_server(config).await?;
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // Wait for server receive loop to be ready
+    test_state.wait_for_log("STUN receive loop started", 5).await?;
+
+    // Give tokio time to register the socket with reactor
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
     let client = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind client socket");
     client
@@ -551,7 +576,11 @@ async fn test_stun_rapid_requests() -> E2EResult<()> {
 
     let mut test_state = start_netget_server(config).await?;
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // Wait for server receive loop to be ready
+    test_state.wait_for_log("STUN receive loop started", 5).await?;
+
+    // Give tokio time to register the socket with reactor
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
     let client = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind client socket");
     client
