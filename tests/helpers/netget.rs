@@ -30,6 +30,9 @@ pub struct NetGetInstance {
     pub mock_temp_file: Option<tempfile::TempPath>,
     /// Mock configuration (DEPRECATED - kept for backward compat, use mock_ollama_server for verification)
     pub mock_config: Option<MockLlmConfig>,
+    /// Abort handles for background reader tasks
+    pub(crate) stdout_reader_handle: tokio::task::JoinHandle<()>,
+    pub(crate) stderr_reader_handle: tokio::task::JoinHandle<()>,
 }
 
 /// Information about a server that was started
@@ -347,21 +350,23 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
 
     // IMPORTANT: Continue reading stdout in background to prevent pipe buffer from filling
     // Without this, the server will crash with "Broken pipe" when stdout buffer fills
-    tokio::spawn(async move {
+    let stdout_reader_handle = tokio::spawn(async move {
         while let Some(line) = reader.next_line().await.ok().flatten() {
             println!("[DEBUG] NetGet output: {}", line);
             output_lines_clone.lock().await.push(line);
         }
+        println!("[DEBUG] stdout reader task finished");
     });
 
     // Also spawn a task to read stderr and capture it
     let output_lines_stderr = output_lines.clone();
-    tokio::spawn(async move {
+    let stderr_reader_handle = tokio::spawn(async move {
         let mut stderr_reader = BufReader::new(stderr).lines();
         while let Some(line) = stderr_reader.next_line().await.ok().flatten() {
             println!("[STDERR] {}", line);
             output_lines_stderr.lock().await.push(line);
         }
+        println!("[DEBUG] stderr reader task finished");
     });
 
     Ok(NetGetInstance {
@@ -372,6 +377,8 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
         mock_ollama_server,
         mock_temp_file: None,
         mock_config: config.mock_config.clone(),
+        stdout_reader_handle,
+        stderr_reader_handle,
     })
 }
 
@@ -717,6 +724,20 @@ async fn wait_for_netget_startup_with_capture(
         .map_err(|_| "Timeout waiting for netget startup")?
 }
 
+impl Drop for NetGetInstance {
+    fn drop(&mut self) {
+        // Abort background reader tasks to prevent hanging
+        // These tasks will be waiting on pipes that may not close cleanly
+        self.stdout_reader_handle.abort();
+        self.stderr_reader_handle.abort();
+
+        // Note: child.kill() is async, so we can't call it in Drop
+        // However, the Child struct has kill_on_drop=true set (line 326),
+        // so it will be killed automatically when dropped
+        println!("[DEBUG] NetGetInstance dropped, background tasks aborted");
+    }
+}
+
 impl NetGetInstance {
     /// Verify all mock expectations were met
     #[allow(dead_code)]
@@ -825,14 +846,30 @@ impl NetGetInstance {
             self.child.wait().await
         };
 
-        match tokio::time::timeout(Duration::from_secs(5), shutdown).await {
+        let result = match tokio::time::timeout(Duration::from_secs(5), shutdown).await {
             Ok(Ok(_)) => Ok(()),
             _ => {
                 // Force kill if graceful shutdown failed
                 self.child.kill().await?;
                 Ok(())
             }
-        }
+        };
+
+        // Abort background reader tasks to prevent hanging
+        // (Do this after killing the child so pipes will close)
+        self.stdout_reader_handle.abort();
+        self.stderr_reader_handle.abort();
+
+        // Wait briefly for tasks to abort
+        let _ = tokio::time::timeout(
+            Duration::from_millis(100),
+            async {
+                let _ = (&mut self.stdout_reader_handle).await;
+                let _ = (&mut self.stderr_reader_handle).await;
+            }
+        ).await;
+
+        result
     }
 
     /// Check if output contains a specific string
