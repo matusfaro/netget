@@ -128,6 +128,76 @@ impl NetGetServer {
         self.output_lines.lock().await.clone()
     }
 
+    /// Wait for a specific log pattern to appear in the output
+    /// Returns when the pattern is found or times out
+    #[allow(dead_code)]
+    pub async fn wait_for_log(&self, pattern: &str, timeout_secs: u64) -> E2EResult<()> {
+        let start = std::time::Instant::now();
+        let timeout_duration = Duration::from_secs(timeout_secs);
+
+        loop {
+            // Check if pattern exists in current output
+            {
+                let lines = self.output_lines.lock().await;
+                if lines.iter().any(|line| line.contains(pattern)) {
+                    println!("[DEBUG] Found log pattern: '{}'", pattern);
+                    return Ok(());
+                }
+            }
+
+            // Check timeout
+            if start.elapsed() > timeout_duration {
+                let lines = self.output_lines.lock().await;
+                return Err(format!(
+                    "Timeout waiting for log pattern '{}' after {}s\nCaptured output:\n{}",
+                    pattern,
+                    timeout_secs,
+                    lines.join("\n")
+                )
+                .into());
+            }
+
+            // Sleep briefly before checking again
+            sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    /// Wait for a log pattern to appear N times
+    #[allow(dead_code)]
+    pub async fn wait_for_log_count(&self, pattern: &str, min_count: usize, timeout_secs: u64) -> E2EResult<()> {
+        let start = std::time::Instant::now();
+        let timeout_duration = Duration::from_secs(timeout_secs);
+
+        loop {
+            // Count occurrences in current output
+            {
+                let lines = self.output_lines.lock().await;
+                let count = lines.iter().filter(|line| line.contains(pattern)).count();
+                if count >= min_count {
+                    println!("[DEBUG] Found log pattern '{}' {} times (needed {})", pattern, count, min_count);
+                    return Ok(());
+                }
+            }
+
+            // Check timeout
+            if start.elapsed() > timeout_duration {
+                let lines = self.output_lines.lock().await;
+                let count = lines.iter().filter(|line| line.contains(pattern)).count();
+                return Err(format!(
+                    "Timeout waiting for log pattern '{}' to appear {} times (found {} times) after {}s",
+                    pattern,
+                    min_count,
+                    count,
+                    timeout_secs
+                )
+                .into());
+            }
+
+            // Sleep briefly before checking again
+            sleep(Duration::from_millis(50)).await;
+        }
+    }
+
     /// Verify all mock expectations were met
     ///
     /// Must be called before dropping the server if mocks were configured.
