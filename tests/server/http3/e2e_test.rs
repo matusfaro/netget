@@ -17,13 +17,43 @@ async fn test_http3_echo() -> E2EResult<()> {
         .with_log_level("debug")
         .with_mock(|mock| {
             mock
+                // Mock 1: Server startup
                 .on_instruction_containing("HTTP3 server")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
                         "port": 0,
                         "base_stack": "HTTP3",
-                        "instruction": "Run HTTP3 server"
+                        "instruction": "Echo back all data received"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Connection opened - just acknowledge
+                .on_event("http3_connection_opened")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "message",
+                        "text": "Connection opened"
+                    }
+                ]))
+                .and()
+                // Mock 3: Stream opened - just acknowledge
+                .on_event("http3_stream_opened")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "message",
+                        "text": "Stream opened"
+                    }
+                ]))
+                .and()
+                // Mock 4: LLM receives data and echoes it back
+                .on_event("http3_data_received")
+                .and_event_data_contains("data", "Hello")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http3_data",
+                        "data": "Hello, HTTP3!"
                     }
                 ]))
                 .expect_calls(1)
@@ -89,8 +119,20 @@ async fn test_http3_echo() -> E2EResult<()> {
 
     println!("✓ Sent data to HTTP3 server");
 
-    // Read response (with timeout in case server doesn't respond)
-    let response_result = timeout(Duration::from_secs(5), recv.read_to_end(1024)).await;
+    // Read response from LLM
+    let response = timeout(Duration::from_secs(5), recv.read_to_end(1024))
+        .await
+        .expect("Read timeout")
+        .expect("Failed to read response");
+
+    println!("✓ Received response: {} bytes", response.len());
+
+    // Verify echo
+    assert_eq!(
+        response,
+        test_data.to_vec(),
+        "Expected echo of sent data"
+    );
 
     // Cleanup
     connection.close(0u32.into(), b"done");
@@ -100,13 +142,6 @@ async fn test_http3_echo() -> E2EResult<()> {
     server.verify_mocks().await?;
 
     server.stop().await?;
-
-    // Check response after cleanup (test passes even if no echo, server startup is success)
-    if let Ok(Ok(response)) = response_result {
-        println!("✓ Received response: {} bytes", response.len());
-    } else {
-        println!("⚠ No response received (LLM may not have echoed data, but server works)");
-    }
 
     Ok(())
 }
@@ -118,6 +153,7 @@ async fn test_http3_custom_response() -> E2EResult<()> {
         .with_log_level("debug")
         .with_mock(|mock| {
             mock
+                // Mock 1: Server startup
                 .on_instruction_containing("HTTP3 server")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -125,6 +161,38 @@ async fn test_http3_custom_response() -> E2EResult<()> {
                         "port": 0,
                         "base_stack": "HTTP3",
                         "instruction": "Respond to PING with PONG"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Connection opened - just acknowledge
+                .on_event("http3_connection_opened")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "message",
+                        "text": "Connection opened"
+                    }
+                ]))
+                .and()
+                // Mock 3: Stream opened - just acknowledge
+                .on_event("http3_stream_opened")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "message",
+                        "text": "Stream opened"
+                    }
+                ]))
+                .and()
+                // Mock 4: LLM receives PING and responds with PONG
+                .on_event("http3_data_received")
+                .and_event_data_contains("data", "PING")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_http3_data",
+                        "data": "PONG"
+                    },
+                    {
+                        "type": "close_this_stream"
                     }
                 ]))
                 .expect_calls(1)
@@ -186,8 +254,20 @@ async fn test_http3_custom_response() -> E2EResult<()> {
 
     println!("✓ Sent PING to HTTP3 server");
 
-    // Read PONG response (with timeout in case server doesn't respond)
-    let response_result = timeout(Duration::from_secs(5), recv.read_to_end(1024)).await;
+    // Read PONG response from LLM
+    let response = timeout(Duration::from_secs(5), recv.read_to_end(1024))
+        .await
+        .expect("Read timeout")
+        .expect("Failed to read response");
+
+    let response_str = String::from_utf8_lossy(&response);
+    println!("✓ Received response: {}", response_str);
+
+    assert_eq!(
+        response_str,
+        "PONG",
+        "Expected PONG response"
+    );
 
     // Cleanup
     connection.close(0u32.into(), b"done");
@@ -197,14 +277,6 @@ async fn test_http3_custom_response() -> E2EResult<()> {
     server.verify_mocks().await?;
 
     server.stop().await?;
-
-    // Check response after cleanup
-    if let Ok(Ok(response)) = response_result {
-        let response_str = String::from_utf8_lossy(&response);
-        println!("✓ Received response: {}", response_str);
-    } else {
-        println!("⚠ No response received (LLM may not have responded, but server works)");
-    }
 
     Ok(())
 }
@@ -216,6 +288,7 @@ async fn test_http3_multiple_streams() -> E2EResult<()> {
         .with_log_level("debug")
         .with_mock(|mock| {
             mock
+                // Mock 1: Server startup
                 .on_instruction_containing("HTTP3 server")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -226,6 +299,39 @@ async fn test_http3_multiple_streams() -> E2EResult<()> {
                     }
                 ]))
                 .expect_calls(1)
+                .and()
+                // Mock 2: Connection opened - just acknowledge
+                .on_event("http3_connection_opened")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "message",
+                        "text": "Connection opened"
+                    }
+                ]))
+                .and()
+                // Mock 3: Stream opened - just acknowledge
+                .on_event("http3_stream_opened")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "message",
+                        "text": "Stream opened"
+                    }
+                ]))
+                .and()
+                // Mock 4: LLM receives data and echoes it back (matches any stream)
+                .on_event("http3_data_received")
+                .and_event_data_contains("data", "Stream")
+                .respond_with_actions_from_event(|event_data| {
+                    // Extract the data from the event and echo it back
+                    let data = event_data["data"].as_str().unwrap_or("Stream");
+                    serde_json::json!([
+                        {
+                            "type": "send_http3_data",
+                            "data": data
+                        }
+                    ])
+                })
+                .expect_calls(3)  // Expecting 3 streams
                 .and()
         });
 
@@ -285,26 +391,25 @@ async fn test_http3_multiple_streams() -> E2EResult<()> {
                 .expect("Failed to send");
             send.finish().expect("Failed to finish");
 
-            // Try to read response with timeout
-            let response = timeout(Duration::from_secs(5), recv.read_to_end(1024)).await;
-            (test_data, response)
+            // Read response from LLM
+            let response = timeout(Duration::from_secs(5), recv.read_to_end(1024))
+                .await
+                .expect("Read timeout")
+                .expect("Failed to read");
+            (test_data, String::from_utf8_lossy(&response).to_string())
         });
         handles.push(handle);
     }
 
-    // Wait for all streams to complete
+    // Wait for all streams to complete and verify echoes
     for handle in handles {
-        let (sent, response_result) = timeout(Duration::from_secs(15), handle)
+        let (sent, received) = timeout(Duration::from_secs(15), handle)
             .await
             .expect("Stream timeout")
             .expect("Stream task failed");
 
-        if let Ok(Ok(response)) = response_result {
-            let received = String::from_utf8_lossy(&response).to_string();
-            println!("✓ Stream test - sent: {}, received: {}", sent, received);
-        } else {
-            println!("⚠ Stream test - sent: {}, no response (LLM may not have echoed)", sent);
-        }
+        println!("✓ Stream test - sent: {}, received: {}", sent, received);
+        assert_eq!(sent, received, "Expected echo on stream");
     }
 
     // Cleanup
