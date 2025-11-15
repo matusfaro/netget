@@ -126,6 +126,9 @@ pub async fn run_non_interactive(
         }
     });
 
+    // Yield to allow the forwarder task to start
+    tokio::task::yield_now().await;
+
     // Call handler directly - no need for separate task!
     // The handler will spawn servers directly now
     event_handler
@@ -136,8 +139,10 @@ pub async fn run_non_interactive(
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Flush stdout to ensure all messages are visible to test helper
-    use std::io::Write;
-    std::io::stdout().flush().ok();
+    {
+        use std::io::Write;
+        std::io::stdout().flush().ok();
+    }
 
     // Check if we're in server mode
     if state.get_mode().await == Mode::Server {

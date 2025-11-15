@@ -27,6 +27,7 @@ async fn test_openapi_todo_list() -> E2EResult<()> {
                         "type": "open_server",
                         "port": 0,
                         "base_stack": "openapi",
+                        "instruction": "OpenAPI server for TODO API",
                         "startup_params": {
                             "spec": spec_content
                         }
@@ -149,6 +150,7 @@ async fn test_openapi_create_todo() -> E2EResult<()> {
                         "type": "open_server",
                         "port": 0,
                         "base_stack": "openapi",
+                        "instruction": "OpenAPI server for TODO API",
                         "startup_params": {
                             "spec": spec_content
                         }
@@ -274,6 +276,7 @@ async fn test_openapi_method_validation() -> E2EResult<()> {
                         "type": "open_server",
                         "port": 0,
                         "base_stack": "openapi",
+                        "instruction": "OpenAPI server for TODO API",
                         "startup_params": {
                             "spec": spec_content
                         }
@@ -375,6 +378,7 @@ async fn test_openapi_spec_compliant_flag() -> E2EResult<()> {
                         "type": "open_server",
                         "port": 0,
                         "base_stack": "openapi",
+                        "instruction": "OpenAPI server for TODO API",
                         "startup_params": {
                             "spec": spec_content
                         }
@@ -465,6 +469,7 @@ async fn test_openapi_404_not_found() -> E2EResult<()> {
                         "type": "open_server",
                         "port": 0,
                         "base_stack": "openapi",
+                        "instruction": "OpenAPI server for TODO API",
                         "startup_params": {
                             "spec": spec_content
                         }
