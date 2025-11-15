@@ -121,6 +121,12 @@ Initialize the heartbeat counter to 0 when the server starts."#;
 
     println!("✓ Recurring task executed and counter incremented");
 
+    // Wait for spawned task executions to complete their LLM calls
+    // (tasks are spawned with tokio::spawn and run asynchronously)
+    // Use a short delay to avoid allowing tasks to execute multiple times
+    println!("Waiting for spawned tasks to complete...");
+    sleep(Duration::from_millis(500)).await;
+
     server.verify_mocks().await?;
     server.stop().await?;
     println!("=== Test passed ===\n");
@@ -230,6 +236,12 @@ Initialize the ready flag to false when the server starts."#;
     );
 
     println!("✓ One-shot task executed and flag was set");
+
+    // Wait for spawned task executions to complete their LLM calls
+    // (tasks are spawned with tokio::spawn and run asynchronously)
+    // Use a short delay to avoid allowing tasks to execute multiple times
+    println!("Waiting for spawned tasks to complete...");
+    sleep(Duration::from_millis(500)).await;
 
     server.verify_mocks().await?;
     server.stop().await?;
@@ -385,6 +397,12 @@ Initialize metrics counter to 0 and initialized flag to false."#;
     );
 
     println!("✓ Server-attached tasks executed successfully");
+
+    // Wait for spawned task executions to complete their LLM calls
+    // (tasks are spawned with tokio::spawn and run asynchronously)
+    // Use a short delay to avoid allowing tasks to execute multiple times
+    println!("Waiting for spawned tasks to complete...");
+    sleep(Duration::from_millis(500)).await;
 
     server.verify_mocks().await?;
     server.stop().await?;

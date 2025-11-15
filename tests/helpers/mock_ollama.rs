@@ -555,6 +555,13 @@ fn extract_context_from_prompt(prompt: &str) -> LlmContext {
         }
     }
 
+    // Also detect event prompts by presence of "## Event-Specific Instructions"
+    // (task execution prompts don't have "Event ID:" but do have this section)
+    if !is_event_prompt && prompt.contains("## Event-Specific Instructions") {
+        is_event_prompt = true;
+        debug!("🔧 Detected event prompt from '## Event-Specific Instructions' section");
+    }
+
     // Try to extract instruction - look for patterns
     // PRIORITY 0: For event prompts, extract from "## Global Instructions" or "## Event-Specific Instructions"
     let has_user_message = if is_event_prompt {
@@ -575,18 +582,30 @@ fn extract_context_from_prompt(prompt: &str) -> LlmContext {
             found
         } else if let Some(event_inst_idx) = prompt.find("## Event-Specific Instructions") {
             let after_header = &prompt[event_inst_idx + "## Event-Specific Instructions".len()..];
-            let lines: Vec<&str> = after_header.lines().collect();
-            let mut found = false;
-            for line in lines.iter() {
+
+            // Find the end of this section (next ## header or "## Network Event Instructions")
+            let section_end = after_header.find("\n##")
+                .or_else(|| after_header.find("## Network Event Instructions"))
+                .unwrap_or(after_header.len());
+            let section = &after_header[..section_end];
+
+            // Collect all non-empty, non-header lines and join them
+            let mut instruction_parts = Vec::new();
+            for line in section.lines() {
                 let trimmed = line.trim();
-                if !trimmed.is_empty() && trimmed.len() > 5 && !trimmed.starts_with('#') {
-                    debug!("🔧 Extracted instruction from Event-Specific Instructions: '{}'", trimmed);
-                    context.instruction = trimmed.to_string();
-                    found = true;
-                    break;
+                if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                    instruction_parts.push(trimmed);
                 }
             }
-            found
+
+            if !instruction_parts.is_empty() {
+                let combined = instruction_parts.join("\n");
+                debug!("🔧 Extracted instruction from Event-Specific Instructions: '{}'", combined);
+                context.instruction = combined;
+                true
+            } else {
+                false
+            }
         } else {
             false
         }
