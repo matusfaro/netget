@@ -156,8 +156,23 @@ impl MockOllamaServer {
             }
         });
 
-        // Give server a moment to start
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        // Wait for server to be ready by attempting to connect
+        let max_retries = 20; // 20 retries * 50ms = 1 second max
+        let mut ready = false;
+        for attempt in 1..=max_retries {
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+            // Try to connect to the server
+            if tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_ok() {
+                ready = true;
+                info!("🔧 Mock Ollama server ready after {}ms", attempt * 50);
+                break;
+            }
+        }
+
+        if !ready {
+            return Err(format!("Mock Ollama server failed to become ready on port {}", port).into());
+        }
 
         info!("✅ Mock Ollama server ready on port {}", port);
 
