@@ -8,6 +8,7 @@
 use super::super::helpers::{self, E2EResult, NetGetConfig};
 use std::time::Duration;
 use tokio::time::sleep;
+use uuid;
 
 /// Simple helper to create a test protobuf schema
 fn create_test_proto_schema() -> String {
@@ -46,11 +47,11 @@ fn compile_proto_to_fds(proto_text: &str) -> E2EResult<Vec<u8>> {
     use std::process::Command;
 
     // Write proto text to temporary file
-    // Use PID to avoid conflicts when running tests concurrently
+    // Use UUID to avoid conflicts when running tests concurrently (PID is not unique across tests)
     let temp_dir = std::env::temp_dir();
-    let pid = std::process::id();
-    let proto_file = temp_dir.join(format!("test_grpc_{}.proto", pid));
-    let descriptor_file = temp_dir.join(format!("test_grpc_descriptor_{}.pb", pid));
+    let unique_id = uuid::Uuid::new_v4();
+    let proto_file = temp_dir.join(format!("test_grpc_{}.proto", unique_id));
+    let descriptor_file = temp_dir.join(format!("test_grpc_descriptor_{}.pb", unique_id));
 
     std::fs::write(&proto_file, proto_text)?;
 
