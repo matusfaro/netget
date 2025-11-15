@@ -132,7 +132,9 @@ impl UdpProtocol {
         // For async actions, we need to return the data and let the caller handle sending
         // This is because we need the socket reference from the network handler
         // We'll encode the target address in the result
-        Ok(ActionResult::Output(data.as_bytes().to_vec()))
+        // Try to decode as hex first, fall back to raw string
+        let bytes = hex::decode(data).unwrap_or_else(|_| data.as_bytes().to_vec());
+        Ok(ActionResult::Output(bytes))
     }
 
     /// Execute send_udp_response sync action
@@ -142,7 +144,10 @@ impl UdpProtocol {
             .and_then(|v| v.as_str())
             .context("Missing 'data' parameter")?;
 
-        Ok(ActionResult::Output(data.as_bytes().to_vec()))
+        // Try to decode as hex first, fall back to raw string
+        let bytes = hex::decode(data).unwrap_or_else(|_| data.as_bytes().to_vec());
+
+        Ok(ActionResult::Output(bytes))
     }
 }
 

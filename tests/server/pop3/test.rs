@@ -30,19 +30,19 @@ async fn test_pop3_greeting() -> E2EResult<()> {
                     {
                         "type": "open_server",
                         "port": 0,
-                        "base_stack": "TCP",
-                        "application_protocol": "POP3",
+                        "base_stack": "pop3",
                         "instruction": "Send POP3 greeting when client connects"
                     }
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock: Client connects
-                .on_event("tcp_connection_accepted")
+                // Mock: Client connects (CONNECTION_ESTABLISHED command)
+                .on_event("pop3_command")
+                .and_event_data_contains("command", "CONNECTION_ESTABLISHED")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_tcp_data",
-                        "data": hex::encode(b"+OK POP3 server ready\r\n")
+                        "type": "send_pop3_greeting",
+                        "message": "POP3 server ready"
                     }
                 ]))
                 .expect_calls(1)
@@ -112,41 +112,41 @@ async fn test_pop3_authentication() -> E2EResult<()> {
                     {
                         "type": "open_server",
                         "port": 0,
-                        "base_stack": "TCP",
-                        "application_protocol": "POP3",
+                        "base_stack": "pop3",
                         "instruction": "Handle USER and PASS commands"
                     }
                 ]))
                 .expect_calls(1)
                 .and()
                 // Mock 2: Client connects - send greeting
-                .on_event("tcp_connection_accepted")
+                .on_event("pop3_command")
+                .and_event_data_contains("command", "CONNECTION_ESTABLISHED")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_tcp_data",
-                        "data": hex::encode(b"+OK POP3 ready\r\n")
+                        "type": "send_pop3_greeting",
+                        "message": "POP3 ready"
                     }
                 ]))
                 .expect_calls(1)
                 .and()
                 // Mock 3: USER command received
-                .on_event("tcp_data_received")
-                .and_event_data_contains("data_utf8", "USER alice")
+                .on_event("pop3_command")
+                .and_event_data_contains("command", "USER alice")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_tcp_data",
-                        "data": hex::encode(b"+OK user accepted\r\n")
+                        "type": "send_pop3_ok",
+                        "message": "user accepted"
                     }
                 ]))
                 .expect_calls(1)
                 .and()
                 // Mock 4: PASS command received
-                .on_event("tcp_data_received")
-                .and_event_data_contains("data_utf8", "PASS secret")
+                .on_event("pop3_command")
+                .and_event_data_contains("command", "PASS secret")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_tcp_data",
-                        "data": hex::encode(b"+OK logged in\r\n")
+                        "type": "send_pop3_ok",
+                        "message": "logged in"
                     }
                 ]))
                 .expect_calls(1)
@@ -239,43 +239,43 @@ async fn test_pop3_stat() -> E2EResult<()> {
                     {
                         "type": "open_server",
                         "port": 0,
-                        "base_stack": "TCP",
-                        "application_protocol": "POP3",
+                        "base_stack": "pop3",
                         "instruction": "Handle USER, PASS, and STAT commands"
                     }
                 ]))
                 .expect_calls(1)
                 .and()
                 // Mock 2: Client connects - send greeting
-                .on_event("tcp_connection_accepted")
+                .on_event("pop3_command")
+                .and_event_data_contains("command", "CONNECTION_ESTABLISHED")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_tcp_data",
-                        "data": hex::encode(b"+OK POP3 ready\r\n")
+                        "type": "send_pop3_greeting",
+                        "message": "POP3 ready"
                     }
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 3-4: USER and PASS commands
-                .on_event("tcp_data_received")
+                // Mock 3: STAT command received (must come before generic mock)
+                .on_event("pop3_command")
+                .and_event_data_contains("command", "STAT")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_tcp_data",
-                        "data": hex::encode(b"+OK\r\n")
+                        "type": "send_pop3_stat",
+                        "message_count": 3,
+                        "total_size": 1024
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 4-5: USER and PASS commands (generic catch-all)
+                .on_event("pop3_command")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "send_pop3_ok"
                     }
                 ]))
                 .expect_calls(2)
-                .and()
-                // Mock 5: STAT command received
-                .on_event("tcp_data_received")
-                .and_event_data_contains("data_utf8", "STAT")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_tcp_data",
-                        "data": hex::encode(b"+OK 3 1024\r\n")
-                    }
-                ]))
-                .expect_calls(1)
                 .and()
         });
 
@@ -355,33 +355,33 @@ async fn test_pop3_quit() -> E2EResult<()> {
                     {
                         "type": "open_server",
                         "port": 0,
-                        "base_stack": "TCP",
-                        "application_protocol": "POP3",
+                        "base_stack": "pop3",
                         "instruction": "Handle QUIT command"
                     }
                 ]))
                 .expect_calls(1)
                 .and()
                 // Mock 2: Client connects - send greeting
-                .on_event("tcp_connection_accepted")
+                .on_event("pop3_command")
+                .and_event_data_contains("command", "CONNECTION_ESTABLISHED")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_tcp_data",
-                        "data": hex::encode(b"+OK POP3 ready\r\n")
+                        "type": "send_pop3_greeting",
+                        "message": "POP3 ready"
                     }
                 ]))
                 .expect_calls(1)
                 .and()
                 // Mock 3: QUIT command received
-                .on_event("tcp_data_received")
-                .and_event_data_contains("data_utf8", "QUIT")
+                .on_event("pop3_command")
+                .and_event_data_contains("command", "QUIT")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_tcp_data",
-                        "data": hex::encode(b"+OK goodbye\r\n")
+                        "type": "send_pop3_ok",
+                        "message": "goodbye"
                     },
                     {
-                        "type": "disconnect"
+                        "type": "close_connection"
                     }
                 ]))
                 .expect_calls(1)

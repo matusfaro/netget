@@ -14,8 +14,8 @@ pub mod server;
 pub use self::netget::NetGetConfig;
 pub use client::{start_netget_client, wait_for_client_startup};
 pub use common::{
-    retry, retry_with_backoff, with_aws_sdk_timeout, with_cassandra_timeout, with_client_timeout,
-    with_timeout, E2EResult,
+    get_available_port, retry, retry_with_backoff, with_aws_sdk_timeout, with_cassandra_timeout,
+    with_client_timeout, with_timeout, E2EResult,
 };
 pub use mock_config::{MockLlmConfig, MockResponse, MockRule, ResponseGenerator, SerializedMockRule};
 pub use mock_matcher::{LlmContext, MockMatcher};

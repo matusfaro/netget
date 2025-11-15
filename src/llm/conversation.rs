@@ -637,7 +637,9 @@ impl ConversationHandler {
 
             eprintln!("🔍 DEBUG: Full prompt length: {} chars", full_prompt.len());
             eprintln!("🔍 DEBUG: Prompt contains 'Event ID:': {}", full_prompt.contains("Event ID:"));
-            let preview_start = full_prompt.len().saturating_sub(500);
+            // Use floor_char_boundary to ensure we don't slice in the middle of a UTF-8 character
+            let preview_bytes = full_prompt.len().saturating_sub(500);
+            let preview_start = full_prompt.floor_char_boundary(preview_bytes);
             eprintln!("🔍 DEBUG: Last 500 chars of prompt: {}", &full_prompt[preview_start..]);
 
             // Call generate API with concatenated prompt and JSON format
