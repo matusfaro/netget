@@ -336,6 +336,13 @@ impl SmbServer {
                 debug!("SMB2 NEGOTIATE request");
                 let _ = status_tx.send("[DEBUG] SMB2 NEGOTIATE - offering SMB 2.1".to_string());
 
+                // Consume NEGOTIATE request body from the stream
+                // The body contains dialect list and negotiation contexts (typically ~38 bytes)
+                // We must consume this to prevent stream corruption on next read
+                let mut body_buf = vec![0u8; 512];
+                let bytes_read = _stream.read(&mut body_buf).await.unwrap_or(0);
+                trace!("NEGOTIATE body: {} bytes consumed", bytes_read);
+
                 // Build SMB2 Negotiate Response
                 // For simplicity, we'll offer SMB 2.1 dialect (0x0210)
                 let response = Self::build_negotiate_response(_header)?;
