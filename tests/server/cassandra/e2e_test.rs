@@ -588,6 +588,9 @@ mod e2e_cassandra {
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_prepared",
+                            "params": [
+                                {"type": "int"}
+                            ],
                             "columns": [
                                 {"name": "id", "type": "int"},
                                 {"name": "name", "type": "varchar"}

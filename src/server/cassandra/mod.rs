@@ -870,10 +870,15 @@ impl CassandraServer {
                             .and_then(|v| v.as_array())
                             .cloned()
                             .unwrap_or_default();
+                        let params = data
+                            .get("params")
+                            .and_then(|v| v.as_array())
+                            .cloned();
                         self.send_prepared(
                             frame.stream_id,
                             statement_id,
                             columns,
+                            params,
                             param_count,
                             stream,
                             status_tx,
@@ -910,6 +915,7 @@ impl CassandraServer {
             frame.stream_id,
             statement_id,
             vec![],
+            None,
             param_count,
             stream,
             status_tx,
@@ -1114,6 +1120,7 @@ impl CassandraServer {
         stream_id: i16,
         statement_id: Vec<u8>,
         columns: Vec<serde_json::Value>,
+        params: Option<Vec<serde_json::Value>>,
         param_count: usize,
         stream: &mut TcpStream,
         status_tx: &mpsc::UnboundedSender<String>,
@@ -1127,19 +1134,64 @@ impl CassandraServer {
         body.extend_from_slice(&(statement_id.len() as u16).to_be_bytes());
         body.extend_from_slice(&statement_id);
 
-        // Metadata for result set (what the query will return)
+        // FIRST: Metadata for bound variables (parameters) - describes bind markers for EXECUTE
+        let keyspace = b"netget";
+        let table = b"data";
+
+        // Flags: 0x0001 (GLOBAL_TABLES_SPEC)
+        body.extend_from_slice(&0x00000001u32.to_be_bytes());
+
+        // Parameter count
+        body.extend_from_slice(&(param_count as u32).to_be_bytes());
+
+        // Partition key count (protocol v4+)
+        body.extend_from_slice(&0u32.to_be_bytes()); // No PK indexes (token routing not supported)
+        // Note: pk_indexes would follow here if pk_count > 0
+
+        // Global keyspace and table for parameters
+        body.extend_from_slice(&(keyspace.len() as u16).to_be_bytes());
+        body.extend_from_slice(keyspace);
+        body.extend_from_slice(&(table.len() as u16).to_be_bytes());
+        body.extend_from_slice(table);
+
+        // Parameter specifications
+        for i in 0..param_count {
+            let param_name = format!("param{}", i);
+            let param_bytes = param_name.as_bytes();
+            body.extend_from_slice(&(param_bytes.len() as u16).to_be_bytes());
+            body.extend_from_slice(param_bytes);
+
+            // Get type from params array if available, otherwise default to varchar
+            let param_type = params
+                .as_ref()
+                .and_then(|p| p.get(i))
+                .and_then(|param| param.get("type"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("varchar");
+
+            // Type code
+            let type_code: u16 = match param_type {
+                "int" => 0x0009,
+                "varchar" | "text" => 0x000D,
+                "boolean" => 0x0004,
+                _ => 0x000D, // Default to varchar
+            };
+            body.extend_from_slice(&type_code.to_be_bytes());
+        }
+
+        // SECOND: Result metadata - describes columns returned when this statement is executed
+        // Uses ROWS metadata format (Section 4.2.5.2) - does NOT include pk_count
         // Flags: 0x0001 (GLOBAL_TABLES_SPEC)
         body.extend_from_slice(&0x00000001u32.to_be_bytes());
 
         // Column count
         body.extend_from_slice(&(columns.len() as u32).to_be_bytes());
 
-        // Global keyspace and table (Phase 2: use placeholder)
-        let keyspace = b"netget";
+        // NOTE: No pk_count field in result metadata (only in parameters metadata)
+
+        // Global keyspace and table
         body.extend_from_slice(&(keyspace.len() as u16).to_be_bytes());
         body.extend_from_slice(keyspace);
-
-        let table = b"data";
         body.extend_from_slice(&(table.len() as u16).to_be_bytes());
         body.extend_from_slice(table);
 
@@ -1166,29 +1218,7 @@ impl CassandraServer {
             body.extend_from_slice(&type_code.to_be_bytes());
         }
 
-        // Metadata for bound variables (parameters)
-        // Flags: 0x0001 (GLOBAL_TABLES_SPEC)
-        body.extend_from_slice(&0x00000001u32.to_be_bytes());
-
-        // Parameter count
-        body.extend_from_slice(&(param_count as u32).to_be_bytes());
-
-        // Global keyspace and table for parameters
-        body.extend_from_slice(&(keyspace.len() as u16).to_be_bytes());
-        body.extend_from_slice(keyspace);
-        body.extend_from_slice(&(table.len() as u16).to_be_bytes());
-        body.extend_from_slice(table);
-
-        // Parameter specifications (Phase 2: all varchar)
-        for i in 0..param_count {
-            let param_name = format!("param{}", i);
-            let param_bytes = param_name.as_bytes();
-            body.extend_from_slice(&(param_bytes.len() as u16).to_be_bytes());
-            body.extend_from_slice(param_bytes);
-
-            // Type: varchar (0x000D)
-            body.extend_from_slice(&0x000Du16.to_be_bytes());
-        }
+        trace!("PREPARED response body hex (first 200 bytes): {}", hex::encode(&body[..std::cmp::min(200, body.len())]));
 
         let response = Envelope {
             version: Version::V4,
@@ -1206,8 +1236,8 @@ impl CassandraServer {
 
         trace!("Sent RESULT (Prepared) response ({} bytes)", bytes.len());
         let _ = status_tx.send(format!(
-            "[TRACE] Cassandra → RESULT (Prepared: {} params)",
-            param_count
+            "[TRACE] Cassandra → RESULT (Prepared: {} params, {} bytes)",
+            param_count, bytes.len()
         ));
 
         Ok(())

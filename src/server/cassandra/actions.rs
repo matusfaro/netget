@@ -210,20 +210,28 @@ impl CassandraProtocol {
             .and_then(|v| v.as_array())
             .context("Missing 'columns' array")?;
 
+        let params = action
+            .get("params")
+            .and_then(|v| v.as_array())
+            .cloned();
+
         debug!(
-            "Cassandra prepared statement: {} result columns",
-            columns.len()
+            "Cassandra prepared statement: {} result columns, {} params",
+            columns.len(),
+            params.as_ref().map(|p| p.len()).unwrap_or(0)
         );
 
         let _ = self.status_tx.send(format!(
-            "[DEBUG] Cassandra → Prepared statement ({} columns)",
-            columns.len()
+            "[DEBUG] Cassandra → Prepared statement ({} columns, {} params)",
+            columns.len(),
+            params.as_ref().map(|p| p.len()).unwrap_or(0)
         ));
 
         Ok(ActionResult::Custom {
             name: "cassandra_prepared".to_string(),
             data: json!({
-                "columns": columns
+                "columns": columns,
+                "params": params
             }),
         })
     }
@@ -356,17 +364,30 @@ fn cassandra_result_rows_action() -> ActionDefinition {
 fn cassandra_prepared_action() -> ActionDefinition {
     ActionDefinition {
         name: "cassandra_prepared".to_string(),
-        description: "Send prepared statement response with result column metadata".to_string(),
-        parameters: vec![Parameter {
-            name: "columns".to_string(),
-            type_hint: "array".to_string(),
-            description:
-                "Column definitions for the result set that the prepared query will return"
-                    .to_string(),
-            required: true,
-        }],
+        description: "Send prepared statement response with parameter and result column metadata".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "columns".to_string(),
+                type_hint: "array".to_string(),
+                description:
+                    "Column definitions for the result set that the prepared query will return"
+                        .to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "params".to_string(),
+                type_hint: "array".to_string(),
+                description:
+                    "Parameter type definitions for bind markers (optional, defaults to varchar)"
+                        .to_string(),
+                required: false,
+            },
+        ],
         example: json!({
             "type": "cassandra_prepared",
+            "params": [
+                {"type": "int"}
+            ],
             "columns": [
                 {"name": "id", "type": "int"},
                 {"name": "name", "type": "varchar"}
