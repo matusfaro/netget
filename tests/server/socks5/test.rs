@@ -328,17 +328,11 @@ async fn test_socks5_with_authentication() -> E2EResult<()> {
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    // Mock 1: Server startup
-                    .on_any()
+                    // Mock 1: CONNECT request (most specific first)
+                    .on_event("socks5_connect_request")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "SOCKS5",
-                            "instruction": "Accept username 'testuser' with password 'testpass'. Allow all connections after successful authentication",
-                            "startup_params": {
-                                "auth_methods": ["username_password"]
-                            }
+                            "type": "allow_socks5_connect"
                         }
                     ]))
                     // NOTE: .expect_calls() disabled
@@ -355,11 +349,17 @@ async fn test_socks5_with_authentication() -> E2EResult<()> {
                     // NOTE: .expect_calls() disabled
                     // .expect_calls(1)
                     .and()
-                    // Mock 3: CONNECT request
-                    .on_event("socks5_connect_request")
+                    // Mock 3: Server startup (catch-all last)
+                    .on_any()
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "allow_connect"
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "SOCKS5",
+                            "instruction": "Accept username 'testuser' with password 'testpass'. Allow all connections after successful authentication",
+                            "startup_params": {
+                                "auth_methods": ["username_password"]
+                            }
                         }
                     ]))
                     // NOTE: .expect_calls() disabled
@@ -513,17 +513,12 @@ async fn test_socks5_domain_name() -> E2EResult<()> {
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    // Mock 1: Server startup
-                    .on_any()
+                    // Mock 1: CONNECT with domain name (most specific first)
+                    .on_event("socks5_connect_request")
+                    .and_event_data_contains("target", "localhost")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "SOCKS5",
-                            "instruction": "Accept domain names in CONNECT requests. Allow connections to localhost",
-                            "startup_params": {
-                                "auth_methods": ["none"]
-                            }
+                            "type": "allow_socks5_connect"
                         }
                     ]))
                     // NOTE: .expect_calls() disabled
@@ -539,12 +534,17 @@ async fn test_socks5_domain_name() -> E2EResult<()> {
                     // NOTE: .expect_calls() disabled
                     // .expect_calls(1)
                     .and()
-                    // Mock 3: CONNECT with domain name
-                    .on_event("socks5_connect_request")
-                    .and_event_data_contains("target", "localhost")
+                    // Mock 3: Server startup (catch-all last)
+                    .on_any()
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "allow_connect"
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "SOCKS5",
+                            "instruction": "Accept domain names in CONNECT requests. Allow connections to localhost",
+                            "startup_params": {
+                                "auth_methods": ["none"]
+                            }
                         }
                     ]))
                     // NOTE: .expect_calls() disabled
@@ -605,24 +605,27 @@ async fn test_socks5_mitm_inspection() -> E2EResult<()> {
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    // Mock 1: Server startup
-                    .on_any()
+                    // Mock 1: Data inspection (most specific first)
+                    .on_event("socks5_data_from_client")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "SOCKS5",
-                            "instruction": "When HTTP data flows through, forward it unchanged to the target. Allow all connections to localhost",
-                            "startup_params": {
-                                "auth_methods": ["no_auth"],
-                                "mitm_by_default": true
-                            }
+                            "type": "forward_data"
+                        }
+                    ]))
+                    // NOTE: .expect_at_least() disabled
+                    // .expect_at_least(1)
+                    .and()
+                    // Mock 2: CONNECT request
+                    .on_event("socks5_connect_request")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "allow_socks5_connect"
                         }
                     ]))
                     // NOTE: .expect_calls() disabled
                     // .expect_calls(1)
                     .and()
-                    // Mock 2: Handshake
+                    // Mock 3: Handshake
                     .on_event("socks5_handshake")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -632,25 +635,22 @@ async fn test_socks5_mitm_inspection() -> E2EResult<()> {
                     // NOTE: .expect_calls() disabled
                     // .expect_calls(1)
                     .and()
-                    // Mock 3: CONNECT request
-                    .on_event("socks5_connect_request")
+                    // Mock 4: Server startup (catch-all last)
+                    .on_any()
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "allow_connect"
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "SOCKS5",
+                            "instruction": "When HTTP data flows through, forward it unchanged to the target. Allow all connections to localhost",
+                            "startup_params": {
+                                "auth_methods": ["none"],
+                                "mitm_by_default": true
+                            }
                         }
                     ]))
                     // NOTE: .expect_calls() disabled
                     // .expect_calls(1)
-                    .and()
-                    // Mock 4: Data inspection (forward unchanged)
-                    .on_event("socks5_data_from_client")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "forward_data"
-                        }
-                    ]))
-                    // NOTE: .expect_at_least() disabled
-                    // .expect_at_least(1)
                     .and()
             })
     ).await?;

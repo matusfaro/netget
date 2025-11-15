@@ -167,6 +167,12 @@ impl Socks5Server {
                 };
                 let _ = status_tx.send(format!("[INFO] Filter mode: {:?}", config.filter_mode));
             }
+
+            // Parse MITM mode
+            if let Some(mitm) = params.get_optional_bool("mitm_by_default") {
+                config.mitm_by_default = mitm;
+                let _ = status_tx.send(format!("[INFO] MITM by default: {}", config.mitm_by_default));
+            }
         }
 
         // Store config in app state
