@@ -43,13 +43,6 @@ pub async fn start_server_by_id(
         .map_err(|e| ActionExecutionError::Fatal(anyhow::anyhow!("Invalid address: {}", e)))?;
 
     let protocol_name = server.protocol_name.clone();
-    let msg = format!(
-        "[SERVER] Starting server #{} ({}) on {}",
-        server_id.as_u32(),
-        protocol_name,
-        listen_addr
-    );
-    let _ = status_tx.send(msg.clone());
 
     // Actually spawn the server using the registry
     use crate::state::server::ServerStatus;
@@ -142,6 +135,15 @@ pub async fn start_server_by_id(
     // Spawn the server using the protocol's spawn method
     match protocol.spawn(spawn_ctx).await {
         Ok(actual_addr) => {
+            // Send startup message with actual port
+            let msg = format!(
+                "[SERVER] Starting server #{} ({}) on {}",
+                server_id.as_u32(),
+                protocol_name,
+                actual_addr
+            );
+            let _ = status_tx.send(msg);
+
             // Update server with actual listen address
             state.update_server_local_addr(server_id, actual_addr).await;
             state
