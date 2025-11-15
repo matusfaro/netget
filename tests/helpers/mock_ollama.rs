@@ -620,25 +620,52 @@ fn extract_context_from_prompt(prompt: &str) -> LlmContext {
             let mut found = false;
 
             // Search from the end backwards to find the user input
+            // Priority 1: Look for lines starting with action verbs (most reliable)
             for line in lines.iter().rev() {
                 let trimmed = line.trim();
+                let lower = trimmed.to_lowercase();
                 if !trimmed.is_empty()
                     && trimmed.len() > 5
                     && !trimmed.starts_with('#')
-                    && !trimmed.starts_with('-')
-                    && !trimmed.starts_with("You ")
-                    && !trimmed.starts_with("Your ")
-                    && !trimmed.starts_with("Please ")
-                    && !trimmed.contains("```")
-                    && !trimmed.starts_with("Use `/")
-                    && !trimmed.ends_with(":")
-                    && !trimmed.contains("CRITICAL:")
-                    && !trimmed.contains("**")
+                    && (lower.starts_with("listen")
+                        || lower.starts_with("start")
+                        || lower.starts_with("create")
+                        || lower.starts_with("open")
+                        || lower.starts_with("run")
+                        || lower.starts_with("spawn")
+                        || lower.starts_with("connect")
+                    )
                 {
-                    debug!("🔧 Extracted instruction from end of prompt: '{}'", trimmed);
+                    debug!("🔧 Extracted instruction from end (action verb): '{}'", trimmed);
                     context.instruction = trimmed.to_string();
                     found = true;
                     break;
+                }
+            }
+
+            // Priority 2: If no action verb found, look for any substantial line
+            if !found {
+                for line in lines.iter().rev() {
+                    let trimmed = line.trim();
+                    if !trimmed.is_empty()
+                        && trimmed.len() > 5
+                        && !trimmed.starts_with('#')
+                        && !trimmed.starts_with('-')
+                        && !trimmed.starts_with("You ")
+                        && !trimmed.starts_with("Your ")
+                        && !trimmed.starts_with("Please ")
+                        && !trimmed.contains("```")
+                        && !trimmed.starts_with("Use `/")
+                        && !trimmed.ends_with(":")
+                        && !trimmed.contains("CRITICAL:")
+                        && !trimmed.contains("**")
+                        && !trimmed.to_lowercase().starts_with("initialize")
+                    {
+                        debug!("🔧 Extracted instruction from end of prompt: '{}'", trimmed);
+                        context.instruction = trimmed.to_string();
+                        found = true;
+                        break;
+                    }
                 }
             }
 
