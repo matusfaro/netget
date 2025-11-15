@@ -143,12 +143,8 @@ async fn test_ollama_generate() -> E2EResult<()> {
                 .and_event_data_contains("model", "qwen2.5-coder:0.5b")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_ollama_response",
-                        "body": {
-                            "model": "qwen2.5-coder:0.5b",
-                            "response": "Hello from NetGet Ollama",
-                            "done": true
-                        }
+                        "type": "ollama_generate_response",
+                        "response_text": "Hello from NetGet Ollama"
                     }
                 ]))
                 .expect_calls(1)
@@ -247,15 +243,8 @@ async fn test_ollama_chat() -> E2EResult<()> {
                 .and_event_data_contains("model", "qwen2.5-coder:0.5b")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_ollama_response",
-                        "body": {
-                            "model": "qwen2.5-coder:0.5b",
-                            "message": {
-                                "role": "assistant",
-                                "content": "NetGet Ollama Chat"
-                            },
-                            "done": true
-                        }
+                        "type": "ollama_chat_response",
+                        "message_content": "NetGet Ollama Chat"
                     }
                 ]))
                 .expect_calls(1)
@@ -357,21 +346,8 @@ async fn test_ollama_invalid_endpoint() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: Invalid endpoint request - HTTP layer returns 404
-                .on_event("http_request_received")
-                .and_event_data_contains("path", "/api/nonexistent")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "send_http_response",
-                        "status": 404,
-                        "headers": {
-                            "Content-Type": "application/json"
-                        },
-                        "body": "{\"error\":\"Endpoint not found\"}"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
+                // Note: Invalid endpoints are handled directly by Ollama server
+                // No LLM call is made, so no mock needed for the 404 response
         });
 
     let server = helpers::start_netget_server(config).await?;

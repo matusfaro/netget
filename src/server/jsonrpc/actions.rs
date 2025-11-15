@@ -8,6 +8,7 @@ use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
+use std::sync::LazyLock;
 use tracing::debug;
 
 /// JSON-RPC protocol action handler
@@ -279,30 +280,33 @@ pub fn list_rpc_methods_action() -> ActionDefinition {
     }
 }
 
+/// JSON-RPC method call event - triggered when client sends a JSON-RPC request
+pub static JSONRPC_METHOD_CALL_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new("jsonrpc_method_call", "JSON-RPC 2.0 method call received")
+        .with_parameters(vec![
+            Parameter {
+                name: "method".to_string(),
+                type_hint: "string".to_string(),
+                description: "The RPC method name being called".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "params".to_string(),
+                type_hint: "any".to_string(),
+                description: "Method parameters (can be array, object, or omitted)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "id".to_string(),
+                type_hint: "string|number|null".to_string(),
+                description: "Request ID (null for notifications)".to_string(),
+                required: false,
+            },
+        ])
+        .with_actions(vec![jsonrpc_success_action(), jsonrpc_error_action()])
+});
+
 /// Get JSON-RPC event types
 pub fn get_jsonrpc_event_types() -> Vec<EventType> {
-    vec![
-        EventType::new("jsonrpc_method_call", "JSON-RPC 2.0 method call received")
-            .with_parameters(vec![
-                Parameter {
-                    name: "method".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "The RPC method name being called".to_string(),
-                    required: true,
-                },
-                Parameter {
-                    name: "params".to_string(),
-                    type_hint: "any".to_string(),
-                    description: "Method parameters (can be array, object, or omitted)".to_string(),
-                    required: false,
-                },
-                Parameter {
-                    name: "id".to_string(),
-                    type_hint: "string|number|null".to_string(),
-                    description: "Request ID (null for notifications)".to_string(),
-                    required: false,
-                },
-            ])
-            .with_actions(vec![jsonrpc_success_action(), jsonrpc_error_action()]),
-    ]
+    vec![JSONRPC_METHOD_CALL_EVENT.clone()]
 }

@@ -337,9 +337,10 @@ impl GrpcServer {
     fn compile_proto_text(proto_text: &str) -> Result<FileDescriptorSet> {
         use std::io::Write;
 
-        // Write to temporary file
+        // Write to temporary file with unique name to avoid conflicts when running multiple servers in parallel
         let temp_dir = std::env::temp_dir();
-        let proto_file = temp_dir.join("netget_grpc_temp.proto");
+        let unique_id = uuid::Uuid::new_v4();
+        let proto_file = temp_dir.join(format!("netget_grpc_{}.proto", unique_id));
 
         {
             let mut file = std::fs::File::create(&proto_file)?;

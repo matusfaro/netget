@@ -81,19 +81,7 @@ Example:
 {"type":"read_file","path":"schema.json","mode":"full"}
 ```
 
-## 2. read_base_stack_docs
-
-Get detailed documentation for a specific network protocol. Returns comprehensive information including description, startup parameters, examples, and keywords. Use this before starting a server to understand protocol configuration options.
-
-Parameters:
-- `protocol` (string, required): Protocol name (e.g., 'http', 'ssh', 'tor', 'dns'). Use lowercase.
-
-Example:
-```json
-{"type":"read_base_stack_docs","protocol":"tor"}
-```
-
-## 3. list_network_interfaces
+## 2. list_network_interfaces
 
 List all available network interfaces on the system. Returns interface names (e.g., eth0, en0, wlan0) and descriptions. Use this when starting DataLink or IP-layer protocols to discover which interfaces are available for packet capture or transmission.
 
@@ -103,7 +91,7 @@ Example:
 {"type":"list_network_interfaces"}
 ```
 
-## 4. list_models
+## 3. list_models
 
 List all available Ollama models that can be used for LLM generation. Returns a list of model names that can be used with the change_model action. Use this to discover which models are available before switching models.
 
@@ -123,12 +111,21 @@ so you may include multiple actions in a single response.
 
 ## 0. open_server
 
-Start a new server. ⚠️ DISABLED: You must call read_base_stack_docs tool call first to enable this action. This tool provides detailed protocol documentation and startup parameters required for server configuration.
+Start a new server.
 
+Parameters:
+- `port` (number, required): Port number to listen on. Use 0 to automatically find an available port.
+- `base_stack` (string, required): Protocol stack to use. Choose the best stack for the task. Available: HTTP, Proxy, TCP
+- `send_first` (boolean): True if server sends data first (FTP, SMTP), false if it waits for client (HTTP)
+- `initial_memory` (string): Optional initial memory as a string. Use for storing persistent context across connections. Example: "user_count: 0"
+- `instruction` (string, required): Detailed instructions for handling network events
+- `startup_params` (object): Optional protocol-specific startup parameters. See protocol documentation for available parameters.
+- `scheduled_tasks` (array): Optional: Array of scheduled tasks to create with this server. Each task will be attached to the server and execute at specified intervals or delays. Tasks are automatically cleaned up when the server stops. Each task has: task_id, recurring (boolean), delay_secs (for one-shot or initial delay), interval_secs (for recurring), max_executions (optional), instruction, context (optional).
+- `event_handlers` (array): Optional: Array of event handlers to configure how events are processed. You can configure different handlers for different events. Each handler specifies an event_pattern (specific event ID or "*" for all events) and a handler type (script, static, or llm). Handlers are matched in order - first match wins.\n\nEach handler has:\n- event_pattern: Event ID to match (e.g., \"tcp_data_received\") or \"*\" for all events\n- handler: Object with:\n  - type: \"script\" (inline code), \"static\" (predefined actions), or \"llm\" (dynamic processing)\n  - For script: language (Python (Python 3.11.0), Node.js (v20.0.0), Go (go version go1.21.0), Perl (perl 5.38.0)), code (inline script)\n  - For static: actions (array of action objects)\n\nExample script handler: {\"event_pattern\": \"ssh_auth\", \"handler\": {\"type\": \"script\", \"language\": \"python\", \"code\": \"import json,sys;data=json.load(sys.stdin);print(json.dumps({'actions':[{'type':'send_data','data':'OK'}]}))\"}}\n\nExample static handler: {\"event_pattern\": \"*\", \"handler\": {\"type\": \"static\", \"actions\": [{\"type\": \"send_data\", \"data\": \"Welcome\"}]}}\n\nExample LLM handler: {\"event_pattern\": \"http_request\", \"handler\": {\"type\": \"llm\"}}
 
 Example:
 ```json
-{}
+{"type":"open_server","port":21,"base_stack":"tcp","send_first":true,"initial_memory":"login_count: 0\nfiles: data.txt,readme.md","instruction":"You are an FTP server. Respond to FTP commands like USER, PASS, LIST, RETR, QUIT with appropriate FTP response codes."}
 ```
 
 ## 1. close_server
@@ -155,12 +152,20 @@ Example:
 
 ## 3. open_client
 
-Connect to a remote server as a client. ⚠️ DISABLED: You must call read_base_stack_docs tool call first to enable this action. This tool provides detailed protocol documentation and startup parameters required for client configuration.
+Connect to a remote server as a client.
 
+Parameters:
+- `protocol` (string, required): Protocol to use for connection (e.g., 'tcp', 'http', 'redis', 'ssh')
+- `remote_addr` (string, required): Remote server address as 'hostname:port' or 'IP:port' (e.g., 'example.com:80', '192.168.1.1:6379', 'localhost:8080')
+- `instruction` (string, required): Detailed instructions for controlling the client (how to send data, interpret responses, make decisions)
+- `initial_memory` (string): Optional initial memory as a string. Use for storing persistent context. Example: "auth_token: abc123\nrequest_count: 0"
+- `startup_params` (object): Optional protocol-specific startup parameters. For example, HTTP clients may accept default headers or user agent settings.
+- `scheduled_tasks` (array): Optional: Array of scheduled tasks to create with this client. Each task will be attached to the client and execute at specified intervals or delays. Tasks are automatically cleaned up when the client disconnects.
+- `event_handlers` (array): Optional: Array of event handlers to configure how client events are processed. You can configure different handlers for different client events. Each handler specifies an event_pattern (specific event ID or "*" for all events) and a handler type (script, static, or llm). Handlers are matched in order - first match wins.\n\nEach handler has:\n- event_pattern: Event ID to match (e.g., \"http_response_received\") or \"*\" for all events\n- handler: Object with:\n  - type: \"script\" (inline code), \"static\" (predefined actions), or \"llm\" (dynamic processing)\n  - For script: language (Python (Python 3.11.0), Node.js (v20.0.0), Go (go version go1.21.0), Perl (perl 5.38.0)), code (inline script)\n  - For static: actions (array of action objects)\n\nExample script handler: {\"event_pattern\": \"redis_response_received\", \"handler\": {\"type\": \"script\", \"language\": \"python\", \"code\": \"import json,sys;data=json.load(sys.stdin);print(json.dumps({'actions':[{'type':'execute_redis_command','command':'PING'}]}))\"}}\n\nExample static handler: {\"event_pattern\": \"*\", \"handler\": {\"type\": \"static\", \"actions\": [{\"type\": \"send_http_request\", \"method\": \"GET\", \"path\": \"/\"}]}}
 
 Example:
 ```json
-{}
+{"type":"open_client","protocol":"http","remote_addr":"example.com:80","instruction":"Send a GET request to /api/status and log the response code."}
 ```
 
 ## 4. close_client
@@ -341,152 +346,39 @@ Example:
 {"type":"append_to_log","output_name":"access_logs","content":"127.0.0.1 - - [29/Oct/2025:12:34:56 +0000] \"GET /index.html HTTP/1.1\" 200 1234"}
 ```
 
+## 18. read_server_documentation
+
+Get detailed documentation for a specific server protocol. Returns comprehensive information including description, startup parameters, examples, and keywords. Use this before calling open_server to understand protocol configuration options. Available server protocols: HTTP, Proxy, TCP
+
+Parameters:
+- `protocol` (string, required): Server protocol name (e.g., 'HTTP', 'SSH', 'TOR', 'DNS'). Use uppercase.
+
+Example:
+```json
+{"type":"read_server_documentation","protocol":"HTTP"}
+```
+
+## 19. read_client_documentation
+
+Get detailed documentation for a specific client protocol. Returns comprehensive information including description, startup parameters, examples, and keywords. Use this before calling open_client to understand protocol configuration options. Available client protocols: HTTP, TCP
+
+Parameters:
+- `protocol` (string, required): Client protocol name (e.g., 'http', 'ssh', 'tor', 'dns'). Use lowercase.
+
+Example:
+```json
+{"type":"read_client_documentation","protocol":"http"}
+```
+
 
 ## Available Base Stacks
 
-### AI & API
-JSON-RPC (jsonrpc, json-rpc, json rpc, rpc)
-MCP (mcp, model-context-protocol, model context protocol)
-OAuth2 (oauth2, oauth, oauth 2.0, via oauth2, authorization server)
-Ollama (ollama, llm, ai)
-OpenAI (openai)
-OpenAPI (openapi, rest, rest api, api, swagger)
-XML-RPC (xmlrpc, xml-rpc, xml rpc)
-gRPC (grpc, grpcserver, protobuf)
-
-### Application
-AMQP (amqp, rabbitmq, broker, messaging, queue)
-DC (dc, direct connect, dc++, nmdc, via dc)
-IMAP (imap)
-IRC (irc, chat)
-LDAP (ldap, directory server)
-MQTT (mqtt, mosquitto, iot messaging)
-Maven (maven, maven repository, maven repo, via maven)
-NNTP (nntp, usenet, news, newsgroup)
-POP3 (pop3, pop3 server, via pop3, post office protocol)
-PyPI (pypi, python repository, python package index, pip server, via pypi)
-SMTP (smtp, mail, email)
-Telnet (telnet)
-XMPP (xmpp, jabber, messaging)
-mDNS (mdns, bonjour, dns-sd, zeroconf)
-
-### Authentication
-OpenID (openid, oidc, openid connect, sso, authentication)
-SamlIdp (saml idp, saml identity provider, identity provider, idp, saml-idp)
-SamlSp (saml sp, saml service provider, service provider, sp, saml-sp)
-
-### Blockchain
-Bitcoin P2P (bitcoin, btc, p2p, blockchain)
-
 ### Core
-ARP (arp, address resolution)
-BOOTP (bootp, bootstrap)
-DHCP (dhcp)
-DNS (dns)
-DataLink (datalink, data link, layer 2, layer2, l2, ethernet, pcap)
-DoH (doh, dns-over-https, dns over https)
-DoT (dot, dns-over-tls, dns over tls)
 HTTP (http, http server, http stack, via http, hyper)
-HTTP2 (http2, http/2, http 2, http2 server, http/2 server, via http2, via http/2)
-HTTP3 (http3)
-NTP (ntp, time)
-SNMP (snmp, snmp agent)
-SOCKET_FILE (socket_file, unix_socket, ipc)
-SSH (ssh)
-Syslog (syslog)
 TCP (tcp, raw, ftp, custom)
-TLS (tls, ssl, secure, encrypted)
-UDP (udp)
-WHOIS (whois)
-
-### Database
-Cassandra (cassandra, cql)
-DynamoDB (dynamo)
-Elasticsearch (elasticsearch, opensearch)
-KAFKA (kafka, kafka broker, via kafka)
-MySQL (mysql)
-PostgreSQL (postgres, psql)
-Redis (redis)
-SQS (sqs, queue, message queue)
-ZooKeeper (zookeeper, zk)
-etcd (etcd, etcd3, etcdv3, etcd server)
-
-### Experimental
-ISIS (isis, is-is)
-
-### Infrastructure
-SVN (svn, subversion)
-
-### Network
-BLUETOOTH_BLE (bluetooth, ble, gatt, peripheral, bluetooth_ble)
-BLUETOOTH_BLE_BATTERY (bluetooth, battery, bluetooth_ble_battery)
-BLUETOOTH_BLE_BEACON (bluetooth, beacon, ibeacon, eddystone, bluetooth_ble_beacon)
-BLUETOOTH_BLE_CYCLING (bluetooth, cycling, bike, fitness)
-BLUETOOTH_BLE_DATA_STREAM (bluetooth, stream, data, sensor)
-BLUETOOTH_BLE_ENVIRONMENTAL (bluetooth, environmental)
-BLUETOOTH_BLE_FILE_TRANSFER (bluetooth, file_transfer)
-BLUETOOTH_BLE_GAMEPAD (bluetooth, gamepad)
-BLUETOOTH_BLE_HEART_RATE (bluetooth, heart, rate, bluetooth_ble_heart_rate)
-BLUETOOTH_BLE_KEYBOARD (bluetooth, keyboard, hid, bluetooth_ble_keyboard)
-BLUETOOTH_BLE_MOUSE (bluetooth, mouse, hid, bluetooth_ble_mouse)
-BLUETOOTH_BLE_PRESENTER (bluetooth, presenter)
-BLUETOOTH_BLE_PROXIMITY (bluetooth, proximity)
-BLUETOOTH_BLE_REMOTE (bluetooth, remote, media, bluetooth_ble_remote)
-BLUETOOTH_BLE_RUNNING (bluetooth, running, jogging, fitness)
-BLUETOOTH_BLE_THERMOMETER (bluetooth, thermometer, temperature)
-BLUETOOTH_BLE_WEIGHT_SCALE (bluetooth, weight, scale, health)
-IGMP (igmp, multicast)
-RIP (rip)
-
-### Network Services
-Tor Directory (directory, consensus, tor_directory, tor-directory, directory authority)
-Tor Relay (tor_relay, tor-relay, onion router, guard, exit, middle, circuit)
-VNC (vnc, rfb, remote desktop, framebuffer)
-
-### P2P
-Torrent-DHT (torrent-dht, dht, kademlia)
-Torrent-Peer (torrent-peer, peer, seeder)
-Torrent-Tracker (torrent-tracker, tracker, bittorrent-tracker)
-
-### Package Management
-NPM (npm)
 
 ### Proxy & Network
 Proxy (proxy, mitm)
-SIP (sip, voip, session initiation)
-SOCKS5 (socks)
-STUN (stun)
-TURN (turn)
-
-### Security
-SSH Agent (ssh-agent, agent, key-agent, ssh keys)
-
-### USB
-usb-fido2 (fido2, u2f, webauthn, security key, yubikey)
-
-### USB Devices
-USB-Keyboard (usb, keyboard, hid, input, typing)
-USB-MassStorage (usb, storage, disk, msc, scsi, flash)
-USB-Mouse (usb, mouse, hid, pointer, cursor)
-USB-Serial (usb, serial, cdc, acm, uart, tty)
-
-### VPN & Routing
-IPSec/IKEv2 (ipsec, ikev2, ike)
-OSPF (ospf, open shortest path first)
-OpenVPN (openvpn)
-WireGuard (wireguard, wg)
-
-### Web
-RSS (rss, rss server, feed, syndication, via rss)
-
-### Web & File
-Git (git, git server, via git)
-IPP (ipp, printer, print)
-Mercurial (mercurial, hg, hg server, via mercurial, via hg)
-NFS (nfs, file server)
-S3 (s3, object storage, minio)
-SMB (smb, cifs)
-WebDAV (webdav, dav)
 
 
 
@@ -735,9 +627,9 @@ No servers currently running.
 
 ## System Capabilities
 
-- **Privileged ports (<1024)**: ✗ Not available — Warn user if they request port <1024
+- **Privileged ports (<1024)**: ✓ Available
 
-- **Raw socket access**: ✗ Not available — DataLink protocol unavailable
+- **Raw socket access**: ✓ Available
 
 
 Trigger: User input: "start a DNS server on port 53"

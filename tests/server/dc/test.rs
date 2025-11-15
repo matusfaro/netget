@@ -264,6 +264,9 @@ async fn test_dc_hub_info() -> E2EResult<()> {
         println!("  This may be expected if hub info broadcasting is not fully implemented");
     }
 
+    // Wait a moment for server to process the $Key command
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
     // Verify mock expectations were met
     server.verify_mocks().await?;
 

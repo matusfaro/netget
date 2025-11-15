@@ -156,8 +156,12 @@ pub async fn run_non_interactive(
 /// Run a server in non-interactive mode
 async fn run_server(
     state: &AppState,
-    _llm: OllamaClient,
+    llm: OllamaClient,
+    mut status_rx: mpsc::UnboundedReceiver<String>,
 ) -> Result<()> {
+    // Create status channel for server messages
+    let (status_tx, mut server_status_rx) = mpsc::unbounded_channel::<String>();
+
     // Server should already be started by the interpret loop above
     // Just verify it exists and print status
     if let Some(server_id) = state.get_first_server_id().await {
@@ -181,16 +185,41 @@ async fn run_server(
         *shutdown = true;
     });
 
+    // Set up task execution ticker (execute tasks every 1 second, same as TUI mode)
+    use tokio::time::{interval, Duration};
+    let mut task_execution_interval = interval(Duration::from_secs(1));
+
     // Main event loop
     loop {
-        // Check for shutdown
-        if *shutdown.lock().await {
-            println!("\nShutting down server...");
-            break;
-        }
+        tokio::select! {
+            // Check for shutdown
+            _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                if *shutdown.lock().await {
+                    println!("\nShutting down server...");
+                    break;
+                }
 
-        // Sleep briefly to avoid busy waiting
-        tokio::time::sleep(Duration::from_millis(100)).await;
+                // Process status messages from handler (drain remaining)
+                while let Ok(msg) = status_rx.try_recv() {
+                    if !msg.starts_with("__") {
+                        println!("[STATUS] {msg}");
+                    }
+                }
+
+                // Sleep briefly to avoid busy waiting
+                tokio::time::sleep(Duration::from_millis(100)).await;
+
+                // Process server status messages
+                while let Ok(msg) = server_status_rx.try_recv() {
+                    println!("[STATUS] {msg}");
+                }
+            }
+
+            // Execute due tasks every 1 second
+            _ = task_execution_interval.tick() => {
+                crate::cli::rolling_tui::execute_due_tasks_public(state, &llm, &status_tx).await;
+            }
+        }
     }
 
     println!("Server stopped.");
