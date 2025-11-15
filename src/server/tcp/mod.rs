@@ -287,6 +287,8 @@ impl TcpServer {
                                 let mut write = write_half.lock().await;
                                 if let Err(e) = write.write_all(&output_data).await {
                                     error!("Failed to send banner: {}", e);
+                                } else if let Err(e) = write.flush().await {
+                                    error!("Failed to flush banner: {}", e);
                                 } else {
                                     // DEBUG: Log summary with data preview
                                     if output_data
@@ -471,6 +473,8 @@ impl TcpServer {
                                 let mut write = write_half.lock().await;
                                 if let Err(e) = write.write_all(&output_data).await {
                                     error!("Failed to send response: {}", e);
+                                } else if let Err(e) = write.flush().await {
+                                    error!("Failed to flush response: {}", e);
                                 } else {
                                     // DEBUG: Log summary with data preview
                                     if output_data

@@ -17,7 +17,7 @@
 pub const TCP_CLIENT: &str = "TCP client";
 pub const TCP_CLIENT_CONNECTED: &str = "connected to";
 pub const TCP_CLIENT_SENT: &str = "bytes after connect";
-pub const TCP_CLIENT_RECEIVED: &str = "received";
+pub const TCP_CLIENT_RECEIVED: &str = "bytes from server";
 pub const TCP_CLIENT_DISCONNECTED: &str = "disconnected";
 
 // Client patterns - Telnet

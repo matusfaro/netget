@@ -106,34 +106,33 @@ impl TcpClient {
                         client_data.lock().await.memory = new_memory;
                     }
 
-                    // Execute actions from LLM response
+                    // Execute actions from LLM response using the proper execute_action method
+                    use crate::llm::actions::client_trait::Client;
+                    let protocol = crate::client::tcp::actions::TcpClientProtocol::new();
                     for action in result.actions {
-                        if let Some(action_type) = action["type"].as_str() {
-                            match action_type {
-                                "send_tcp_data" => {
-                                    if let Some(hex_data) = action["data"].as_str() {
-                                        if let Ok(bytes) = hex::decode(hex_data) {
-                                            let mut write_guard = write_half_for_connected.lock().await;
-                                            if let Err(e) = write_guard.write_all(&bytes).await {
-                                                error!("Failed to send data after connect: {}", e);
-                                            } else if let Err(e) = write_guard.flush().await {
-                                                error!("Failed to flush after connect: {}", e);
-                                            } else {
-                                                info!("Sent {} {}", bytes.len(), patterns::TCP_CLIENT_SENT);
-                                            }
-                                        }
-                                    }
+                        match protocol.execute_action(action) {
+                            Ok(crate::llm::actions::client_trait::ClientActionResult::SendData(bytes)) => {
+                                let mut write_guard = write_half_for_connected.lock().await;
+                                if let Err(e) = write_guard.write_all(&bytes).await {
+                                    error!("Failed to send data after connect: {}", e);
+                                } else if let Err(e) = write_guard.flush().await {
+                                    error!("Failed to flush after connect: {}", e);
+                                } else {
+                                    info!("Sent {} {}", bytes.len(), patterns::TCP_CLIENT_SENT);
                                 }
-                                "disconnect" => {
-                                    info!("LLM requested disconnect after connect");
-                                    return Ok(local_addr);
-                                }
-                                "wait_for_more" => {
-                                    // Just wait for data
-                                }
-                                _ => {
-                                    trace!("Unknown action type after connect: {}", action_type);
-                                }
+                            }
+                            Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
+                                info!("LLM requested disconnect after connect");
+                                return Ok(local_addr);
+                            }
+                            Ok(crate::llm::actions::client_trait::ClientActionResult::WaitForMore) => {
+                                // Just wait for data
+                            }
+                            Ok(_) => {
+                                // Other action results
+                            }
+                            Err(e) => {
+                                error!("Failed to execute action after connect: {}", e);
                             }
                         }
                     }
@@ -146,6 +145,7 @@ impl TcpClient {
 
         // Spawn read loop
         tokio::spawn(async move {
+            info!("TCP client {} read loop started", client_id);
             let mut buffer = vec![0u8; 8192];
 
             loop {
@@ -162,6 +162,7 @@ impl TcpClient {
                     }
                     Ok(n) => {
                         let data = buffer[..n].to_vec();
+                        info!("TCP client {} received {} {}", client_id, n, patterns::TCP_CLIENT_RECEIVED);
                         trace!("TCP client {} received {} bytes", client_id, n);
 
                         // Handle data with LLM
