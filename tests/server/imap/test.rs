@@ -5,9 +5,7 @@
 //! - Using raw TCP clients to send IMAP commands
 //! - Validating IMAP responses against RFC 3501 expectations
 
-use crate::server::helpers::{
-    start_netget_server, wait_for_server_startup, E2EResult, NetGetConfig,
-};
+use crate::helpers::{start_netget_server, wait_for_server_startup, E2EResult, NetGetConfig};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::time::{timeout, Duration};

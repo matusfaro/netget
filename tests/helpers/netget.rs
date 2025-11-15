@@ -6,9 +6,9 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::time::{sleep, timeout};
-use crate::helpers::mock_builder::MockLlmBuilder;
-use crate::helpers::mock_config::MockLlmConfig;
 use super::common::*;
+use super::mock_builder::MockLlmBuilder;
+use super::mock_config::MockLlmConfig;
 
 /// Represents a running NetGet process with 0+ servers and 0+ clients
 pub struct NetGetInstance {

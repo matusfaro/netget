@@ -5,7 +5,9 @@
 
 #[cfg(all(test, feature = "rip"))]
 mod e2e_rip {
-    use crate::server::helpers::{start_netget_server, E2EResult, NetGetConfig, with_client_timeout};
+    use crate::helpers::{
+        start_netget_server, with_client_timeout, E2EResult, NetGetConfig,
+    };
     use tokio::net::UdpSocket;
     use tokio::time::{timeout, Duration};
 

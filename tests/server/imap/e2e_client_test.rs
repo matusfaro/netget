@@ -10,7 +10,7 @@
 
 #[cfg(all(test, feature = "imap", feature = "imap"))]
 mod e2e_imap_client {
-    use crate::server::helpers::*;
+    use crate::helpers::*;
     use futures::StreamExt;
     // For collecting Streams
     use tokio::net::TcpStream;

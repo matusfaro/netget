@@ -2,10 +2,7 @@ use reqwest;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::server::helpers::{
-    start_netget_server, wait_for_server_startup, E2EResult,
-    NetGetConfig,
-};
+use crate::helpers::{start_netget_server, wait_for_server_startup, E2EResult, NetGetConfig};
 
 /// Test comprehensive route matching with file-based OpenAPI spec
 #[tokio::test]

@@ -7,7 +7,7 @@
 //! NOTE: These tests use basic TCP connectivity checks instead of rdkafka clients
 //! because rdkafka crashes when connecting to mock/incomplete Kafka implementations.
 
-use crate::server::helpers::{start_netget_server, wait_for_server_startup, NetGetConfig};
+use crate::helpers::{start_netget_server, wait_for_server_startup, NetGetConfig};
 use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::time::sleep;

@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::helpers::mock_matcher::{LlmContext, MockMatcher};
+use super::mock_matcher::{LlmContext, MockMatcher};
 
 /// Function that generates mock actions dynamically from event data
 ///

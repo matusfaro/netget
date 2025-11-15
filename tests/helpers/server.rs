@@ -1,7 +1,7 @@
 // Server-specific test helpers and backward-compatible wrappers
 
 use super::common::*;
-use crate::helpers::mock_config::MockLlmConfig;
+use super::mock_config::MockLlmConfig;
 use std::time::Duration;
 use tokio::process::Child;
 use tokio::time::sleep;

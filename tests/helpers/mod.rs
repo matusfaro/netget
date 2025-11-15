@@ -10,9 +10,13 @@ pub mod mock_ollama;
 pub mod netget;
 pub mod server;
 
+// Re-export commonly used types and functions for convenience
 pub use self::netget::NetGetConfig;
-pub use client::start_netget_client;
-pub use common::E2EResult;
+pub use client::{start_netget_client, wait_for_client_startup};
+pub use common::{
+    retry, retry_with_backoff, with_aws_sdk_timeout, with_cassandra_timeout, with_client_timeout,
+    with_timeout, E2EResult,
+};
 pub use mock_config::{MockLlmConfig, MockResponse, MockRule, ResponseGenerator, SerializedMockRule};
 pub use mock_matcher::{LlmContext, MockMatcher};
-pub use server::start_netget_server;
+pub use server::{start_netget_server, wait_for_server_startup};

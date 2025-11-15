@@ -2,9 +2,9 @@
 //!
 //! Provides a fluent interface for configuring mock LLM responses in tests.
 
-use crate::helpers::mock_config::{MockLlmConfig, MockResponse, MockRule, SerializedMatcher};
-use crate::helpers::mock_matcher::{
-    AnyMatcher, CombinedMatcher, CustomMatcher, EventDataMatcher, EventTypeMatcher,
+use super::mock_config::{MockLlmConfig, MockResponse, MockRule, SerializedMatcher};
+use super::mock_matcher::{
+    AnyMatcher, CombinedMatcher, EventDataMatcher, EventTypeMatcher,
     InstructionContainsMatcher, InstructionRegexMatcher, IterationMatcher, MessageRoleMatcher,
     MockMatcher,
 };
@@ -64,7 +64,7 @@ impl MockLlmBuilder {
     where
         F: Fn(&super::mock_matcher::LlmContext) -> bool + Send + Sync + 'static,
     {
-        use crate::helpers::mock_matcher::CustomMatcher;
+        use super::mock_matcher::CustomMatcher;
 
         // Custom matchers can't be serialized, so we use match_any
         let mut serialized = SerializedMatcher::new();
@@ -224,7 +224,7 @@ impl MockRuleBuilder {
     where
         F: Fn(&serde_json::Value) -> serde_json::Value + Send + Sync + 'static,
     {
-        use crate::helpers::mock_config::ResponseGenerator;
+        use super::mock_config::ResponseGenerator;
         use std::sync::Arc;
 
         // Wrap user's closure to handle array/single-action normalization
