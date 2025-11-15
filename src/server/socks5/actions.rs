@@ -103,6 +103,13 @@ impl Protocol for Socks5Protocol {
                         "target_port_ranges": [[80, 80], [443, 443]]
                     }),
                 },
+                ParameterDefinition {
+                    name: "mitm_by_default".to_string(),
+                    type_hint: "boolean".to_string(),
+                    description: "Enable Man-in-the-Middle inspection for all allowed connections by default".to_string(),
+                    required: false,
+                    example: json!(false),
+                },
             ]
     }
     fn group_name(&self) -> &'static str {
