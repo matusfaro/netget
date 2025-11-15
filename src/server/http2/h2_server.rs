@@ -43,6 +43,7 @@ impl H2Server {
             "HTTP/2 (h2c with push)"
         };
         info!("{} server listening on {}", protocol_name, local_addr);
+        let _ = status_tx.send(format!("[INFO] {} server listening on {}", protocol_name, local_addr));
 
         let protocol = Arc::new(Http2Protocol::new());
 
@@ -231,7 +232,11 @@ pub async fn handle_h2_request(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Extract request metadata
     let method = request.method().to_string();
-    let uri = request.uri().to_string();
+    // For HTTP/2, only use the path+query portion (not scheme/host)
+    let uri = request.uri().path_and_query()
+        .map(|pq| pq.as_str())
+        .unwrap_or(request.uri().path())
+        .to_string();
     let version = format!("{:?}", request.version());
 
     // Extract headers
