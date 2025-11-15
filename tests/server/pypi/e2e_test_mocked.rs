@@ -33,7 +33,7 @@ mod pypi_server_tests {
                 .and()
                 // Mock 2: PyPI request for /simple/
                 .on_event("pypi_request")
-                .and_event_data_contains("path", "/simple")
+                .and_event_data_contains("path", "/simple/")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_pypi_response",

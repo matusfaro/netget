@@ -11,14 +11,11 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 
-/// Helper: Build SMB2 Negotiate Protocol Request
+/// Helper: Build SMB2 Negotiate Protocol Request (Direct TCP, no NetBIOS)
 fn build_smb2_negotiate() -> Vec<u8> {
     let mut packet = Vec::new();
 
-    // NetBIOS Session Service Header (4 bytes)
-    packet.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // Length placeholder
-
-    // SMB2 Header (64 bytes)
+    // SMB2 Header (64 bytes) - Direct TCP mode, no NetBIOS wrapper
     packet.extend_from_slice(b"\xFESMB"); // Protocol ID
     packet.extend_from_slice(&[64, 0]); // Header length = 64
     packet.extend_from_slice(&[0; 2]); // Credit charge
@@ -43,21 +40,14 @@ fn build_smb2_negotiate() -> Vec<u8> {
     packet.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // Context offset/count
     packet.extend_from_slice(&[0x10, 0x02]); // SMB 2.1 dialect (0x0210)
 
-    // Update NetBIOS length (total - 4 bytes)
-    let len = (packet.len() - 4) as u32;
-    packet[0..4].copy_from_slice(&len.to_be_bytes());
-
     packet
 }
 
-/// Helper: Build SMB2 Session Setup Request
+/// Helper: Build SMB2 Session Setup Request (Direct TCP, no NetBIOS)
 fn build_smb2_session_setup() -> Vec<u8> {
     let mut packet = Vec::new();
 
-    // NetBIOS Session Service Header
-    packet.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // Length placeholder
-
-    // SMB2 Header (64 bytes)
+    // SMB2 Header (64 bytes) - Direct TCP mode, no NetBIOS wrapper
     packet.extend_from_slice(b"\xFESMB");
     packet.extend_from_slice(&[64, 0]); // Header length
     packet.extend_from_slice(&[0; 2]); // Credit charge
@@ -82,30 +72,26 @@ fn build_smb2_session_setup() -> Vec<u8> {
     packet.extend_from_slice(&[0, 0]); // Security buffer length = 0 (guest)
     packet.extend_from_slice(&[0; 8]); // Previous session ID
 
-    // Update NetBIOS length
-    let len = (packet.len() - 4) as u32;
-    packet[0..4].copy_from_slice(&len.to_be_bytes());
-
     packet
 }
 
-/// Helper: Parse SMB2 response status
+/// Helper: Parse SMB2 response status (Direct TCP, no NetBIOS)
 fn parse_smb2_status(response: &[u8]) -> Option<u32> {
-    if response.len() < 68 {
+    if response.len() < 64 {
         return None;
     }
 
-    // Check for SMB2 signature at offset 4 (after NetBIOS header)
-    if &response[4..8] != b"\xFESMB" {
+    // Check for SMB2 signature at offset 0 (Direct TCP mode)
+    if &response[0..4] != b"\xFESMB" {
         return None;
     }
 
-    // Status is at offset 12 (4 NetBIOS + 8 into SMB2 header)
+    // Status is at offset 8 (8 bytes into SMB2 header, no NetBIOS offset)
     Some(u32::from_le_bytes([
-        response[12],
-        response[13],
-        response[14],
-        response[15],
+        response[8],
+        response[9],
+        response[10],
+        response[11],
     ]))
 }
 
@@ -123,10 +109,9 @@ async fn test_smb_llm_allows_guest_auth() -> E2EResult<()> {
                 mock.on_instruction_containing("SMB").respond_with_actions(serde_json::json!([
                     {"type": "open_server", "port": 0, "base_stack": "SMB", "instruction": "Allow all auth"}
                 ])).expect_calls(1).and()
-                .on_event("smb_negotiate_received").respond_with_actions(serde_json::json!([
-                    {"type": "smb_negotiate_response", "dialect": "SMB 2.1"}
-                ])).expect_calls(1).and()
-                .on_event("smb_session_setup_received").respond_with_actions(serde_json::json!([
+                .on_event("smb_operation")
+                .and_event_data_contains("operation", "session_setup")
+                .respond_with_actions(serde_json::json!([
                     {"type": "smb_auth_success"}
                 ])).expect_calls(1).and()
             })
@@ -204,10 +189,9 @@ async fn test_smb_llm_denies_user() -> E2EResult<()> {
                 mock.on_instruction_containing("SMB").respond_with_actions(serde_json::json!([
                     {"type": "open_server", "port": 0, "base_stack": "SMB", "instruction": "Allow alice only"}
                 ])).expect_calls(1).and()
-                .on_event("smb_negotiate_received").respond_with_actions(serde_json::json!([
-                    {"type": "smb_negotiate_response", "dialect": "SMB 2.1"}
-                ])).expect_calls(1).and()
-                .on_event("smb_session_setup_received").respond_with_actions(serde_json::json!([
+                .on_event("smb_operation")
+                .and_event_data_contains("operation", "session_setup")
+                .respond_with_actions(serde_json::json!([
                     {"type": "smb_auth_denied", "status": 0xC0000016u32 as i32}
                 ])).expect_calls(1).and()
             })
@@ -439,9 +423,6 @@ async fn test_smb_llm_connection_tracking() -> E2EResult<()> {
             .with_mock(|mock| {
                 mock.on_instruction_containing("SMB").respond_with_actions(serde_json::json!([
                     {"type": "open_server", "port": 0, "base_stack": "SMB", "instruction": "Track connections"}
-                ])).expect_calls(1).and()
-                .on_event("smb_negotiate_received").respond_with_actions(serde_json::json!([
-                    {"type": "smb_negotiate_response", "dialect": "SMB 2.1"}
                 ])).expect_calls(1).and()
             })
     ).await?;

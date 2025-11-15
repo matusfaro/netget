@@ -3,7 +3,7 @@
 use std::time::Duration;
 use tokio::process::Child;
 use tokio::time::sleep;
-
+use crate::helpers::mock_config::MockLlmConfig;
 use super::common::*;
 use super::netget::NetGetConfig;
 
@@ -23,7 +23,7 @@ pub struct NetGetClient {
     /// Captured client output lines (for verification)
     pub output_lines: std::sync::Arc<tokio::sync::Mutex<Vec<String>>>,
     /// Mock configuration (if mocks were used)
-    mock_config: Option<netget::testing::MockLlmConfig>,
+    mock_config: Option<MockLlmConfig>,
 }
 
 impl NetGetClient {
@@ -36,7 +36,7 @@ impl NetGetClient {
         remote_addr: String,
         local_addr: Option<String>,
         output_lines: std::sync::Arc<tokio::sync::Mutex<Vec<String>>>,
-        mock_config: Option<netget::testing::MockLlmConfig>,
+        mock_config: Option<MockLlmConfig>,
     ) -> Self {
         Self {
             child,

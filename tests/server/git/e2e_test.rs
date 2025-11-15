@@ -79,6 +79,31 @@ If you are unsure about pack format, provide minimal pack data and we will test 
                 ]))
                 .expect_calls(1)
                 .and()
+                // Mock 2: Git info/refs request
+                .on_instruction_containing("Git client is requesting references")
+                .and_instruction_containing("test-repo")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "git_advertise_refs",
+                        "refs": [
+                            {"name": "refs/heads/main", "sha": "1234567890abcdef1234567890abcdef12345678"}
+                        ],
+                        "capabilities": ["multi_ack", "side-band-64k", "ofs-delta"]
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: Git upload-pack request (pack file generation)
+                .on_instruction_containing("Git client is requesting a pack file")
+                .and_instruction_containing("test-repo")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "git_send_pack",
+                        "pack_data": "UEFDSwAAAAIAAAAA"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
         });
 
     let server = helpers::start_netget_server(config).await?;
@@ -180,6 +205,21 @@ When client requests /simple-repo/info/refs?service=git-upload-pack:
                 ]))
                 .expect_calls(1)
                 .and()
+                // Mock 2: Git info/refs request
+                .on_instruction_containing("Git client is requesting references")
+                .and_instruction_containing("simple-repo")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "git_advertise_refs",
+                        "refs": [
+                            {"name": "refs/heads/main", "sha": "abcdef0123456789abcdef0123456789abcdef01"},
+                            {"name": "refs/tags/v1.0", "sha": "fedcba9876543210fedcba9876543210fedcba98"}
+                        ],
+                        "capabilities": ["multi_ack", "side-band-64k"]
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
         });
 
     let server = helpers::start_netget_server(config).await?;
@@ -273,6 +313,18 @@ When client requests info/refs for any other repository name:
                 ]))
                 .expect_calls(1)
                 .and()
+                // Mock 2: Git request for non-existent repo
+                .on_instruction_containing("Git client is requesting references")
+                .and_instruction_containing("nonexistent")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "git_error",
+                        "message": "Repository not found",
+                        "code": 404
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
         });
 
     let server = helpers::start_netget_server(config).await?;
@@ -346,6 +398,36 @@ When client requests info/refs for 'backend', return backend branches."#;
                         "port": 0,
                         "base_stack": "Git",
                         "instruction": "Git server with frontend and backend repositories"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Frontend repository request
+                .on_instruction_containing("Git client is requesting references")
+                .and_instruction_containing("frontend")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "git_advertise_refs",
+                        "refs": [
+                            {"name": "refs/heads/main", "sha": "1111111111111111111111111111111111111111"},
+                            {"name": "refs/heads/dev", "sha": "2222222222222222222222222222222222222222"}
+                        ],
+                        "capabilities": ["multi_ack", "side-band-64k"]
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: Backend repository request
+                .on_instruction_containing("Git client is requesting references")
+                .and_instruction_containing("backend")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "git_advertise_refs",
+                        "refs": [
+                            {"name": "refs/heads/main", "sha": "3333333333333333333333333333333333333333"},
+                            {"name": "refs/heads/staging", "sha": "4444444444444444444444444444444444444444"}
+                        ],
+                        "capabilities": ["multi_ack", "side-band-64k"]
                     }
                 ]))
                 .expect_calls(1)
@@ -442,6 +524,21 @@ Script should return:
                     }
                 ]))
                 .expect_calls(1)
+                .and()
+                // Mock 2: Git requests for scripted-repo (3 requests)
+                .on_instruction_containing("Git client is requesting references")
+                .and_instruction_containing("scripted-repo")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "git_advertise_refs",
+                        "refs": [
+                            {"name": "refs/heads/main", "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+                            {"name": "refs/heads/develop", "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+                        ],
+                        "capabilities": ["multi_ack", "side-band-64k"]
+                    }
+                ]))
+                .expect_calls(3)
                 .and()
         });
 

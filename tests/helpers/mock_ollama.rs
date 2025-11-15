@@ -16,13 +16,12 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use netget::testing::{LlmContext, MockLlmConfig};
+use crate::helpers::mock_config::{LlmContext, MockLlmConfig};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, oneshot};
 use tracing::{debug, info, warn};
-
 use super::common::E2EResult;
 
 /// Mock Ollama server that responds with configured mock responses
@@ -315,7 +314,7 @@ async fn handle_chat(
         created_at: chrono::Utc::now().to_rfc3339(),
         message: OllamaResponseMessage {
             role: "assistant".to_string(),
-            content: mock_response.to_response_string(),
+            content: mock_response.to_response_string(Some(&context.event_data)),
         },
         done: true,
     };
@@ -337,11 +336,31 @@ async fn handle_generate(
     // Extract context from prompt
     let context = extract_context_from_prompt(&request.prompt);
 
+    // DEBUG: Log extracted context
+    eprintln!("🔍🔍🔍 Mock generate context extracted:");
+    eprintln!("  event_type: {:?}", context.event_type);
+    eprintln!("  instruction: {}", &context.instruction[..context.instruction.len().min(200)]);
+    eprintln!("  prompt length: {} chars", request.prompt.len());
+    eprintln!("  prompt first 500 chars: {}", &request.prompt[..request.prompt.len().min(500)]);
+    eprintln!("  prompt last 500 chars: {}", &request.prompt[request.prompt.len().saturating_sub(500)..]);
+
     // Get mock response
     let config = state.config.lock().await;
+
+    // DEBUG: Log all rules and their match status
+    eprintln!("🔍 Checking {} mock rules:", config.rules.len());
+    for (idx, rule) in config.rules.iter().enumerate() {
+        let matches = rule.matches(&context);
+        eprintln!("  Rule #{}: {} -> {}", idx, rule.describe(), if matches { "✅ MATCH" } else { "❌ no match" });
+    }
+
     let mock_response = match config.find_match(&context).await {
-        Some((_idx, response)) => response,
+        Some((idx, response)) => {
+            eprintln!("✅ Using matched rule #{}", idx);
+            response
+        },
         None => {
+            eprintln!("❌ NO RULE MATCHED!");
             warn!("🔧 No mock rule matched generate request, returning default error");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -359,7 +378,7 @@ async fn handle_generate(
     let response = OllamaGenerateResponse {
         model: request.model,
         created_at: chrono::Utc::now().to_rfc3339(),
-        response: mock_response.to_response_string(),
+        response: mock_response.to_response_string(Some(&context.event_data)),
         done: true,
     };
 
@@ -516,36 +535,132 @@ fn extract_context_from_prompt(prompt: &str) -> LlmContext {
     }
 
     // Try to extract instruction - look for patterns
-    if let Some(instruction_line) = prompt.lines().find(|line| {
-        line.contains("Your instruction:") || line.contains("instruction:")
-    }) {
-        if let Some(instruction) = instruction_line
-            .split("instruction:")
-            .nth(1)
-            .or_else(|| instruction_line.split("Your instruction:").nth(1))
-        {
-            let instruction_trimmed = instruction.trim();
-            debug!("🔧 Extracted instruction: '{}'", instruction_trimmed);
-            context.instruction = instruction_trimmed.to_string();
+    // First, try to find the user input section at the end of the prompt
+    // User input typically appears after system capabilities or markers like "## System Capabilities"
+    let has_user_message = if let Some(cap_idx) = prompt.find("## System Capabilities").or_else(|| prompt.find("# Current State")) {
+        // Extract everything after the capabilities section
+        let after_cap = &prompt[cap_idx..];
+        // Find the end of the capabilities section (usually ends with "DataLink protocol unavailable" or similar)
+        if let Some(end_idx) = after_cap.find("DataLink protocol unavailable") {
+            let after_system = &after_cap[end_idx + "DataLink protocol unavailable".len()..];
+            // Look for the first substantial non-empty line after the system section
+            let lines: Vec<&str> = after_system.lines().collect();
+            let mut found_instruction = false;
+            for line in lines.iter() {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() && trimmed.len() > 5 {
+                    // Check if this is a "Trigger: User input:" or "User input:" line
+                    if let Some(after_marker) = trimmed.strip_prefix("Trigger: User input:") {
+                        let instruction = after_marker.trim().trim_matches('"').trim_matches('\'');
+                        debug!("🔧 Extracted instruction from Trigger: User input: '{}'", instruction);
+                        context.instruction = instruction.to_string();
+                        found_instruction = true;
+                        break;
+                    } else if let Some(after_marker) = trimmed.strip_prefix("User input:") {
+                        let instruction = after_marker.trim().trim_matches('"').trim_matches('\'');
+                        debug!("🔧 Extracted instruction from User input: '{}'", instruction);
+                        context.instruction = instruction.to_string();
+                        found_instruction = true;
+                        break;
+                    } else {
+                        debug!("🔧 Extracted instruction from end of prompt: '{}'", trimmed);
+                        context.instruction = trimmed.to_string();
+                        found_instruction = true;
+                        break;
+                    }
+                }
+            }
+            found_instruction
+        } else {
+            false
         }
     } else {
-        debug!("🔧 Instruction extraction: no 'instruction:' line found, trying fallback");
-        // Fallback: Look for the last substantial non-empty line
-        let lines: Vec<&str> = prompt.lines().collect();
-        for line in lines.iter().rev() {
-            let trimmed = line.trim();
-            if !trimmed.is_empty()
-                && trimmed.len() > 5
-                && !trimmed.starts_with('#')
-                && !trimmed.starts_with("You ")
-                && !trimmed.starts_with("Your ")
-                && !trimmed.starts_with("Please ")
-                && !trimmed.contains("```")
-                && !trimmed.starts_with("Use `/")
+        // Fallback: check for [user] message pattern
+        if let Some(user_line) = prompt.lines().find(|line| {
+            line.starts_with("[user]") || line.contains("Message") && line.contains("[user]")
+        }) {
+            // Extract text after [user]
+            if let Some(after_user) = user_line.split("[user]").nth(1) {
+                let instruction_trimmed = after_user.trim();
+                if !instruction_trimmed.is_empty() {
+                    debug!("🔧 Extracted instruction from [user] message: '{}'", instruction_trimmed);
+                    context.instruction = instruction_trimmed.to_string();
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    };
+
+    // If no [user] message found, try traditional instruction markers
+    if !has_user_message {
+        if let Some(instruction_line) = prompt.lines().find(|line| {
+            line.contains("Your instruction:") || line.contains("instruction:")
+        }) {
+            if let Some(instruction) = instruction_line
+                .split("instruction:")
+                .nth(1)
+                .or_else(|| instruction_line.split("Your instruction:").nth(1))
             {
-                debug!("🔧 Extracted instruction (fallback): '{}'", trimmed);
-                context.instruction = trimmed.to_string();
-                break;
+                let instruction_trimmed = instruction.trim();
+                debug!("🔧 Extracted instruction: '{}'", instruction_trimmed);
+                context.instruction = instruction_trimmed.to_string();
+            }
+        } else {
+            debug!("🔧 Instruction extraction: no markers found, trying fallback");
+            // Fallback: Look for the FIRST substantial line that looks like a command
+            // Common patterns: "listen", "start", "create", "open", "run", "spawn"
+            let lines: Vec<&str> = prompt.lines().collect();
+            let mut found = false;
+            for line in lines.iter() {
+                let trimmed = line.trim();
+                let lower = trimmed.to_lowercase();
+                if !trimmed.is_empty()
+                    && trimmed.len() > 5
+                    && !trimmed.starts_with('#')
+                    && !trimmed.starts_with("You ")
+                    && !trimmed.starts_with("Your ")
+                    && !trimmed.starts_with("Please ")
+                    && !trimmed.contains("```")
+                    && !trimmed.starts_with("Use `/")
+                    && (lower.starts_with("listen")
+                        || lower.starts_with("start")
+                        || lower.starts_with("create")
+                        || lower.starts_with("open")
+                        || lower.starts_with("run")
+                        || lower.starts_with("spawn")
+                        || lower.starts_with("connect")
+                    )
+                {
+                    debug!("🔧 Extracted instruction (fallback): '{}'", trimmed);
+                    context.instruction = trimmed.to_string();
+                    found = true;
+                    break;
+                }
+            }
+            // If no command-like line found, use the first non-empty line as last resort
+            if !found {
+                for line in lines.iter() {
+                    let trimmed = line.trim();
+                    if !trimmed.is_empty()
+                        && trimmed.len() > 5
+                        && !trimmed.starts_with('#')
+                        && !trimmed.starts_with("You ")
+                        && !trimmed.starts_with("Your ")
+                        && !trimmed.starts_with("Please ")
+                        && !trimmed.contains("```")
+                        && !trimmed.starts_with("Use `/")
+                    {
+                        debug!("🔧 Extracted instruction (last resort fallback): '{}'", trimmed);
+                        context.instruction = trimmed.to_string();
+                        break;
+                    }
+                }
             }
         }
     }

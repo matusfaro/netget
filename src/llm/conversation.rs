@@ -605,6 +605,15 @@ impl ConversationHandler {
 
             // Concatenate all messages into a single prompt for generate API
             // This provides better JSON formatting than chat API
+            eprintln!("🔍 DEBUG: Building prompt from {} messages", self.messages.len());
+            for (idx, msg) in self.messages.iter().enumerate() {
+                eprintln!("  Message {}: role={}, content_len={}", idx, msg.role, msg.content.len());
+                if msg.role == "user" {
+                    let preview_len = msg.content.len().min(300);
+                    eprintln!("    User message preview: {}", &msg.content[..preview_len]);
+                }
+            }
+
             let mut full_prompt = String::new();
             for msg in &self.messages {
                 match msg.role.as_str() {
@@ -625,6 +634,11 @@ impl ConversationHandler {
                     _ => {}
                 }
             }
+
+            eprintln!("🔍 DEBUG: Full prompt length: {} chars", full_prompt.len());
+            eprintln!("🔍 DEBUG: Prompt contains 'Event ID:': {}", full_prompt.contains("Event ID:"));
+            let preview_start = full_prompt.len().saturating_sub(500);
+            eprintln!("🔍 DEBUG: Last 500 chars of prompt: {}", &full_prompt[preview_start..]);
 
             // Call generate API with concatenated prompt and JSON format
             let response_text = self

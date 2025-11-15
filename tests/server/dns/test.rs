@@ -38,19 +38,22 @@ async fn test_dns_a_record_query() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: DNS query received (dns_query event)
+                // Mock 2: DNS query received (dns_query event) - DYNAMIC RESPONSE
                 .on_event("dns_query")
                 .and_event_data_contains("domain", "example.com")
                 .and_event_data_contains("query_type", "A")
-                .respond_with_actions(serde_json::json!([
-                    {
+                .respond_with_actions_from_event(|event_data| {
+                    // Extract query_id from event (transaction ID must match request)
+                    let query_id = event_data["query_id"].as_u64().unwrap_or(0);
+
+                    serde_json::json!([{
                         "type": "send_dns_a_response",
-                        "query_id": 0, // Will be replaced by actual query_id from event
+                        "query_id": query_id,  // ← DYNAMIC from event!
                         "domain": "example.com",
                         "ip": "93.184.216.34",
                         "ttl": 300
-                    }
-                ]))
+                    }])
+                })
                 .expect_calls(1)
                 .and()
         });
@@ -125,34 +128,36 @@ async fn test_dns_multiple_records() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: Query for example.com
+                // Mock 2: Query for example.com - DYNAMIC RESPONSE
                 .on_event("dns_query")
                 .and_event_data_contains("domain", "example.com")
                 .and_event_data_contains("query_type", "A")
-                .respond_with_actions(serde_json::json!([
-                    {
+                .respond_with_actions_from_event(|event_data| {
+                    let query_id = event_data["query_id"].as_u64().unwrap_or(0);
+                    serde_json::json!([{
                         "type": "send_dns_a_response",
-                        "query_id": 0,
+                        "query_id": query_id,
                         "domain": "example.com",
                         "ip": "1.2.3.4",
                         "ttl": 300
-                    }
-                ]))
+                    }])
+                })
                 .expect_calls(1)
                 .and()
-                // Mock 3: Query for mail.example.com
+                // Mock 3: Query for mail.example.com - DYNAMIC RESPONSE
                 .on_event("dns_query")
                 .and_event_data_contains("domain", "mail.example.com")
                 .and_event_data_contains("query_type", "A")
-                .respond_with_actions(serde_json::json!([
-                    {
+                .respond_with_actions_from_event(|event_data| {
+                    let query_id = event_data["query_id"].as_u64().unwrap_or(0);
+                    serde_json::json!([{
                         "type": "send_dns_a_response",
-                        "query_id": 0,
+                        "query_id": query_id,
                         "domain": "mail.example.com",
                         "ip": "5.6.7.8",
                         "ttl": 300
-                    }
-                ]))
+                    }])
+                })
                 .expect_calls(1)
                 .and()
         });
@@ -228,19 +233,20 @@ async fn test_dns_txt_record() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: Query for TXT record
+                // Mock 2: Query for TXT record - DYNAMIC RESPONSE
                 .on_event("dns_query")
                 .and_event_data_contains("domain", "example.com")
                 .and_event_data_contains("query_type", "TXT")
-                .respond_with_actions(serde_json::json!([
-                    {
+                .respond_with_actions_from_event(|event_data| {
+                    let query_id = event_data["query_id"].as_u64().unwrap_or(0);
+                    serde_json::json!([{
                         "type": "send_dns_txt_response",
-                        "query_id": 0,
+                        "query_id": query_id,
                         "domain": "example.com",
                         "text": "v=spf1 include:_spf.example.com ~all",
                         "ttl": 300
-                    }
-                ]))
+                    }])
+                })
                 .expect_calls(1)
                 .and()
         });
@@ -304,17 +310,18 @@ async fn test_dns_nxdomain() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: Query for unknown domain - return NXDOMAIN
+                // Mock 2: Query for unknown domain - return NXDOMAIN - DYNAMIC RESPONSE
                 .on_event("dns_query")
                 .and_event_data_contains("domain", "unknown.example.com")
                 .and_event_data_contains("query_type", "A")
-                .respond_with_actions(serde_json::json!([
-                    {
+                .respond_with_actions_from_event(|event_data| {
+                    let query_id = event_data["query_id"].as_u64().unwrap_or(0);
+                    serde_json::json!([{
                         "type": "send_dns_nxdomain",
-                        "query_id": 0,
+                        "query_id": query_id,
                         "domain": "unknown.example.com"
-                    }
-                ]))
+                    }])
+                })
                 .expect_calls(1)
                 .and()
         });

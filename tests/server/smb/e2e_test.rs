@@ -11,14 +11,11 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 
-/// Helper: Build SMB2 Negotiate Protocol Request
+/// Helper: Build SMB2 Negotiate Protocol Request (Direct TCP, no NetBIOS)
 fn build_smb2_negotiate() -> Vec<u8> {
     let mut packet = Vec::new();
 
-    // NetBIOS Session Service Header (4 bytes)
-    packet.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // Length placeholder
-
-    // SMB2 Header (64 bytes)
+    // SMB2 Header (64 bytes) - Direct TCP mode, no NetBIOS wrapper
     packet.extend_from_slice(b"\xFESMB"); // Protocol ID
     packet.extend_from_slice(&[64, 0]); // Header length = 64
     packet.extend_from_slice(&[0; 2]); // Credit charge
@@ -43,21 +40,14 @@ fn build_smb2_negotiate() -> Vec<u8> {
     packet.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // Negotiation context offset/count
     packet.extend_from_slice(&[0x10, 0x02]); // SMB 2.1 dialect (0x0210)
 
-    // Update NetBIOS length (total - 4 bytes)
-    let len = (packet.len() - 4) as u32;
-    packet[0..4].copy_from_slice(&len.to_be_bytes());
-
     packet
 }
 
-/// Helper: Build SMB2 Session Setup Request
+/// Helper: Build SMB2 Session Setup Request (Direct TCP, no NetBIOS)
 fn build_smb2_session_setup() -> Vec<u8> {
     let mut packet = Vec::new();
 
-    // NetBIOS Session Service Header
-    packet.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // Length placeholder
-
-    // SMB2 Header (64 bytes)
+    // SMB2 Header (64 bytes) - Direct TCP mode, no NetBIOS wrapper
     packet.extend_from_slice(b"\xFESMB");
     packet.extend_from_slice(&[64, 0]); // Header length
     packet.extend_from_slice(&[0; 2]); // Credit charge
@@ -82,30 +72,26 @@ fn build_smb2_session_setup() -> Vec<u8> {
     packet.extend_from_slice(&[0, 0]); // Security buffer length = 0 (guest)
     packet.extend_from_slice(&[0; 8]); // Previous session ID
 
-    // Update NetBIOS length
-    let len = (packet.len() - 4) as u32;
-    packet[0..4].copy_from_slice(&len.to_be_bytes());
-
     packet
 }
 
-/// Helper: Parse SMB2 response and extract status
+/// Helper: Parse SMB2 response and extract status (Direct TCP, no NetBIOS)
 fn parse_smb2_status(response: &[u8]) -> Option<u32> {
-    if response.len() < 68 {
+    if response.len() < 64 {
         return None;
     }
 
-    // Check for SMB2 signature at offset 4 (after NetBIOS header)
-    if &response[4..8] != b"\xFESMB" {
+    // Check for SMB2 signature at offset 0 (Direct TCP mode)
+    if &response[0..4] != b"\xFESMB" {
         return None;
     }
 
-    // Status is at offset 12 (4 NetBIOS + 8 into SMB2 header)
+    // Status is at offset 8 (8 bytes into SMB2 header, no NetBIOS offset)
     Some(u32::from_le_bytes([
-        response[12],
-        response[13],
-        response[14],
-        response[15],
+        response[8],
+        response[9],
+        response[10],
+        response[11],
     ]))
 }
 
@@ -162,11 +148,11 @@ async fn test_smb_negotiate() -> E2EResult<()> {
 
     println!("  [TEST] Received {} bytes", n);
 
-    // Verify it's a valid SMB2 response
-    assert!(n >= 68, "Response too short for SMB2 message");
+    // Verify it's a valid SMB2 response (Direct TCP, 64-byte minimum)
+    assert!(n >= 64, "Response too short for SMB2 message");
 
-    // Check SMB2 signature
-    assert_eq!(&response[4..8], b"\xFESMB", "Invalid SMB2 signature");
+    // Check SMB2 signature (Direct TCP format, no NetBIOS wrapper)
+    assert_eq!(&response[0..4], b"\xFESMB", "Invalid SMB2 signature");
 
     // Check status (should be 0 = success)
     if let Some(status) = parse_smb2_status(&response) {
@@ -207,6 +193,14 @@ async fn test_smb_session_setup() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
+                // Mock: Session setup event
+                .on_event("smb_operation")
+                .and_event_data_contains("operation", "session_setup")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "smb_auth_success"}
+                ]))
+                .expect_calls(1)
+                .and()
         });
 
     let server = start_netget_server(config).await?;
@@ -243,9 +237,9 @@ async fn test_smb_session_setup() -> E2EResult<()> {
 
     println!("  [TEST] Session Setup response: {} bytes", n);
 
-    // Verify SMB2 response
-    assert!(n >= 68, "Response too short for SMB2 message");
-    assert_eq!(&response[4..8], b"\xFESMB", "Invalid SMB2 signature");
+    // Verify SMB2 response (Direct TCP, 64-byte minimum)
+    assert!(n >= 64, "Response too short for SMB2 message");
+    assert_eq!(&response[0..4], b"\xFESMB", "Invalid SMB2 signature");
 
     if let Some(status) = parse_smb2_status(&response) {
         println!("  [TEST] Session Setup status: 0x{:08X}", status);
@@ -403,8 +397,8 @@ async fn test_smb_server_responsiveness() -> E2EResult<()> {
                         Ok(n) if n > 0 => {
                             println!("  [TEST] ✓ Received {} bytes response", n);
 
-                            // Check if it looks like SMB2
-                            if n >= 8 && &response[4..8] == b"\xFESMB" {
+                            // Check if it looks like SMB2 (Direct TCP format)
+                            if n >= 4 && &response[0..4] == b"\xFESMB" {
                                 println!("  [TEST] ✓ Valid SMB2 response signature");
                             } else {
                                 println!("  [TEST] Note: Response doesn't look like SMB2, but server is responsive");
@@ -504,6 +498,14 @@ async fn test_smb_auth_llm_controlled() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
+                // Mock: Session setup event (guest auth, should be denied per prompt)
+                .on_event("smb_operation")
+                .and_event_data_contains("operation", "session_setup")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "wait_for_more"}  // Deny auth by not returning smb_auth_success
+                ]))
+                .expect_calls(1)
+                .and()
         });
 
     let server = start_netget_server(config).await?;
@@ -527,9 +529,9 @@ async fn test_smb_auth_llm_controlled() -> E2EResult<()> {
     let n = stream.read(&mut response)?;
     println!("  [TEST] Negotiate response: {} bytes", n);
 
-    // Verify SMB2 response
-    assert!(n >= 68, "Negotiate response too short");
-    assert_eq!(&response[4..8], b"\xFESMB", "Invalid SMB2 signature");
+    // Verify SMB2 response (Direct TCP, 64-byte minimum)
+    assert!(n >= 64, "Negotiate response too short");
+    assert_eq!(&response[0..4], b"\xFESMB", "Invalid SMB2 signature");
 
     // Send Session Setup
     let session_setup = build_smb2_session_setup();

@@ -7,7 +7,13 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use super::mock_matcher::{LlmContext, MockMatcher};
+use crate::helpers::mock_matcher::{LlmContext, MockMatcher};
+
+/// Function that generates mock actions dynamically from event data
+///
+/// This enables protocol-correct responses for correlation IDs (DNS query_id, STUN transaction_id, etc.)
+/// The closure receives event data extracted from the LLM prompt and returns actions.
+pub type ResponseGenerator = Arc<dyn Fn(&serde_json::Value) -> Vec<serde_json::Value> + Send + Sync>;
 
 /// Complete mock LLM configuration
 #[derive(Serialize, Deserialize)]
@@ -365,11 +371,16 @@ impl Default for SerializedMatcher {
 }
 
 /// Response types
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
 pub enum MockResponse {
     /// Valid action response (parsed as JSON)
     Actions { actions: Vec<serde_json::Value> },
+
+    /// Dynamic actions generated from event data (not serializable)
+    ///
+    /// This variant allows mock responses to access event data at runtime,
+    /// enabling protocol-correct responses for correlation IDs.
+    /// Cannot be serialized to environment variables.
+    DynamicActions { generator: ResponseGenerator },
 
     /// Raw string (for testing LLM failures/malformed responses)
     Raw { content: String },
@@ -377,7 +388,10 @@ pub enum MockResponse {
 
 impl MockResponse {
     /// Convert to string for LLM response
-    pub fn to_response_string(&self) -> String {
+    ///
+    /// # Arguments
+    /// * `event_data` - Event data from LLM context (for dynamic responses)
+    pub fn to_response_string(&self, event_data: Option<&serde_json::Value>) -> String {
         match self {
             MockResponse::Actions { actions } => {
                 // Wrap actions in ActionResponse format
@@ -386,8 +400,90 @@ impl MockResponse {
                 })
                 .to_string()
             }
+
+            MockResponse::DynamicActions { generator } => {
+                let empty_obj = serde_json::json!({});
+                let event_data = event_data.unwrap_or(&empty_obj);
+                let actions = generator(event_data);
+                serde_json::json!({
+                    "actions": actions
+                })
+                .to_string()
+            }
+
             MockResponse::Raw { content } => content.clone(),
         }
+    }
+}
+
+// Manual Clone implementation (can't derive due to DynamicActions)
+impl Clone for MockResponse {
+    fn clone(&self) -> Self {
+        match self {
+            MockResponse::Actions { actions } => {
+                MockResponse::Actions { actions: actions.clone() }
+            }
+            MockResponse::DynamicActions { generator } => {
+                MockResponse::DynamicActions { generator: Arc::clone(generator) }
+            }
+            MockResponse::Raw { content } => {
+                MockResponse::Raw { content: content.clone() }
+            }
+        }
+    }
+}
+
+// Manual Serialize implementation (DynamicActions cannot be serialized)
+impl Serialize for MockResponse {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+
+        match self {
+            MockResponse::Actions { actions } => {
+                let mut state = serializer.serialize_struct("MockResponse", 2)?;
+                state.serialize_field("type", "actions")?;
+                state.serialize_field("actions", actions)?;
+                state.end()
+            }
+            MockResponse::DynamicActions { .. } => {
+                Err(serde::ser::Error::custom(
+                    "DynamicActions cannot be serialized. \
+                     Dynamic mocks require MOCK_OLLAMA_BASE_URL (in-process mock server), \
+                     not NETGET_MOCK_LLM_CONFIG (environment variable serialization)."
+                ))
+            }
+            MockResponse::Raw { content } => {
+                let mut state = serializer.serialize_struct("MockResponse", 2)?;
+                state.serialize_field("type", "raw")?;
+                state.serialize_field("content", content)?;
+                state.end()
+            }
+        }
+    }
+}
+
+// Manual Deserialize implementation (DynamicActions intentionally not deserializable)
+impl<'de> Deserialize<'de> for MockResponse {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(tag = "type", rename_all = "snake_case")]
+        enum MockResponseHelper {
+            Actions { actions: Vec<serde_json::Value> },
+            Raw { content: String },
+            // DynamicActions intentionally not deserializable
+        }
+
+        let helper = MockResponseHelper::deserialize(deserializer)?;
+        Ok(match helper {
+            MockResponseHelper::Actions { actions } => MockResponse::Actions { actions },
+            MockResponseHelper::Raw { content } => MockResponse::Raw { content },
+        })
     }
 }
 

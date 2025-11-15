@@ -2,9 +2,9 @@
 //!
 //! Provides a fluent interface for configuring mock LLM responses in tests.
 
-use super::mock_config::{MockLlmConfig, MockResponse, MockRule, SerializedMatcher};
-use super::mock_matcher::{
-    AnyMatcher, CombinedMatcher, EventDataMatcher, EventTypeMatcher,
+use crate::helpers::mock_config::{MockLlmConfig, MockResponse, MockRule, SerializedMatcher};
+use crate::helpers::mock_matcher::{
+    AnyMatcher, CombinedMatcher, CustomMatcher, EventDataMatcher, EventTypeMatcher,
     InstructionContainsMatcher, InstructionRegexMatcher, IterationMatcher, MessageRoleMatcher,
     MockMatcher,
 };
@@ -64,7 +64,7 @@ impl MockLlmBuilder {
     where
         F: Fn(&super::mock_matcher::LlmContext) -> bool + Send + Sync + 'static,
     {
-        use super::mock_matcher::CustomMatcher;
+        use crate::helpers::mock_matcher::CustomMatcher;
 
         // Custom matchers can't be serialized, so we use match_any
         let mut serialized = SerializedMatcher::new();
@@ -123,9 +123,7 @@ impl MockRuleBuilder {
         self.matcher = Box::new(combined);
 
         // Add to serialized
-        self.serialized_matcher
-            .instruction_contains
-            .push(substring);
+        self.serialized_matcher.instruction_contains.push(substring);
 
         self
     }
@@ -188,7 +186,64 @@ impl MockRuleBuilder {
             vec![actions]
         };
 
-        MockResponseBuilder::new(self, MockResponse::Actions { actions: actions_vec })
+        MockResponseBuilder::new(
+            self,
+            MockResponse::Actions {
+                actions: actions_vec,
+            },
+        )
+    }
+
+    /// Respond with actions generated dynamically from event data
+    ///
+    /// This allows mock responses to access event data at runtime, enabling
+    /// protocol-correct responses for correlation IDs (DNS query_id, STUN transaction_id, etc.)
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// .respond_with_actions_from_event(|event_data| {
+    ///     serde_json::json!([{
+    ///         "type": "send_dns_a_response",
+    ///         "query_id": event_data["query_id"],  // Dynamic from event
+    ///         "domain": "example.com",
+    ///         "ip": "93.184.216.34"
+    ///     }])
+    /// })
+    /// ```
+    ///
+    /// # Arguments
+    /// * `generator` - Closure that takes event data and returns action JSON (array or single object)
+    ///
+    /// # Returns
+    /// MockResponseBuilder for chaining (.expect_calls(), etc.)
+    ///
+    /// # Note
+    /// Dynamic mocks cannot be serialized to environment variables.
+    /// Use with MOCK_OLLAMA_BASE_URL (in-process mock server) only.
+    pub fn respond_with_actions_from_event<F>(self, generator: F) -> MockResponseBuilder
+    where
+        F: Fn(&serde_json::Value) -> serde_json::Value + Send + Sync + 'static,
+    {
+        use crate::helpers::mock_config::ResponseGenerator;
+        use std::sync::Arc;
+
+        // Wrap user's closure to handle array/single-action normalization
+        let wrapped_generator: ResponseGenerator =
+            Arc::new(move |event_data: &serde_json::Value| {
+                let result = generator(event_data);
+                if result.is_array() {
+                    result.as_array().unwrap().clone()
+                } else {
+                    vec![result]
+                }
+            });
+
+        MockResponseBuilder::new(
+            self,
+            MockResponse::DynamicActions {
+                generator: wrapped_generator,
+            },
+        )
     }
 
     /// Respond with raw string (for testing failures)

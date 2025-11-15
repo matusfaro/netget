@@ -12,10 +12,6 @@ pub mod event_handler_executor; // Event handler execution (script/static/llm)
 pub mod event_instructions; // Event-specific instructions
 pub mod model_selection;
 pub mod template_engine; // Handlebars template engine // Model selection utilities
-
-// Old modules
-pub mod client;
-pub mod old_actions; // Legacy action system, to be removed
 pub mod ollama_client;
 pub mod prompt;
 pub mod response_handler; // Keep the old client module for reference
@@ -36,9 +32,6 @@ pub use action_helper::{
     call_llm_for_client, call_llm_with_actions, call_llm_with_custom_actions,
     call_llm_with_protocol, ClientLlmResult,
 };
-
-// Legacy re-exports (for backward compatibility during migration)
-pub use old_actions::{Action as OldAction, CommandInterpretation as OldCommandInterpretation};
 
 // Current ollama client exports
 pub use ollama_client::{

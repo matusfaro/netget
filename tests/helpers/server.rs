@@ -1,10 +1,10 @@
 // Server-specific test helpers and backward-compatible wrappers
 
+use super::common::*;
+use crate::helpers::mock_config::MockLlmConfig;
 use std::time::Duration;
 use tokio::process::Child;
 use tokio::time::sleep;
-
-use super::common::*;
 
 /// A running NetGet server process (backward compatible)
 /// This wrapper maintains compatibility with the original NetGetServer struct
@@ -23,7 +23,7 @@ pub struct NetGetServer {
     #[allow(dead_code)]
     mock_ollama_server: Option<super::mock_ollama::MockOllamaServer>,
     /// Mock configuration (DEPRECATED - kept for backward compat, use mock_ollama_server for verification)
-    mock_config: Option<netget::testing::MockLlmConfig>,
+    mock_config: Option<MockLlmConfig>,
     /// Temporary mock config file (DEPRECATED - not used anymore)
     /// IMPORTANT: Must NOT have underscore prefix - field must be kept alive for entire test duration
     #[allow(dead_code)]
@@ -38,7 +38,7 @@ impl NetGetServer {
         stack: String,
         output_lines: std::sync::Arc<tokio::sync::Mutex<Vec<String>>>,
         mock_ollama_server: Option<super::mock_ollama::MockOllamaServer>,
-        mock_config: Option<netget::testing::MockLlmConfig>,
+        mock_config: Option<MockLlmConfig>,
         mock_temp_file: Option<tempfile::TempPath>,
     ) -> Self {
         Self {
@@ -220,7 +220,14 @@ impl NetGetServer {
                     "Timeout waiting for pattern '{}' after {:?}.\nLast 20 lines:\n{}",
                     pattern,
                     timeout,
-                    lines.iter().rev().take(20).rev().map(|s| s.as_str()).collect::<Vec<_>>().join("\n")
+                    lines
+                        .iter()
+                        .rev()
+                        .take(20)
+                        .rev()
+                        .map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n")
                 )
                 .into());
             }
@@ -243,11 +250,9 @@ impl NetGetServer {
                 }
             }
             if start.elapsed() >= timeout {
-                return Err(format!(
-                    "Timeout waiting for regex pattern after {:?}",
-                    timeout
-                )
-                .into());
+                return Err(
+                    format!("Timeout waiting for regex pattern after {:?}", timeout).into(),
+                );
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }

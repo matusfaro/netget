@@ -12,6 +12,7 @@ resolution. Uses hickory-client (real DNS client) for protocol correctness.
 - **Protocol correctness**: Tests actual DNS wire protocol, not mocked responses
 - **Record type coverage**: Tests A, TXT records; NXDOMAIN response
 - **No scripting**: Action-based LLM responses (tests LLM's ability to handle DNS semantics)
+- **Dynamic mocks**: Uses `.respond_with_actions_from_event()` for protocol-correct transaction ID matching
 
 ## LLM Call Budget
 
@@ -31,6 +32,143 @@ clearer failure diagnosis.
 
 **Rationale**: Tests validate that LLM can correctly generate DNS responses using structured actions. Scripting would
 bypass this validation. For production DNS servers, scripting is highly recommended for performance.
+
+## Dynamic Mock Pattern (CRITICAL)
+
+All DNS tests use **dynamic mocks** via `.respond_with_actions_from_event()` to enable protocol-correct transaction ID matching.
+
+### Why Dynamic Mocks?
+
+DNS (and all UDP protocols) require **transaction ID matching**: the `query_id` in the response must exactly match the `query_id` in the request. Static mocks cannot do this because the client generates random transaction IDs.
+
+**Problem with static mocks:**
+```rust
+// ❌ WRONG - hardcoded query_id doesn't match request
+.respond_with_actions(serde_json::json!([{
+    "type": "send_dns_a_response",
+    "query_id": 0,  // ← Static! Client expects 15073
+    "domain": "example.com",
+    "ip": "93.184.216.34"
+}]))
+```
+
+**Solution with dynamic mocks:**
+```rust
+// ✅ CORRECT - extract query_id from event data
+.respond_with_actions_from_event(|event_data| {
+    let query_id = event_data["query_id"].as_u64().unwrap_or(0);
+    serde_json::json!([{
+        "type": "send_dns_a_response",
+        "query_id": query_id,  // ← Dynamic! Matches request
+        "domain": "example.com",
+        "ip": "93.184.216.34"
+    }])
+})
+```
+
+### Pattern Usage
+
+**Step 1**: Match the event type and event data:
+```rust
+.on_event("dns_query")
+.and_event_data_contains("domain", "example.com")
+.and_event_data_contains("query_type", "A")
+```
+
+**Step 2**: Use dynamic response with closure:
+```rust
+.respond_with_actions_from_event(|event_data| {
+    // Extract dynamic values from event
+    let query_id = event_data["query_id"].as_u64().unwrap_or(0);
+
+    // Return actions using extracted values
+    serde_json::json!([{
+        "type": "send_dns_a_response",
+        "query_id": query_id,
+        "domain": "example.com",
+        "ip": "93.184.216.34",
+        "ttl": 300
+    }])
+})
+```
+
+**Step 3**: Set call expectations:
+```rust
+.expect_calls(1)
+.and()
+```
+
+### Full Example
+
+```rust
+let config = NetGetConfig::new("listen on port {AVAILABLE_PORT} via dns. ...")
+    .with_log_level("debug")
+    .with_mock(|mock| {
+        mock
+            // Mock 1: Server startup
+            .on_instruction_containing("listen on port")
+            .and_instruction_containing("dns")
+            .respond_with_actions(serde_json::json!([
+                {"type": "open_server", "port": 0, "base_stack": "DNS", ...}
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 2: DNS query event - DYNAMIC RESPONSE
+            .on_event("dns_query")
+            .and_event_data_contains("domain", "example.com")
+            .and_event_data_contains("query_type", "A")
+            .respond_with_actions_from_event(|event_data| {
+                let query_id = event_data["query_id"].as_u64().unwrap_or(0);
+                serde_json::json!([{
+                    "type": "send_dns_a_response",
+                    "query_id": query_id,  // ← CRITICAL: Must match request!
+                    "domain": "example.com",
+                    "ip": "93.184.216.34"
+                }])
+            })
+            .expect_calls(1)
+            .and()
+    });
+
+let server = helpers::start_netget_server(config).await?;
+
+// ... send DNS query ...
+
+server.verify_mocks().await?;  // ← CRITICAL: Verify mock expectations
+```
+
+### Key Points
+
+1. **Extract event data inside closure**: `event_data["query_id"]`, `event_data["domain"]`, etc.
+2. **Return JSON array or single object**: Normalizes automatically
+3. **Closure signature**: `Fn(&serde_json::Value) -> serde_json::Value`
+4. **Always call `.verify_mocks().await?`**: Ensures expectations met
+5. **Dynamic mocks are NOT serializable**: Requires in-process mock server (not env var)
+
+### Event Data Available
+
+For `dns_query` events:
+- `query_id` (number) - Transaction ID from DNS request packet
+- `domain` (string) - Domain name being queried
+- `query_type` (string) - Record type (A, AAAA, TXT, MX, etc.)
+
+### Transaction ID Matching Evidence
+
+**Correct behavior with dynamic mocks:**
+```
+DNS request:  0x3ae1 (15073 decimal)
+Mock extracts: query_id = 15073
+DNS response: 0x3ae1 (matches!)
+Client accepts response ✅
+```
+
+**Broken behavior with static mocks:**
+```
+DNS request:  0x3ae1 (15073 decimal)
+Mock returns: query_id = 0
+DNS response: 0x0000 (doesn't match!)
+Client ignores response ❌ timeout
+```
 
 ## Client Library
 

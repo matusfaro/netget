@@ -93,6 +93,40 @@ This is a strict project policy. Unlike standard Rust convention:
 
 **Minimize LLM calls** (< 10 per suite): Reuse servers, use scripting mode, bundle scenarios. **Setup**: `./cargo-isolated.sh build --release --all-features`. **Privacy**: Localhost only (127.0.0.1/::1), no external endpoints.
 
+### Dynamic Mock Pattern for UDP Protocols (CRITICAL)
+
+**All UDP protocol tests MUST use dynamic mocks** for transaction ID matching. Static mocks fail because clients generate random transaction IDs.
+
+**Pattern**: Use `.respond_with_actions_from_event()` to extract event data at runtime:
+
+```rust
+let config = NetGetConfig::new("...")
+    .with_mock(|mock| {
+        mock
+            .on_event("dns_query")  // or stun_binding_request, ntp_request, etc.
+            .and_event_data_contains("domain", "example.com")
+            .respond_with_actions_from_event(|event_data| {
+                // Extract dynamic values from event
+                let query_id = event_data["query_id"].as_u64().unwrap_or(0);
+
+                serde_json::json!([{
+                    "type": "send_dns_a_response",
+                    "query_id": query_id,  // ← DYNAMIC! Matches request
+                    "domain": "example.com",
+                    "ip": "93.184.216.34"
+                }])
+            })
+            .expect_calls(1)
+            .and()
+    });
+
+server.verify_mocks().await?;  // ← CRITICAL: Always verify!
+```
+
+**Why required**: UDP protocols (DNS, STUN, NTP, DHCP, etc.) require correlation IDs to match request→response. Static mocks with hardcoded IDs cause client timeouts.
+
+**See**: `tests/server/dns/CLAUDE.md` for comprehensive examples and transaction ID matching evidence.
+
 ## Multi-Instance Concurrency
 
 **Ollama Lock**: `--ollama-lock` serializes LLM API (default in tests). **Safe**: Multiple E2E tests/instances with lock. **Unsafe**: Same `target/` (use `cargo-isolated.sh`), concurrent git (use worktrees).

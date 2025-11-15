@@ -124,13 +124,6 @@ pub async fn select_or_validate_model(
     interactive: bool,
     ollama_url: &str,
 ) -> Result<Option<String>> {
-    // In mock mode, skip Ollama availability check
-    if std::env::var("NETGET_MOCK_CONFIG_JSON").is_ok() {
-        debug!("Mock mode detected, skipping Ollama availability check");
-        // Return the configured model or a dummy model name
-        return Ok(Some(configured_model.unwrap_or_else(|| "mock-model".to_string())));
-    }
-
     // Query Ollama for available models
     let models = match check_ollama_availability(ollama_url).await {
         Ok(models) => models,

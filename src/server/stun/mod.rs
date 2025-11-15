@@ -39,7 +39,10 @@ impl StunServer {
         tokio::spawn(async move {
             let mut buffer = vec![0u8; 2048]; // STUN messages are typically < 2KB
 
+            let _ = status_tx.send("[DEBUG] STUN receive loop started, waiting for packets...".to_string());
+
             loop {
+                debug!("STUN calling recv_from...");
                 match socket.recv_from(&mut buffer).await {
                     Ok((n, peer_addr)) => {
                         let data = buffer[..n].to_vec();

@@ -14,7 +14,7 @@ async fn test_stun_basic_binding_request() -> E2EResult<()> {
     println!("\n=== E2E Test: STUN Basic Binding Request with Mocks ===");
 
     let config = NetGetConfig::new("Start a STUN server on port {AVAILABLE_PORT}")
-        .with_log_level("info")
+        .with_log_level("debug")
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup (user command)
@@ -29,17 +29,20 @@ async fn test_stun_basic_binding_request() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: STUN binding request received
+                // Mock 2: STUN binding request received - DYNAMIC RESPONSE
                 .on_event("stun_binding_request")
-                .respond_with_actions(serde_json::json!([
-                    {
+                .respond_with_actions_from_event(|event_data| {
+                    // Extract transaction_id and peer_addr from event
+                    let transaction_id = event_data["transaction_id"].as_str().unwrap_or("000000000000000000000000");
+                    let peer_addr = event_data["peer_addr"].as_str().unwrap_or("127.0.0.1:54321");
+
+                    serde_json::json!([{
                         "type": "send_stun_binding_response",
-                        "transaction_id": "0102030405060708090a0b0c",
-                        "client_address": "127.0.0.1",
-                        "client_port": 54321,
-                        "xor_mapped": true
-                    }
-                ]))
+                        "transaction_id": transaction_id,  // ← DYNAMIC from event!
+                        "mapped_address": peer_addr,        // ← DYNAMIC from event!
+                        "xor_mapped_address": true
+                    }])
+                })
                 .expect_calls(1)
                 .and()
         });
@@ -147,17 +150,19 @@ async fn test_stun_multiple_clients() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2-4: Multiple STUN binding requests (one per client)
+                // Mock 2-4: Multiple STUN binding requests (one per client) - DYNAMIC RESPONSE
                 .on_event("stun_binding_request")
-                .respond_with_actions(serde_json::json!([
-                    {
+                .respond_with_actions_from_event(|event_data| {
+                    let transaction_id = event_data["transaction_id"].as_str().unwrap_or("000000000000000000000000");
+                    let peer_addr = event_data["peer_addr"].as_str().unwrap_or("127.0.0.1:54321");
+
+                    serde_json::json!([{
                         "type": "send_stun_binding_response",
-                        "transaction_id": "000000000000000000000000",
-                        "client_address": "127.0.0.1",
-                        "client_port": 54321,
-                        "xor_mapped": true
-                    }
-                ]))
+                        "transaction_id": transaction_id,  // ← DYNAMIC from event!
+                        "mapped_address": peer_addr,        // ← DYNAMIC from event!
+                        "xor_mapped_address": true
+                    }])
+                })
                 .expect_calls(3)  // Expect 3 binding requests from 3 clients
                 .and()
         });
@@ -231,9 +236,17 @@ async fn test_stun_xor_mapped_address() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 .on_event("stun_binding_request")
-                .respond_with_actions(serde_json::json!([
-                    {"type": "send_stun_binding_response", "xor_mapped": true}
-                ]))
+                .respond_with_actions_from_event(|event_data| {
+                    let transaction_id = event_data["transaction_id"].as_str().unwrap_or("000000000000000000000000");
+                    let peer_addr = event_data["peer_addr"].as_str().unwrap_or("127.0.0.1:54321");
+
+                    serde_json::json!([{
+                        "type": "send_stun_binding_response",
+                        "transaction_id": transaction_id,  // ← DYNAMIC from event!
+                        "mapped_address": peer_addr,        // ← DYNAMIC from event!
+                        "xor_mapped_address": true
+                    }])
+                })
                 .expect_calls(1)
                 .and()
         });
@@ -451,9 +464,16 @@ async fn test_stun_request_with_attributes() -> E2EResult<()> {
                     .expect_calls(1)
                     .and()
                     .on_event("stun_binding_request")
-                    .respond_with_actions(serde_json::json!([
-                        {"type": "send_stun_binding_response"}
-                    ]))
+                    .respond_with_actions_from_event(|event_data| {
+                        let transaction_id = event_data["transaction_id"].as_str().unwrap_or("000000000000000000000000");
+                        let peer_addr = event_data["peer_addr"].as_str().unwrap_or("127.0.0.1:54321");
+
+                        serde_json::json!([{
+                            "type": "send_stun_binding_response",
+                            "transaction_id": transaction_id,  // ← DYNAMIC from event!
+                            "mapped_address": peer_addr         // ← DYNAMIC from event!
+                        }])
+                    })
                     .expect_calls(1)
                     .and()
             });
@@ -515,9 +535,16 @@ async fn test_stun_rapid_requests() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 .on_event("stun_binding_request")
-                .respond_with_actions(serde_json::json!([
-                    {"type": "send_stun_binding_response"}
-                ]))
+                .respond_with_actions_from_event(|event_data| {
+                    let transaction_id = event_data["transaction_id"].as_str().unwrap_or("000000000000000000000000");
+                    let peer_addr = event_data["peer_addr"].as_str().unwrap_or("127.0.0.1:54321");
+
+                    serde_json::json!([{
+                        "type": "send_stun_binding_response",
+                        "transaction_id": transaction_id,  // ← DYNAMIC from event!
+                        "mapped_address": peer_addr         // ← DYNAMIC from event!
+                    }])
+                })
                 .expect_calls(5)
                 .and()
         });

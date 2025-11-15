@@ -159,6 +159,9 @@ async fn handle_pypi_request_with_llm_actions(
     status_tx: mpsc::UnboundedSender<String>,
     protocol: Arc<PypiProtocol>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
+    // TRACE: Handler invoked
+    let _ = status_tx.send(format!("[TRACE] 🔍 PyPI handler called for connection {}", connection_id));
+
     // Extract request details first for logging
     let method = req.method().to_string();
     let uri = req.uri().to_string();
@@ -231,6 +234,8 @@ async fn handle_pypi_request_with_llm_actions(
     }
 
     // Create PyPI request event
+    let _ = status_tx.send(format!("[TRACE] 🔍 Creating PyPI event: path={}, request_type={}", path, request_type));
+
     let body_text = String::from_utf8_lossy(&body_bytes);
     let event = Event::new(
         &PYPI_REQUEST_EVENT,
@@ -245,6 +250,8 @@ async fn handle_pypi_request_with_llm_actions(
         }),
     );
 
+    let _ = status_tx.send("[TRACE] 🔍 Calling LLM for PyPI request".to_string());
+
     // Call LLM to generate PyPI response
     match call_llm(
         &llm_client,
@@ -258,7 +265,7 @@ async fn handle_pypi_request_with_llm_actions(
     {
         Ok(execution_result) => {
             debug!("LLM PyPI response received");
-            let _ = status_tx.send("[DEBUG] LLM PyPI response received".to_string());
+            let _ = status_tx.send(format!("[TRACE] 🔍 LLM PyPI response received, {} protocol results", execution_result.protocol_results.len()));
 
             // Display messages
             for msg in execution_result.messages {
@@ -317,8 +324,7 @@ async fn handle_pypi_request_with_llm_actions(
                 .unwrap())
         }
         Err(e) => {
-            error!("LLM error generating PyPI response: {}", e);
-            let _ = status_tx.send(format!("✗ LLM error for {} {}: {}", method, uri, e));
+            let _ = status_tx.send(format!("[ERROR] 🔍 ERROR: LLM error for {} {}: {}", method, uri, e));
 
             Ok(Response::builder()
                 .status(500)

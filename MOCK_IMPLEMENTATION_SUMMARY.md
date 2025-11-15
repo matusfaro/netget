@@ -47,21 +47,6 @@ async fn test_tcp_echo_with_mock() -> E2EResult<()> {
 
 ### test-e2e.sh Updates Needed
 
-Add argument parsing for `--mode`:
-
-```bash
-TEST_MODE="auto"  # Default
-
-# Add to argument parsing:
---mode)
-    shift
-    TEST_MODE="$1"
-    ;;
-
-# Export before running tests:
-export NETGET_TEST_MODE="$TEST_MODE"
-```
-
 Usage: `./test-e2e.sh --mode mock amqp`
 
 ### CLAUDE.md Updates Needed
@@ -102,11 +87,6 @@ Create comprehensive guide with:
 ✅ **Backward Compatible** - No mocks = real Ollama mode
 ✅ **Multiple Matchers** - Event type, instruction, data, iteration, custom
 ✅ **Arc-based Sharing** - Efficient cloning of configuration
-
-## 🚀 Environment Variables
-
-- `NETGET_TEST_MODE=real|mock|auto` (default: auto)
-- `NETGET_MOCK_CONFIG_JSON` (set automatically by test helpers)
 
 ## ✨ Benefits
 

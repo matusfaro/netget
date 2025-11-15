@@ -6,7 +6,8 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::time::{sleep, timeout};
-
+use crate::helpers::mock_builder::MockLlmBuilder;
+use crate::helpers::mock_config::MockLlmConfig;
 use super::common::*;
 
 /// Represents a running NetGet process with 0+ servers and 0+ clients
@@ -28,7 +29,7 @@ pub struct NetGetInstance {
     #[allow(dead_code)]
     pub mock_temp_file: Option<tempfile::TempPath>,
     /// Mock configuration (DEPRECATED - kept for backward compat, use mock_ollama_server for verification)
-    pub mock_config: Option<netget::testing::MockLlmConfig>,
+    pub mock_config: Option<MockLlmConfig>,
 }
 
 /// Information about a server that was started
@@ -96,7 +97,7 @@ pub struct NetGetConfig {
     /// Enable Ollama lock for concurrent test execution (default: true)
     pub ollama_lock: bool,
     /// Mock LLM configuration (for testing without Ollama)
-    pub mock_config: Option<netget::testing::MockLlmConfig>,
+    pub mock_config: Option<MockLlmConfig>,
 }
 
 /// Detect if --use-ollama flag is present (from test args or environment)
@@ -208,7 +209,7 @@ impl NetGetConfig {
     ///
     /// # Example
     /// ```ignore
-    /// use netget::testing::MockLlmBuilder;
+    /// use crate::helpers::mock_config::MockLlmBuilder;
     ///
     /// let config = NetGetConfig::new("Start TCP server on port 0")
     ///     .with_mock(|mock| {
@@ -221,9 +222,9 @@ impl NetGetConfig {
     /// ```
     pub fn with_mock<F>(mut self, builder_fn: F) -> Self
     where
-        F: FnOnce(netget::testing::MockLlmBuilder) -> netget::testing::MockLlmBuilder,
+        F: FnOnce(MockLlmBuilder) -> MockLlmBuilder,
     {
-        let builder = netget::testing::MockLlmBuilder::new();
+        let builder = MockLlmBuilder::new();
         self.mock_config = Some(builder_fn(builder).build());
         self
     }
@@ -256,7 +257,7 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
             println!("   → Configure specific mocks with .with_mock() for test assertions");
 
             // Create default empty mock config
-            let mock_config = netget::testing::MockLlmBuilder::new().build();
+            let mock_config = MockLlmBuilder::new().build();
             let server = super::mock_ollama::MockOllamaServer::start(mock_config).await?;
             println!("🔧 Mock Ollama server started on {}", server.base_url());
             Some(server)
@@ -324,11 +325,6 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
         .stderr(Stdio::piped())
         .kill_on_drop(true);
 
-    // Set environment variable to indicate mock mode (skips Ollama availability check)
-    if mock_ollama_server.is_some() {
-        cmd.env("NETGET_MOCK_CONFIG_JSON", "true");
-    }
-
     // Debug: print the command being executed
     println!("[DEBUG] Executing: {:?}", cmd);
 
@@ -374,8 +370,8 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
         clients,
         output_lines,
         mock_ollama_server,
-        mock_temp_file: None, // DEPRECATED - not used anymore
-        mock_config: config.mock_config.clone(), // DEPRECATED - kept for backward compat
+        mock_temp_file: None,
+        mock_config: config.mock_config.clone(),
     })
 }
 
