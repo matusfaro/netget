@@ -8,7 +8,32 @@ use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
+use std::sync::LazyLock;
 use tracing::debug;
+
+/// OpenAI request event (for /v1/models, /v1/chat/completions, etc.)
+pub static OPENAI_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new("openai_request", "OpenAI API request received").with_parameters(vec![
+        Parameter {
+            name: "method".to_string(),
+            type_hint: "string".to_string(),
+            description: "HTTP method (GET, POST)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "path".to_string(),
+            type_hint: "string".to_string(),
+            description: "Request path (/v1/models, /v1/chat/completions)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "body".to_string(),
+            type_hint: "string".to_string(),
+            description: "Request body (JSON string for POST requests)".to_string(),
+            required: false,
+        },
+    ])
+});
 
 /// OpenAI protocol action handler
 pub struct OpenAiProtocol {}
@@ -55,9 +80,9 @@ impl Protocol for OpenAiProtocol {
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Beta)
             .implementation("hyper with OpenAI-compatible HTTP endpoints")
-            .llm_control("No LLM control - direct Ollama delegation")
+            .llm_control("Event/action system - LLM generates OpenAI responses")
             .e2e_testing("openai Python SDK and async-openai Rust client")
-            .notes("Zero-config passthrough to Ollama")
+            .notes("OpenAI-compatible API with LLM-driven responses")
             .build()
     }
     fn description(&self) -> &'static str {
@@ -338,20 +363,5 @@ pub fn list_active_chats_action() -> ActionDefinition {
 
 /// Get OpenAI event types
 pub fn get_openai_event_types() -> Vec<EventType> {
-    vec![
-        EventType::new("openai_request", "OpenAI API request received").with_parameters(vec![
-            Parameter {
-                name: "method".to_string(),
-                type_hint: "string".to_string(),
-                description: "HTTP method (GET, POST)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "path".to_string(),
-                type_hint: "string".to_string(),
-                description: "Request path (/v1/models, /v1/chat/completions)".to_string(),
-                required: true,
-            },
-        ]),
-    ]
+    vec![OPENAI_REQUEST_EVENT.clone()]
 }
