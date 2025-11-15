@@ -156,14 +156,16 @@ impl MockOllamaServer {
             }
         });
 
-        // Wait for server to be ready by attempting to connect
+        // Wait for server to be ready by making HTTP requests
         let max_retries = 20; // 20 retries * 50ms = 1 second max
         let mut ready = false;
         for attempt in 1..=max_retries {
             tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
-            // Try to connect to the server
-            if tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_ok() {
+            // Try to make an HTTP request to the server (GET /api/version)
+            let client = reqwest::Client::new();
+            let url = format!("http://127.0.0.1:{}/api/version", port);
+            if client.get(&url).timeout(tokio::time::Duration::from_millis(100)).send().await.is_ok() {
                 ready = true;
                 info!("🔧 Mock Ollama server ready after {}ms", attempt * 50);
                 break;
