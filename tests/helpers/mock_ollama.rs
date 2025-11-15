@@ -541,9 +541,25 @@ fn extract_context_from_prompt(prompt: &str) -> LlmContext {
     let has_user_message = if let Some(cap_idx) = prompt.find("## System Capabilities").or_else(|| prompt.find("# Current State")) {
         // Extract everything after the capabilities section
         let after_cap = &prompt[cap_idx..];
-        // Find the end of the capabilities section (usually ends with "DataLink protocol unavailable" or similar)
-        if let Some(end_idx) = after_cap.find("DataLink protocol unavailable") {
-            let after_system = &after_cap[end_idx + "DataLink protocol unavailable".len()..];
+
+        // Try to find the end of the capabilities section using various markers
+        let end_marker_and_len = [
+            ("DataLink protocol unavailable", "DataLink protocol unavailable".len()),
+            ("- **Raw socket access**: ✓ Available", "- **Raw socket access**: ✓ Available".len()),
+            ("- **Raw socket access**: ✗ Unavailable", "- **Raw socket access**: ✗ Unavailable".len()),
+            ("- **Privileged ports (<1024)**: ✓ Available", "- **Privileged ports (<1024)**: ✓ Available".len()),
+        ];
+
+        let mut after_system = None;
+        for (marker, len) in &end_marker_and_len {
+            if let Some(end_idx) = after_cap.find(marker) {
+                after_system = Some(&after_cap[end_idx + len..]);
+                debug!("🔧 Found capabilities end marker: '{}'", marker);
+                break;
+            }
+        }
+
+        if let Some(after_system) = after_system {
             // Collect ALL non-empty lines after the system section as the instruction
             // (not just the first line, to support multi-line instructions)
             let instruction_text = after_system
