@@ -50,7 +50,7 @@ TARGET_DIR="${SCRIPT_DIR}/target"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$TARGET_DIR}"
 
 # Ensure sccache is used and consistent
-export RUSTC_WRAPPER="${RUSTC_WRAPPER:-sccache}"        # rustc wrapper hook
+# export RUSTC_WRAPPER="${RUSTC_WRAPPER:-sccache}"
 export SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-30G}"
 
 # Disable incremental; env overrides profiles
