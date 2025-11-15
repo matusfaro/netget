@@ -356,6 +356,10 @@ impl SerializedMatcher {
             parts.push(format!("role={}", role));
         }
 
+        if !self.prompt_contains.is_empty() {
+            parts.push(format!("prompt contains {:?}", self.prompt_contains));
+        }
+
         if parts.is_empty() {
             "no criteria".to_string()
         } else {

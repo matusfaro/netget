@@ -149,6 +149,29 @@ impl MockMatcher for InstructionRegexMatcher {
     }
 }
 
+/// Matcher for full prompt substring
+pub struct PromptContainsMatcher {
+    substring: String,
+}
+
+impl PromptContainsMatcher {
+    pub fn new(substring: impl Into<String>) -> Self {
+        Self {
+            substring: substring.into(),
+        }
+    }
+}
+
+impl MockMatcher for PromptContainsMatcher {
+    fn matches(&self, context: &LlmContext) -> bool {
+        context.prompt.contains(&self.substring)
+    }
+
+    fn describe(&self) -> String {
+        format!("prompt contains '{}'", self.substring)
+    }
+}
+
 /// Matcher for event data field
 pub struct EventDataMatcher {
     key: String,

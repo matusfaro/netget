@@ -34,16 +34,35 @@ Always respond quickly with these standard capabilities."#;
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    // Mock: Server startup (user command)
-                    .on_instruction_containing("listen on port")
-                    .and_instruction_containing("mercurial")
-                    .and_instruction_containing("capabilities")
+                    // Mock 1: Server startup (user command)
+                    .on_prompt_containing("listen on port")
+                    .and_prompt_containing("mercurial")
+                    .and_prompt_containing("capabilities")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "open_server",
                             "port": 0,
                             "base_stack": "Mercurial",
                             "instruction": "Mercurial server with capabilities"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Network event - capabilities request
+                    .on_prompt_containing("Mercurial client is requesting capabilities")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "hg_capabilities",
+                            "capabilities": [
+                                "batch",
+                                "branchmap",
+                                "getbundle",
+                                "httpheader=1024",
+                                "known",
+                                "lookup",
+                                "pushkey",
+                                "unbundle=HG10GZ,HG10BZ,HG10UN"
+                            ]
                         }
                     ]))
                     .expect_calls(1)
@@ -113,9 +132,21 @@ This represents the tip of the default branch."#;
     let server = helpers::start_netget_server(
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
-                mock.on_instruction_containing("listen on port")
-                    .and_instruction_containing("mercurial")
+                mock
+                    // Mock 1: Server startup
+                    .on_prompt_containing("listen on port")
+                    .and_prompt_containing("mercurial")
                     .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "Mercurial", "instruction": "Mercurial server with heads"}]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Network event - heads request
+                    .on_prompt_containing("Mercurial client is requesting repository heads")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "hg_heads",
+                            "heads": ["1234567890abcdef1234567890abcdef12345678"]
+                        }
+                    ]))
                     .expect_calls(1)
                     .and()
             })
@@ -180,9 +211,24 @@ Each line represents one branch with its head node IDs."#;
     let server = helpers::start_netget_server(
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
-                mock.on_instruction_containing("listen on port")
-                    .and_instruction_containing("mercurial")
+                mock
+                    // Mock 1: Server startup
+                    .on_prompt_containing("listen on port")
+                    .and_prompt_containing("mercurial")
                     .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "Mercurial", "instruction": "Mercurial server with branchmap"}]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Network event - branchmap request
+                    .on_prompt_containing("Mercurial client is requesting branch mappings")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "hg_branchmap",
+                            "branches": {
+                                "default": ["1234567890abcdef1234567890abcdef12345678"],
+                                "stable": ["abc123def456789012345678901234567890abcd"]
+                            }
+                        }
+                    ]))
                     .expect_calls(1)
                     .and()
             })
@@ -261,9 +307,24 @@ Each line is tab-separated: bookmark name, then node ID."#;
     let server = helpers::start_netget_server(
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
-                mock.on_instruction_containing("listen on port")
-                    .and_instruction_containing("mercurial")
+                mock
+                    // Mock 1: Server startup
+                    .on_prompt_containing("listen on port")
+                    .and_prompt_containing("mercurial")
                     .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "Mercurial", "instruction": "Mercurial server with listkeys"}]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Network event - listkeys request
+                    .on_prompt_containing("Mercurial client is requesting listkeys")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "hg_listkeys",
+                            "keys": {
+                                "master": "1234567890abcdef1234567890abcdef12345678",
+                                "develop": "abc123def456789012345678901234567890abcd"
+                            }
+                        }
+                    ]))
                     .expect_calls(1)
                     .and()
             })
@@ -341,8 +402,8 @@ Test error handling for non-existent repositories."#;
     let server = helpers::start_netget_server(
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
-                mock.on_instruction_containing("listen on port")
-                    .and_instruction_containing("mercurial")
+                mock.on_prompt_containing("listen on port")
+                    .and_prompt_containing("mercurial")
                     .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "Mercurial", "instruction": "Mercurial server with error handling"}]))
                     .expect_calls(1)
                     .and()
