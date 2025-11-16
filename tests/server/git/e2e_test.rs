@@ -7,7 +7,9 @@
 
 use super::super::super::helpers::{self, E2EResult, NetGetConfig};
 use std::process::Command;
+use std::time::Duration;
 use tempfile::TempDir;
+use tokio::time::timeout;
 
 /// Helper to create a unique temporary directory for git operations
 fn create_temp_dir() -> E2EResult<TempDir> {
@@ -106,7 +108,12 @@ If you are unsure about pack format, provide minimal pack data and we will test 
                 .and()
         });
 
-    let server = helpers::start_netget_server(config).await?;
+    let server = timeout(
+        Duration::from_secs(30),
+        helpers::start_netget_server(config)
+    )
+    .await
+    .map_err(|_| "Server startup timeout")??;
 
     let port = server.port;
     println!("Git server started on port {}", port);
@@ -170,7 +177,9 @@ If you are unsure about pack format, provide minimal pack data and we will test 
     }
 
     // Verify mocks
-    server.verify_mocks().await?;
+    timeout(Duration::from_secs(30), server.verify_mocks())
+        .await
+        .map_err(|_| "Mock verification timeout")??;
 
     println!("\n✓ Git protocol flow validated");
     Ok(())
@@ -222,7 +231,12 @@ When client requests /simple-repo/info/refs?service=git-upload-pack:
                 .and()
         });
 
-    let server = helpers::start_netget_server(config).await?;
+    let server = timeout(
+        Duration::from_secs(30),
+        helpers::start_netget_server(config)
+    )
+    .await
+    .map_err(|_| "Server startup timeout")??;
 
     let port = server.port;
     println!("Git server started on port {}", port);
@@ -279,7 +293,9 @@ When client requests /simple-repo/info/refs?service=git-upload-pack:
     }
 
     // Verify mocks
-    server.verify_mocks().await?;
+    timeout(Duration::from_secs(30), server.verify_mocks())
+        .await
+        .map_err(|_| "Mock verification timeout")??;
 
     println!("\n✓ Info/refs endpoint validated");
     Ok(())
@@ -327,7 +343,12 @@ When client requests info/refs for any other repository name:
                 .and()
         });
 
-    let server = helpers::start_netget_server(config).await?;
+    let server = timeout(
+        Duration::from_secs(30),
+        helpers::start_netget_server(config)
+    )
+    .await
+    .map_err(|_| "Server startup timeout")??;
 
     let port = server.port;
     println!("Git server started on port {}", port);
@@ -361,7 +382,9 @@ When client requests info/refs for any other repository name:
     }
 
     // Verify mocks
-    server.verify_mocks().await?;
+    timeout(Duration::from_secs(30), server.verify_mocks())
+        .await
+        .map_err(|_| "Mock verification timeout")??;
 
     println!("\n✓ Repository not found handling validated");
     Ok(())
@@ -434,7 +457,12 @@ When client requests info/refs for 'backend', return backend branches."#;
                 .and()
         });
 
-    let server = helpers::start_netget_server(config).await?;
+    let server = timeout(
+        Duration::from_secs(30),
+        helpers::start_netget_server(config)
+    )
+    .await
+    .map_err(|_| "Server startup timeout")??;
 
     let port = server.port;
     println!("Git server started on port {}", port);
@@ -476,7 +504,9 @@ When client requests info/refs for 'backend', return backend branches."#;
     );
 
     // Verify mocks
-    server.verify_mocks().await?;
+    timeout(Duration::from_secs(30), server.verify_mocks())
+        .await
+        .map_err(|_| "Mock verification timeout")??;
 
     println!("\n✓ Multiple repositories validated");
     Ok(())
@@ -542,7 +572,12 @@ Script should return:
                 .and()
         });
 
-    let server = helpers::start_netget_server(config).await?;
+    let server = timeout(
+        Duration::from_secs(30),
+        helpers::start_netget_server(config)
+    )
+    .await
+    .map_err(|_| "Server startup timeout")??;
 
     let port = server.port;
     println!("Git server with scripting started on port {}", port);
@@ -577,7 +612,9 @@ Script should return:
     }
 
     // Verify mocks
-    server.verify_mocks().await?;
+    timeout(Duration::from_secs(30), server.verify_mocks())
+        .await
+        .map_err(|_| "Mock verification timeout")??;
 
     println!("\n✓ Scripting mode validated - all responses < 100ms");
     Ok(())

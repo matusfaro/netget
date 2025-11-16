@@ -781,12 +781,14 @@ mod e2e_cassandra {
         let uri = format!("127.0.0.1:{}", server.port);
         println!("  [TEST] Connecting to {}", uri);
 
-        let session: Session = SessionBuilder::new()
-            .known_node(&uri)
-            .pool_size(PoolSize::PerHost(NonZeroUsize::new(1).unwrap()))
-            .build()
-            .await
-            .expect("Failed to connect");
+        let session: Session = with_cassandra_timeout(
+            SessionBuilder::new()
+                .known_node(&uri)
+                .pool_size(PoolSize::PerHost(NonZeroUsize::new(1).unwrap()))
+                .build()
+        )
+        .await
+        .expect("Failed to connect");
 
         println!("  [TEST] ✓ Connected successfully");
 
@@ -943,12 +945,14 @@ mod e2e_cassandra {
         let uri = format!("127.0.0.1:{}", server.port);
         println!("  [TEST] Connecting to {}", uri);
 
-        let session: Session = SessionBuilder::new()
-            .known_node(&uri)
-            .pool_size(PoolSize::PerHost(NonZeroUsize::new(1).unwrap()))
-            .build()
-            .await
-            .expect("Failed to connect");
+        let session: Session = with_cassandra_timeout(
+            SessionBuilder::new()
+                .known_node(&uri)
+                .pool_size(PoolSize::PerHost(NonZeroUsize::new(1).unwrap()))
+                .build()
+        )
+        .await
+        .expect("Failed to connect");
 
         println!("  [TEST] ✓ Connected successfully");
 

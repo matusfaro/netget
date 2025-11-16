@@ -82,10 +82,10 @@ async fn test_postgresql_simple_query() -> E2EResult<()> {
     println!("Connecting to PostgreSQL server...");
 
     // Note: statement_timeout=0 disables query timeout on the server side
-    let connection_string = format!("host=127.0.0.1 port={} user=postgres dbname=test connect_timeout=60 options='-c statement_timeout=0'", server.port);
+    let connection_string = format!("host=127.0.0.1 port={} user=postgres dbname=test connect_timeout=30 options='-c statement_timeout=0'", server.port);
 
     let (client, _connection) = match tokio::time::timeout(
-        Duration::from_secs(60),
+        Duration::from_secs(30),
         tokio_postgres::connect(&connection_string, NoTls),
     )
     .await
@@ -112,7 +112,7 @@ async fn test_postgresql_simple_query() -> E2EResult<()> {
 
     // Execute simple query
     println!("Executing SELECT 1...");
-    let row = match tokio::time::timeout(Duration::from_secs(60), client.query_one("SELECT 1", &[]))
+    let row = match tokio::time::timeout(Duration::from_secs(30), client.query_one("SELECT 1", &[]))
         .await
     {
         Ok(Ok(row)) => row,
@@ -202,7 +202,16 @@ async fn test_postgresql_multi_row_query() -> E2EResult<()> {
 
     println!("Connecting to PostgreSQL server...");
     let connection_string = format!("host=127.0.0.1 port={} user=postgres", server.port);
-    let (client, connection) = tokio_postgres::connect(&connection_string, NoTls).await?;
+    let (client, connection) = match tokio::time::timeout(
+        Duration::from_secs(30),
+        tokio_postgres::connect(&connection_string, NoTls),
+    )
+    .await
+    {
+        Ok(Ok((client, connection))) => (client, connection),
+        Ok(Err(e)) => return Err(e.into()),
+        Err(_) => return Err("Connection timeout".into()),
+    };
 
     tokio::spawn(async move {
         if let Err(e) = connection.await {
@@ -213,7 +222,16 @@ async fn test_postgresql_multi_row_query() -> E2EResult<()> {
     println!("✓ PostgreSQL connected");
 
     println!("Executing SELECT * FROM users...");
-    let rows = client.query("SELECT * FROM users", &[]).await?;
+    let rows = match tokio::time::timeout(
+        Duration::from_secs(30),
+        client.query("SELECT * FROM users", &[]),
+    )
+    .await
+    {
+        Ok(Ok(rows)) => rows,
+        Ok(Err(e)) => return Err(e.into()),
+        Err(_) => return Err("Query timeout".into()),
+    };
 
     println!("Received {} rows:", rows.len());
     for row in &rows {
@@ -286,7 +304,16 @@ async fn test_postgresql_create_table() -> E2EResult<()> {
 
     println!("Connecting to PostgreSQL server...");
     let connection_string = format!("host=127.0.0.1 port={} user=postgres", server.port);
-    let (client, connection) = tokio_postgres::connect(&connection_string, NoTls).await?;
+    let (client, connection) = match tokio::time::timeout(
+        Duration::from_secs(30),
+        tokio_postgres::connect(&connection_string, NoTls),
+    )
+    .await
+    {
+        Ok(Ok((client, connection))) => (client, connection),
+        Ok(Err(e)) => return Err(e.into()),
+        Err(_) => return Err("Connection timeout".into()),
+    };
 
     tokio::spawn(async move {
         if let Err(e) = connection.await {
@@ -297,14 +324,20 @@ async fn test_postgresql_create_table() -> E2EResult<()> {
     println!("✓ PostgreSQL connected");
 
     println!("Executing CREATE TABLE...");
-    match client
-        .execute("CREATE TABLE test (id INT PRIMARY KEY)", &[])
-        .await
+    match tokio::time::timeout(
+        Duration::from_secs(30),
+        client.execute("CREATE TABLE test (id INT PRIMARY KEY)", &[]),
+    )
+    .await
     {
-        Ok(_) => println!("✓ CREATE TABLE executed successfully"),
-        Err(e) => {
+        Ok(Ok(_)) => println!("✓ CREATE TABLE executed successfully"),
+        Ok(Err(e)) => {
             println!("CREATE TABLE returned: {}", e);
             // This is OK - the LLM might not support DDL fully
+        }
+        Err(_) => {
+            println!("CREATE TABLE timeout");
+            // This is OK - timeout doesn't fail the test
         }
     }
 

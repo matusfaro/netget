@@ -11,6 +11,7 @@ use std::fs;
 use std::process::Command;
 use std::time::Duration;
 use tempfile::TempDir;
+use tokio::time::timeout;
 
 #[tokio::test]
 async fn test_npm_package_metadata() -> E2EResult<()> {
@@ -74,7 +75,12 @@ For any other package, return a 404 error with: {"error": "Package not found"}"#
                 .and()
         });
 
-    let mut server = helpers::start_netget_server(config).await?;
+    let mut server = timeout(
+        Duration::from_secs(30),
+        helpers::start_netget_server(config)
+    )
+    .await
+    .map_err(|_| "Server startup timeout")??;
     println!("NPM registry started on port {}", server.port);
 
     // Wait for server to be ready
@@ -138,7 +144,9 @@ For any other package, return a 404 error with: {"error": "Package not found"}"#
     println!("✓ NPM Package Metadata test completed\n");
 
     // Verify mock expectations were met
-    server.verify_mocks().await?;
+    timeout(Duration::from_secs(30), server.verify_mocks())
+        .await
+        .map_err(|_| "Mock verification timeout")??;
 
     Ok(())
 }
@@ -180,7 +188,12 @@ When a client requests any package, return a 404 error with JSON: {"error": "Pac
                 .and()
         });
 
-    let mut server = helpers::start_netget_server(config).await?;
+    let mut server = timeout(
+        Duration::from_secs(30),
+        helpers::start_netget_server(config)
+    )
+    .await
+    .map_err(|_| "Server startup timeout")??;
     println!("NPM registry started on port {}", server.port);
 
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -223,7 +236,9 @@ When a client requests any package, return a 404 error with JSON: {"error": "Pac
     println!("✓ NPM Package Not Found test completed\n");
 
     // Verify mock expectations were met
-    server.verify_mocks().await?;
+    timeout(Duration::from_secs(30), server.verify_mocks())
+        .await
+        .map_err(|_| "Mock verification timeout")??;
 
     Ok(())
 }
@@ -359,7 +374,12 @@ For any other package, return 404 error."#,
                 .and()
         });
 
-    let mut server = helpers::start_netget_server(config).await?;
+    let mut server = timeout(
+        Duration::from_secs(30),
+        helpers::start_netget_server(config)
+    )
+    .await
+    .map_err(|_| "Server startup timeout")??;
     println!("NPM registry started on port {}", server.port);
 
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -461,7 +481,9 @@ For any other package, return 404 error."#,
     println!("✓ NPM with Real CLI test completed\n");
 
     // Verify mock expectations were met
-    server.verify_mocks().await?;
+    timeout(Duration::from_secs(30), server.verify_mocks())
+        .await
+        .map_err(|_| "Mock verification timeout")??;
 
     Ok(())
 }
@@ -550,7 +572,12 @@ For any other search query, return empty results: {"objects": [], "total": 0}"#;
                 .and()
         });
 
-    let mut server = helpers::start_netget_server(config).await?;
+    let mut server = timeout(
+        Duration::from_secs(30),
+        helpers::start_netget_server(config)
+    )
+    .await
+    .map_err(|_| "Server startup timeout")??;
     println!("NPM registry started on port {}", server.port);
 
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -610,7 +637,9 @@ For any other search query, return empty results: {"objects": [], "total": 0}"#;
     println!("✓ NPM Search test completed\n");
 
     // Verify mock expectations were met
-    server.verify_mocks().await?;
+    timeout(Duration::from_secs(30), server.verify_mocks())
+        .await
+        .map_err(|_| "Mock verification timeout")??;
 
     Ok(())
 }

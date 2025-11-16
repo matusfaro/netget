@@ -8,6 +8,7 @@
 use crate::server::helpers::*;
 use std::process::Command;
 use std::time::Duration;
+use tokio::time::timeout;
 
 #[tokio::test]
 async fn test_pypi_comprehensive() -> E2EResult<()> {
@@ -89,7 +90,12 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
             .and()
     });
 
-    let test_state = start_netget_server(config).await?;
+    let test_state = timeout(
+        Duration::from_secs(30),
+        start_netget_server(config)
+    )
+    .await
+    .map_err(|_| "Server startup timeout")??;
 
     // Wait for server to be ready
     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -228,8 +234,12 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
 
     println!("\n✓✓✓ All PyPI E2E tests passed!");
 
-    test_state.verify_mocks().await?;
-    test_state.stop().await?;
+    timeout(Duration::from_secs(30), test_state.verify_mocks())
+        .await
+        .map_err(|_| "Mock verification timeout")??;
+    timeout(Duration::from_secs(30), test_state.stop())
+        .await
+        .map_err(|_| "Server stop timeout")??;
     Ok(())
 }
 
@@ -281,7 +291,12 @@ Use scripting mode for zero LLM calls after setup.
             .and()
     });
 
-    let test_state = start_netget_server(config).await?;
+    let test_state = timeout(
+        Duration::from_secs(30),
+        start_netget_server(config)
+    )
+    .await
+    .map_err(|_| "Server startup timeout")??;
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     let base_url = format!("http://127.0.0.1:{}/simple/", test_state.port);
@@ -303,7 +318,11 @@ Use scripting mode for zero LLM calls after setup.
     );
     println!("✓ Minimal PyPI server works correctly");
 
-    test_state.verify_mocks().await?;
-    test_state.stop().await?;
+    timeout(Duration::from_secs(30), test_state.verify_mocks())
+        .await
+        .map_err(|_| "Mock verification timeout")??;
+    timeout(Duration::from_secs(30), test_state.stop())
+        .await
+        .map_err(|_| "Server stop timeout")??;
     Ok(())
 }
