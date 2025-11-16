@@ -92,9 +92,9 @@ impl RedisClient {
                             match action_type {
                                 "execute_redis_command" => {
                                     if let Some(command) = action["command"].as_str() {
-                                        let command_line = format!("{}\r\n", command);
+                                        let command_bytes = encode_redis_command(command);
                                         let mut write_guard = write_half_for_connected.lock().await;
-                                        if let Err(e) = write_guard.write_all(command_line.as_bytes()).await {
+                                        if let Err(e) = write_guard.write_all(&command_bytes).await {
                                             error!("Failed to send Redis command after connect: {}", e);
                                         } else if let Err(e) = write_guard.flush().await {
                                             error!("Failed to flush after connect: {}", e);
@@ -184,9 +184,9 @@ impl RedisClient {
                                         match protocol.execute_action(action) {
                                             Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) if name == "redis_command" => {
                                                 if let Some(command_str) = data.get("command").and_then(|v| v.as_str()) {
-                                                    let cmd = format!("{}\r\n", command_str);
+                                                    let cmd_bytes = encode_redis_command(command_str);
                                                     let mut write_guard = write_half_arc.lock().await;
-                                                    if let Ok(_) = write_guard.write_all(cmd.as_bytes()).await {
+                                                    if let Ok(_) = write_guard.write_all(&cmd_bytes).await {
                                                         if let Ok(_) = write_guard.flush().await {
                                                             trace!("Redis client {} sent: {}", client_id, command_str);
                                                         }
@@ -221,4 +221,25 @@ impl RedisClient {
 
         Ok(local_addr)
     }
+}
+
+/// Encode a Redis command as a RESP array
+///
+/// Example: "PING" -> "*1\r\n$4\r\nPING\r\n"
+/// Example: "SET key value" -> "*3\r\n$3\r\nSET\r\n$3\r\nkey\r\n$5\r\nvalue\r\n"
+fn encode_redis_command(command: &str) -> Vec<u8> {
+    // Split command into parts
+    let parts: Vec<&str> = command.split_whitespace().collect();
+
+    // Start with array length
+    let mut result = format!("*{}\r\n", parts.len()).into_bytes();
+
+    // Encode each part as a bulk string
+    for part in parts {
+        result.extend_from_slice(&format!("${}\r\n", part.len()).into_bytes());
+        result.extend_from_slice(part.as_bytes());
+        result.extend_from_slice(b"\r\n");
+    }
+
+    result
 }

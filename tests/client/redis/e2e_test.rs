@@ -17,8 +17,8 @@ mod redis_client_tests {
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
-                    .on_instruction_containing("Redis")
-                    .and_instruction_containing("PING")
+                    .on_instruction_containing("Listen on port")
+                    .and_instruction_containing("via Redis")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "open_server",
@@ -161,7 +161,8 @@ mod redis_client_tests {
             NetGetConfig::new("Listen on port {AVAILABLE_PORT} via Redis. Log all incoming commands.")
                 .with_mock(|mock| {
                     mock
-                        .on_instruction_containing("Redis")
+                        .on_instruction_containing("Listen on port")
+                        .and_instruction_containing("via Redis")
                         .respond_with_actions(serde_json::json!([
                             {
                                 "type": "open_server",
