@@ -19,8 +19,9 @@ mod telnet_client_tests {
         )
         .with_mock(|mock| {
             mock
-                // Mock: Server startup
-                .on_instruction_containing("Telnet")
+                // Mock: Server startup (more specific to avoid matching events)
+                .on_instruction_containing("Listen on port")
+                .and_instruction_containing("Telnet")
                 .and_instruction_containing("Welcome")
                 .respond_with_actions(serde_json::json!([
                     {

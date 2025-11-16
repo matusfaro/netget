@@ -13,7 +13,7 @@ mod http_client_tests {
     #[tokio::test]
     async fn test_http_client_get_request() -> E2EResult<()> {
         // Start an HTTP server listening on an available port with mocks
-        let server_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via HTTP. Respond to GET requests with 'Hello from server'.")
+        let server_config = NetGetConfig::new("Listen on port 0 via HTTP. Respond to GET requests with 'Hello from server'.")
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup (user command)
@@ -29,8 +29,8 @@ mod http_client_tests {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: Server receives HTTP request (http_request_received event)
-                    .on_event("http_request_received")
+                    // Mock 2: Server receives HTTP request (http_request event)
+                    .on_event("http_request")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_http_response",
@@ -45,8 +45,10 @@ mod http_client_tests {
 
         let server = start_netget_server(server_config).await?;
 
-        // Give server time to start
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // Give server time to fully bind and start listening
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        println!("[TEST] Server started on port {}", server.port);
 
         // Now start an HTTP client that makes a GET request with mocks
         let client_config = NetGetConfig::new(format!(
@@ -123,7 +125,7 @@ mod http_client_tests {
     async fn test_http_client_lllm_controlled_request() -> E2EResult<()> {
         // Start a simple HTTP server with mocks
         let server_config = NetGetConfig::new(
-            "Listen on port {AVAILABLE_PORT} via HTTP. Log all incoming requests.",
+            "Listen on port 0 via HTTP. Log all incoming requests.",
         )
             .with_mock(|mock| {
                 mock
@@ -141,7 +143,7 @@ mod http_client_tests {
                     .expect_calls(1)
                     .and()
                     // Mock 2: Server receives custom header request
-                    .on_event("http_request_received")
+                    .on_event("http_request")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "send_http_response",
@@ -156,7 +158,10 @@ mod http_client_tests {
 
         let server = start_netget_server(server_config).await?;
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // Give server time to fully bind and start listening
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        println!("[TEST] Server started on port {}", server.port);
 
         // Client that makes a specific request based on LLM instruction with mocks
         let client_config = NetGetConfig::new(format!(

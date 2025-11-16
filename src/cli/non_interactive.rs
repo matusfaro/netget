@@ -146,8 +146,10 @@ pub async fn run_non_interactive(
 
     // Check if we're in server mode
     if state.get_mode().await == Mode::Server {
-        // Run the server (creates its own status channel internally)
-        return run_server(&state, llm).await;
+        // Create a new status channel for the server
+        // (the original status_rx was consumed by the forwarder task above)
+        let (_new_status_tx, new_status_rx) = mpsc::unbounded_channel::<String>();
+        return run_server(&state, llm, new_status_rx).await;
     }
 
     Ok(())
@@ -392,7 +394,7 @@ pub async fn run_with_actions(
     // Check if we're in server mode
     if state.get_mode().await == Mode::Server {
         // Run the server
-        return run_server(&state, llm).await;
+        return run_server(&state, llm, status_rx).await;
     }
 
     Ok(())
