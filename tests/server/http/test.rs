@@ -22,7 +22,8 @@ async fn test_http_simple_get() -> E2EResult<()> {
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    .on_instruction_containing("http")
+                    .on_instruction_containing("listen on port")
+                    .and_instruction_containing("via http")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "open_server",
@@ -86,7 +87,8 @@ async fn test_http_json_api() -> E2EResult<()> {
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    .on_instruction_containing("http")
+                    .on_instruction_containing("listen on port")
+                    .and_instruction_containing("via http")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "open_server",
@@ -154,7 +156,8 @@ async fn test_http_routing() -> E2EResult<()> {
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    .on_instruction_containing("http")
+                    .on_instruction_containing("listen on port")
+                    .and_instruction_containing("via http")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "open_server",
@@ -255,7 +258,8 @@ async fn test_http_headers() -> E2EResult<()> {
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    .on_instruction_containing("http")
+                    .on_instruction_containing("listen on port")
+                    .and_instruction_containing("via http")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "open_server",
@@ -323,7 +327,8 @@ async fn test_http_methods() -> E2EResult<()> {
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    .on_instruction_containing("http")
+                    .on_instruction_containing("listen on port")
+                    .and_instruction_containing("via http")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "open_server",
@@ -435,7 +440,8 @@ async fn test_http_error_responses() -> E2EResult<()> {
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    .on_instruction_containing("http")
+                    .on_instruction_containing("listen on port")
+                    .and_instruction_containing("via http")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "open_server",
@@ -543,7 +549,8 @@ async fn test_http_simple_get_with_logging() -> E2EResult<()> {
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    .on_instruction_containing("http")
+                    .on_instruction_containing("listen on port")
+                    .and_instruction_containing("via http")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "open_server",
