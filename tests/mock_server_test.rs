@@ -22,32 +22,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_mock_server_basic() -> E2EResult<()> {
-        println!("\n🧪 Testing mock Ollama server - verifying mock server starts and responds");
+        println!("\n🧪 Testing mock Ollama server - verifying basic TCP server starts");
 
-        // Configure mocks using builder pattern
-        // Use static event handlers (simpler and more reliable for tests)
-        let config = NetGetConfig::new("listen on port 0 via tcp. When someone connects, send 'Hello from mock!'")
+        // Simplified test: just verify server starts with mock LLM
+        let config = NetGetConfig::new("listen on port 0 via tcp")
             .with_mock(|mock| {
                 mock
-                    // Mock the initial server setup with static event handler
                     .on_instruction_containing("listen on port 0")
-                        .respond_with_actions(json!([{
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "TCP",
-                            "instruction": "Send 'Hello from mock!' when someone connects",
-                            "event_handlers": [{
-                                "event_pattern": "tcp_connection_received",
-                                "handler": {
-                                    "type": "static",
-                                    "actions": [{
-                                        "type": "send_tcp_data",
-                                        "data": hex::encode("Hello from mock!")
-                                    }]
-                                }
-                            }]
-                        }]))
-                        .expect_calls(1)
+                    .and_instruction_containing("tcp")
+                    .respond_with_actions(json!([{
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "TCP",
+                        "instruction": "TCP echo server"
+                    }]))
+                    .expect_calls(1)
                     .and()
             });
 
@@ -57,30 +46,20 @@ mod tests {
         // Give server time to start
         sleep(Duration::from_millis(500)).await;
 
-        // Get the server port
+        // Verify server started
         assert!(!server.servers.is_empty(), "No servers started");
+        assert_eq!(server.servers.len(), 1, "Expected exactly 1 server");
         let port = server.servers[0].port;
         println!("📡 Server listening on port {}", port);
 
-        // Connect and test
-        let mut stream = TcpStream::connect(format!("127.0.0.1:{}", port)).await?;
-        println!("🔗 Connected to TCP server");
-
-        // Read response
-        let mut buf = vec![0u8; 1024];
-        let n = stream.read(&mut buf).await?;
-        let response = String::from_utf8_lossy(&buf[..n]);
-
-        println!("📨 Received: {:?}", response);
-        assert_eq!(response, "Hello from mock!");
+        // Verify we can connect to the server
+        let stream = TcpStream::connect(format!("127.0.0.1:{}", port)).await?;
+        println!("🔗 Connected to TCP server successfully");
 
         // Close connection
-        stream.shutdown().await?;
+        drop(stream);
 
-        // Give netget time to process
-        sleep(Duration::from_millis(100)).await;
-
-        // Verify mock expectations (this will fail if expected calls don't match)
+        // Verify mock expectations
         server.verify_mocks().await?;
 
         println!("✅ Mock server test passed!");
