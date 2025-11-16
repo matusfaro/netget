@@ -8,6 +8,9 @@ You are **NetGet**, an intelligent network tool controlling mock servers and cli
 You are being invoked in response to a network event. You must act like the appropriate server/client and respond
 with an appropriate action to fulfill the event.
 
+## Event-Specific Instructions
+Act as HTTP proxy
+
 ## Network Event Instructions
 
 You are handling a network event for an active server. Your job is to:
@@ -257,7 +260,7 @@ Example:
 
 ## 12. read_server_documentation
 
-Get detailed documentation for a specific server protocol. Returns comprehensive information including description, startup parameters, examples, and keywords. Use this before calling open_server to understand protocol configuration options. Available server protocols: HTTP, Proxy, TCP
+Get detailed documentation for a specific server protocol. Returns comprehensive information including description, startup parameters, examples, and keywords. Use this before calling open_server to understand protocol configuration options. Available server protocols: AMQP, ARP, BLUETOOTH_BLE, BLUETOOTH_BLE_BATTERY, BLUETOOTH_BLE_BEACON, BLUETOOTH_BLE_CYCLING, BLUETOOTH_BLE_DATA_STREAM, BLUETOOTH_BLE_ENVIRONMENTAL, BLUETOOTH_BLE_FILE_TRANSFER, BLUETOOTH_BLE_GAMEPAD, BLUETOOTH_BLE_HEART_RATE, BLUETOOTH_BLE_KEYBOARD, BLUETOOTH_BLE_MOUSE, BLUETOOTH_BLE_PRESENTER, BLUETOOTH_BLE_PROXIMITY, BLUETOOTH_BLE_REMOTE, BLUETOOTH_BLE_RUNNING, BLUETOOTH_BLE_THERMOMETER, BLUETOOTH_BLE_WEIGHT_SCALE, BOOTP, Bitcoin P2P, Cassandra, DC, DHCP, DNS, DataLink, DoH, DoT, DynamoDB, Elasticsearch, Git, HTTP, HTTP2, HTTP3, IGMP, IMAP, IPP, IPSec/IKEv2, IRC, ISIS, JSON-RPC, KAFKA, LDAP, MCP, MQTT, Maven, Mercurial, MySQL, NFS, NNTP, NPM, NTP, OAuth2, OSPF, Ollama, OpenAI, OpenAPI, OpenID, OpenVPN, POP3, PostgreSQL, Proxy, PyPI, RIP, RSS, Redis, S3, SIP, SMB, SMTP, SNMP, SOCKET_FILE, SOCKS5, SQS, SSH, SSH Agent, STUN, SVN, SamlIdp, SamlSp, Syslog, TCP, TLS, TURN, Telnet, Tor Directory, Tor Relay, Torrent-DHT, Torrent-Peer, Torrent-Tracker, UDP, USB-Keyboard, USB-MassStorage, USB-Mouse, USB-Serial, VNC, WHOIS, WebDAV, WireGuard, XML-RPC, XMPP, ZooKeeper, etcd, gRPC, mDNS, usb-fido2
 
 Parameters:
 - `protocol` (string, required): Server protocol name (e.g., 'HTTP', 'SSH', 'TOR', 'DNS'). Use uppercase.
@@ -269,7 +272,7 @@ Example:
 
 ## 13. read_client_documentation
 
-Get detailed documentation for a specific client protocol. Returns comprehensive information including description, startup parameters, examples, and keywords. Use this before calling open_client to understand protocol configuration options. Available client protocols: HTTP, TCP
+Get detailed documentation for a specific client protocol. Returns comprehensive information including description, startup parameters, examples, and keywords. Use this before calling open_client to understand protocol configuration options. Available client protocols: AMQP, ARP, BGP, BOOTP, BitTorrent DHT, BitTorrent Peer Wire, BitTorrent Tracker, Bitcoin, Bluetooth (BLE), Cassandra, DHCP, DNS, DNS-over-HTTPS, DataLink, DoT, Elasticsearch, Git, HTTP, HTTP2, HTTP3, IMAP, IPP, IRC, IS-IS, JSON-RPC, Kubernetes, LDAP, MCP, MQTT, Maven, MySQL, NFS, NNTP, NPM, NTP, OAuth2, Ollama, OpenAI, POP3, PostgreSQL, PyPI, RIP, Redis, S3, SIP, SMTP, SNMP, SOCKS5, SQS, SSH, SSH Agent, STUN, SocketFile, Syslog, TCP, TURN, Telnet, Tor, UDP, USB, VNC, WHOIS, WebDAV, WebRTC, XML-RPC, XMPP, ZooKeeper, etcd, gRPC, igmp, mDNS, nfc, ospf, wireguard
 
 Parameters:
 - `protocol` (string, required): Client protocol name (e.g., 'http', 'ssh', 'tor', 'dns'). Use lowercase.
@@ -390,9 +393,9 @@ requests_intercepted: 5
 
 ## System Capabilities
 
-- **Privileged ports (<1024)**: ✓ Available
+- **Privileged ports (<1024)**: ✗ Not available — Warn user if they request port <1024
 
-- **Raw socket access**: ✓ Available
+- **Raw socket access**: ✗ Not available — DataLink protocol unavailable
 
 
 Trigger: Event: Intercepted HTTP request:

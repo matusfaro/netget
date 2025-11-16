@@ -115,7 +115,7 @@ Start a new server.
 
 Parameters:
 - `port` (number, required): Port number to listen on. Use 0 to automatically find an available port.
-- `base_stack` (string, required): Protocol stack to use. Choose the best stack for the task. Available: HTTP, Proxy, TCP
+- `base_stack` (string, required): Protocol stack to use. Choose the best stack for the task. Available: AMQP, ARP, BLUETOOTH_BLE, BLUETOOTH_BLE_BATTERY, BLUETOOTH_BLE_BEACON, BLUETOOTH_BLE_CYCLING, BLUETOOTH_BLE_DATA_STREAM, BLUETOOTH_BLE_ENVIRONMENTAL, BLUETOOTH_BLE_FILE_TRANSFER, BLUETOOTH_BLE_GAMEPAD, BLUETOOTH_BLE_HEART_RATE, BLUETOOTH_BLE_KEYBOARD, BLUETOOTH_BLE_MOUSE, BLUETOOTH_BLE_PRESENTER, BLUETOOTH_BLE_PROXIMITY, BLUETOOTH_BLE_REMOTE, BLUETOOTH_BLE_RUNNING, BLUETOOTH_BLE_THERMOMETER, BLUETOOTH_BLE_WEIGHT_SCALE, BOOTP, Bitcoin P2P, Cassandra, DC, DHCP, DNS, DataLink, DoH, DoT, DynamoDB, Elasticsearch, Git, HTTP, HTTP2, HTTP3, IGMP, IMAP, IPP, IPSec/IKEv2, IRC, ISIS, JSON-RPC, KAFKA, LDAP, MCP, MQTT, Maven, Mercurial, MySQL, NFS, NNTP, NPM, NTP, OAuth2, OSPF, Ollama, OpenAI, OpenAPI, OpenID, OpenVPN, POP3, PostgreSQL, Proxy, PyPI, RIP, RSS, Redis, S3, SIP, SMB, SMTP, SNMP, SOCKET_FILE, SOCKS5, SQS, SSH, SSH Agent, STUN, SVN, SamlIdp, SamlSp, Syslog, TCP, TLS, TURN, Telnet, Tor Directory, Tor Relay, Torrent-DHT, Torrent-Peer, Torrent-Tracker, UDP, USB-Keyboard, USB-MassStorage, USB-Mouse, USB-Serial, VNC, WHOIS, WebDAV, WireGuard, XML-RPC, XMPP, ZooKeeper, etcd, gRPC, mDNS, usb-fido2
 - `send_first` (boolean): True if server sends data first (FTP, SMTP), false if it waits for client (HTTP)
 - `initial_memory` (string): Optional initial memory as a string. Use for storing persistent context across connections. Example: "user_count: 0"
 - `instruction` (string, required): Detailed instructions for handling network events
@@ -348,7 +348,7 @@ Example:
 
 ## 18. read_server_documentation
 
-Get detailed documentation for a specific server protocol. Returns comprehensive information including description, startup parameters, examples, and keywords. Use this before calling open_server to understand protocol configuration options. Available server protocols: HTTP, Proxy, TCP
+Get detailed documentation for a specific server protocol. Returns comprehensive information including description, startup parameters, examples, and keywords. Use this before calling open_server to understand protocol configuration options. Available server protocols: AMQP, ARP, BLUETOOTH_BLE, BLUETOOTH_BLE_BATTERY, BLUETOOTH_BLE_BEACON, BLUETOOTH_BLE_CYCLING, BLUETOOTH_BLE_DATA_STREAM, BLUETOOTH_BLE_ENVIRONMENTAL, BLUETOOTH_BLE_FILE_TRANSFER, BLUETOOTH_BLE_GAMEPAD, BLUETOOTH_BLE_HEART_RATE, BLUETOOTH_BLE_KEYBOARD, BLUETOOTH_BLE_MOUSE, BLUETOOTH_BLE_PRESENTER, BLUETOOTH_BLE_PROXIMITY, BLUETOOTH_BLE_REMOTE, BLUETOOTH_BLE_RUNNING, BLUETOOTH_BLE_THERMOMETER, BLUETOOTH_BLE_WEIGHT_SCALE, BOOTP, Bitcoin P2P, Cassandra, DC, DHCP, DNS, DataLink, DoH, DoT, DynamoDB, Elasticsearch, Git, HTTP, HTTP2, HTTP3, IGMP, IMAP, IPP, IPSec/IKEv2, IRC, ISIS, JSON-RPC, KAFKA, LDAP, MCP, MQTT, Maven, Mercurial, MySQL, NFS, NNTP, NPM, NTP, OAuth2, OSPF, Ollama, OpenAI, OpenAPI, OpenID, OpenVPN, POP3, PostgreSQL, Proxy, PyPI, RIP, RSS, Redis, S3, SIP, SMB, SMTP, SNMP, SOCKET_FILE, SOCKS5, SQS, SSH, SSH Agent, STUN, SVN, SamlIdp, SamlSp, Syslog, TCP, TLS, TURN, Telnet, Tor Directory, Tor Relay, Torrent-DHT, Torrent-Peer, Torrent-Tracker, UDP, USB-Keyboard, USB-MassStorage, USB-Mouse, USB-Serial, VNC, WHOIS, WebDAV, WireGuard, XML-RPC, XMPP, ZooKeeper, etcd, gRPC, mDNS, usb-fido2
 
 Parameters:
 - `protocol` (string, required): Server protocol name (e.g., 'HTTP', 'SSH', 'TOR', 'DNS'). Use uppercase.
@@ -360,7 +360,7 @@ Example:
 
 ## 19. read_client_documentation
 
-Get detailed documentation for a specific client protocol. Returns comprehensive information including description, startup parameters, examples, and keywords. Use this before calling open_client to understand protocol configuration options. Available client protocols: HTTP, TCP
+Get detailed documentation for a specific client protocol. Returns comprehensive information including description, startup parameters, examples, and keywords. Use this before calling open_client to understand protocol configuration options. Available client protocols: AMQP, ARP, BGP, BOOTP, BitTorrent DHT, BitTorrent Peer Wire, BitTorrent Tracker, Bitcoin, Bluetooth (BLE), Cassandra, DHCP, DNS, DNS-over-HTTPS, DataLink, DoT, Elasticsearch, Git, HTTP, HTTP2, HTTP3, IMAP, IPP, IRC, IS-IS, JSON-RPC, Kubernetes, LDAP, MCP, MQTT, Maven, MySQL, NFS, NNTP, NPM, NTP, OAuth2, Ollama, OpenAI, POP3, PostgreSQL, PyPI, RIP, Redis, S3, SIP, SMTP, SNMP, SOCKS5, SQS, SSH, SSH Agent, STUN, SocketFile, Syslog, TCP, TURN, Telnet, Tor, UDP, USB, VNC, WHOIS, WebDAV, WebRTC, XML-RPC, XMPP, ZooKeeper, etcd, gRPC, igmp, mDNS, nfc, ospf, wireguard
 
 Parameters:
 - `protocol` (string, required): Client protocol name (e.g., 'http', 'ssh', 'tor', 'dns'). Use lowercase.
@@ -373,12 +373,149 @@ Example:
 
 ## Available Base Stacks
 
+### AI & API
+JSON-RPC (jsonrpc, json-rpc, json rpc, rpc)
+MCP (mcp, model-context-protocol, model context protocol)
+OAuth2 (oauth2, oauth, oauth 2.0, via oauth2, authorization server)
+Ollama (ollama, llm, ai)
+OpenAI (openai)
+OpenAPI (openapi, rest, rest api, api, swagger)
+XML-RPC (xmlrpc, xml-rpc, xml rpc)
+gRPC (grpc, grpcserver, protobuf)
+
+### Application
+AMQP (amqp, rabbitmq, broker, messaging, queue)
+DC (dc, direct connect, dc++, nmdc, via dc)
+IMAP (imap)
+IRC (irc, chat)
+LDAP (ldap, directory server)
+MQTT (mqtt, mosquitto, iot messaging)
+Maven (maven, maven repository, maven repo, via maven)
+NNTP (nntp, usenet, news, newsgroup)
+POP3 (pop3, pop3 server, via pop3, post office protocol)
+PyPI (pypi, python repository, python package index, pip server, via pypi)
+SMTP (smtp, mail, email)
+Telnet (telnet)
+XMPP (xmpp, jabber, messaging)
+mDNS (mdns, bonjour, dns-sd, zeroconf)
+
+### Authentication
+OpenID (openid, oidc, openid connect, sso, authentication)
+SamlIdp (saml idp, saml identity provider, identity provider, idp, saml-idp)
+SamlSp (saml sp, saml service provider, service provider, sp, saml-sp)
+
+### Blockchain
+Bitcoin P2P (bitcoin, btc, p2p, blockchain)
+
 ### Core
+ARP (arp, address resolution)
+BOOTP (bootp, bootstrap)
+DHCP (dhcp)
+DNS (dns)
+DataLink (datalink, data link, layer 2, layer2, l2, ethernet, pcap)
+DoH (doh, dns-over-https, dns over https)
+DoT (dot, dns-over-tls, dns over tls)
 HTTP (http, http server, http stack, via http, hyper)
+HTTP2 (http2, http/2, http 2, http2 server, http/2 server, via http2, via http/2)
+HTTP3 (http3)
+NTP (ntp, time)
+SNMP (snmp, snmp agent)
+SOCKET_FILE (socket_file, unix_socket, ipc)
+SSH (ssh)
+Syslog (syslog)
 TCP (tcp, raw, ftp, custom)
+TLS (tls, ssl, secure, encrypted)
+UDP (udp)
+WHOIS (whois)
+
+### Database
+Cassandra (cassandra, cql)
+DynamoDB (dynamo)
+Elasticsearch (elasticsearch, opensearch)
+KAFKA (kafka, kafka broker, via kafka)
+MySQL (mysql)
+PostgreSQL (postgres, psql)
+Redis (redis)
+SQS (sqs, queue, message queue)
+ZooKeeper (zookeeper, zk)
+etcd (etcd, etcd3, etcdv3, etcd server)
+
+### Experimental
+ISIS (isis, is-is)
+
+### Infrastructure
+SVN (svn, subversion)
+
+### Network
+BLUETOOTH_BLE (bluetooth, ble, gatt, peripheral, bluetooth_ble)
+BLUETOOTH_BLE_BATTERY (bluetooth, battery, bluetooth_ble_battery)
+BLUETOOTH_BLE_BEACON (bluetooth, beacon, ibeacon, eddystone, bluetooth_ble_beacon)
+BLUETOOTH_BLE_CYCLING (bluetooth, cycling, bike, fitness)
+BLUETOOTH_BLE_DATA_STREAM (bluetooth, stream, data, sensor)
+BLUETOOTH_BLE_ENVIRONMENTAL (bluetooth, environmental)
+BLUETOOTH_BLE_FILE_TRANSFER (bluetooth, file_transfer)
+BLUETOOTH_BLE_GAMEPAD (bluetooth, gamepad)
+BLUETOOTH_BLE_HEART_RATE (bluetooth, heart, rate, bluetooth_ble_heart_rate)
+BLUETOOTH_BLE_KEYBOARD (bluetooth, keyboard, hid, bluetooth_ble_keyboard)
+BLUETOOTH_BLE_MOUSE (bluetooth, mouse, hid, bluetooth_ble_mouse)
+BLUETOOTH_BLE_PRESENTER (bluetooth, presenter)
+BLUETOOTH_BLE_PROXIMITY (bluetooth, proximity)
+BLUETOOTH_BLE_REMOTE (bluetooth, remote, media, bluetooth_ble_remote)
+BLUETOOTH_BLE_RUNNING (bluetooth, running, jogging, fitness)
+BLUETOOTH_BLE_THERMOMETER (bluetooth, thermometer, temperature)
+BLUETOOTH_BLE_WEIGHT_SCALE (bluetooth, weight, scale, health)
+IGMP (igmp, multicast)
+RIP (rip)
+
+### Network Services
+Tor Directory (directory, consensus, tor_directory, tor-directory, directory authority)
+Tor Relay (tor_relay, tor-relay, onion router, guard, exit, middle, circuit)
+VNC (vnc, rfb, remote desktop, framebuffer)
+
+### P2P
+Torrent-DHT (torrent-dht, dht, kademlia)
+Torrent-Peer (torrent-peer, peer, seeder)
+Torrent-Tracker (torrent-tracker, tracker, bittorrent-tracker)
+
+### Package Management
+NPM (npm)
 
 ### Proxy & Network
 Proxy (proxy, mitm)
+SIP (sip, voip, session initiation)
+SOCKS5 (socks, socks5)
+STUN (stun)
+TURN (turn)
+
+### Security
+SSH Agent (ssh-agent, agent, key-agent, ssh keys)
+
+### USB
+usb-fido2 (fido2, u2f, webauthn, security key, yubikey)
+
+### USB Devices
+USB-Keyboard (usb, keyboard, hid, input, typing)
+USB-MassStorage (usb, storage, disk, msc, scsi, flash)
+USB-Mouse (usb, mouse, hid, pointer, cursor)
+USB-Serial (usb, serial, cdc, acm, uart, tty)
+
+### VPN & Routing
+IPSec/IKEv2 (ipsec, ikev2, ike)
+OSPF (ospf, open shortest path first)
+OpenVPN (openvpn)
+WireGuard (wireguard, wg)
+
+### Web
+RSS (rss, rss server, feed, syndication, via rss)
+
+### Web & File
+Git (git, git server, via git)
+IPP (ipp, printer, print)
+Mercurial (mercurial, hg, hg server, via mercurial, via hg)
+NFS (nfs, file server)
+S3 (s3, object storage, minio)
+SMB (smb, cifs)
+WebDAV (webdav, dav)
 
 
 
@@ -627,9 +764,9 @@ No servers currently running.
 
 ## System Capabilities
 
-- **Privileged ports (<1024)**: ✓ Available
+- **Privileged ports (<1024)**: ✗ Not available — Warn user if they request port <1024
 
-- **Raw socket access**: ✓ Available
+- **Raw socket access**: ✗ Not available — DataLink protocol unavailable
 
 
 Trigger: User input: "start a DNS server on port 53"
