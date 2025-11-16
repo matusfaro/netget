@@ -37,7 +37,8 @@ async fn test_postgresql_simple_query() -> E2EResult<()> {
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
-                .on_instruction_containing("PostgreSQL")
+                .on_instruction_containing("Open PostgreSQL")
+                .and_instruction_containing("port")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -152,7 +153,8 @@ async fn test_postgresql_multi_row_query() -> E2EResult<()> {
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
-                .on_instruction_containing("PostgreSQL")
+                .on_instruction_containing("Open PostgreSQL")
+                .and_instruction_containing("port")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -262,7 +264,8 @@ async fn test_postgresql_create_table() -> E2EResult<()> {
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
-                .on_instruction_containing("PostgreSQL")
+                .on_instruction_containing("Open PostgreSQL")
+                .and_instruction_containing("port")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -361,7 +364,8 @@ async fn test_postgresql_error_response() -> E2EResult<()> {
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
-                .on_instruction_containing("PostgreSQL")
+                .on_instruction_containing("Open PostgreSQL")
+                .and_instruction_containing("port")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
