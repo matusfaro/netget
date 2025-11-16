@@ -45,13 +45,20 @@ impl HttpClient {
             .context("Failed to build HTTP client")?;
 
         // Store client in protocol_data
+        // Ensure base_url has http:// scheme
+        let base_url = if remote_addr.starts_with("http://") || remote_addr.starts_with("https://") {
+            remote_addr.clone()
+        } else {
+            format!("http://{}", remote_addr)
+        };
+
         app_state
             .with_client_mut(client_id, |client| {
                 client.set_protocol_field(
                     "http_client".to_string(),
                     serde_json::json!("initialized"),
                 );
-                client.set_protocol_field("base_url".to_string(), serde_json::json!(remote_addr));
+                client.set_protocol_field("base_url".to_string(), serde_json::json!(base_url));
             })
             .await;
 
@@ -70,7 +77,7 @@ impl HttpClient {
             let event = Event::new(
                 &HTTP_CLIENT_CONNECTED_EVENT,
                 serde_json::json!({
-                    "base_url": remote_addr.clone(),
+                    "base_url": base_url.clone(),
                 }),
             );
 
@@ -88,21 +95,52 @@ impl HttpClient {
             {
                 Ok(result) => {
                     // Execute actions from LLM response
-                    // Note: For HTTP, actions are typically send_http_request which will be handled
-                    // by the action execution system, not here directly
+                    use crate::llm::actions::client_trait::{Client, ClientActionResult};
+                    let protocol = crate::client::http::actions::HttpClientProtocol;
+
                     for action in result.actions {
-                        if let Some(action_type) = action["type"].as_str() {
-                            match action_type {
-                                "send_http_request" => {
-                                    // This will be handled by the client_startup system
-                                    // via ClientActionResult::Custom
-                                    info!("HTTP client ready to make request after connect");
+                        match protocol.execute_action(action.clone()) {
+                            Ok(ClientActionResult::Custom { name, data }) => {
+                                if name == "http_request" {
+                                    // Extract request parameters
+                                    let method = data["method"].as_str().unwrap_or("GET").to_string();
+                                    let path = data["path"].as_str().unwrap_or("/").to_string();
+                                    let headers = data["headers"].as_object().cloned();
+                                    let body = data["body"].as_str().map(|s| s.to_string());
+
+                                    // Actually make the HTTP request
+                                    let llm_clone = llm_client.clone();
+                                    let state_clone = app_state.clone();
+                                    let status_clone = status_tx.clone();
+
+                                    tokio::spawn(async move {
+                                        if let Err(e) = HttpClient::make_request(
+                                            client_id,
+                                            method,
+                                            path,
+                                            headers,
+                                            body,
+                                            state_clone,
+                                            llm_clone,
+                                            status_clone,
+                                        ).await {
+                                            error!("HTTP request failed: {}", e);
+                                        }
+                                    });
                                 }
-                                "disconnect" => {
-                                    info!("LLM requested disconnect after connect");
-                                    return Ok("0.0.0.0:0".parse().unwrap());
-                                }
-                                _ => {}
+                            }
+                            Ok(ClientActionResult::Disconnect) => {
+                                info!("LLM requested disconnect after connect");
+                                return Ok("0.0.0.0:0".parse().unwrap());
+                            }
+                            Ok(ClientActionResult::WaitForMore) => {
+                                // No action needed
+                            }
+                            Ok(ClientActionResult::SendData(_)) | Ok(ClientActionResult::NoAction) | Ok(ClientActionResult::Multiple(_)) => {
+                                // These are not applicable for HTTP client in this context
+                            }
+                            Err(e) => {
+                                error!("Action execution error: {}", e);
                             }
                         }
                     }
