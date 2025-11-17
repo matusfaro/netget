@@ -8,7 +8,7 @@ This guide covers installing and running NetGet on Android devices using Termux.
 
 ```bash
 # In Termux on Android
-pkg install rust ollama clang binutils git make perl cmake
+pkg install rust ollama clang binutils git make perl cmake protobuf
 git clone https://github.com/yourusername/netget.git && cd netget
 cargo build --release --no-default-features --features android-termux
 ./target/release/netget
@@ -72,7 +72,7 @@ Press `Y` when asked to continue.
 #### Step 3: Install Build Tools
 
 ```bash
-pkg install rust clang binutils git make perl cmake
+pkg install rust clang binutils git make perl cmake protobuf
 ```
 
 This installs:
@@ -83,8 +83,9 @@ This installs:
 - `make`: Build automation (required for OpenSSL compilation)
 - `perl`: Scripting language (required for OpenSSL compilation)
 - `cmake`: Build system generator (required for some dependencies)
+- `protobuf`: Protocol Buffers compiler (required for etcd, gRPC)
 
-**Note**: `make`, `perl`, and `cmake` are needed because NetGet compiles OpenSSL and other dependencies from source (vendored) to avoid Android system library compatibility issues.
+**Note**: `make`, `perl`, `cmake`, and `protobuf` are needed because NetGet compiles OpenSSL and other dependencies from source (vendored) to avoid Android system library compatibility issues.
 
 #### Step 4: Clone NetGet
 
@@ -453,6 +454,27 @@ cargo build --release --no-default-features --features android-termux
 # - It builds natively for your device's architecture
 # - The .cargo/config.toml NDK paths are ignored
 # - DO NOT use the --target flag when building in Termux!
+```
+
+**Problem**: `Could not find 'protoc'` (Protocol Buffers compiler)
+```bash
+# Error message:
+# "Failed to compile proto files: Could not find `protoc`"
+# "Try installing `protobuf-compiler` or `protobuf`"
+
+# Solution: Install protobuf package
+pkg install protobuf
+
+# Verify installation:
+protoc --version
+
+# Then retry build:
+cargo build --release --no-default-features --features android-termux
+
+# Explanation:
+# - etcd and gRPC protocols require Protocol Buffers (protoc) at build time
+# - protoc compiles .proto files into Rust code
+# - This is a build-time dependency, not runtime
 ```
 
 ### Runtime Issues
