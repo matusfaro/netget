@@ -72,7 +72,7 @@ Press `Y` when asked to continue.
 #### Step 3: Install Build Tools
 
 ```bash
-pkg install rust clang binutils git
+pkg install rust clang binutils git make perl
 ```
 
 This installs:
@@ -80,6 +80,10 @@ This installs:
 - `clang`: C compiler (needed for some dependencies)
 - `binutils`: Assembler and linker
 - `git`: Version control
+- `make`: Build automation (required for OpenSSL compilation)
+- `perl`: Scripting language (required for OpenSSL compilation)
+
+**Note**: `make` and `perl` are needed because NetGet compiles OpenSSL from source (vendored) to avoid Android system library compatibility issues.
 
 #### Step 4: Clone NetGet
 
@@ -407,6 +411,24 @@ cargo clean
 cd /sdcard
 mkdir netget-build
 cd netget-build
+```
+
+**Problem**: `Could not find directory of OpenSSL installation`
+```bash
+# This should NOT happen with android-termux feature (uses vendored OpenSSL)
+# If you see this error:
+
+# Solution 1: Verify you're using the android-termux feature
+cargo build --no-default-features --features android-termux
+
+# Solution 2: Install make and perl (required for OpenSSL compilation)
+pkg install make perl
+
+# Solution 3: Check Cargo.toml has dep:openssl-sys in android-termux feature
+grep "openssl-sys" Cargo.toml
+
+# Explanation: NetGet compiles OpenSSL from source (vendored) to avoid
+# Android system library issues. This requires make and perl during build.
 ```
 
 ### Runtime Issues
