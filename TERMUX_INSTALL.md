@@ -277,7 +277,7 @@ dig @192.168.1.50 -p 5353 example.com  # DNS server
 
 ## Supported Protocols
 
-The `android-termux` feature includes **68+ pure-Rust protocols**:
+The `android-termux` feature includes **66+ pure-Rust protocols**:
 
 ### Networking
 ✓ TCP, UDP, HTTP, HTTP/2, HTTP/3, DNS, DoT, DoH
@@ -301,8 +301,8 @@ The `android-termux` feature includes **68+ pure-Rust protocols**:
 ### File Transfer
 ✓ WebDAV, NFS, SMB, FTP, SFTP
 
-### VPN & Proxies
-✓ WireGuard, OpenVPN, SOCKS5, HTTP Proxy
+### Proxies & Anonymity
+✓ SOCKS5, HTTP Proxy
 ✓ Tor (relay and directory)
 
 ### API Protocols
@@ -355,6 +355,11 @@ The following protocols are **excluded** from `android-termux` feature because t
 ❌ **STUN/TURN** (NAT traversal protocols)
 - Uses old nix-0.8.1 crate incompatible with modern Rust
 - WebRTC data channels still work (uses different implementation)
+
+❌ **WireGuard/OpenVPN** (VPN protocols)
+- Platform-specific implementations not gated for Android
+- defguard_wireguard_rs only supports Linux/macOS/FreeBSD/NetBSD
+- Use SOCKS5, HTTP Proxy, or Tor instead for privacy/tunneling
 
 ❌ **SMB Client** (with native library)
 - Requires libsmbclient (native C library)
