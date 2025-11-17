@@ -19,18 +19,15 @@
 
 # Android ARM64 (most modern Android devices)
 [target.aarch64-linux-android]
-# Uncomment and adjust paths after installing Android NDK:
-# linker = "/path/to/ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android21-clang"
-# ar = "/path/to/ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-ar"
+linker = "/Users/matus/android-ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android21-clang"
+ar = "/Users/matus/android-ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-ar"
 
 # Android ARMv7 (older Android devices)
 [target.armv7-linux-androideabi]
-# Uncomment and adjust paths after installing Android NDK:
-# linker = "/path/to/ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/armv7a-linux-androideabi21-clang"
-# ar = "/path/to/ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-ar"
+linker = "/Users/matus/android-ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/armv7a-linux-androideabi21-clang"
+ar = "/Users/matus/android-ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-ar"
 
 # Android x86_64 (emulators and x86 tablets)
 [target.x86_64-linux-android]
-# Uncomment and adjust paths after installing Android NDK:
-# linker = "/path/to/ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/x86_64-linux-android21-clang"
-# ar = "/path/to/ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-ar"
+linker = "/Users/matus/android-ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/x86_64-linux-android21-clang"
+ar = "/Users/matus/android-ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-ar"
