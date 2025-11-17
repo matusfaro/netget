@@ -1,0 +1,36 @@
+# Cargo configuration for NetGet
+#
+# Android Cross-Compilation Setup:
+#
+# Option 1: Using Android NDK (recommended for local builds)
+#   1. Install Android NDK: https://developer.android.com/ndk/downloads
+#   2. Set ANDROID_NDK_HOME environment variable
+#   3. Add NDK toolchain to PATH or use full paths below
+#   4. Build with: cargo build --target aarch64-linux-android --no-default-features --features android-termux
+#
+# Option 2: Using `cross` tool (easiest, requires Docker)
+#   1. Install: cargo install cross
+#   2. Build with: cross build --target aarch64-linux-android --no-default-features --features android-termux
+#
+# Option 3: Build directly in Termux on Android device
+#   1. Install Termux from F-Droid
+#   2. Install Rust: pkg install rust
+#   3. Build with: cargo build --release --no-default-features --features android-termux
+
+# Android ARM64 (most modern Android devices)
+[target.aarch64-linux-android]
+# Uncomment and adjust paths after installing Android NDK:
+# linker = "/path/to/ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android21-clang"
+# ar = "/path/to/ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-ar"
+
+# Android ARMv7 (older Android devices)
+[target.armv7-linux-androideabi]
+# Uncomment and adjust paths after installing Android NDK:
+# linker = "/path/to/ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/armv7a-linux-androideabi21-clang"
+# ar = "/path/to/ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-ar"
+
+# Android x86_64 (emulators and x86 tablets)
+[target.x86_64-linux-android]
+# Uncomment and adjust paths after installing Android NDK:
+# linker = "/path/to/ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/x86_64-linux-android21-clang"
+# ar = "/path/to/ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-ar"
