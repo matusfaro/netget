@@ -276,12 +276,12 @@ dig @192.168.1.50 -p 5353 example.com  # DNS server
 
 ## Supported Protocols
 
-The `android-termux` feature includes **70+ pure-Rust protocols**:
+The `android-termux` feature includes **68+ pure-Rust protocols**:
 
 ### Networking
 ✓ TCP, UDP, HTTP, HTTP/2, HTTP/3, DNS, DoT, DoH
 ✓ DHCP, BOOTP, NTP, mDNS, SNMP, IGMP
-✓ STUN, TURN, WebRTC, SIP, VoIP
+✓ WebRTC, SIP, VoIP
 
 ### Remote Access
 ✓ SSH, SFTP, SSH Agent, Telnet, VNC
@@ -350,6 +350,10 @@ The following protocols are **excluded** from `android-termux` feature because t
 ❌ **OSPF Routing**
 - Requires raw sockets (IP protocol 89)
 - Needs root/CAP_NET_RAW capability
+
+❌ **STUN/TURN** (NAT traversal protocols)
+- Uses old nix-0.8.1 crate incompatible with modern Rust
+- WebRTC data channels still work (uses different implementation)
 
 ❌ **SMB Client** (with native library)
 - Requires libsmbclient (native C library)

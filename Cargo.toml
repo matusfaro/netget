@@ -7,7 +7,7 @@ edition = "2021"
 default = ["all-protocols"]
 
 # Android Termux: Pure-Rust protocols compatible with Android/Termux environment
-# Excludes: BLE (needs BlueZ), NFC (needs PC/SC), USB (needs USB/IP), packet capture (needs libpcap/root)
+# Excludes: BLE (needs BlueZ), NFC (needs PC/SC), USB (needs USB/IP), packet capture (needs libpcap/root), STUN/TURN (old nix crate)
 # Uses vendored OpenSSL to compile from source (no system OpenSSL needed)
 android-termux = [
     "dep:openssl-sys",  # Force vendored OpenSSL compilation from source
@@ -48,8 +48,7 @@ android-termux = [
     "nfs",
     "cassandra",
     "smb",
-    "stun",
-    "turn",
+    # STUN/TURN excluded (use old nix-0.8.1 crate incompatible with modern Rust)
     "webrtc",
     "sip",
     "ldap",
