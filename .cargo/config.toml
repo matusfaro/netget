@@ -1,33 +1,45 @@
 # Cargo configuration for NetGet
 #
-# Android Cross-Compilation Setup:
+# Android Cross-Compilation Setup (Desktop → Android)
+# =====================================================
+# These settings are ONLY for cross-compiling FROM macOS/Linux/Windows TO Android.
+# If you're building IN Termux on Android, you DON'T need these settings!
 #
-# Option 1: Using Android NDK (recommended for local builds)
+# Option 1: Using Android NDK (for cross-compilation from desktop)
 #   1. Install Android NDK: https://developer.android.com/ndk/downloads
 #   2. Set ANDROID_NDK_HOME environment variable
-#   3. Add NDK toolchain to PATH or use full paths below
+#   3. Uncomment and update the paths below with your NDK location
 #   4. Build with: cargo build --target aarch64-linux-android --no-default-features --features android-termux
 #
-# Option 2: Using `cross` tool (easiest, requires Docker)
+# Option 2: Using `cross` tool (easiest for cross-compilation, requires Docker)
 #   1. Install: cargo install cross
 #   2. Build with: cross build --target aarch64-linux-android --no-default-features --features android-termux
 #
-# Option 3: Build directly in Termux on Android device
+# Option 3: Build directly in Termux on Android device (RECOMMENDED, no NDK needed)
 #   1. Install Termux from F-Droid
-#   2. Install Rust: pkg install rust
-#   3. Build with: cargo build --release --no-default-features --features android-termux
+#   2. Install packages: pkg install rust clang binutils git make perl
+#   3. Build NATIVELY (no --target flag): cargo build --release --no-default-features --features android-termux
+#   4. Cargo automatically detects Android and builds natively - no NDK paths needed!
+
+# ============================================================================
+# Cross-Compilation Settings (Desktop → Android)
+# COMMENT OUT these sections if building natively in Termux on Android
+# ============================================================================
 
 # Android ARM64 (most modern Android devices)
+# Uncomment and update paths for your system when cross-compiling from desktop
 [target.aarch64-linux-android]
-linker = "/Users/matus/android-ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android21-clang"
-ar = "/Users/matus/android-ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-ar"
+# linker = "/Users/matus/android-ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android21-clang"
+# ar = "/Users/matus/android-ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-ar"
 
 # Android ARMv7 (older Android devices)
+# Uncomment and update paths for your system when cross-compiling from desktop
 [target.armv7-linux-androideabi]
-linker = "/Users/matus/android-ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/armv7a-linux-androideabi21-clang"
-ar = "/Users/matus/android-ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-ar"
+# linker = "/Users/matus/android-ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/armv7a-linux-androideabi21-clang"
+# ar = "/Users/matus/android-ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-ar"
 
 # Android x86_64 (emulators and x86 tablets)
+# Uncomment and update paths for your system when cross-compiling from desktop
 [target.x86_64-linux-android]
-linker = "/Users/matus/android-ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/x86_64-linux-android21-clang"
-ar = "/Users/matus/android-ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-ar"
+# linker = "/Users/matus/android-ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/x86_64-linux-android21-clang"
+# ar = "/Users/matus/android-ndk/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-ar"
