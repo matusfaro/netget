@@ -241,9 +241,9 @@ SETUP (one-time):
      $ pkg update && pkg upgrade
 
   3. Install Rust and required tools:
-     $ pkg install rust git clang binutils make perl
+     $ pkg install rust git clang binutils make perl cmake
 
-     Note: make and perl are needed for compiling OpenSSL from source
+     Note: make, perl, and cmake are needed for compiling OpenSSL and other dependencies from source
 
   4. Clone NetGet repository:
      $ git clone https://github.com/yourusername/netget.git

@@ -8,7 +8,7 @@ This guide covers installing and running NetGet on Android devices using Termux.
 
 ```bash
 # In Termux on Android
-pkg install rust ollama clang binutils git
+pkg install rust ollama clang binutils git make perl cmake
 git clone https://github.com/yourusername/netget.git && cd netget
 cargo build --release --no-default-features --features android-termux
 ./target/release/netget
@@ -72,7 +72,7 @@ Press `Y` when asked to continue.
 #### Step 3: Install Build Tools
 
 ```bash
-pkg install rust clang binutils git make perl
+pkg install rust clang binutils git make perl cmake
 ```
 
 This installs:
@@ -82,8 +82,9 @@ This installs:
 - `git`: Version control
 - `make`: Build automation (required for OpenSSL compilation)
 - `perl`: Scripting language (required for OpenSSL compilation)
+- `cmake`: Build system generator (required for some dependencies)
 
-**Note**: `make` and `perl` are needed because NetGet compiles OpenSSL from source (vendored) to avoid Android system library compatibility issues.
+**Note**: `make`, `perl`, and `cmake` are needed because NetGet compiles OpenSSL and other dependencies from source (vendored) to avoid Android system library compatibility issues.
 
 #### Step 4: Clone NetGet
 
@@ -429,6 +430,25 @@ grep "openssl-sys" Cargo.toml
 
 # Explanation: NetGet compiles OpenSSL from source (vendored) to avoid
 # Android system library issues. This requires make and perl during build.
+```
+
+**Problem**: `No such file or directory` for NDK path (e.g., `/Users/matus/android-ndk/...`)
+```bash
+# This means you're trying to use cross-compilation settings in Termux
+# The NDK is ONLY for cross-compiling FROM desktop TO Android
+# In Termux, you build NATIVELY - no NDK needed!
+
+# WRONG (tries to cross-compile, needs NDK):
+cargo build --target aarch64-linux-android --no-default-features --features android-termux
+
+# CORRECT (native build, no NDK needed):
+cargo build --release --no-default-features --features android-termux
+
+# Explanation:
+# - When building IN Termux, cargo automatically detects you're on Android
+# - It builds natively for your device's architecture
+# - The .cargo/config.toml NDK paths are ignored
+# - DO NOT use the --target flag when building in Termux!
 ```
 
 ### Runtime Issues
