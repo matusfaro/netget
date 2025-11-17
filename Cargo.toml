@@ -8,7 +8,9 @@ default = ["all-protocols"]
 
 # Android Termux: Pure-Rust protocols compatible with Android/Termux environment
 # Excludes: BLE (needs BlueZ), NFC (needs PC/SC), USB (needs USB/IP), packet capture (needs libpcap/root)
+# Uses vendored OpenSSL to compile from source (no system OpenSSL needed)
 android-termux = [
+    "dep:openssl-sys",  # Force vendored OpenSSL compilation from source
     "tcp",
     "socket_file",
     "http",
@@ -342,6 +344,10 @@ tokio-stream = "0.1"
 
 # Low-level system bindings
 libc = "0.2"
+
+# OpenSSL (for transitive dependencies like git2, ssh2, native-tls)
+# Vendored = compile from source, needed for Android/cross-compilation
+openssl-sys = { version = "0.9", optional = true, features = ["vendored"] }
 
 # Terminal UI - using crossterm for rolling terminal
 crossterm = { version = "0.28", features = ["event-stream"] }
