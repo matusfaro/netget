@@ -134,6 +134,14 @@ pub struct ClientInstance {
     pub protocol_data: serde_json::Value,
     /// Log file paths (output_name -> log_file_path)
     pub log_files: HashMap<String, PathBuf>,
+    /// Feedback instructions for automatic client adjustment
+    /// When set, server responses can provide feedback that triggers LLM-based client adjustments
+    pub feedback_instructions: Option<String>,
+    /// Accumulated feedback buffer (cleared after processing)
+    /// Each entry is a JSON value containing feedback data
+    pub feedback_buffer: Vec<serde_json::Value>,
+    /// Last time feedback was processed (for debouncing)
+    pub last_feedback_processed: Option<Instant>,
 }
 
 impl ClientInstance {
@@ -160,6 +168,9 @@ impl ClientInstance {
             event_handler_config: None,
             protocol_data: serde_json::Value::Object(serde_json::Map::new()),
             log_files: HashMap::new(),
+            feedback_instructions: None,
+            feedback_buffer: Vec::new(),
+            last_feedback_processed: None,
         }
     }
 
