@@ -158,6 +158,41 @@ fn summarize_common_action(action: &CommonAction) -> String {
             };
             format!("update_client_instruction: #{} \"{}\"", client_id, preview)
         }
+        #[cfg(feature = "sqlite")]
+        CommonAction::CreateDatabase {
+            name,
+            path,
+            owner,
+            schema_ddl,
+        } => {
+            let path_display = path.as_deref().unwrap_or(":memory:");
+            let owner_display = owner.as_deref().unwrap_or("auto");
+            format!(
+                "create_database: {} (path: {}, owner: {}, schema: {})",
+                name,
+                path_display,
+                owner_display,
+                if schema_ddl.is_some() { "yes" } else { "no" }
+            )
+        }
+        #[cfg(feature = "sqlite")]
+        CommonAction::ExecuteSql {
+            database_id,
+            query,
+        } => {
+            let query_preview = if query.len() > 40 {
+                format!("{}...", &query[..37])
+            } else {
+                query.clone()
+            };
+            format!("execute_sql: db-{} \"{}\"", database_id, query_preview)
+        }
+        #[cfg(feature = "sqlite")]
+        CommonAction::ListDatabases => "list_databases".to_string(),
+        #[cfg(feature = "sqlite")]
+        CommonAction::DeleteDatabase { database_id } => {
+            format!("delete_database: db-{}", database_id)
+        }
     }
 }
 

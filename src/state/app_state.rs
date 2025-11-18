@@ -282,6 +282,8 @@ struct AppStateInner {
     system_capabilities: crate::privilege::SystemCapabilities,
     /// Active and recently-completed LLM conversations
     conversations: Vec<ConversationInfo>,
+    /// SQLite database manager
+    database_manager: crate::state::DatabaseManager,
 }
 
 impl AppState {
@@ -334,6 +336,7 @@ impl AppState {
                 task_names: HashMap::new(),
                 system_capabilities,
                 conversations: Vec::new(),
+                database_manager: crate::state::DatabaseManager::new(),
             })),
         }
     }
@@ -1427,6 +1430,11 @@ impl AppState {
         self.inner.read().await.servers.keys().next().copied()
     }
 
+    /// Get the first client's ID (for backwards compat)
+    pub async fn get_first_client_id(&self) -> Option<ClientId> {
+        self.inner.read().await.clients.keys().next().copied()
+    }
+
     /// Get local address of first server (for backwards compat)
     pub async fn get_local_addr(&self) -> Option<std::net::SocketAddr> {
         self.inner
@@ -1758,6 +1766,121 @@ impl AppState {
             }
         }
         None
+    }
+
+    // ===== Database Management =====
+
+    /// Create a new database
+    #[cfg(feature = "sqlite")]
+    pub async fn create_database(
+        &self,
+        name: String,
+        path: String,
+        owner: crate::state::DatabaseOwner,
+        init_sql: Option<&str>,
+    ) -> anyhow::Result<crate::state::DatabaseId> {
+        use anyhow::Context;
+
+        let mut inner = self.inner.write().await;
+        let id = crate::state::DatabaseId::new(inner.next_unified_id);
+        inner.next_unified_id += 1;
+
+        inner
+            .database_manager
+            .create_database(id, name, path, owner, init_sql)
+            .context("Failed to create database")?;
+
+        Ok(id)
+    }
+
+    /// Execute a SQL query on a database
+    #[cfg(feature = "sqlite")]
+    pub async fn execute_sql(
+        &self,
+        db_id: crate::state::DatabaseId,
+        sql: &str,
+    ) -> anyhow::Result<crate::state::QueryResult> {
+        let mut inner = self.inner.write().await;
+        inner.database_manager.execute_query(db_id, sql)
+    }
+
+    /// Get all databases
+    #[cfg(feature = "sqlite")]
+    pub async fn get_all_databases(&self) -> Vec<crate::state::DatabaseInstance> {
+        let inner = self.inner.read().await;
+        inner
+            .database_manager
+            .get_all_instances()
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+
+    /// Get a database by ID
+    #[cfg(feature = "sqlite")]
+    pub async fn get_database(
+        &self,
+        db_id: crate::state::DatabaseId,
+    ) -> Option<crate::state::DatabaseInstance> {
+        let inner = self.inner.read().await;
+        inner.database_manager.get_instance(db_id).cloned()
+    }
+
+    /// Delete a database
+    #[cfg(feature = "sqlite")]
+    pub async fn delete_database(&self, db_id: crate::state::DatabaseId) -> anyhow::Result<()> {
+        let mut inner = self.inner.write().await;
+        inner.database_manager.delete_database(db_id)
+    }
+
+    /// Get databases owned by a server
+    #[cfg(feature = "sqlite")]
+    pub async fn get_databases_by_server(
+        &self,
+        server_id: crate::state::ServerId,
+    ) -> Vec<crate::state::DatabaseInstance> {
+        let inner = self.inner.read().await;
+        inner
+            .database_manager
+            .get_databases_by_server(server_id)
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+
+    /// Get databases owned by a client
+    #[cfg(feature = "sqlite")]
+    pub async fn get_databases_by_client(
+        &self,
+        client_id: crate::state::ClientId,
+    ) -> Vec<crate::state::DatabaseInstance> {
+        let inner = self.inner.read().await;
+        inner
+            .database_manager
+            .get_databases_by_client(client_id)
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+
+    /// Delete all databases owned by a server (called when server closes)
+    #[cfg(feature = "sqlite")]
+    pub async fn cleanup_databases_for_server(
+        &self,
+        server_id: crate::state::ServerId,
+    ) -> anyhow::Result<()> {
+        let mut inner = self.inner.write().await;
+        inner.database_manager.delete_databases_by_server(server_id)
+    }
+
+    /// Delete all databases owned by a client (called when client disconnects)
+    #[cfg(feature = "sqlite")]
+    pub async fn cleanup_databases_for_client(
+        &self,
+        client_id: crate::state::ClientId,
+    ) -> anyhow::Result<()> {
+        let mut inner = self.inner.write().await;
+        inner.database_manager.delete_databases_by_client(client_id)
     }
 }
 

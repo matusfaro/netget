@@ -153,6 +153,11 @@ impl EventHandler {
                 self.handle_load(name, ui).await?;
                 Ok(false)
             }
+            #[cfg(feature = "sqlite")]
+            UserCommand::Sqlite { db_id, query } => {
+                self.handle_sqlite(db_id, query, ui).await?;
+                Ok(false)
+            }
             UserCommand::Quit => {
                 self.handle_quit(ui).await?;
                 Ok(true) // Signal to quit
@@ -1092,6 +1097,133 @@ impl EventHandler {
                 let _ = status_tx.send(format!("[CLIENT] New instruction: {}", instruction));
                 let _ = status_tx.send("__UPDATE_UI__".to_string());
             }
+
+            #[cfg(feature = "sqlite")]
+            CommonAction::CreateDatabase {
+                name,
+                path,
+                owner,
+                schema_ddl,
+            } => {
+                use crate::state::DatabaseOwner;
+
+                // Determine path (default to in-memory)
+                let db_path = path.unwrap_or_else(|| ":memory:".to_string());
+
+                // Determine owner (default to global)
+                let db_owner = if let Some(owner_str) = owner {
+                    if owner_str == "global" {
+                        DatabaseOwner::Global
+                    } else if let Some(id_str) = owner_str.strip_prefix("server-") {
+                        if let Ok(id) = id_str.parse::<u32>() {
+                            DatabaseOwner::Server(crate::state::ServerId::new(id))
+                        } else {
+                            let _ = status_tx.send(format!(
+                                "[ERROR] Invalid server ID in owner: {}",
+                                owner_str
+                            ));
+                            return Ok(());
+                        }
+                    } else if let Some(id_str) = owner_str.strip_prefix("client-") {
+                        if let Ok(id) = id_str.parse::<u32>() {
+                            DatabaseOwner::Client(crate::state::ClientId::new(id))
+                        } else {
+                            let _ = status_tx.send(format!(
+                                "[ERROR] Invalid client ID in owner: {}",
+                                owner_str
+                            ));
+                            return Ok(());
+                        }
+                    } else {
+                        let _ = status_tx.send(format!("[ERROR] Invalid owner format: {}", owner_str));
+                        return Ok(());
+                    }
+                } else {
+                    // Default to first server or global
+                    if let Some(sid) = self.state.get_first_server_id().await {
+                        DatabaseOwner::Server(sid)
+                    } else if let Some(cid) = self.state.get_first_client_id().await {
+                        DatabaseOwner::Client(cid)
+                    } else {
+                        DatabaseOwner::Global
+                    }
+                };
+
+                // Create database
+                match self
+                    .state
+                    .create_database(name.clone(), db_path.clone(), db_owner.clone(), schema_ddl.as_deref())
+                    .await
+                {
+                    Ok(db_id) => {
+                        let _ = status_tx.send(format!(
+                            "[DB] Created database '{}' ({}) at {} (owner: {})",
+                            name, db_id, db_path, db_owner
+                        ));
+
+                        // Show schema if provided
+                        if let Some(db) = self.state.get_database(db_id).await {
+                            if !db.tables.is_empty() {
+                                let _ = status_tx.send(format!("[DB] Schema: {}", db.schema_summary()));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let _ = status_tx.send(format!("[ERROR] Failed to create database: {}", e));
+                    }
+                }
+            }
+
+            #[cfg(feature = "sqlite")]
+            CommonAction::ExecuteSql {
+                database_id,
+                query,
+            } => {
+                let db_id = crate::state::DatabaseId::new(database_id);
+
+                match self.state.execute_sql(db_id, &query).await {
+                    Ok(result) => {
+                        let formatted = result.format();
+                        let _ = status_tx.send(format!("[DB] Query result:\n{}", formatted));
+
+                        // Show updated row counts
+                        if let Some(db) = self.state.get_database(db_id).await {
+                            let _ = status_tx.send(format!("[DB] Database: {}", db.schema_summary()));
+                        }
+                    }
+                    Err(e) => {
+                        let _ = status_tx.send(format!("[ERROR] SQL error: {}", e));
+                    }
+                }
+            }
+
+            #[cfg(feature = "sqlite")]
+            CommonAction::ListDatabases => {
+                let databases = self.state.get_all_databases().await;
+                if databases.is_empty() {
+                    let _ = status_tx.send("[DB] No databases".to_string());
+                } else {
+                    let _ = status_tx.send(format!("[DB] {} database(s):", databases.len()));
+                    for db in databases {
+                        let _ = status_tx.send(format!("  {}", db.schema_summary()));
+                    }
+                }
+            }
+
+            #[cfg(feature = "sqlite")]
+            CommonAction::DeleteDatabase { database_id } => {
+                let db_id = crate::state::DatabaseId::new(database_id);
+
+                match self.state.delete_database(db_id).await {
+                    Ok(_) => {
+                        let _ = status_tx.send(format!("[DB] Deleted database {}", db_id));
+                    }
+                    Err(e) => {
+                        let _ = status_tx.send(format!("[ERROR] Failed to delete database: {}", e));
+                    }
+                }
+            }
+
             CommonAction::ShowMessage { message } => {
                 let _ = status_tx.send(format!("[CLIENT] {}", message));
             }
@@ -1721,6 +1853,71 @@ impl EventHandler {
         }
 
         ui.add_llm_message("[LOAD] Configuration loaded successfully".to_string());
+        Ok(())
+    }
+
+    #[cfg(feature = "sqlite")]
+    async fn handle_sqlite(
+        &mut self,
+        db_id: Option<u32>,
+        query: Option<String>,
+        ui: &mut App,
+    ) -> Result<()> {
+        match (db_id, query) {
+            (None, None) => {
+                // List all databases
+                let databases = self.state.get_all_databases().await;
+                if databases.is_empty() {
+                    ui.add_llm_message("[DB] No databases".to_string());
+                } else {
+                    ui.add_llm_message(format!("[DB] {} database(s):", databases.len()));
+                    for db in databases {
+                        ui.add_llm_message(format!("  {}", db.schema_summary()));
+                    }
+                }
+            }
+            (Some(id), None) => {
+                // Show schema for specific database
+                let db_id_obj = crate::state::DatabaseId::new(id);
+                if let Some(db) = self.state.get_database(db_id_obj).await {
+                    ui.add_llm_message(format!("[DB] Database {}:", db_id_obj));
+                    ui.add_llm_message(db.schema_summary());
+                } else {
+                    ui.add_llm_message(format!("[ERROR] Database {} not found", db_id_obj));
+                }
+            }
+            (Some(id), Some(sql)) => {
+                // Execute query on specific database
+                let db_id_obj = crate::state::DatabaseId::new(id);
+                match self.state.execute_sql(db_id_obj, &sql).await {
+                    Ok(result) => {
+                        let formatted = result.format();
+                        ui.add_llm_message(format!("[DB] Query result:\n{}", formatted));
+                    }
+                    Err(e) => {
+                        ui.add_llm_message(format!("[ERROR] SQL error: {}", e));
+                    }
+                }
+            }
+            (None, Some(sql)) => {
+                // Execute query on first database
+                let databases = self.state.get_all_databases().await;
+                if databases.is_empty() {
+                    ui.add_llm_message("[ERROR] No databases available".to_string());
+                } else {
+                    let db_id = databases[0].id;
+                    match self.state.execute_sql(db_id, &sql).await {
+                        Ok(result) => {
+                            let formatted = result.format();
+                            ui.add_llm_message(format!("[DB] Query result:\n{}", formatted));
+                        }
+                        Err(e) => {
+                            ui.add_llm_message(format!("[ERROR] SQL error: {}", e));
+                        }
+                    }
+                }
+            }
+        }
         Ok(())
     }
 }

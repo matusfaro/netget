@@ -70,6 +70,12 @@ pub enum UserCommand {
     Save { name: String, id: Option<u32> },
     /// Load servers/clients from a file (slash command: /load <name>)
     Load { name: String },
+    /// SQLite database management (slash command: /sqlite [db_id] [query])
+    #[cfg(feature = "sqlite")]
+    Sqlite {
+        db_id: Option<u32>,
+        query: Option<String>,
+    },
     /// Quit the application (slash command: /quit)
     Quit,
     /// Unknown slash command (error case)
@@ -256,6 +262,44 @@ impl UserCommand {
             return UserCommand::UnknownSlashCommand {
                 command: trimmed.to_string(),
             };
+        }
+
+        // /sqlite command - database management
+        #[cfg(feature = "sqlite")]
+        if input_lower.starts_with("/sqlite") {
+            let rest = trimmed[7..].trim();
+            if rest.is_empty() {
+                // List all databases
+                return UserCommand::Sqlite {
+                    db_id: None,
+                    query: None,
+                };
+            }
+
+            // Try to parse first part as database ID
+            let parts: Vec<&str> = rest.splitn(2, ' ').collect();
+            if let Ok(id) = parts[0].parse::<u32>() {
+                // Database ID provided
+                if parts.len() > 1 {
+                    // Query provided
+                    return UserCommand::Sqlite {
+                        db_id: Some(id),
+                        query: Some(parts[1].trim().to_string()),
+                    };
+                } else {
+                    // No query - show schema
+                    return UserCommand::Sqlite {
+                        db_id: Some(id),
+                        query: None,
+                    };
+                }
+            } else {
+                // Not a database ID - treat entire rest as query for first DB
+                return UserCommand::Sqlite {
+                    db_id: None,
+                    query: Some(rest.to_string()),
+                };
+            }
         }
 
         // Unknown slash command - return error, don't send to LLM

@@ -6,6 +6,7 @@ pub mod app_state;
 pub mod client;
 pub mod machine;
 pub mod server;
+pub mod sqlite;
 pub mod task;
 
 pub use app_state::AppState;
@@ -14,4 +15,5 @@ pub use machine::StateMachine;
 pub use server::{
     ConnectionState, ProtocolConnectionInfo, ProtocolState, ServerId, ServerInstance, ServerStatus,
 };
+pub use sqlite::{DatabaseId, DatabaseInstance, DatabaseManager, DatabaseOwner, QueryResult};
 pub use task::{ScheduledTask, TaskExecutionResult, TaskId, TaskScope, TaskStatus, TaskType};

@@ -7,7 +7,7 @@ use std::time::Instant;
 use tokio::task::JoinHandle;
 
 /// Unique identifier for a client instance
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct ClientId(u32);
 
 impl ClientId {

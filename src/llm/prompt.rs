@@ -110,6 +110,21 @@ impl PromptBuilder {
                 "— DataLink protocol unavailable"
             }
         ));
+
+        // Append SQLite databases information
+        #[cfg(feature = "sqlite")]
+        {
+            let databases = state.get_all_databases().await;
+            if !databases.is_empty() {
+                current_state.push_str("## SQLite Databases\n\n");
+                current_state.push_str("Active databases available for queries:\n\n");
+                for db in databases {
+                    current_state.push_str(&db.schema_summary());
+                    current_state.push('\n');
+                }
+            }
+        }
+
         current_state
     }
 
