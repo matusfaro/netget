@@ -21,6 +21,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::ServerId;
 use anyhow::{Context as AnyhowContext, Result};
+use std::sync::Arc;
 use tracing::{debug, warn};
 
 /// Call LLM with action-based framework
@@ -78,6 +79,9 @@ pub async fn call_llm_with_actions(
     custom_actions: Vec<ActionDefinition>,
     event_data: Option<serde_json::Value>,
 ) -> Result<ExecutionResult> {
+    // NOTE: Easy protocol handling is done in call_llm() since it requires an Event object
+    // This function (call_llm_with_actions) is for legacy code paths that don't have Event objects
+
     // TRY EVENT HANDLER FIRST if configured
     let event_type_id = crate::scripting::ScriptManager::extract_context_type(event_description);
 
@@ -289,6 +293,35 @@ pub async fn call_llm(
     event: &Event,
     protocol: &dyn Server,
 ) -> Result<ExecutionResult> {
+    // TRY EASY PROTOCOL HANDLER FIRST if this server is managed by an easy protocol
+    if let Some(easy_id) = state.get_easy_for_server(server_id).await {
+        use crate::protocol::EASY_REGISTRY;
+        if let Some(easy_instance) = state.get_easy_instance(easy_id).await {
+            if let Some(easy_protocol) = EASY_REGISTRY.get_by_name(&easy_instance.protocol_name) {
+                // Call Easy protocol handler
+                let actions = easy_protocol
+                    .handle_event(
+                        event.clone(),
+                        easy_instance.user_instruction.clone(),
+                        Arc::new(llm_client.clone()),
+                        Arc::new(state.clone()),
+                    )
+                    .await
+                    .context("Easy protocol handler failed")?;
+
+                // Execute actions and return result
+                let result = crate::llm::execute_actions(
+                    actions,
+                    state,
+                    Some(protocol),
+                )
+                .await?;
+
+                return Ok(result);
+            }
+        }
+    }
+
     // TRY SCRIPT FIRST if configured
     // Note: Script handling is done via event handlers, not through this path anymore
     // This section needs refactoring to use the new event handler system

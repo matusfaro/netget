@@ -3,6 +3,7 @@
 mod args;
 mod banner;
 pub mod client_startup;
+pub mod easy_startup;
 mod input_state;
 mod non_interactive;
 mod rolling_tui;
