@@ -21,6 +21,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::ServerId;
 use anyhow::{Context as AnyhowContext, Result};
+use std::sync::Arc;
 use tracing::{debug, warn};
 
 /// Call LLM with action-based framework
@@ -78,6 +79,59 @@ pub async fn call_llm_with_actions(
     custom_actions: Vec<ActionDefinition>,
     event_data: Option<serde_json::Value>,
 ) -> Result<ExecutionResult> {
+    // TRY EASY PROTOCOL HANDLER FIRST if this server is managed by an easy protocol
+    if let Some(easy_id) = state.get_easy_for_server(server_id).await {
+        use crate::protocol::EASY_REGISTRY;
+        if let Some(easy_instance) = state.get_easy_instance(easy_id).await {
+            if let Some(easy_protocol) = EASY_REGISTRY.get_by_name(&easy_instance.protocol_name) {
+                // Extract event from event_data if available, otherwise create a minimal one
+                let event = if let Some(ref data) = event_data {
+                    // Need to create an Event with proper EventType
+                    // For now, we'll create a simplified Event with just the data
+                    let event_type_id = crate::scripting::ScriptManager::extract_context_type(event_description);
+                    crate::protocol::Event {
+                        event_type: crate::protocol::EventType::new(&event_type_id, event_description),
+                        data: data.clone(),
+                    }
+                } else {
+                    return Err(anyhow::anyhow!("Easy protocol requires event_data"));
+                };
+
+                // Call Easy protocol handler
+                let actions = easy_protocol
+                    .handle_event(
+                        &event,
+                        easy_instance.user_instruction.as_deref(),
+                        Arc::new(llm_client.clone()),
+                        Arc::new(state.clone()),
+                    )
+                    .await
+                    .context("Easy protocol handler failed")?;
+
+                // Execute actions and return result
+                if let Some(proto) = protocol {
+                    let results = crate::llm::execute_actions(
+                        state,
+                        llm_client,
+                        &actions,
+                        server_id,
+                        connection_id,
+                        proto,
+                    )
+                    .await?;
+
+                    return Ok(ExecutionResult {
+                        protocol_results: results,
+                        messages: vec![],
+                        memory_update: None,
+                    });
+                } else {
+                    return Err(anyhow::anyhow!("Easy protocol requires underlying protocol"));
+                }
+            }
+        }
+    }
+
     // TRY EVENT HANDLER FIRST if configured
     let event_type_id = crate::scripting::ScriptManager::extract_context_type(event_description);
 
@@ -289,6 +343,42 @@ pub async fn call_llm(
     event: &Event,
     protocol: &dyn Server,
 ) -> Result<ExecutionResult> {
+    // TRY EASY PROTOCOL HANDLER FIRST if this server is managed by an easy protocol
+    if let Some(easy_id) = state.get_easy_for_server(server_id).await {
+        use crate::protocol::EASY_REGISTRY;
+        if let Some(easy_instance) = state.get_easy_instance(easy_id).await {
+            if let Some(easy_protocol) = EASY_REGISTRY.get_by_name(&easy_instance.protocol_name) {
+                // Call Easy protocol handler
+                let actions = easy_protocol
+                    .handle_event(
+                        event,
+                        easy_instance.user_instruction.as_deref(),
+                        Arc::new(llm_client.clone()),
+                        Arc::new(state.clone()),
+                    )
+                    .await
+                    .context("Easy protocol handler failed")?;
+
+                // Execute actions and return result
+                let results = crate::llm::execute_actions(
+                    state,
+                    llm_client,
+                    &actions,
+                    server_id,
+                    connection_id,
+                    protocol,
+                )
+                .await?;
+
+                return Ok(ExecutionResult {
+                    protocol_results: results,
+                    messages: vec![],
+                    memory_update: None,
+                });
+            }
+        }
+    }
+
     // TRY SCRIPT FIRST if configured
     // Note: Script handling is done via event handlers, not through this path anymore
     // This section needs refactoring to use the new event handler system
