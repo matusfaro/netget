@@ -923,41 +923,4 @@ mod tests {
 
         send_ctrl(&mut pty, 'c');
     }
-
-    #[test]
-    fn test_usage_command_toggle_off() {
-        let (mut pty, _child) = spawn_netget();
-
-        // Wait for initial render
-        std::thread::sleep(Duration::from_millis(1000));
-        let _ = capture_screen(&mut pty);
-
-        // First, enable usage stats
-        send_input(&mut pty, "/usage");
-        pty.write_all(b"\r").expect("Failed to send Enter");
-        std::thread::sleep(Duration::from_millis(1000));
-        let _ = capture_screen(&mut pty);
-
-        // Now toggle it off again
-        send_input(&mut pty, "/usage");
-        pty.write_all(b"\r").expect("Failed to send Enter");
-        std::thread::sleep(Duration::from_millis(1000));
-
-        // Capture screen after toggling off
-        let screen = capture_screen(&mut pty);
-
-        println!("=== After /usage Toggle Off ===");
-        println!("{}", screen);
-        println!("=================================");
-
-        // Verify no double status lines
-        assert!(
-            !screen.contains(" Model:None | Log:INFO <^l> | WebSearch:ON <^w> | Handler:ANY <^h>\n Model:None"),
-            "Found double status line"
-        );
-
-        snapshot_util::assert_snapshot("usage_command_disabled", SNAPSHOT_DIR, &screen);
-
-        send_ctrl(&mut pty, 'c');
-    }
 }

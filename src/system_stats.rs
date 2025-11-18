@@ -4,6 +4,9 @@ use sysinfo::{System, RefreshKind, CpuRefreshKind, MemoryRefreshKind};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+#[cfg(feature = "gpu")]
+use nvml_wrapper::Nvml;
+
 /// System statistics (CPU, memory, GPU)
 #[derive(Debug, Clone)]
 pub struct SystemStats {
@@ -91,6 +94,8 @@ fn format_bytes(bytes: u64) -> String {
 pub struct SystemStatsMonitor {
     system: Arc<RwLock<System>>,
     last_update: Arc<RwLock<std::time::Instant>>,
+    #[cfg(feature = "gpu")]
+    nvml: Option<Arc<Nvml>>,
 }
 
 impl SystemStatsMonitor {
@@ -102,9 +107,26 @@ impl SystemStatsMonitor {
                 .with_memory(MemoryRefreshKind::everything()),
         );
 
+        #[cfg(feature = "gpu")]
+        let nvml = {
+            // Try to initialize NVML, but don't fail if it's not available
+            match Nvml::init() {
+                Ok(nvml) => {
+                    tracing::info!("NVIDIA GPU monitoring initialized successfully");
+                    Some(Arc::new(nvml))
+                }
+                Err(e) => {
+                    tracing::debug!("NVIDIA GPU monitoring not available: {}", e);
+                    None
+                }
+            }
+        };
+
         Self {
             system: Arc::new(RwLock::new(system)),
             last_update: Arc::new(RwLock::new(std::time::Instant::now())),
+            #[cfg(feature = "gpu")]
+            nvml,
         }
     }
 
@@ -124,13 +146,37 @@ impl SystemStatsMonitor {
         // Read stats
         let system = self.system.read().await;
 
+        // Get GPU stats if available
+        #[cfg(feature = "gpu")]
+        let (gpu_usage, gpu_memory_used, gpu_memory_total) = if let Some(ref nvml) = self.nvml {
+            // Try to get stats from the first GPU (device 0)
+            match nvml.device_by_index(0) {
+                Ok(device) => {
+                    let utilization = device.utilization_rates().ok();
+                    let memory = device.memory_info().ok();
+
+                    let gpu_usage = utilization.map(|u| u.gpu as f32);
+                    let gpu_memory_used = memory.as_ref().map(|m| m.used);
+                    let gpu_memory_total = memory.as_ref().map(|m| m.total);
+
+                    (gpu_usage, gpu_memory_used, gpu_memory_total)
+                }
+                Err(_) => (None, None, None),
+            }
+        } else {
+            (None, None, None)
+        };
+
+        #[cfg(not(feature = "gpu"))]
+        let (gpu_usage, gpu_memory_used, gpu_memory_total) = (None, None, None);
+
         SystemStats {
             cpu_usage: system.global_cpu_usage(),
             memory_used: system.used_memory(),
             memory_total: system.total_memory(),
-            gpu_usage: None,  // TODO: Add GPU support
-            gpu_memory_used: None,
-            gpu_memory_total: None,
+            gpu_usage,
+            gpu_memory_used,
+            gpu_memory_total,
         }
     }
 }

@@ -528,18 +528,18 @@ impl StickyFooter {
 
         // Render usage stats if enabled (2 lines, positioned above input box)
         let usage_lines = if self.show_usage_stats { 2 } else { 0 };
-        let adjusted_input_top = input_box_top_line - usage_lines;
 
         if self.show_usage_stats {
-            let usage_start = adjusted_input_top;
+            // Render usage stats ABOVE the input box (2 lines before input_box_top_line)
+            let usage_start = input_box_top_line - usage_lines;
             self.render_usage_stats(stdout, usage_start)?;
         }
 
-        // Render top border of input box (with column connections if we have content)
+        // Render top border of input box (stays in fixed position)
         if content_lines > 0 {
-            self.render_input_box_top_with_columns(stdout, adjusted_input_top, &self.content)?;
+            self.render_input_box_top_with_columns(stdout, input_box_top_line, &self.content)?;
         } else {
-            self.render_input_box_top(stdout, adjusted_input_top)?;
+            self.render_input_box_top(stdout, input_box_top_line)?;
         }
 
         // Render input or approval prompt (fixed position)

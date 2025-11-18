@@ -9,6 +9,9 @@ default = ["all-protocols"]
 # Terminal snapshot testing (PTY-based TUI tests)
 terminal-snapshot = []
 
+# GPU monitoring (NVIDIA only, requires NVIDIA drivers)
+gpu = ["dep:nvml-wrapper"]
+
 # Android Termux: Pure-Rust protocols compatible with Android/Termux environment
 # Excludes: BLE (needs BlueZ), NFC (needs PC/SC), USB (needs USB/IP), packet capture (needs libpcap/root), STUN/TURN (old nix crate), WireGuard/OpenVPN (not gated for Android)
 # Uses vendored OpenSSL to compile from source (no system OpenSSL needed)
@@ -407,6 +410,7 @@ handlebars = "5.1"
 walkdir = "2.4"
 include_dir = "0.7"  # Embed template directory in binary
 sysinfo = "0.32"  # System monitoring (CPU, memory, processes)
+nvml-wrapper = { version = "0.11", optional = true }  # NVIDIA GPU monitoring (optional, only if NVIDIA drivers present)
 
 # CLI argument parsing
 clap = { version = "4.5", features = ["derive"] }
