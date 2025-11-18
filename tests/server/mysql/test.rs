@@ -37,16 +37,7 @@ async fn test_mysql_simple_query() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: Client connection
-                .on_event("mysql_connection_received")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "accept_connection"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: SELECT @@* system variable queries (during handshake)
+                // Mock 2: SELECT @@* system variable queries (mysql_async client initialization)
                 .on_event("mysql_query")
                 .and_event_data_contains("query", "SELECT @@")
                 .respond_with_actions(serde_json::json!([
@@ -56,7 +47,7 @@ async fn test_mysql_simple_query() -> E2EResult<()> {
                         "rows": [["1000"]]
                     }
                 ]))
-                .expect_calls(0)
+                .expect_calls(1)
                 .and()
                 // Mock 4: SELECT 1 query
                 .on_event("mysql_query")

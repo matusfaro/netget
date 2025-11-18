@@ -43,8 +43,7 @@ async fn test_postgresql_simple_query() -> E2EResult<()> {
                     {
                         "type": "open_server",
                         "port": 0,
-                        "base_stack": "TCP",
-                        "application_protocol": "PostgreSQL",
+                        "base_stack": "PostgreSQL",
                         "instruction": "Handle SELECT 1 and SELECT version() queries"
                     }
                 ]))
@@ -159,8 +158,7 @@ async fn test_postgresql_multi_row_query() -> E2EResult<()> {
                     {
                         "type": "open_server",
                         "port": 0,
-                        "base_stack": "TCP",
-                        "application_protocol": "PostgreSQL",
+                        "base_stack": "PostgreSQL",
                         "instruction": "Handle SELECT * FROM users query"
                     }
                 ]))
@@ -270,8 +268,7 @@ async fn test_postgresql_create_table() -> E2EResult<()> {
                     {
                         "type": "open_server",
                         "port": 0,
-                        "base_stack": "TCP",
-                        "application_protocol": "PostgreSQL",
+                        "base_stack": "PostgreSQL",
                         "instruction": "Handle CREATE TABLE and version queries"
                     }
                 ]))
@@ -370,8 +367,7 @@ async fn test_postgresql_error_response() -> E2EResult<()> {
                     {
                         "type": "open_server",
                         "port": 0,
-                        "base_stack": "TCP",
-                        "application_protocol": "PostgreSQL",
+                        "base_stack": "PostgreSQL",
                         "instruction": "Handle error responses for invalid_table"
                     }
                 ]))
