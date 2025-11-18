@@ -89,20 +89,7 @@ IMPORTANT: Respond with the generate_rss_feed action containing all the feed dat
     .with_log_level("debug") // Use debug to see LLM interactions
     .with_mock(|mock| {
         mock
-            // Mock 1: Server startup (user command)
-            .on_instruction_containing("listen")
-            .and_instruction_containing("rss")
-            .respond_with_actions(serde_json::json!([
-                {
-                    "type": "open_server",
-                    "port": 0,
-                    "base_stack": "RSS",
-                    "instruction": "RSS feed server - generate feeds dynamically"
-                }
-            ]))
-            .expect_calls(1)
-            .and()
-            // Mock 2: GET /tech-news.xml
+            // Mock 1: GET /tech-news.xml - MUST BE FIRST (most specific)
             .on_event("http_request")
             .and_event_data_contains("path", "/tech-news.xml")
             .respond_with_actions(serde_json::json!([
@@ -141,7 +128,7 @@ IMPORTANT: Respond with the generate_rss_feed action containing all the feed dat
             ]))
             .expect_calls(2)
             .and()
-            // Mock 3: GET /sports.xml
+            // Mock 2: GET /sports.xml - MUST BE SECOND (most specific)
             .on_event("http_request")
             .and_event_data_contains("path", "/sports.xml")
             .respond_with_actions(serde_json::json!([
@@ -170,7 +157,7 @@ IMPORTANT: Respond with the generate_rss_feed action containing all the feed dat
             ]))
             .expect_calls(1)
             .and()
-            // Mock 4: GET /blog.xml
+            // Mock 3: GET /blog.xml - MUST BE THIRD (most specific)
             .on_event("http_request")
             .and_event_data_contains("path", "/blog.xml")
             .respond_with_actions(serde_json::json!([
@@ -202,7 +189,7 @@ IMPORTANT: Respond with the generate_rss_feed action containing all the feed dat
             ]))
             .expect_calls(1)
             .and()
-            // Mock 5: GET /nonexistent.xml (404)
+            // Mock 4: GET /nonexistent.xml (404) - MUST BE FOURTH (most specific)
             .on_event("http_request")
             .and_event_data_contains("path", "/nonexistent.xml")
             .respond_with_actions(serde_json::json!([
@@ -210,6 +197,19 @@ IMPORTANT: Respond with the generate_rss_feed action containing all the feed dat
                     "type": "send_http_response",
                     "status": 404,
                     "body": "Not Found"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 5: Server startup - MUST BE LAST (less specific)
+            .on_instruction_containing("listen")
+            .and_instruction_containing("rss")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "RSS",
+                    "instruction": "RSS feed server - generate feeds dynamically"
                 }
             ]))
             .expect_calls(1)

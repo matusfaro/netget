@@ -253,7 +253,17 @@ async fn test_simple_echo() -> E2EResult<()> {
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    // Mock 1: User command interpretation (start server)
+                    // Mock 1: TCP data received event (echo with ACK prefix) - MUST BE FIRST (most specific)
+                    .on_event("tcp_data_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_tcp_data",
+                            "data": "ACK: Hello, LLM!"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: User command interpretation (start server) - MUST BE SECOND (less specific)
                     .on_instruction_containing("tcp")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -261,16 +271,6 @@ async fn test_simple_echo() -> E2EResult<()> {
                             "port": 0,
                             "base_stack": "TCP",
                             "instruction": "TCP echo server that prefixes ACK: to received data"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: TCP data received event (echo with ACK prefix)
-                    .on_event("tcp_data_received")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "send_tcp_data",
-                            "data": "ACK: Hello, LLM!"
                         }
                     ]))
                     .expect_calls(1)
@@ -336,7 +336,17 @@ async fn test_custom_response() -> E2EResult<()> {
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    // Mock 1: User command interpretation (start server)
+                    // Mock 1: TCP data received event (send PONG when PING received) - MUST BE FIRST (most specific)
+                    .on_event("tcp_data_received")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "send_tcp_data",
+                            "data": "PONG\r\n"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: User command interpretation (start server) - MUST BE SECOND (less specific)
                     .on_instruction_containing("tcp")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -344,16 +354,6 @@ async fn test_custom_response() -> E2EResult<()> {
                             "port": 0,
                             "base_stack": "TCP",
                             "instruction": "TCP server that responds to PING with PONG"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: TCP data received event (send PONG when PING received)
-                    .on_event("tcp_data_received")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "send_tcp_data",
-                            "data": "PONG\r\n"
                         }
                     ]))
                     .expect_calls(1)

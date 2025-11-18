@@ -19,8 +19,25 @@ async fn test_ssh_banner() -> E2EResult<()> {
     // PROMPT: Tell the LLM to act as an SSH server
     let prompt = "listen on port {AVAILABLE_PORT} via ssh. Send SSH protocol version banner 'SSH-2.0-NetGet_1.0' when clients connect";
 
-    // Start the server
-    let server = helpers::start_netget_server(NetGetConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let server = helpers::start_netget_server(
+        NetGetConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock: Server startup
+                    .on_instruction_containing("ssh")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "SSH",
+                            "instruction": "Send SSH protocol version banner"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("Server started on port {}", server.port);
 
     // VALIDATION: Connect and read SSH banner
@@ -68,6 +85,9 @@ async fn test_ssh_banner() -> E2EResult<()> {
             println!("  This may be expected if SSH server is not fully implemented");
         }
     }
+
+    // Verify mock expectations
+    server.verify_mocks().await?;
 
     server.stop().await?;
     println!("=== Test completed ===\n");
@@ -593,8 +613,52 @@ async fn test_ssh_script_fallback_to_llm() -> E2EResult<()> {
     let prompt = "listen on port {AVAILABLE_PORT} via ssh. Use a script that allows user 'dave', and falls back to LLM for other users. \
         The LLM should allow user 'eve' but deny other unknown users.";
 
-    // Start the server
-    let server = helpers::start_netget_server(NetGetConfig::new(prompt)).await?;
+    // Start the server with mocks
+    let server = helpers::start_netget_server(
+        NetGetConfig::new(prompt)
+            .with_mock(|mock| {
+                mock
+                    // Mock 1: Server startup with script
+                    .on_instruction_containing("ssh")
+                    .and_instruction_containing("script")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "SSH",
+                            "instruction": "SSH server with script fallback",
+                            "script_inline": "import json,sys\nd=json.load(sys.stdin)\nif d['event']['username']=='dave':print(json.dumps({'actions':[{'type':'ssh_auth_decision','allowed':True}]}))\nelse:print(json.dumps({'fallback_to_llm':True}))",
+                            "script_handles": ["ssh_auth"]
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: LLM fallback for 'eve' (should allow)
+                    .on_event("ssh_auth")
+                    .and_event_data_contains("username", "eve")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "ssh_auth_decision",
+                            "allowed": true,
+                            "message": "User eve allowed by LLM fallback"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: LLM fallback for 'frank' (should deny)
+                    .on_event("ssh_auth")
+                    .and_event_data_contains("username", "frank")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "ssh_auth_decision",
+                            "allowed": false,
+                            "message": "User frank denied by LLM fallback"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+            })
+    ).await?;
     println!("Server started on port {}", server.port);
 
     // Test 1: User handled by script (dave) - should succeed
@@ -704,6 +768,9 @@ async fn test_ssh_script_fallback_to_llm() -> E2EResult<()> {
     } else if llm_request_count >= 2 {
         println!("  ✓ Verified: Script handled dave, LLM handled fallback for eve/frank");
     }
+
+    // Verify mock expectations
+    server.verify_mocks().await?;
 
     server.stop().await?;
     println!("\n=== Test completed ===\n");

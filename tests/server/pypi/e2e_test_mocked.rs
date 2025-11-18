@@ -54,17 +54,35 @@ mod pypi_server_tests {
 
         // Make HTTP request to trigger pypi_request event
         let url = format!("http://127.0.0.1:{}/simple/", server.port);
-        let _ = std::process::Command::new("curl")
-            .arg("-s")
-            .arg(&url)
-            .output();
+        let output = tokio::time::timeout(
+            Duration::from_secs(10),
+            tokio::task::spawn_blocking(move || {
+                std::process::Command::new("curl")
+                    .arg("-s")
+                    .arg("--max-time")
+                    .arg("5")
+                    .arg(&url)
+                    .output()
+            })
+        )
+        .await
+        .map_err(|_| "curl timeout")?
+        .map_err(|_| "curl spawn failed")?
+        .map_err(|e| format!("curl failed: {}", e))?;
 
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // Wait for server to fully process the request
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
-        println!("✅ PyPI server served package index with mocks");
+        println!("✅ PyPI server served package index with mocks (response: {} bytes)", output.stdout.len());
 
-        server.verify_mocks().await?;
-        server.stop().await?;
+        // Add timeout to mock verification to prevent indefinite hanging
+        tokio::time::timeout(Duration::from_secs(10), server.verify_mocks())
+            .await
+            .map_err(|_| "Mock verification timed out after 10s")??;
+
+        tokio::time::timeout(Duration::from_secs(5), server.stop())
+            .await
+            .map_err(|_| "Server stop timed out after 5s")??;
 
         Ok(())
     }
@@ -115,17 +133,35 @@ mod pypi_server_tests {
 
         // Make HTTP request to trigger pypi_request event
         let url = format!("http://127.0.0.1:{}/simple/hello-world/", server.port);
-        let _ = std::process::Command::new("curl")
-            .arg("-s")
-            .arg(&url)
-            .output();
+        let output = tokio::time::timeout(
+            Duration::from_secs(10),
+            tokio::task::spawn_blocking(move || {
+                std::process::Command::new("curl")
+                    .arg("-s")
+                    .arg("--max-time")
+                    .arg("5")
+                    .arg(&url)
+                    .output()
+            })
+        )
+        .await
+        .map_err(|_| "curl timeout")?
+        .map_err(|_| "curl spawn failed")?
+        .map_err(|e| format!("curl failed: {}", e))?;
 
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // Wait for server to fully process the request
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
-        println!("✅ PyPI server served package page with mocks");
+        println!("✅ PyPI server served package page with mocks (response: {} bytes)", output.stdout.len());
 
-        server.verify_mocks().await?;
-        server.stop().await?;
+        // Add timeout to mock verification to prevent indefinite hanging
+        tokio::time::timeout(Duration::from_secs(10), server.verify_mocks())
+            .await
+            .map_err(|_| "Mock verification timed out after 10s")??;
+
+        tokio::time::timeout(Duration::from_secs(5), server.stop())
+            .await
+            .map_err(|_| "Server stop timed out after 5s")??;
 
         Ok(())
     }
@@ -173,17 +209,35 @@ mod pypi_server_tests {
 
         // Make HTTP request to trigger pypi_request event
         let url = format!("http://127.0.0.1:{}/simple/nonexistent-package/", server.port);
-        let _ = std::process::Command::new("curl")
-            .arg("-s")
-            .arg(&url)
-            .output();
+        let output = tokio::time::timeout(
+            Duration::from_secs(10),
+            tokio::task::spawn_blocking(move || {
+                std::process::Command::new("curl")
+                    .arg("-s")
+                    .arg("--max-time")
+                    .arg("5")
+                    .arg(&url)
+                    .output()
+            })
+        )
+        .await
+        .map_err(|_| "curl timeout")?
+        .map_err(|_| "curl spawn failed")?
+        .map_err(|e| format!("curl failed: {}", e))?;
 
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // Wait for server to fully process the request
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
-        println!("✅ PyPI server returned 404 for non-existent package with mocks");
+        println!("✅ PyPI server returned 404 for non-existent package with mocks (response: {} bytes)", output.stdout.len());
 
-        server.verify_mocks().await?;
-        server.stop().await?;
+        // Add timeout to mock verification to prevent indefinite hanging
+        tokio::time::timeout(Duration::from_secs(10), server.verify_mocks())
+            .await
+            .map_err(|_| "Mock verification timed out after 10s")??;
+
+        tokio::time::timeout(Duration::from_secs(5), server.stop())
+            .await
+            .map_err(|_| "Server stop timed out after 5s")??;
 
         Ok(())
     }

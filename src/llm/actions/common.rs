@@ -54,6 +54,9 @@ pub enum CommonAction {
         // Scheduled tasks to create with this server
         #[serde(default)]
         scheduled_tasks: Option<Vec<ServerTaskDefinition>>,
+        // Feedback instructions for automatic server adjustment
+        #[serde(default)]
+        feedback_instructions: Option<String>,
     },
 
     /// Close a specific server
@@ -77,6 +80,9 @@ pub enum CommonAction {
         // Scheduled tasks to create with this client
         #[serde(default)]
         scheduled_tasks: Option<Vec<ServerTaskDefinition>>,
+        // Feedback instructions for automatic client adjustment
+        #[serde(default)]
+        feedback_instructions: Option<String>,
     },
 
     /// Close a specific client
@@ -149,6 +155,40 @@ pub enum CommonAction {
 
     /// List all scheduled tasks
     ListTasks,
+
+    /// Provide feedback for automatic server/client adjustment
+    /// This action accumulates feedback for later LLM processing (if feedback_instructions is set)
+    ProvideFeedback {
+        /// Feedback data (free-form JSON describing what to learn/adjust)
+        feedback: serde_json::Value,
+    },
+
+    /// Create a new SQLite database (file-based or in-memory)
+    #[cfg(feature = "sqlite")]
+    CreateDatabase {
+        name: String,
+        #[serde(default)]
+        is_memory: bool, // true = in-memory (:memory:), false = file-based (./netget_db_<name>.db)
+        #[serde(default)]
+        owner: Option<String>, // "server-N", "client-N", or "global"
+        #[serde(default)]
+        schema_ddl: Option<String>, // Initial DDL statements to create tables
+    },
+
+    /// Execute a SQL query (DDL, DML, or DQL)
+    #[cfg(feature = "sqlite")]
+    ExecuteSql {
+        database_id: u32, // Database ID (db-N → N)
+        query: String,
+    },
+
+    /// List all databases
+    #[cfg(feature = "sqlite")]
+    ListDatabases,
+
+    /// Delete a database
+    #[cfg(feature = "sqlite")]
+    DeleteDatabase { database_id: u32 },
 }
 
 impl CommonAction {
@@ -254,6 +294,13 @@ pub fn open_server_action(
         name: "event_handlers".to_string(),
         type_hint: "array".to_string(),
         description: event_handlers_description,
+        required: false,
+    });
+
+    parameters.push(Parameter {
+        name: "feedback_instructions".to_string(),
+        type_hint: "string".to_string(),
+        description: "Optional: Instructions for automatic server adjustment based on network request feedback. When set, network requests can provide feedback via the 'provide_feedback' action. Feedback is accumulated and debounced (leading edge), then the LLM is invoked with these instructions to decide how to adjust the server behavior (e.g., update instructions, modify handlers, change configuration). Example: \"Adjust response time if clients are timing out\" or \"Learn from failed requests and improve error handling\".".to_string(),
         required: false,
     });
 
@@ -376,6 +423,13 @@ pub fn open_client_action(
         name: "event_handlers".to_string(),
         type_hint: "array".to_string(),
         description: event_handlers_description,
+        required: false,
+    });
+
+    parameters.push(Parameter {
+        name: "feedback_instructions".to_string(),
+        type_hint: "string".to_string(),
+        description: "Optional: Instructions for automatic client adjustment based on server response feedback. When set, server responses can provide feedback via the 'provide_feedback' action. Feedback is accumulated and debounced (leading edge), then the LLM is invoked with these instructions to decide how to adjust the client behavior (e.g., update request strategy, modify retry logic, change authentication method). Example: \"Adjust request rate if server is throttling\" or \"Learn from error responses and modify request format\".".to_string(),
         required: false,
     });
 
@@ -593,6 +647,31 @@ pub fn append_to_log_action() -> ActionDefinition {
     }
 }
 
+/// Get action definition for provide_feedback
+pub fn provide_feedback_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "provide_feedback".to_string(),
+        description: "Provide feedback for automatic server/client adjustment. Only available when feedback_instructions was set during server/client creation. Feedback is accumulated and debounced (leading edge), then periodically the LLM is invoked with the feedback_instructions to decide how to adjust the server/client behavior. Use this to signal issues, patterns, or learning opportunities that should trigger automatic adaptation.".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "feedback".to_string(),
+                type_hint: "object".to_string(),
+                description: "Structured feedback data describing what should be learned or adjusted. Can include any relevant context like error rates, performance metrics, client behaviors, failed requests, etc. Example: {\"issue\": \"client_timeout\", \"details\": \"Client disconnected after 5s\", \"suggestion\": \"Increase response speed\"}".to_string(),
+                required: true,
+            },
+        ],
+        example: json!({
+            "type": "provide_feedback",
+            "feedback": {
+                "issue": "authentication_failed",
+                "username": "guest",
+                "attempts": 3,
+                "suggestion": "Consider blocking IP after multiple failures"
+            }
+        }),
+    }
+}
+
 /// Get action definition for schedule_task
 pub fn schedule_task_action(
     selected_mode: crate::state::app_state::ScriptingMode,
@@ -763,6 +842,110 @@ pub fn list_tasks_action() -> ActionDefinition {
     }
 }
 
+/// Get action definition for create_database
+#[cfg(feature = "sqlite")]
+pub fn create_database_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "create_database".to_string(),
+        description: "Create a new SQLite database (in-memory or file-based). Use this to store protocol state (e.g., NFS file system, DNS cache, user sessions). The database persists for the lifetime of the owning server/client, or forever if global. You can execute DDL to create tables during creation.".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "name".to_string(),
+                type_hint: "string".to_string(),
+                description: "Database name (user-friendly identifier). This will be used to construct the filename as './netget_db_<name>.db' for file-based databases.".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "is_memory".to_string(),
+                type_hint: "boolean".to_string(),
+                description: "true = in-memory database (fast, data lost on close), false = file-based database (persistent, saved to ./netget_db_<name>.db). Defaults to false (file-based).".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "owner".to_string(),
+                type_hint: "string".to_string(),
+                description: "Owner scope: 'server-N' (auto-deleted when server closes), 'client-N' (auto-deleted when client disconnects), or 'global' (persists across servers/clients). Omit to default to current context.".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "schema_ddl".to_string(),
+                type_hint: "string".to_string(),
+                description: "SQL DDL statements to create initial schema (e.g., 'CREATE TABLE files (path TEXT PRIMARY KEY, content BLOB);'). Use semicolons to separate multiple statements.".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "create_database",
+            "name": "nfs_storage",
+            "is_memory": true,
+            "owner": "server-1",
+            "schema_ddl": "CREATE TABLE files (path TEXT PRIMARY KEY, content BLOB, size INTEGER, modified INTEGER);"
+        }),
+    }
+}
+
+/// Get action definition for execute_sql
+#[cfg(feature = "sqlite")]
+pub fn execute_sql_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "execute_sql".to_string(),
+        description: "Execute a SQL query on a database. Supports DDL (CREATE/ALTER/DROP), DML (INSERT/UPDATE/DELETE), and DQL (SELECT). Returns results as JSON with columns and rows for SELECT queries, or affected row count for modifications.".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "database_id".to_string(),
+                type_hint: "number".to_string(),
+                description: "Database ID (from create_database response or list_databases). Format: db-N → use N.".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "query".to_string(),
+                type_hint: "string".to_string(),
+                description: "SQL query to execute. Use standard SQLite syntax. Be careful with semicolons (only one statement per execute_sql).".to_string(),
+                required: true,
+            },
+        ],
+        example: json!({
+            "type": "execute_sql",
+            "database_id": 1,
+            "query": "SELECT * FROM files WHERE path LIKE '/home/%'"
+        }),
+    }
+}
+
+/// Get action definition for list_databases
+#[cfg(feature = "sqlite")]
+pub fn list_databases_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "list_databases".to_string(),
+        description: "List all active SQLite databases with their schemas, table information, and row counts. Use this to discover available databases and understand their structure before querying.".to_string(),
+        parameters: vec![],
+        example: json!({
+            "type": "list_databases"
+        }),
+    }
+}
+
+/// Get action definition for delete_database
+#[cfg(feature = "sqlite")]
+pub fn delete_database_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "delete_database".to_string(),
+        description: "Delete a database and remove its file (if file-based). This is permanent and cannot be undone. Server/client-owned databases are automatically deleted when the owner closes.".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "database_id".to_string(),
+                type_hint: "number".to_string(),
+                description: "Database ID to delete".to_string(),
+                required: true,
+            },
+        ],
+        example: json!({
+            "type": "delete_database",
+            "database_id": 1
+        }),
+    }
+}
+
 /// Get all common action definitions
 ///
 /// Actions are organized logically:
@@ -770,14 +953,15 @@ pub fn list_tasks_action() -> ActionDefinition {
 /// 2. Client Management - Create/destroy/control clients
 /// 3. Server Configuration - Configure running servers
 /// 4. Task Management - Schedule/cancel tasks
-/// 5. System/Utility - Model changes, messages, logging
+/// 5. Database Management - Create/query/manage SQLite databases
+/// 6. System/Utility - Model changes, messages, logging
 pub fn get_all_common_actions(
     selected_mode: crate::state::app_state::ScriptingMode,
     env: &crate::scripting::ScriptingEnvironment,
     is_open_server_enabled: bool,
     is_open_client_enabled: bool,
 ) -> Vec<ActionDefinition> {
-    let actions = vec![
+    let mut actions = vec![
         // === Server Management ===
         open_server_action(selected_mode, env, is_open_server_enabled),
         close_server_action(),
@@ -804,6 +988,15 @@ pub fn get_all_common_actions(
         show_message_action(),
         append_to_log_action(),
     ];
+
+    // === Database Management ===
+    #[cfg(feature = "sqlite")]
+    {
+        actions.push(create_database_action());
+        actions.push(execute_sql_action());
+        actions.push(list_databases_action());
+        actions.push(delete_database_action());
+    }
 
     actions
 }
@@ -835,6 +1028,9 @@ pub fn get_network_event_common_actions() -> Vec<ActionDefinition> {
         // === System/Utility ===
         show_message_action(),
         append_to_log_action(),
+        // === Feedback/Learning ===
+        // Note: provide_feedback is added conditionally in action_helper.rs
+        // only when feedback_instructions is set on the server/client
     ]
 }
 

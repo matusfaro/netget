@@ -25,16 +25,18 @@ async fn test_udp_echo_server() -> E2EResult<()> {
     let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
+                // Mock 1: UDP datagram received event - MUST BE FIRST (most specific)
+                .on_event("udp_datagram_received")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "send_udp_datagram", "data": "48656c6c6f20554450"}  // "Hello UDP" in hex
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: User command interpretation - MUST BE SECOND (less specific)
                 .on_instruction_containing("udp")
                 .and_instruction_containing("Echo")
                 .respond_with_actions(serde_json::json!([
                     {"type": "open_server", "port": 0, "base_stack": "UDP", "instruction": "UDP echo server"}
-                ]))
-                .expect_calls(1)
-                .and()
-                .on_event("udp_datagram_received")
-                .respond_with_actions(serde_json::json!([
-                    {"type": "send_udp_datagram", "data": "48656c6c6f20554450"}  // "Hello UDP" in hex
                 ]))
                 .expect_calls(1)
                 .and()

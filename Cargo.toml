@@ -224,6 +224,7 @@ torrent-tracker = ["dep:serde_bencode"]  # BitTorrent Tracker (HTTP-based peer d
 torrent-dht = ["dep:serde_bencode"]  # BitTorrent DHT (Kademlia-based distributed peer discovery)
 torrent-peer = ["dep:serde_bencode"]  # BitTorrent Peer Wire Protocol (peer-to-peer data transfer)
 tls = ["dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]  # TLS server for custom protocols on top of encrypted transport
+sqlite = ["dep:rusqlite"]  # SQLite database support for protocols (in-memory or file-based)
 all-protocols = [
     "tcp",
     "socket_file",
@@ -697,6 +698,9 @@ serde_cbor = { version = "0.11", optional = true }  # CBOR encoding for CTAP2
 # USB Smart Card dependencies
 rsa = { version = "0.9", optional = true, features = ["sha2"] }  # RSA cryptography for smart cards
 # sha2 already defined above for wireguard/tor
+
+# SQLite database support (in-memory or file-based)
+rusqlite = { version = "0.37", optional = true, features = ["bundled"] }  # SQLite library with bundled SQLite (matches tor-dirmgr dependency)
 
 [dev-dependencies]
 # For async tests
