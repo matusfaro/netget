@@ -26,8 +26,8 @@ use super::theme::ColorPalette;
 
 // Layout constants for multi-column footer
 const INPUTS_LEFT_MARGIN: u16 = 6;
-const INPUTS_COLUMN_WIDTH: u16 = 30;
-const COLUMN_MARGIN: u16 = 4;
+const INPUTS_COLUMN_WIDTH: u16 = 22;  // Reduced from 30 to fit three columns in 80-char terminal
+const COLUMN_MARGIN: u16 = 2;  // Reduced from 4 to save space
 
 /// Pending web approval request
 pub struct PendingApproval {
@@ -1008,20 +1008,18 @@ impl StickyFooter {
                         Print("Usage")
                     )?;
                 } else if usage_line_idx == 1 {
-                    // Line 1: CPU and Memory stats
-                    let (input_tokens, output_tokens, llm_calls) = self.llm_stats;
-                    let cpu_pct = format!("{:.1}%", self.system_stats.cpu_usage);
-                    let mem_pct = format!("{:.1}%", self.system_stats.memory_percent());
+                    // Line 1: CPU and Memory stats (compact format)
+                    let cpu = format!("{:.0}%", self.system_stats.cpu_usage);
                     let mem_used = self.system_stats.memory_used_str();
                     let mem_total = self.system_stats.memory_total_str();
 
                     let gpu_display = if let Some(gpu_pct) = self.system_stats.gpu_usage {
-                        format!(" GPU:{:.1}%", gpu_pct)
+                        format!(" G:{:.0}%", gpu_pct)
                     } else {
                         String::new()
                     };
 
-                    let text = format!("CPU:{} Mem:{} ({}/{}){}", cpu_pct, mem_pct, mem_used, mem_total, gpu_display);
+                    let text = format!("C:{} M:{}/{}{}", cpu, mem_used, mem_total, gpu_display);
                     execute!(
                         stdout,
                         cursor::MoveTo(usage_column_start, current_line),
@@ -1033,11 +1031,23 @@ impl StickyFooter {
                         ResetColor
                     )?;
                 } else if usage_line_idx == 2 {
-                    // Line 2: LLM stats
+                    // Line 2: LLM stats (compact format)
                     let (input_tokens, output_tokens, llm_calls) = self.llm_stats;
                     let total_tokens = input_tokens + output_tokens;
-                    let text = format!("LLM: {} calls, {} in, {} out, {} total",
-                        llm_calls, input_tokens, output_tokens, total_tokens);
+                    // Format: "L:5 12k/8k" (calls, in/out in thousands)
+                    let format_tokens = |t: u64| {
+                        if t >= 1_000_000 {
+                            format!("{}m", t / 1_000_000)
+                        } else if t >= 1_000 {
+                            format!("{}k", t / 1_000)
+                        } else {
+                            format!("{}", t)
+                        }
+                    };
+                    let text = format!("L:{} {}/{}",
+                        llm_calls,
+                        format_tokens(input_tokens),
+                        format_tokens(output_tokens));
                     execute!(
                         stdout,
                         cursor::MoveTo(usage_column_start, current_line),
