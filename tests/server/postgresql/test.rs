@@ -44,24 +44,12 @@ async fn test_postgresql_simple_query() -> E2EResult<()> {
                         "type": "open_server",
                         "port": 0,
                         "base_stack": "PostgreSQL",
-                        "instruction": "Handle SELECT 1 and SELECT version() queries"
+                        "instruction": "Handle SELECT 1 query"
                     }
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: SELECT version() query (startup query)
-                .on_event("postgresql_query")
-                .and_event_data_contains("query", "version")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "postgresql_query_response",
-                        "columns": [{"name": "version", "type": "text"}],
-                        "rows": [["PostgreSQL 16.0 (LLM)"]]
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: SELECT 1 query
+                // Mock 2: SELECT 1 query
                 .on_event("postgresql_query")
                 .and_event_data_contains("query", "SELECT 1")
                 .respond_with_actions(serde_json::json!([
@@ -164,19 +152,7 @@ async fn test_postgresql_multi_row_query() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: SELECT version() query
-                .on_event("postgresql_query")
-                .and_event_data_contains("query", "version")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "postgresql_query_response",
-                        "columns": [{"name": "version", "type": "text"}],
-                        "rows": [["PostgreSQL 16.0"]]
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: SELECT * FROM users query
+                // Mock 2: SELECT * FROM users query
                 .on_event("postgresql_query")
                 .and_event_data_contains("query", "SELECT * FROM users")
                 .respond_with_actions(serde_json::json!([
@@ -269,24 +245,12 @@ async fn test_postgresql_create_table() -> E2EResult<()> {
                         "type": "open_server",
                         "port": 0,
                         "base_stack": "PostgreSQL",
-                        "instruction": "Handle CREATE TABLE and version queries"
+                        "instruction": "Handle CREATE TABLE queries"
                     }
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: SELECT version() query
-                .on_event("postgresql_query")
-                .and_event_data_contains("query", "version")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "postgresql_query_response",
-                        "columns": [{"name": "version", "type": "text"}],
-                        "rows": [["PostgreSQL 16.0"]]
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: CREATE TABLE query
+                // Mock 2: CREATE TABLE query
                 .on_event("postgresql_query")
                 .and_event_data_contains("query", "CREATE TABLE")
                 .respond_with_actions(serde_json::json!([
@@ -373,19 +337,7 @@ async fn test_postgresql_error_response() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: SELECT version() query
-                .on_event("postgresql_query")
-                .and_event_data_contains("query", "version")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "postgresql_query_response",
-                        "columns": [{"name": "version", "type": "text"}],
-                        "rows": [["PostgreSQL 16.0"]]
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 3: SELECT * FROM invalid_table query (error)
+                // Mock 2: SELECT * FROM invalid_table query (error)
                 .on_event("postgresql_query")
                 .and_event_data_contains("query", "invalid_table")
                 .respond_with_actions(serde_json::json!([
