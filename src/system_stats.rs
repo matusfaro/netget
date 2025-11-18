@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 #[cfg(feature = "gpu")]
-use nvml_wrapper::Nvml;
+use gfxinfo::active_gpu;
 
 /// System statistics (CPU, memory, GPU)
 #[derive(Debug, Clone)]
@@ -94,8 +94,6 @@ fn format_bytes(bytes: u64) -> String {
 pub struct SystemStatsMonitor {
     system: Arc<RwLock<System>>,
     last_update: Arc<RwLock<std::time::Instant>>,
-    #[cfg(feature = "gpu")]
-    nvml: Option<Arc<Nvml>>,
 }
 
 impl SystemStatsMonitor {
@@ -107,26 +105,9 @@ impl SystemStatsMonitor {
                 .with_memory(MemoryRefreshKind::everything()),
         );
 
-        #[cfg(feature = "gpu")]
-        let nvml = {
-            // Try to initialize NVML, but don't fail if it's not available
-            match Nvml::init() {
-                Ok(nvml) => {
-                    tracing::info!("NVIDIA GPU monitoring initialized successfully");
-                    Some(Arc::new(nvml))
-                }
-                Err(e) => {
-                    tracing::debug!("NVIDIA GPU monitoring not available: {}", e);
-                    None
-                }
-            }
-        };
-
         Self {
             system: Arc::new(RwLock::new(system)),
             last_update: Arc::new(RwLock::new(std::time::Instant::now())),
-            #[cfg(feature = "gpu")]
-            nvml,
         }
     }
 
@@ -146,25 +127,35 @@ impl SystemStatsMonitor {
         // Read stats
         let system = self.system.read().await;
 
-        // Get GPU stats if available
+        // Get GPU stats if available (cross-platform: NVIDIA, AMD, Intel)
         #[cfg(feature = "gpu")]
-        let (gpu_usage, gpu_memory_used, gpu_memory_total) = if let Some(ref nvml) = self.nvml {
-            // Try to get stats from the first GPU (device 0)
-            match nvml.device_by_index(0) {
-                Ok(device) => {
-                    let utilization = device.utilization_rates().ok();
-                    let memory = device.memory_info().ok();
+        let (gpu_usage, gpu_memory_used, gpu_memory_total) = {
+            // active_gpu() returns Result<Box<dyn Gpu>, _>
+            match active_gpu() {
+                Ok(gpu) => {
+                    let info = gpu.info();
 
-                    let gpu_usage = utilization.map(|u| u.gpu as f32);
-                    let gpu_memory_used = memory.as_ref().map(|m| m.used);
-                    let gpu_memory_total = memory.as_ref().map(|m| m.total);
+                    // gfxinfo returns 0 for unsupported/unavailable stats
+                    let gpu_usage = {
+                        let load = info.load_pct();
+                        if load > 0 { Some(load as f32) } else { None }
+                    };
+                    let gpu_memory_used = {
+                        let used = info.used_vram();
+                        if used > 0 { Some(used) } else { None }
+                    };
+                    let gpu_memory_total = {
+                        let total = info.total_vram();
+                        if total > 0 { Some(total) } else { None }
+                    };
 
                     (gpu_usage, gpu_memory_used, gpu_memory_total)
                 }
-                Err(_) => (None, None, None),
+                Err(_) => {
+                    // GPU detection failed (no GPU or drivers not available)
+                    (None, None, None)
+                }
             }
-        } else {
-            (None, None, None)
         };
 
         #[cfg(not(feature = "gpu"))]
