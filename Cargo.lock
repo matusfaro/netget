@@ -1670,6 +1670,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "55248b47b0caf0546f7988906588779981c43bb1bc9d0c44087278f80cdb44ba"
 
 [[package]]
+name = "bcder"
+version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f7c42c9913f68cf9390a225e81ad56a5c515347287eb98baa710090ca1de86d"
+dependencies = [
+ "bytes 1.10.1",
+ "smallvec",
+]
+
+[[package]]
 name = "bcrypt-pbkdf"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8757,26 +8767,33 @@ dependencies = [
 
 [[package]]
 name = "pgwire"
-version = "0.27.0"
+version = "0.35.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8e3b217978f9e224cfd5e2b272064067e793a39744030e49657c699752473c8"
+checksum = "8af67f4c689d97c91fb95132942f1e05eadc765448e9ffcc16e792783286d99d"
 dependencies = [
  "async-trait",
  "aws-lc-rs",
+ "base64 0.22.1",
  "bytes 1.10.1",
  "chrono",
  "derive-new",
  "futures",
  "hex",
  "lazy-regex",
- "md5 0.7.0",
+ "md5 0.8.0",
  "postgres-types",
- "rand 0.8.5",
+ "rand 0.9.2",
  "rust_decimal",
+ "rustls-pki-types",
+ "ryu",
+ "serde",
+ "serde_json",
+ "stringprep",
  "thiserror 2.0.17",
  "tokio 1.48.0",
  "tokio-rustls 0.26.4",
  "tokio-util",
+ "x509-certificate",
 ]
 
 [[package]]
@@ -9247,6 +9264,8 @@ dependencies = [
  "chrono",
  "fallible-iterator 0.2.0",
  "postgres-protocol",
+ "serde_core",
+ "serde_json",
 ]
 
 [[package]]
@@ -15992,6 +16011,25 @@ dependencies = [
  "const-oid 0.9.6",
  "der 0.7.10",
  "spki 0.7.3",
+]
+
+[[package]]
+name = "x509-certificate"
+version = "0.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca9eb9a0c822c67129d5b8fcc2806c6bc4f50496b420825069a440669bcfbf7f"
+dependencies = [
+ "bcder",
+ "bytes 1.10.1",
+ "chrono",
+ "der 0.7.10",
+ "hex",
+ "pem 3.0.6",
+ "ring 0.17.14",
+ "signature 2.2.0",
+ "spki 0.7.3",
+ "thiserror 2.0.17",
+ "zeroize",
 ]
 
 [[package]]

@@ -465,7 +465,7 @@ opensrv-mysql = { version = "0.7", optional = true }
 ipp = { version = "5.3", optional = true }
 
 # PostgreSQL server
-pgwire = { version = "0.27", optional = true }
+pgwire = { version = "0.35", optional = true }
 
 # Redis server (RESP protocol)
 redis-protocol = { version = "6.0", optional = true }
