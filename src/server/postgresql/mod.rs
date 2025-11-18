@@ -144,6 +144,11 @@ impl PostgresqlServer {
     }
 }
 
+/// Simple startup handler for PostgreSQL
+struct PostgresqlStartupHandler;
+
+impl NoopStartupHandler for PostgresqlStartupHandler {}
+
 /// Factory for creating PostgreSQL handlers
 struct PostgresqlHandlerFactory {
     connection_id: ConnectionId,
@@ -155,7 +160,7 @@ struct PostgresqlHandlerFactory {
 }
 
 impl PgWireHandlerFactory for PostgresqlHandlerFactory {
-    type StartupHandler = NoopStartupHandler;
+    type StartupHandler = PostgresqlStartupHandler;
     type SimpleQueryHandler = PostgresqlHandler;
     type ExtendedQueryHandler = PostgresqlHandler;
     type CopyHandler = NoopCopyHandler;
@@ -194,7 +199,7 @@ impl PgWireHandlerFactory for PostgresqlHandlerFactory {
     }
 
     fn startup_handler(&self) -> Arc<Self::StartupHandler> {
-        Arc::new(NoopStartupHandler)
+        Arc::new(PostgresqlStartupHandler)
     }
 
     fn copy_handler(&self) -> Arc<Self::CopyHandler> {
