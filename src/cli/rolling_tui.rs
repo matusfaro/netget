@@ -1228,6 +1228,7 @@ async fn handle_key_event(
                         servers: app.servers.clone(),
                         clients: app.clients.clone(),
                         connections: app.connections.clone(),
+                        tasks: app.tasks.clone(),
                         expand_all: app.expand_all_connections,
                         conversations: app.conversations.clone(),
                     });
@@ -1847,6 +1848,7 @@ fn update_slash_suggestions_and_render(
                 servers: app.servers.clone(),
                 clients: app.clients.clone(),
                 connections: app.connections.clone(),
+                tasks: app.tasks.clone(),
                 expand_all: app.expand_all_connections,
                 conversations: app.conversations.clone(),
             });
@@ -1927,12 +1929,55 @@ async fn update_ui_from_state(app: &mut App, state: &AppState, footer: &mut Stic
     // Fetch active conversations from state
     app.conversations = state.get_active_conversations().await;
 
+    // Fetch scheduled tasks from state
+    use crate::ui::app::TaskDisplayInfo;
+    let all_tasks = state.get_all_tasks().await;
+    app.tasks = all_tasks
+        .iter()
+        .map(|t| {
+            let scope = match &t.scope {
+                crate::state::task::TaskScope::Global => "Global".to_string(),
+                crate::state::task::TaskScope::Server(sid) => format!("#{}", sid.as_u32()),
+                crate::state::task::TaskScope::Connection(sid, cid) => {
+                    format!("#{}:{}", sid.as_u32(), cid)
+                }
+                crate::state::task::TaskScope::Client(cid) => format!("Client #{}", cid.as_u32()),
+            };
+            let task_type = match &t.task_type {
+                crate::state::task::TaskType::OneShot { delay_secs } => {
+                    format!("OneShot({}s)", delay_secs)
+                }
+                crate::state::task::TaskType::Recurring {
+                    interval_secs,
+                    executions_count,
+                    ..
+                } => {
+                    format!("Recurring({}s, {} runs)", interval_secs, executions_count)
+                }
+            };
+            let status = match &t.status {
+                crate::state::task::TaskStatus::Scheduled => "Scheduled".to_string(),
+                crate::state::task::TaskStatus::Executing => "Executing".to_string(),
+                crate::state::task::TaskStatus::Completed => "Completed".to_string(),
+                crate::state::task::TaskStatus::Failed(err) => format!("Failed: {}", err),
+            };
+            TaskDisplayInfo {
+                id: format!("T{}", t.id.as_u64()),
+                name: t.name.clone(),
+                scope,
+                status,
+                task_type,
+            }
+        })
+        .collect();
+
     // Update footer content (this recalculates scroll region)
     if app.slash_suggestions.is_empty() {
         footer.set_content(FooterContent::Normal {
             servers: app.servers.clone(),
             clients: app.clients.clone(),
             connections: app.connections.clone(),
+            tasks: app.tasks.clone(),
             expand_all: app.expand_all_connections,
             conversations: app.conversations.clone(),
         });
