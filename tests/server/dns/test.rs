@@ -115,22 +115,25 @@ async fn test_dns_multiple_records() -> E2EResult<()> {
         .with_log_level("debug")
         .with_mock(|mock| {
             mock
-                // Mock 1: Server startup (user command)
-                .on_instruction_containing("listen on port")
-                .and_instruction_containing("dns")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "DNS",
-                        "instruction": "For example.com A records return 1.2.3.4. For mail.example.com A records return 5.6.7.8"
-                    }
-                ]))
+                // Mock 1: Query for mail.example.com - MUST BE FIRST (most specific, avoids substring match)
+                .on_event("dns_query")
+                .and_event_data_contains("domain", "mail.example.com.")
+                .and_event_data_contains("query_type", "A")
+                .respond_with_actions_from_event(|event_data| {
+                    let query_id = event_data["query_id"].as_u64().unwrap_or(0);
+                    serde_json::json!([{
+                        "type": "send_dns_a_response",
+                        "query_id": query_id,
+                        "domain": "mail.example.com",
+                        "ip": "5.6.7.8",
+                        "ttl": 300
+                    }])
+                })
                 .expect_calls(1)
                 .and()
-                // Mock 2: Query for example.com - DYNAMIC RESPONSE
+                // Mock 2: Query for example.com - MUST BE SECOND (less specific)
                 .on_event("dns_query")
-                .and_event_data_contains("domain", "example.com")
+                .and_event_data_contains("domain", "example.com.")
                 .and_event_data_contains("query_type", "A")
                 .respond_with_actions_from_event(|event_data| {
                     let query_id = event_data["query_id"].as_u64().unwrap_or(0);
@@ -144,20 +147,17 @@ async fn test_dns_multiple_records() -> E2EResult<()> {
                 })
                 .expect_calls(1)
                 .and()
-                // Mock 3: Query for mail.example.com - DYNAMIC RESPONSE
-                .on_event("dns_query")
-                .and_event_data_contains("domain", "mail.example.com")
-                .and_event_data_contains("query_type", "A")
-                .respond_with_actions_from_event(|event_data| {
-                    let query_id = event_data["query_id"].as_u64().unwrap_or(0);
-                    serde_json::json!([{
-                        "type": "send_dns_a_response",
-                        "query_id": query_id,
-                        "domain": "mail.example.com",
-                        "ip": "5.6.7.8",
-                        "ttl": 300
-                    }])
-                })
+                // Mock 3: Server startup (user command) - MUST BE LAST (less specific)
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("dns")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "DNS",
+                        "instruction": "For example.com A records return 1.2.3.4. For mail.example.com A records return 5.6.7.8"
+                    }
+                ]))
                 .expect_calls(1)
                 .and()
         });
