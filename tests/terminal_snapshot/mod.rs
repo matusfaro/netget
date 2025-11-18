@@ -5,7 +5,6 @@
 
 use nix::libc;
 use std::io::{Read, Write};
-use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd};
 use std::process::Child;
 use std::time::Duration;
 use vt100::Parser;
@@ -24,34 +23,18 @@ fn spawn_netget() -> (pty_process::blocking::Pty, Child) {
 
 /// Helper to spawn NetGet with arguments in a PTY
 fn spawn_netget_with_args(args: &[&str]) -> (pty_process::blocking::Pty, Child) {
-    use std::os::unix::io::OwnedFd;
-
     // Use cargo's env variable to get the actual binary path
     let binary_path = env!("CARGO_BIN_EXE_netget");
 
-    // Create a PTY using posix_openpt
-    use nix::pty::{posix_openpt, grantpt, unlockpt, PtyMaster};
-    use nix::fcntl::{OFlag, open};
-    use nix::sys::stat::Mode;
+    // Create a PTY using openpty (simpler than posix_openpt + manual slave open)
+    use nix::pty::openpty;
 
-    // Open a new PTY master
-    let master_fd = posix_openpt(OFlag::O_RDWR).expect("Failed to open PTY master");
-    grantpt(&master_fd).expect("Failed to grant PTY");
-    unlockpt(&master_fd).expect("Failed to unlock PTY");
+    // Open a new PTY (returns both master and slave as OwnedFds)
+    let pty_result = openpty(None, None).expect("Failed to open PTY");
 
-    // Get the slave path
-    let slave_name = unsafe { nix::pty::ptsname(&master_fd) }.expect("Failed to get PTS name");
-
-    // Open the slave
-    let slave_fd = open(
-        std::path::Path::new(&slave_name),
-        OFlag::O_RDWR,
-        Mode::empty()
-    ).expect("Failed to open PTS");
-
-    // Convert to OwnedFd for pty-process
-    let master_owned = unsafe { OwnedFd::from_raw_fd(master_fd.into_raw_fd()) };
-    let slave_owned = unsafe { OwnedFd::from_raw_fd(slave_fd) };
+    // openpty already returns OwnedFds, use them directly
+    let master_owned = pty_result.master;
+    let slave_owned = pty_result.slave;
 
     // Create PTY from file descriptor
     let pty = unsafe { pty_process::blocking::Pty::from_fd(master_owned) };
@@ -62,7 +45,7 @@ fn spawn_netget_with_args(args: &[&str]) -> (pty_process::blocking::Pty, Child) 
     // now handles this gracefully by defaulting to 80x24 in rolling_tui.rs
     let mut cmd = pty_process::blocking::Command::new(binary_path);
     for arg in args {
-        cmd.arg(arg);
+        cmd = cmd.arg(arg);
     }
     let child = cmd.spawn(pts).expect("Failed to spawn netget in PTY");
 
@@ -797,34 +780,20 @@ mod tests {
     fn test_pre_existing_content_preserved() {
         use nix::libc::TIOCSWINSZ;
         use nix::pty::Winsize;
-        use std::os::unix::io::{AsRawFd, OwnedFd};
+        use std::os::unix::io::AsRawFd;
 
         // Use a taller terminal (100 lines) to fit welcome message + pre-existing content
         const TALL_TERMINAL_HEIGHT: u16 = 100;
 
-        // Create PTY using posix_openpt
-        use nix::pty::{posix_openpt, grantpt, unlockpt};
-        use nix::fcntl::{OFlag, open};
-        use nix::sys::stat::Mode;
+        // Create PTY using openpty (simpler than posix_openpt + manual slave open)
+        use nix::pty::openpty;
 
-        // Open a new PTY master
-        let master_fd = posix_openpt(OFlag::O_RDWR).expect("Failed to open PTY master");
-        grantpt(&master_fd).expect("Failed to grant PTY");
-        unlockpt(&master_fd).expect("Failed to unlock PTY");
+        // Open a new PTY (returns both master and slave as OwnedFds)
+        let pty_result = openpty(None, None).expect("Failed to open PTY");
 
-        // Get the slave path
-        let slave_name = unsafe { nix::pty::ptsname(&master_fd) }.expect("Failed to get PTS name");
-
-        // Open the slave
-        let slave_fd = open(
-            std::path::Path::new(&slave_name),
-            OFlag::O_RDWR,
-            Mode::empty()
-        ).expect("Failed to open PTS");
-
-        // Convert to OwnedFd for pty-process
-        let master_owned = unsafe { OwnedFd::from_raw_fd(master_fd.into_raw_fd()) };
-        let slave_owned = unsafe { OwnedFd::from_raw_fd(slave_fd) };
+        // openpty already returns OwnedFds, use them directly
+        let master_owned = pty_result.master;
+        let slave_owned = pty_result.slave;
 
         // Create PTY from file descriptor
         let mut pty = unsafe { pty_process::blocking::Pty::from_fd(master_owned) };
