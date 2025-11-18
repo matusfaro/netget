@@ -111,6 +111,16 @@ pub async fn call_llm_with_actions(
     // Collect all actions: common + protocol sync + custom
     let mut all_actions = get_network_event_common_actions();
 
+    // Add provide_feedback action only if server has feedback_instructions configured
+    let has_feedback_instructions = state
+        .with_server_mut(server_id, |server| server.feedback_instructions.is_some())
+        .await
+        .unwrap_or(false);
+
+    if has_feedback_instructions {
+        all_actions.push(crate::llm::actions::common::provide_feedback_action());
+    }
+
     // Add protocol sync actions if provided
     if let Some(proto) = protocol {
         all_actions.extend(proto.get_sync_actions());
@@ -304,6 +314,16 @@ pub async fn call_llm(
     // Collect all actions: common + event-specific actions
     let mut all_actions = get_network_event_common_actions();
 
+    // Add provide_feedback action only if server has feedback_instructions configured
+    let has_feedback_instructions = state
+        .with_server_mut(server_id, |server| server.feedback_instructions.is_some())
+        .await
+        .unwrap_or(false);
+
+    if has_feedback_instructions {
+        all_actions.push(crate::llm::actions::common::provide_feedback_action());
+    }
+
     // Add event-specific actions (these are the actions available for this event type)
     all_actions.extend(event.event_type.actions.clone());
 
@@ -398,7 +418,7 @@ pub struct ClientLlmResult {
 pub async fn call_llm_for_client(
     llm_client: &OllamaClient,
     state: &AppState,
-    _client_id: String,
+    client_id: String,
     instruction: &str,
     memory: &str,
     event: Option<&Event>,
@@ -406,7 +426,20 @@ pub async fn call_llm_for_client(
     status_tx: &tokio::sync::mpsc::UnboundedSender<String>,
 ) -> Result<ClientLlmResult> {
     // Get client actions
-    let all_actions = protocol.get_async_actions(state);
+    let mut all_actions = protocol.get_async_actions(state);
+
+    // Add provide_feedback action only if client has feedback_instructions configured
+    // Parse client_id from string format "client-123"
+    if let Some(cid) = crate::state::ClientId::from_string(&client_id) {
+        let has_feedback_instructions = state
+            .with_client_mut(cid, |client| client.feedback_instructions.is_some())
+            .await
+            .unwrap_or(false);
+
+        if has_feedback_instructions {
+            all_actions.push(crate::llm::actions::common::provide_feedback_action());
+        }
+    }
 
     // Build simple prompt for client
     let system_prompt =

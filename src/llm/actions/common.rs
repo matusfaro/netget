@@ -888,7 +888,8 @@ pub fn get_network_event_common_actions() -> Vec<ActionDefinition> {
         show_message_action(),
         append_to_log_action(),
         // === Feedback/Learning ===
-        provide_feedback_action(),
+        // Note: provide_feedback is added conditionally in action_helper.rs
+        // only when feedback_instructions is set on the server/client
     ]
 }
 
