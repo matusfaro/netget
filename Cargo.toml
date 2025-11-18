@@ -6,6 +6,9 @@ edition = "2021"
 [features]
 default = ["all-protocols"]
 
+# Terminal snapshot testing (PTY-based TUI tests)
+terminal-snapshot = []
+
 # Android Termux: Pure-Rust protocols compatible with Android/Termux environment
 # Excludes: BLE (needs BlueZ), NFC (needs PC/SC), USB (needs USB/IP), packet capture (needs libpcap/root), STUN/TURN (old nix crate), WireGuard/OpenVPN (not gated for Android)
 # Uses vendored OpenSSL to compile from source (no system OpenSSL needed)

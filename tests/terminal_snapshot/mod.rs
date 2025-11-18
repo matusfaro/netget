@@ -5,6 +5,7 @@
 
 use nix::libc;
 use std::io::{Read, Write};
+use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd};
 use std::process::Child;
 use std::time::Duration;
 use vt100::Parser;
@@ -23,14 +24,38 @@ fn spawn_netget() -> (pty_process::blocking::Pty, Child) {
 
 /// Helper to spawn NetGet with arguments in a PTY
 fn spawn_netget_with_args(args: &[&str]) -> (pty_process::blocking::Pty, Child) {
+    use std::os::unix::io::OwnedFd;
+
     // Use cargo's env variable to get the actual binary path
     let binary_path = env!("CARGO_BIN_EXE_netget");
 
-    // Create a PTY
-    let pty = pty_process::blocking::Pty::new().expect("Failed to create PTY");
+    // Create a PTY using posix_openpt
+    use nix::pty::{posix_openpt, grantpt, unlockpt, PtyMaster};
+    use nix::fcntl::{OFlag, open};
+    use nix::sys::stat::Mode;
 
-    // Get the PTS (pseudo-terminal slave)
-    let pts = pty.pts().expect("Failed to get PTS");
+    // Open a new PTY master
+    let master_fd = posix_openpt(OFlag::O_RDWR).expect("Failed to open PTY master");
+    grantpt(&master_fd).expect("Failed to grant PTY");
+    unlockpt(&master_fd).expect("Failed to unlock PTY");
+
+    // Get the slave path
+    let slave_name = unsafe { nix::pty::ptsname(&master_fd) }.expect("Failed to get PTS name");
+
+    // Open the slave
+    let slave_fd = open(
+        std::path::Path::new(&slave_name),
+        OFlag::O_RDWR,
+        Mode::empty()
+    ).expect("Failed to open PTS");
+
+    // Convert to OwnedFd for pty-process
+    let master_owned = unsafe { OwnedFd::from_raw_fd(master_fd.into_raw_fd()) };
+    let slave_owned = unsafe { OwnedFd::from_raw_fd(slave_fd) };
+
+    // Create PTY from file descriptor
+    let pty = unsafe { pty_process::blocking::Pty::from_fd(master_owned) };
+    let pts = unsafe { pty_process::blocking::Pts::from_fd(slave_owned) };
 
     // Spawn NetGet with the PTY
     // Note: The PTY size detection may fail in test environments, but NetGet
@@ -39,7 +64,7 @@ fn spawn_netget_with_args(args: &[&str]) -> (pty_process::blocking::Pty, Child) 
     for arg in args {
         cmd.arg(arg);
     }
-    let child = cmd.spawn(&pts).expect("Failed to spawn netget in PTY");
+    let child = cmd.spawn(pts).expect("Failed to spawn netget in PTY");
 
     (pty, child)
 }
@@ -772,14 +797,38 @@ mod tests {
     fn test_pre_existing_content_preserved() {
         use nix::libc::TIOCSWINSZ;
         use nix::pty::Winsize;
-        use std::os::unix::io::AsRawFd;
+        use std::os::unix::io::{AsRawFd, OwnedFd};
 
         // Use a taller terminal (100 lines) to fit welcome message + pre-existing content
         const TALL_TERMINAL_HEIGHT: u16 = 100;
 
-        // Create PTY with custom size
-        let mut pty = pty_process::blocking::Pty::new().expect("Failed to create PTY");
-        let pts = pty.pts().expect("Failed to get PTS");
+        // Create PTY using posix_openpt
+        use nix::pty::{posix_openpt, grantpt, unlockpt};
+        use nix::fcntl::{OFlag, open};
+        use nix::sys::stat::Mode;
+
+        // Open a new PTY master
+        let master_fd = posix_openpt(OFlag::O_RDWR).expect("Failed to open PTY master");
+        grantpt(&master_fd).expect("Failed to grant PTY");
+        unlockpt(&master_fd).expect("Failed to unlock PTY");
+
+        // Get the slave path
+        let slave_name = unsafe { nix::pty::ptsname(&master_fd) }.expect("Failed to get PTS name");
+
+        // Open the slave
+        let slave_fd = open(
+            std::path::Path::new(&slave_name),
+            OFlag::O_RDWR,
+            Mode::empty()
+        ).expect("Failed to open PTS");
+
+        // Convert to OwnedFd for pty-process
+        let master_owned = unsafe { OwnedFd::from_raw_fd(master_fd.into_raw_fd()) };
+        let slave_owned = unsafe { OwnedFd::from_raw_fd(slave_fd) };
+
+        // Create PTY from file descriptor
+        let mut pty = unsafe { pty_process::blocking::Pty::from_fd(master_owned) };
+        let pts = unsafe { pty_process::blocking::Pts::from_fd(slave_owned) };
 
         // Set PTY window size to 80x100 so terminal::size() can detect it correctly
         let winsize = Winsize {
@@ -807,7 +856,7 @@ mod tests {
         // Now spawn netget in the PTY that already has content
         let binary_path = env!("CARGO_BIN_EXE_netget");
         let mut cmd = pty_process::blocking::Command::new(binary_path);
-        let _child = cmd.spawn(&pts).expect("Failed to spawn netget in PTY");
+        let _child = cmd.spawn(pts).expect("Failed to spawn netget in PTY");
 
         // Give TUI time to start and render
         std::thread::sleep(Duration::from_millis(2000));
@@ -843,6 +892,90 @@ mod tests {
         assert!(screen.contains("Input:"), "Expected footer to be present");
 
         snapshot_util::assert_snapshot("pre_existing_content", SNAPSHOT_DIR, &screen);
+
+        send_ctrl(&mut pty, 'c');
+    }
+
+    #[test]
+    fn test_usage_command_display() {
+        let (mut pty, _child) = spawn_netget();
+
+        // Wait for initial render
+        std::thread::sleep(Duration::from_millis(1000));
+        let _ = capture_screen(&mut pty);
+
+        // Send /usage command to toggle usage stats
+        send_input(&mut pty, "/usage");
+        // Press Enter to submit (PTY uses \r for Enter)
+        pty.write_all(b"\r").expect("Failed to send Enter");
+        std::thread::sleep(Duration::from_millis(1500)); // Wait for stats to update and render
+
+        // Capture screen after /usage command
+        let screen = capture_screen(&mut pty);
+
+        println!("=== After /usage Command ===");
+        println!("{}", screen);
+        println!("=============================");
+
+        // Verify we see the usage stats section
+        // The stats should show CPU%, Memory%, and LLM token counts
+        let has_cpu_stats = screen.contains("CPU:") || screen.contains("cpu");
+        let has_mem_stats = screen.contains("Mem:") || screen.contains("memory");
+        let has_llm_stats = screen.contains("LLM:") || screen.contains("calls");
+
+        // Note: Stats may be zero initially, but headers should be present
+        assert!(
+            has_cpu_stats || has_mem_stats || has_llm_stats,
+            "Expected to see usage stats (CPU, Memory, or LLM)"
+        );
+
+        // Verify the confirmation message
+        assert!(
+            screen.contains("Usage stats section enabled")
+                || screen.contains("usage panel is now visible")
+                || screen.contains("Usage"),
+            "Expected to see usage stats confirmation message"
+        );
+
+        snapshot_util::assert_snapshot("usage_command_enabled", SNAPSHOT_DIR, &screen);
+
+        send_ctrl(&mut pty, 'c');
+    }
+
+    #[test]
+    fn test_usage_command_toggle_off() {
+        let (mut pty, _child) = spawn_netget();
+
+        // Wait for initial render
+        std::thread::sleep(Duration::from_millis(1000));
+        let _ = capture_screen(&mut pty);
+
+        // First, enable usage stats
+        send_input(&mut pty, "/usage");
+        pty.write_all(b"\r").expect("Failed to send Enter");
+        std::thread::sleep(Duration::from_millis(1000));
+        let _ = capture_screen(&mut pty);
+
+        // Now toggle it off again
+        send_input(&mut pty, "/usage");
+        pty.write_all(b"\r").expect("Failed to send Enter");
+        std::thread::sleep(Duration::from_millis(1000));
+
+        // Capture screen after toggling off
+        let screen = capture_screen(&mut pty);
+
+        println!("=== After /usage Toggle Off ===");
+        println!("{}", screen);
+        println!("=================================");
+
+        // Verify the disabled confirmation message
+        assert!(
+            screen.contains("Usage stats section disabled")
+                || screen.contains("disabled"),
+            "Expected to see usage stats disabled message"
+        );
+
+        snapshot_util::assert_snapshot("usage_command_disabled", SNAPSHOT_DIR, &screen);
 
         send_ctrl(&mut pty, 'c');
     }
