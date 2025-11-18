@@ -769,11 +769,16 @@ async fn execute_single_task(
         task.instruction.clone()
     };
 
+    // Get rate limiter for scheduled tasks (discards if rate limited)
+    let rate_limiter = state.get_rate_limiter().await;
+
     // Create conversation handler with tracking
     let mut conversation = crate::llm::ConversationHandler::new(
         prompt.clone(),
         std::sync::Arc::new(llm_client.clone()),
         model.clone(),
+        rate_limiter,
+        crate::llm::RequestSource::Network, // Scheduled tasks are discarded if rate limited
     )
     .with_status_tx(status_tx.clone())
     .with_tracking(state.clone(), conversation_source, truncated_instruction);

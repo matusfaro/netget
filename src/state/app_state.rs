@@ -259,6 +259,8 @@ struct AppStateInner {
     ollama_model: Option<String>,
     /// Configured LLM client (with mock config, lock settings, etc.)
     llm_client: Option<crate::llm::OllamaClient>,
+    /// Rate limiter for LLM calls (concurrency + token throttling)
+    rate_limiter: crate::llm::RateLimiter,
     /// Available scripting environments (Python, Node.js)
     scripting_env: crate::scripting::ScriptingEnvironment,
     /// Currently selected scripting mode (LLM, Python, or JavaScript)
@@ -318,6 +320,9 @@ impl AppState {
         // Generate unique instance ID: process_id + timestamp + random bytes
         let instance_id = Self::generate_instance_id();
 
+        // Create default rate limiter (will be configured from CLI args later)
+        let rate_limiter = crate::llm::RateLimiter::new(crate::llm::RateLimiterConfig::default());
+
         Self {
             inner: Arc::new(RwLock::new(AppStateInner {
                 mode: Mode::Idle,
@@ -331,6 +336,7 @@ impl AppState {
                 next_client_id: 1,
                 ollama_model: None,
                 llm_client: None,
+                rate_limiter,
                 scripting_env,
                 selected_scripting_mode,
                 event_handler_mode,
@@ -658,6 +664,17 @@ impl AppState {
     /// Get the configured LLM client
     pub async fn get_llm_client(&self) -> Option<crate::llm::OllamaClient> {
         self.inner.read().await.llm_client.clone()
+    }
+
+    /// Get the rate limiter
+    pub async fn get_rate_limiter(&self) -> crate::llm::RateLimiter {
+        self.inner.read().await.rate_limiter.clone()
+    }
+
+    /// Configure the rate limiter
+    pub async fn configure_rate_limiter(&self, config: crate::llm::RateLimiterConfig) -> anyhow::Result<()> {
+        let rate_limiter = self.inner.read().await.rate_limiter.clone();
+        rate_limiter.update_config(config).await
     }
 
     /// Get the unique instance ID for this NetGet process

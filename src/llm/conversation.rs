@@ -9,6 +9,7 @@
 use crate::llm::actions::{execute_tool, ActionDefinition, ActionResponse, ToolAction, ToolResult};
 use crate::llm::conversation_state::ConversationState;
 use crate::llm::ollama_client::{Message, OllamaClient};
+use crate::llm::{RateLimiter, RequestSource};
 use crate::state::app_state::{AppState, ConversationSource, WebApprovalRequest, WebSearchMode};
 use anyhow::{Context, Result};
 use std::sync::{Arc, Mutex};
@@ -93,11 +94,23 @@ pub struct ConversationHandler {
 
     /// Whether this conversation has been registered (to avoid duplicate registration)
     registered: bool,
+
+    /// Rate limiter for controlling LLM call frequency and token usage
+    rate_limiter: RateLimiter,
+
+    /// Source of the request (User or Network) for rate limiting behavior
+    request_source: RequestSource,
 }
 
 impl ConversationHandler {
     /// Create a new conversation handler with a system message
-    pub fn new(system_message: String, client: Arc<OllamaClient>, model: String) -> Self {
+    pub fn new(
+        system_message: String,
+        client: Arc<OllamaClient>,
+        model: String,
+        rate_limiter: RateLimiter,
+        request_source: RequestSource,
+    ) -> Self {
         let messages = vec![Message::system(system_message)];
 
         // Generate unique conversation ID using timestamp and random bytes
@@ -124,6 +137,8 @@ impl ConversationHandler {
             source: None,
             details: None,
             registered: false,
+            rate_limiter,
+            request_source,
         }
     }
 
@@ -642,17 +657,37 @@ impl ConversationHandler {
             let preview_start = full_prompt.floor_char_boundary(preview_bytes);
             eprintln!("🔍 DEBUG: Last 500 chars of prompt: {}", &full_prompt[preview_start..]);
 
+            // Acquire rate limiter permit (waits for user requests, discards network requests if limited)
+            let permit = self
+                .rate_limiter
+                .acquire_permit(self.request_source)
+                .await
+                .context("Rate limit exceeded")?;
+
             // Call generate API with concatenated prompt and JSON format
-            let response_text = self
+            let generate_response = self
                 .client
                 .generate_with_format(&self.model, &full_prompt, Some(serde_json::json!("json")))
                 .await
                 .context("Generate API call failed")?;
 
+            // Record token usage
+            permit
+                .record_usage(
+                    generate_response.token_usage.prompt_tokens,
+                    generate_response.token_usage.completion_tokens,
+                )
+                .await;
+
+            let response_text = generate_response.text;
+
             info!(
-                "LLM response received (attempt {}): {} chars",
+                "LLM response received (attempt {}): {} chars, {}i/{}o/{}t tokens",
                 attempt,
-                response_text.len()
+                response_text.len(),
+                generate_response.token_usage.prompt_tokens,
+                generate_response.token_usage.completion_tokens,
+                generate_response.token_usage.total_tokens
             );
 
             // Extract reasoning if present (before normalization to preserve formatting)
