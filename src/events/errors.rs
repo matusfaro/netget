@@ -71,12 +71,13 @@ impl std::error::Error for ActionExecutionError {}
 impl ActionExecutionError {
     /// Check if this error is retryable
     pub fn is_retryable(&self) -> bool {
-        matches!(
-            self,
-            Self::PortConflict { .. }
-                | Self::SqlError { .. }
-                    if cfg!(feature = "sqlite")
-        )
+        #[allow(clippy::match_like_matches_macro)]
+        match self {
+            Self::PortConflict { .. } => true,
+            #[cfg(feature = "sqlite")]
+            Self::SqlError { .. } => true,
+            _ => false,
+        }
     }
 
     /// Build a correction message for the LLM

@@ -329,6 +329,8 @@ pub async fn call_llm(
                     actions,
                     state,
                     Some(protocol),
+                    Some(server_id),
+                    None, // client_id
                 )
                 .await?;
 
@@ -650,6 +652,9 @@ pub async fn call_llm_for_feedback(
         feedback_entries.len()
     );
 
+    // Get rate limiter for feedback processing (user-initiated, should not be discarded)
+    let rate_limiter = state.get_rate_limiter().await;
+
     // Create conversation handler with tracking
     let conversation_source = if let Some(sid) = server_id {
         crate::state::app_state::ConversationSource::Network {
@@ -667,6 +672,8 @@ pub async fn call_llm_for_feedback(
         system_prompt,
         std::sync::Arc::new(llm_client.clone()),
         model,
+        rate_limiter,
+        crate::llm::RequestSource::User, // Feedback is user-initiated (via debounce timer)
     )
     .with_status_tx(status_tx.clone())
     .with_tracking(

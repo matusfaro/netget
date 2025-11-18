@@ -143,6 +143,7 @@ async fn execute_startup_action(
                 None, // startup_params
                 None, // event_handlers
                 None, // scheduled_tasks
+                None, // feedback_instructions
             )
             .await
             .context("Failed to start server")?;
