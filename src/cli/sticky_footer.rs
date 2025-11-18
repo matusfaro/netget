@@ -589,6 +589,7 @@ impl StickyFooter {
                 servers,
                 clients,
                 connections,
+                tasks,
                 expand_all,
                 conversations,
             } => self.calculate_normal_content_lines(

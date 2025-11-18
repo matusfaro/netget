@@ -57,6 +57,12 @@ pub async fn run() -> Result<()> {
         let state = AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock, ollama_url);
         debug!("AppState created");
 
+        // Configure rate limiter from CLI args
+        debug!("Configuring rate limiter...");
+        let rate_limiter_config = args.build_rate_limiter_config();
+        state.configure_rate_limiter(rate_limiter_config).await?;
+        debug!("Rate limiter configured");
+
         // Determine scripting mode with priority: CLI arg > saved setting > auto-detected
         debug!("Parsing scripting mode...");
         let mode_to_set = if let Some(mode) = args.parse_scripting_mode()? {
