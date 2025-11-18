@@ -500,6 +500,169 @@ Understand what the user wants and respond with the appropriate actions to make 
         .await
     }
 
+    /// Build system prompt for feedback processing
+    ///
+    /// This builds the SYSTEM prompt for processing accumulated feedback.
+    /// The prompt includes feedback instructions, current instance state, and available adjustment actions.
+    ///
+    /// # Arguments
+    /// * `state` - Application state
+    /// * `server_id` - Server ID if processing server feedback
+    /// * `client_id` - Client ID if processing client feedback
+    /// * `feedback_instructions` - Instructions for how to process feedback
+    /// * `current_instruction` - Current instruction of the instance
+    /// * `memory` - Current memory of the instance
+    /// * `feedback_entries` - Accumulated feedback entries
+    /// * `available_actions` - Actions available for adjusting the instance
+    pub async fn build_feedback_system_prompt(
+        state: &AppState,
+        server_id: Option<ServerId>,
+        _client_id: Option<crate::state::ClientId>,
+        feedback_instructions: &str,
+        current_instruction: &str,
+        memory: &str,
+        feedback_entries: &[serde_json::Value],
+        available_actions: Vec<ActionDefinition>,
+    ) -> String {
+        // Get selected scripting mode
+        let selected_mode = state.get_selected_scripting_mode().await;
+        let has_scripting = selected_mode != crate::state::app_state::ScriptingMode::Off;
+
+        // Filter actions based on scripting mode
+        let filtered_actions =
+            Self::filter_actions_by_scripting_mode(available_actions, has_scripting);
+
+        // Get servers for context
+        let servers = state.get_all_servers().await;
+        let include_disabled = state.get_include_disabled_protocols().await;
+
+        // Split actions into tools and regular actions
+        let (tool_actions_raw, regular_actions_raw): (Vec<_>, Vec<_>) =
+            filtered_actions.iter().partition(|a| a.is_tool());
+
+        // Convert actions to JSON for templates
+        let tool_actions: Vec<serde_json::Value> = tool_actions_raw
+            .iter()
+            .map(|a| {
+                let mut params_map = serde_json::Map::new();
+                for param in &a.parameters {
+                    params_map.insert(
+                        param.name.clone(),
+                        serde_json::json!({
+                            "type": param.type_hint,
+                            "description": param.description,
+                            "required": param.required
+                        }),
+                    );
+                }
+
+                serde_json::json!({
+                    "name": a.name,
+                    "description": a.description,
+                    "is_tool": a.is_tool(),
+                    "parameters": params_map,
+                    "example": a.example.to_string()
+                })
+            })
+            .collect();
+
+        let regular_actions: Vec<serde_json::Value> = regular_actions_raw
+            .iter()
+            .map(|a| {
+                let mut params_map = serde_json::Map::new();
+                for param in &a.parameters {
+                    params_map.insert(
+                        param.name.clone(),
+                        serde_json::json!({
+                            "type": param.type_hint,
+                            "description": param.description,
+                            "required": param.required
+                        }),
+                    );
+                }
+
+                serde_json::json!({
+                    "name": a.name,
+                    "description": a.description,
+                    "is_tool": a.is_tool(),
+                    "parameters": params_map,
+                    "example": a.example.to_string()
+                })
+            })
+            .collect();
+
+        // Get system capabilities
+        let system_caps = state.get_system_capabilities().await;
+
+        // Convert servers to simple objects for templates
+        let servers_data: Vec<serde_json::Value> = servers
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "id": s.id.as_u32(),
+                    "protocol_name": s.protocol_name,
+                    "port": s.port,
+                    "status": s.status.to_string(),
+                    "memory": s.memory
+                })
+            })
+            .collect();
+
+        let active_server_data = server_id.and_then(|id| {
+            servers.iter().find(|s| s.id == id).map(|s| {
+                serde_json::json!({
+                    "id": s.id.as_u32(),
+                    "protocol_name": s.protocol_name,
+                    "port": s.port,
+                    "status": s.status.to_string(),
+                    "memory": s.memory,
+                    "instruction": s.instruction
+                })
+            })
+        });
+
+        // Convert feedback entries to pretty JSON strings for template
+        let feedback_strings: Vec<String> = feedback_entries
+            .iter()
+            .map(|entry| serde_json::to_string_pretty(entry).unwrap_or_else(|_| entry.to_string()))
+            .collect();
+
+        // Determine instance type (server or client)
+        let instance_type = if server_id.is_some() {
+            "server"
+        } else {
+            "client"
+        };
+
+        // Build template data
+        let data = TemplateDataBuilder::new()
+            .field("instance_type", instance_type)
+            .field("feedback_instructions", feedback_instructions)
+            .field("current_instruction", current_instruction)
+            .field("memory", memory)
+            .field("feedback_count", feedback_entries.len())
+            .field("feedback_entries", &feedback_strings)
+            .field("tool_actions", &tool_actions)
+            .field("regular_actions", &regular_actions)
+            .field("include_disabled_protocols", include_disabled)
+            .field("scripting_enabled", has_scripting)
+            .field("selected_scripting_mode", selected_mode.as_str())
+            .field("mode", state.get_mode().await.as_str())
+            .field("servers", &servers_data)
+            .optional_field("active_server", active_server_data)
+            .field("can_bind_privileged_ports", system_caps.can_bind_privileged_ports)
+            .field("has_raw_socket_access", system_caps.has_raw_socket_access)
+            .build();
+
+        // Render template
+        TEMPLATE_ENGINE
+            .render_json("feedback/main", &data)
+            .unwrap_or_else(|e| {
+                tracing::error!("Failed to render feedback template: {}", e);
+                format!("# Error\n\nFailed to render feedback prompt template: {}", e)
+            })
+    }
+
     /// Convert a prompt string to conversation messages
     ///
     /// Splits a prompt into system and user messages suitable for conversation-based API.

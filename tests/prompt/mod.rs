@@ -443,3 +443,200 @@ async fn test_protocol_documentation_prompt() {
         assert!(doc.contains("E2E Testing:"));
     }
 }
+
+#[tokio::test]
+async fn test_feedback_prompt_server() {
+    let state = Arc::new(AppState::new());
+
+    // Set up environment with scripting
+    let scripting_env = netget::scripting::ScriptingEnvironment {
+        python: Some("Python 3.11.0".to_string()),
+        javascript: Some("v20.0.0".to_string()),
+        go: Some("go version go1.21.0".to_string()),
+        perl: Some("perl 5.38.0".to_string()),
+    };
+    state.set_scripting_env(scripting_env).await;
+
+    // Create a test server with feedback instructions
+    let mut server = ServerInstance::new(
+        ServerId::new(1),
+        8080,
+        "HTTP".to_string(),
+        "You are an HTTP server. Respond to GET/POST requests with appropriate status codes.".to_string(),
+    );
+    server.status = ServerStatus::Running;
+    server.memory = "request_count: 15\nerror_count: 3".to_string();
+    server.feedback_instructions = Some(
+        "Monitor error rates and client timeouts. If errors exceed 20%, adjust response strategy."
+            .to_string(),
+    );
+
+    let server_id = state.add_server(server).await;
+    state
+        .update_server_status(server_id, ServerStatus::Running)
+        .await;
+
+    // Create sample feedback entries
+    let feedback_entries = vec![
+        serde_json::json!({
+            "issue": "client_timeout",
+            "details": "Client disconnected after 5s waiting for response",
+            "path": "/api/data",
+            "suggestion": "Increase response speed or add caching"
+        }),
+        serde_json::json!({
+            "issue": "authentication_failed",
+            "username": "guest",
+            "attempts": 3,
+            "suggestion": "Consider rate limiting after multiple failures"
+        }),
+        serde_json::json!({
+            "issue": "slow_response",
+            "path": "/api/search",
+            "response_time_ms": 8500,
+            "suggestion": "Optimize database queries or add pagination"
+        }),
+    ];
+
+    // Get server data for prompt
+    let server = state
+        .with_server_mut(server_id, |s| (s.instruction.clone(), s.memory.clone()))
+        .await
+        .unwrap_or_else(|| ("".to_string(), "".to_string()));
+
+    // Get available actions for feedback processing
+    use netget::llm::actions::get_user_input_common_actions;
+    let selected_mode = state.get_selected_scripting_mode().await;
+    let scripting_env = state.get_scripting_env().await;
+    let available_actions = get_user_input_common_actions(
+        selected_mode,
+        &scripting_env,
+        true, // is_open_server_enabled
+        true, // is_open_client_enabled
+    );
+
+    // Build feedback prompt
+    let system_prompt = PromptBuilder::build_feedback_system_prompt(
+        &state,
+        Some(server_id),
+        None,
+        "Monitor error rates and client timeouts. If errors exceed 20%, adjust response strategy.",
+        &server.0, // current_instruction
+        &server.1, // memory
+        &feedback_entries,
+        available_actions,
+    )
+    .await;
+
+    let prompt = format!(
+        "{}\n\nTrigger: Analyze the accumulated feedback and suggest adjustments.",
+        system_prompt
+    );
+
+    // Assert snapshot
+    snapshot_util::assert_snapshot("feedback_prompt_server", SNAPSHOT_DIR, &prompt);
+
+    // Sanity checks
+    assert!(prompt.contains("server"));
+    assert!(prompt.contains("Server #1"));
+    assert!(prompt.contains("HTTP"));
+    assert!(prompt.contains("Feedback Instructions"));
+    assert!(prompt.contains("Monitor error rates"));
+    assert!(prompt.contains("client_timeout"));
+    assert!(prompt.contains("authentication_failed"));
+    assert!(prompt.contains("slow_response"));
+    assert!(prompt.contains("3 entries"));
+    assert!(prompt.contains("update_instruction") || prompt.contains("Available"));
+}
+
+#[tokio::test]
+async fn test_feedback_prompt_client() {
+    let state = Arc::new(AppState::new());
+
+    // Set up environment
+    let scripting_env = netget::scripting::ScriptingEnvironment {
+        python: Some("Python 3.11.0".to_string()),
+        javascript: Some("v20.0.0".to_string()),
+        go: Some("go version go1.21.0".to_string()),
+        perl: Some("perl 5.38.0".to_string()),
+    };
+    state.set_scripting_env(scripting_env).await;
+
+    use netget::state::client::ClientInstance;
+    use netget::state::ClientId;
+
+    // Create a test client with feedback instructions
+    let mut client = ClientInstance::new(
+        ClientId::new(1),
+        "api.example.com:443".to_string(),
+        "HTTP".to_string(),
+        "Fetch data from /api/endpoint every 5 seconds".to_string(),
+    );
+    client.memory = "fetch_count: 20\ntimeout_count: 5".to_string();
+    client.feedback_instructions = Some(
+        "If timeout rate exceeds 25%, reduce request frequency or add retry logic.".to_string(),
+    );
+
+    let client_id = state.add_client(client).await;
+
+    // Create sample feedback entries
+    let feedback_entries = vec![
+        serde_json::json!({
+            "issue": "timeout",
+            "details": "Request to /api/endpoint timed out after 10s",
+            "suggestion": "Increase timeout or reduce request frequency"
+        }),
+        serde_json::json!({
+            "issue": "rate_limited",
+            "status_code": 429,
+            "retry_after": 60,
+            "suggestion": "Back off when receiving 429 responses"
+        }),
+    ];
+
+    // Get client data
+    let client_data = state
+        .with_client_mut(client_id, |c| (c.instruction.clone(), c.memory.clone()))
+        .await
+        .unwrap_or_else(|| ("".to_string(), "".to_string()));
+
+    // Get available actions
+    use netget::llm::actions::get_user_input_common_actions;
+    let selected_mode = state.get_selected_scripting_mode().await;
+    let scripting_env = state.get_scripting_env().await;
+    let available_actions = get_user_input_common_actions(
+        selected_mode,
+        &scripting_env,
+        true,
+        true,
+    );
+
+    // Build feedback prompt for client
+    let system_prompt = PromptBuilder::build_feedback_system_prompt(
+        &state,
+        None,
+        Some(client_id),
+        "If timeout rate exceeds 25%, reduce request frequency or add retry logic.",
+        &client_data.0,
+        &client_data.1,
+        &feedback_entries,
+        available_actions,
+    )
+    .await;
+
+    let prompt = format!(
+        "{}\n\nTrigger: Analyze the accumulated feedback and suggest adjustments.",
+        system_prompt
+    );
+
+    // Assert snapshot
+    snapshot_util::assert_snapshot("feedback_prompt_client", SNAPSHOT_DIR, &prompt);
+
+    // Sanity checks
+    assert!(prompt.contains("client"));
+    assert!(prompt.contains("Feedback Instructions"));
+    assert!(prompt.contains("timeout rate exceeds 25%"));
+    assert!(prompt.contains("timeout"));
+    assert!(prompt.contains("rate_limited"));
+    assert!(prompt.contains("2 entries"));
+}
