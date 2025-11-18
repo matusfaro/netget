@@ -43,7 +43,7 @@ mod tests {
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup instruction
-                    .on_instruction_containing("DynamoDB")
+                    .on_instruction_containing("Start a DynamoDB")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "open_server",
@@ -128,7 +128,7 @@ mod tests {
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
-                    .on_instruction_containing("DynamoDB")
+                    .on_instruction_containing("Start a DynamoDB")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "open_server",
@@ -239,7 +239,7 @@ mod tests {
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
-                    .on_instruction_containing("DynamoDB")
+                    .on_instruction_containing("Start a DynamoDB")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "open_server",
@@ -337,7 +337,7 @@ mod tests {
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
-                    .on_instruction_containing("DynamoDB")
+                    .on_instruction_containing("Start a DynamoDB")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "open_server",
@@ -436,7 +436,7 @@ mod tests {
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
-                    .on_instruction_containing("DynamoDB")
+                    .on_instruction_containing("Start a DynamoDB")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "open_server",
@@ -543,7 +543,7 @@ mod tests {
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
-                    .on_instruction_containing("DynamoDB")
+                    .on_instruction_containing("Start a DynamoDB")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "open_server",
@@ -645,7 +645,7 @@ mod tests {
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
-                    .on_instruction_containing("DynamoDB")
+                    .on_instruction_containing("Start a DynamoDB")
                     .and_instruction_containing("batch")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -737,7 +737,7 @@ mod tests {
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
-                    .on_instruction_containing("DynamoDB")
+                    .on_instruction_containing("Start a DynamoDB")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "open_server",
