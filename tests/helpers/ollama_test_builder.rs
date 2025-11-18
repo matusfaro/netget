@@ -418,6 +418,10 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
                 .as_str()
                 .ok_or_else(|| anyhow!("Action has no 'type' field"))?;
             if actual_type != expected_type {
+                eprintln!("\n❌ Action Type Mismatch:");
+                eprintln!("   Expected: '{}'", expected_type);
+                eprintln!("   Actual:   '{}'", actual_type);
+                eprintln!("   Full action: {}", serde_json::to_string_pretty(action).unwrap_or_default());
                 bail!("Expected action type '{}', got '{}'", expected_type, actual_type);
             }
             Ok(())
@@ -431,6 +435,10 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
             let actual_value = action.get(field)
                 .ok_or_else(|| anyhow!("Action has no '{}' field", field))?;
             if actual_value != value {
+                eprintln!("\n❌ Field Exact Match Failed:");
+                eprintln!("   Field:    '{}'", field);
+                eprintln!("   Expected: {}", serde_json::to_string_pretty(value).unwrap_or_default());
+                eprintln!("   Actual:   {}", serde_json::to_string_pretty(actual_value).unwrap_or_default());
                 bail!(
                     "Expected field '{}' to be {}, got {}",
                     field,
@@ -451,6 +459,10 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
                 .as_str()
                 .ok_or_else(|| anyhow!("Field '{}' is not a string", field))?;
             if !actual_value.contains(substring) {
+                eprintln!("\n❌ Field Contains Failed:");
+                eprintln!("   Field:          '{}'", field);
+                eprintln!("   Expected substring: '{}'", substring);
+                eprintln!("   Actual value:   '{}'", actual_value);
                 bail!(
                     "Expected field '{}' to contain '{}', got '{}'",
                     field,
@@ -472,6 +484,10 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
                 .ok_or_else(|| anyhow!("Field '{}' is not a string", field))?;
             let re = regex::Regex::new(pattern)?;
             if !re.is_match(actual_value) {
+                eprintln!("\n❌ Field Regex Match Failed:");
+                eprintln!("   Field:    '{}'", field);
+                eprintln!("   Pattern:  '{}'", pattern);
+                eprintln!("   Actual:   '{}'", actual_value);
                 bail!(
                     "Expected field '{}' to match pattern '{}', got '{}'",
                     field,
@@ -491,6 +507,9 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
                 .as_str()
                 .ok_or_else(|| anyhow!("Action has no 'protocol' field"))?;
             if actual_protocol != expected_protocol {
+                eprintln!("\n❌ Protocol Mismatch:");
+                eprintln!("   Expected: '{}'", expected_protocol);
+                eprintln!("   Actual:   '{}'", actual_protocol);
                 bail!(
                     "Expected protocol '{}', got '{}'",
                     expected_protocol,
@@ -511,6 +530,9 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
             // Check if handler is object with "static" field
             if let Some(static_value) = handler.get("static") {
                 if static_value != expected_value {
+                    eprintln!("\n❌ Static Handler Mismatch:");
+                    eprintln!("   Expected: {}", serde_json::to_string_pretty(expected_value).unwrap_or_default());
+                    eprintln!("   Actual:   {}", serde_json::to_string_pretty(static_value).unwrap_or_default());
                     bail!(
                         "Expected static handler value {}, got {}",
                         expected_value,
@@ -520,6 +542,8 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
                 return Ok(());
             }
 
+            eprintln!("\n❌ No Static Handler Found:");
+            eprintln!("   Handler: {}", serde_json::to_string_pretty(handler).unwrap_or_default());
             bail!("Action does not have a static handler");
         }
 
@@ -533,6 +557,8 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
 
             // Check if handler has "script" field
             if handler.get("script").is_none() {
+                eprintln!("\n❌ No Script Handler Found:");
+                eprintln!("   Handler: {}", serde_json::to_string_pretty(handler).unwrap_or_default());
                 bail!("Action does not have a script handler");
             }
             Ok(())
@@ -548,6 +574,8 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
 
             // Check if handler has "script" field
             if handler.get("script").is_none() {
+                eprintln!("\n❌ No Script Handler Found:");
+                eprintln!("   Handler: {}", serde_json::to_string_pretty(handler).unwrap_or_default());
                 bail!("Action does not have a script handler");
             }
 
@@ -556,6 +584,9 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
                 let actual_lang = language.as_str()
                     .ok_or_else(|| anyhow!("Language is not a string"))?;
                 if actual_lang.to_lowercase() != expected_lang.to_lowercase() {
+                    eprintln!("\n❌ Script Language Mismatch:");
+                    eprintln!("   Expected: '{}'", expected_lang);
+                    eprintln!("   Actual:   '{}'", actual_lang);
                     bail!(
                         "Expected script language '{}', got '{}'",
                         expected_lang,
@@ -614,6 +645,10 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
 
             // Compare actions
             if response.actions.len() != expected_actions.len() {
+                eprintln!("\n❌ Script Action Count Mismatch:");
+                eprintln!("   Expected: {} actions", expected_actions.len());
+                eprintln!("   Actual:   {} actions", response.actions.len());
+                eprintln!("   Actual actions: {}", serde_json::to_string_pretty(&response.actions).unwrap_or_default());
                 bail!(
                     "Expected {} actions from script, got {}",
                     expected_actions.len(),
@@ -623,6 +658,9 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
 
             for (i, (expected, actual)) in expected_actions.iter().zip(response.actions.iter()).enumerate() {
                 if expected != actual {
+                    eprintln!("\n❌ Script Action {} Mismatch:", i);
+                    eprintln!("   Expected: {}", serde_json::to_string_pretty(expected).unwrap_or_default());
+                    eprintln!("   Actual:   {}", serde_json::to_string_pretty(actual).unwrap_or_default());
                     bail!(
                         "Script action {} mismatch:\nExpected: {}\nActual: {}",
                         i,
