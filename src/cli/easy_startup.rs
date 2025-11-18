@@ -113,7 +113,7 @@ pub async fn start_easy_protocol(
 async fn execute_startup_action(
     action: &JsonValue,
     state: &Arc<AppState>,
-    llm_client: &Arc<OllamaClient>,
+    _llm_client: &Arc<OllamaClient>,
 ) -> Result<JsonValue> {
     let action_type = action["type"].as_str().ok_or_else(|| {
         anyhow::anyhow!("Startup action missing 'type' field")

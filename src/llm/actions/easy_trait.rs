@@ -57,7 +57,7 @@ pub trait Easy: Send + Sync {
     /// protocol actions to execute on underlying protocol.
     ///
     /// # Arguments
-    /// * `event` - Network event from underlying protocol
+    /// * `event` - Network event from underlying protocol (owned for async move)
     /// * `user_instruction` - Optional user instruction for this Easy instance
     /// * `llm_client` - LLM client for making simplified calls
     /// * `app_state` - Application state
@@ -66,11 +66,11 @@ pub trait Easy: Send + Sync {
     /// Vector of JSON actions to execute on underlying protocol
     fn handle_event(
         &self,
-        event: &Event,
-        user_instruction: Option<&str>,
+        event: Event,
+        user_instruction: Option<String>,
         llm_client: Arc<OllamaClient>,
         app_state: Arc<AppState>,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<JsonValue>>> + Send + '_>>;
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<JsonValue>>> + Send>>;
 
     /// Get list of event type IDs this Easy protocol handles
     ///

@@ -5,6 +5,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::llm::actions::Easy;
+use crate::llm::template_engine::{TemplateDataBuilder, TEMPLATE_ENGINE};
 use crate::llm::OllamaClient;
 use crate::protocol::Event;
 use crate::state::AppState;
@@ -59,11 +60,11 @@ impl Easy for HttpEasyProtocol {
 
     fn handle_event(
         &self,
-        event: &Event,
-        user_instruction: Option<&str>,
+        event: Event,
+        user_instruction: Option<String>,
         llm_client: Arc<OllamaClient>,
         app_state: Arc<AppState>,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<JsonValue>>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<JsonValue>>> + Send>> {
         Box::pin(async move {
             let event_type = &event.event_type;
 
@@ -79,46 +80,66 @@ impl Easy for HttpEasyProtocol {
             let uri = event.data.get("uri")
                 .and_then(|v| v.as_str())
                 .unwrap_or("/");
-            let headers = event.data.get("headers")
-                .and_then(|v| v.as_object())
-                .map(|obj| {
-                    obj.iter()
-                        .map(|(k, v)| format!("  {}: {}", k, v.as_str().unwrap_or("")))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                })
-                .unwrap_or_else(|| "  (no headers)".to_string());
             let body = event.data.get("body")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
 
-            // Build simplified prompt for LLM
-            let mut prompt = String::new();
-            prompt.push_str("You are a helpful HTTP server.\n\n");
+            // Convert headers object to array for template
+            let headers_array: Vec<serde_json::Value> = event.data.get("headers")
+                .and_then(|v| v.as_object())
+                .map(|obj| {
+                    obj.iter()
+                        .map(|(k, v)| {
+                            json!({
+                                "name": k,
+                                "value": v.as_str().unwrap_or("")
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_else(Vec::new);
 
-            if let Some(instruction) = user_instruction {
-                prompt.push_str("Your instructions: ");
-                prompt.push_str(instruction);
-                prompt.push_str("\n\n");
+            // Parse query string from URI if present
+            let (path, query_string) = if let Some(idx) = uri.find('?') {
+                (uri[..idx].to_string(), Some(uri[idx + 1..].to_string()))
+            } else {
+                (uri.to_string(), None)
+            };
+
+            // Build prompt using template engine
+            let mut data_builder = TemplateDataBuilder::new()
+                .field("protocol_name", "HTTP")
+                .field("output_format", "HTML")
+                .field("method", method)
+                .field("uri", path)
+                .field("headers", headers_array);
+
+            if let Some(qs) = query_string {
+                data_builder = data_builder.field("query_string", qs);
             }
-
-            prompt.push_str("An HTTP request has been received:\n\n");
-            prompt.push_str(&format!("Method: {}\n", method));
-            prompt.push_str(&format!("URI: {}\n", uri));
-            prompt.push_str("Headers:\n");
-            prompt.push_str(&headers);
-            prompt.push('\n');
 
             if !body.is_empty() {
-                prompt.push_str(&format!("\nRequest Body:\n{}\n", body));
+                data_builder = data_builder.field("body", body);
             }
 
-            prompt.push_str("\nPlease respond with Markdown content that will be converted to HTML and sent as the HTTP response. ");
-            prompt.push_str("Just write the content you want to send - don't include any JSON or action formatting.");
+            if let Some(instruction) = user_instruction {
+                data_builder = data_builder.field("user_instruction", instruction);
+            }
+
+            let template_data = data_builder.build();
+
+            // Render prompt template
+            let prompt = TEMPLATE_ENGINE
+                .render_json("easy_request/http", &template_data)
+                .context("Failed to render HTTP-easy prompt template")?;
+
+            // Get model name from app_state
+            let model = app_state.get_ollama_model().await
+                .unwrap_or_else(|| "qwen2.5-coder:7b".to_string());
 
             // Call LLM expecting Markdown response
             let response = llm_client
-                .generate(&prompt)
+                .generate(&model, &prompt)
                 .await
                 .context("Failed to call LLM for HTTP-easy response")?;
 
@@ -287,4 +308,71 @@ fn html_escape(text: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&#39;")
+}
+
+/// Generate HTTP-easy prompt for testing/snapshot purposes
+///
+/// This public function generates the same prompt that would be sent to the LLM,
+/// useful for snapshot testing and debugging.
+///
+/// # Arguments
+/// * `method` - HTTP method (GET, POST, etc.)
+/// * `uri` - Request URI
+/// * `headers` - Request headers as key-value pairs
+/// * `body` - Optional request body
+/// * `user_instruction` - Optional custom instruction
+///
+/// # Returns
+/// The generated prompt string
+pub fn generate_http_easy_prompt(
+    method: &str,
+    uri: &str,
+    headers: &[(String, String)],
+    body: Option<&str>,
+    user_instruction: Option<&str>,
+) -> Result<String> {
+    // Convert headers to array for template
+    let headers_array: Vec<JsonValue> = headers
+        .iter()
+        .map(|(k, v)| {
+            json!({
+                "name": k,
+                "value": v
+            })
+        })
+        .collect();
+
+    // Parse query string from URI if present
+    let (path, query_string) = if let Some(idx) = uri.find('?') {
+        (uri[..idx].to_string(), Some(uri[idx + 1..].to_string()))
+    } else {
+        (uri.to_string(), None)
+    };
+
+    // Build template data
+    let mut data_builder = TemplateDataBuilder::new()
+        .field("protocol_name", "HTTP")
+        .field("output_format", "HTML")
+        .field("method", method)
+        .field("uri", path)
+        .field("headers", headers_array);
+
+    if let Some(qs) = query_string {
+        data_builder = data_builder.field("query_string", qs);
+    }
+
+    if let Some(body_str) = body {
+        data_builder = data_builder.field("body", body_str);
+    }
+
+    if let Some(instruction) = user_instruction {
+        data_builder = data_builder.field("user_instruction", instruction);
+    }
+
+    let template_data = data_builder.build();
+
+    // Render prompt template
+    TEMPLATE_ENGINE
+        .render_json("easy_request/http", &template_data)
+        .context("Failed to render HTTP-easy prompt template")
 }

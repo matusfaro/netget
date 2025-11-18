@@ -79,58 +79,8 @@ pub async fn call_llm_with_actions(
     custom_actions: Vec<ActionDefinition>,
     event_data: Option<serde_json::Value>,
 ) -> Result<ExecutionResult> {
-    // TRY EASY PROTOCOL HANDLER FIRST if this server is managed by an easy protocol
-    if let Some(easy_id) = state.get_easy_for_server(server_id).await {
-        use crate::protocol::EASY_REGISTRY;
-        if let Some(easy_instance) = state.get_easy_instance(easy_id).await {
-            if let Some(easy_protocol) = EASY_REGISTRY.get_by_name(&easy_instance.protocol_name) {
-                // Extract event from event_data if available, otherwise create a minimal one
-                let event = if let Some(ref data) = event_data {
-                    // Need to create an Event with proper EventType
-                    // For now, we'll create a simplified Event with just the data
-                    let event_type_id = crate::scripting::ScriptManager::extract_context_type(event_description);
-                    crate::protocol::Event {
-                        event_type: crate::protocol::EventType::new(&event_type_id, event_description),
-                        data: data.clone(),
-                    }
-                } else {
-                    return Err(anyhow::anyhow!("Easy protocol requires event_data"));
-                };
-
-                // Call Easy protocol handler
-                let actions = easy_protocol
-                    .handle_event(
-                        &event,
-                        easy_instance.user_instruction.as_deref(),
-                        Arc::new(llm_client.clone()),
-                        Arc::new(state.clone()),
-                    )
-                    .await
-                    .context("Easy protocol handler failed")?;
-
-                // Execute actions and return result
-                if let Some(proto) = protocol {
-                    let results = crate::llm::execute_actions(
-                        state,
-                        llm_client,
-                        &actions,
-                        server_id,
-                        connection_id,
-                        proto,
-                    )
-                    .await?;
-
-                    return Ok(ExecutionResult {
-                        protocol_results: results,
-                        messages: vec![],
-                        memory_update: None,
-                    });
-                } else {
-                    return Err(anyhow::anyhow!("Easy protocol requires underlying protocol"));
-                }
-            }
-        }
-    }
+    // NOTE: Easy protocol handling is done in call_llm() since it requires an Event object
+    // This function (call_llm_with_actions) is for legacy code paths that don't have Event objects
 
     // TRY EVENT HANDLER FIRST if configured
     let event_type_id = crate::scripting::ScriptManager::extract_context_type(event_description);
@@ -351,8 +301,8 @@ pub async fn call_llm(
                 // Call Easy protocol handler
                 let actions = easy_protocol
                     .handle_event(
-                        event,
-                        easy_instance.user_instruction.as_deref(),
+                        event.clone(),
+                        easy_instance.user_instruction.clone(),
                         Arc::new(llm_client.clone()),
                         Arc::new(state.clone()),
                     )
@@ -360,21 +310,14 @@ pub async fn call_llm(
                     .context("Easy protocol handler failed")?;
 
                 // Execute actions and return result
-                let results = crate::llm::execute_actions(
+                let result = crate::llm::execute_actions(
+                    actions,
                     state,
-                    llm_client,
-                    &actions,
-                    server_id,
-                    connection_id,
-                    protocol,
+                    Some(protocol),
                 )
                 .await?;
 
-                return Ok(ExecutionResult {
-                    protocol_results: results,
-                    messages: vec![],
-                    memory_update: None,
-                });
+                return Ok(result);
             }
         }
     }
