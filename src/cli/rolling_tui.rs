@@ -1255,7 +1255,8 @@ async fn handle_key_event(
                     | UserCommand::ShowLogLevel
                     | UserCommand::ShowWebSearch
                     | UserCommand::ShowEventHandler
-                    | UserCommand::ShowEnvironment => {
+                    | UserCommand::ShowEnvironment
+                    | UserCommand::ShowUsage => {
                         // Handle status/info commands
                         handle_status_command(
                             &command,
@@ -2029,7 +2030,7 @@ async fn update_ui_from_state(app: &mut App, state: &AppState, footer: &mut Stic
 /// Handle status/info commands
 async fn handle_status_command(
     command: &UserCommand,
-    app: &App,
+    app: &mut App,
     state: &AppState,
     event_handler: &mut EventHandler,
     footer: &mut StickyFooter,
@@ -2171,6 +2172,16 @@ async fn handle_status_command(
                 footer,
                 palette,
             )?;
+        }
+        UserCommand::ShowUsage => {
+            // Toggle usage stats display
+            app.toggle_usage_stats();
+            if app.show_usage_stats {
+                print_output_line("Usage stats section enabled.", footer, palette)?;
+                print_output_line("The usage panel is now visible in the footer.", footer, palette)?;
+            } else {
+                print_output_line("Usage stats section disabled.", footer, palette)?;
+            }
         }
         _ => {}
     }

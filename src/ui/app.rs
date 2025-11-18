@@ -148,6 +148,10 @@ pub struct App {
     pub system_capabilities: crate::privilege::SystemCapabilities,
     /// Active and recently-completed conversations
     pub conversations: Vec<crate::state::app_state::ConversationInfo>,
+    /// Whether to show the usage stats section
+    pub show_usage_stats: bool,
+    /// Current system stats (CPU, memory, GPU)
+    pub system_stats: crate::system_stats::SystemStats,
 }
 
 impl Default for App {
@@ -168,6 +172,8 @@ impl Default for App {
             connection_id_map: std::collections::HashMap::new(),
             system_capabilities: crate::privilege::SystemCapabilities::detect(),
             conversations: Vec::new(),
+            show_usage_stats: false,
+            system_stats: crate::system_stats::SystemStats::default(),
         }
     }
 }
@@ -338,6 +344,11 @@ impl App {
     /// Toggle expand all connections
     pub fn toggle_expand_all(&mut self) {
         self.expand_all_connections = !self.expand_all_connections;
+    }
+
+    /// Toggle usage stats visibility
+    pub fn toggle_usage_stats(&mut self) {
+        self.show_usage_stats = !self.show_usage_stats;
     }
 
     /// Legacy compatibility: add_llm_message (no-op in rolling terminal, output goes to stdout)

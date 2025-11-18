@@ -120,7 +120,8 @@ pub async fn run() -> Result<()> {
         debug!("Creating OllamaClient...");
         let ollama_url = args.ollama_url.as_deref().unwrap_or("http://localhost:11434");
         let llm = OllamaClient::new_with_options(ollama_url, lock_enabled)
-            .with_mock_config_file(args.mock_config_file.clone());
+            .with_mock_config_file(args.mock_config_file.clone())
+            .with_app_state(state.clone());
 
         // Store the configured LLM client in state so spawned servers can use it
         state.set_llm_client(llm.clone()).await;

@@ -62,6 +62,8 @@ pub enum UserCommand {
     ShowDocs { protocol: Option<String> },
     /// Show environment information (slash command: /env or /environment)
     ShowEnvironment,
+    /// Show usage statistics (slash command: /usage)
+    ShowUsage,
     /// Stop everything - all servers, connections, and clients (slash command: /stop)
     StopAll,
     /// Stop a specific server, connection, or client by unified ID (slash command: /stop <id>)
@@ -205,6 +207,11 @@ impl UserCommand {
         // /env, /environment command - show environment information
         if input_lower == "/env" || input_lower == "/environment" {
             return UserCommand::ShowEnvironment;
+        }
+
+        // /usage command - show usage statistics
+        if input_lower == "/usage" {
+            return UserCommand::ShowUsage;
         }
 
         // /save command - save configuration to file

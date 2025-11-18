@@ -1,7 +1,7 @@
 //! Sticky footer rendering for rolling terminal
 //!
 //! Manages the fixed footer area at the bottom of the terminal that displays:
-//! - Servers and connections (normal mode)
+//! - Connections and servers (normal mode)
 //! - Slash command suggestions (slash command mode)
 //! - Input field (always)
 //! - Status bar (always)
@@ -787,7 +787,7 @@ impl StickyFooter {
                         SetForegroundColor(self.palette.separator),
                         Print("┌──── "),
                         ResetColor,
-                        Print("Servers")
+                        Print("Connections")
                     )?;
                 } else {
                     // Content line - need to build server/connection content

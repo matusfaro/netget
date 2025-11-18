@@ -269,6 +269,7 @@ pub struct OllamaClient {
     ollama: Ollama,
     status_tx: Option<mpsc::UnboundedSender<String>>,
     mock_config_file: Option<std::path::PathBuf>,
+    app_state: Option<crate::state::AppState>,
 }
 
 impl OllamaClient {
@@ -303,6 +304,7 @@ impl OllamaClient {
             ollama,
             status_tx: None,
             mock_config_file: None,
+            app_state: None,
         }
     }
 
@@ -314,6 +316,7 @@ impl OllamaClient {
             ollama,
             status_tx: None,
             mock_config_file: None,
+            app_state: None,
         }
     }
 
@@ -332,6 +335,12 @@ impl OllamaClient {
     /// Set the mock configuration file path (for testing)
     pub fn with_mock_config_file(mut self, path: Option<std::path::PathBuf>) -> Self {
         self.mock_config_file = path;
+        self
+    }
+
+    /// Set the app state for token tracking
+    pub fn with_app_state(mut self, state: crate::state::AppState) -> Self {
+        self.app_state = Some(state);
         self
     }
 
@@ -435,15 +444,30 @@ impl OllamaClient {
             }
         })?;
 
-        // DEBUG: Summary
+        // Extract token counts from response
+        let input_tokens = response.prompt_eval_count.unwrap_or(0) as u64;
+        let output_tokens = response.eval_count.unwrap_or(0) as u64;
+        let total_tokens = input_tokens + output_tokens;
+
+        // Record tokens in app state if available
+        if let Some(ref state) = self.app_state {
+            state.record_llm_tokens(input_tokens, output_tokens).await;
+        }
+
+        // DEBUG: Summary with token counts
         debug!(
-            "LLM response: response_len={} chars",
-            response.response.len()
+            "LLM response: response_len={} chars, input_tokens={}, output_tokens={}, total_tokens={}",
+            response.response.len(),
+            input_tokens,
+            output_tokens,
+            total_tokens
         );
         if let Some(ref tx) = self.status_tx {
             let _ = tx.send(format!(
-                "[DEBUG] LLM response: response_len={} chars",
-                response.response.len()
+                "[DEBUG] LLM response: {} chars, {} input tokens, {} output tokens",
+                response.response.len(),
+                input_tokens,
+                output_tokens
             ));
         }
 
