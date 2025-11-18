@@ -81,9 +81,9 @@ If you are unsure about pack format, provide minimal pack data and we will test 
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: Git info/refs request
-                .on_instruction_containing("Git client is requesting references")
-                .and_instruction_containing("test-repo")
+                // Mock 2: Git info/refs request (uses generate_with_retry, match on prompt)
+                .on_prompt_containing("Git client is requesting references")
+                .and_prompt_containing("test-repo")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "git_advertise_refs",
@@ -95,9 +95,9 @@ If you are unsure about pack format, provide minimal pack data and we will test 
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 3: Git upload-pack request (pack file generation)
-                .on_instruction_containing("Git client is requesting a pack file")
-                .and_instruction_containing("test-repo")
+                // Mock 3: Git upload-pack request (uses generate_with_retry, match on prompt)
+                .on_prompt_containing("Git client is requesting a pack file")
+                .and_prompt_containing("test-repo")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "git_send_pack",
@@ -246,8 +246,8 @@ When client requests /simple-repo/info/refs?service=git-upload-pack:
                 .expect_calls(1)
                 .and()
                 // Mock 2: Git info/refs request
-                .on_instruction_containing("Git client is requesting references")
-                .and_instruction_containing("simple-repo")
+                .on_prompt_containing("Git client is requesting references")
+                .and_prompt_containing("simple-repo")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "git_advertise_refs",
@@ -361,8 +361,8 @@ When client requests info/refs for any other repository name:
                 .expect_calls(1)
                 .and()
                 // Mock 2: Git request for non-existent repo
-                .on_instruction_containing("Git client is requesting references")
-                .and_instruction_containing("nonexistent")
+                .on_prompt_containing("Git client is requesting references")
+                .and_prompt_containing("nonexistent")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "git_error",
@@ -457,8 +457,8 @@ When client requests info/refs for 'backend', return backend branches."#;
                 .expect_calls(1)
                 .and()
                 // Mock 2: Frontend repository request
-                .on_instruction_containing("Git client is requesting references")
-                .and_instruction_containing("frontend")
+                .on_prompt_containing("Git client is requesting references")
+                .and_prompt_containing("frontend")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "git_advertise_refs",
@@ -472,8 +472,8 @@ When client requests info/refs for 'backend', return backend branches."#;
                 .expect_calls(1)
                 .and()
                 // Mock 3: Backend repository request
-                .on_instruction_containing("Git client is requesting references")
-                .and_instruction_containing("backend")
+                .on_prompt_containing("Git client is requesting references")
+                .and_prompt_containing("backend")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "git_advertise_refs",
@@ -587,8 +587,8 @@ Script should return:
                 .expect_calls(1)
                 .and()
                 // Mock 2: Git requests for scripted-repo (3 requests)
-                .on_instruction_containing("Git client is requesting references")
-                .and_instruction_containing("scripted-repo")
+                .on_prompt_containing("Git client is requesting references")
+                .and_prompt_containing("scripted-repo")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "git_advertise_refs",

@@ -145,6 +145,31 @@ pub struct Args {
     )]
     pub suppress_art: bool,
 
+    /// Maximum concurrent LLM requests (default: 1)
+    #[clap(
+        long = "llm-max-concurrent",
+        value_name = "NUM",
+        help = "Maximum number of concurrent LLM requests. Default: 1 for sequential processing. Increase for higher throughput with local Ollama."
+    )]
+    pub llm_max_concurrent: Option<usize>,
+
+    /// Token limit per time window (optional, for cloud API usage control)
+    #[clap(
+        long = "llm-token-limit",
+        value_name = "TOKENS",
+        help = "Maximum tokens (input + output) per time window. Use for cloud API rate limiting. No limit by default (suitable for local Ollama)."
+    )]
+    pub llm_token_limit: Option<u64>,
+
+    /// Token limit time window in seconds (default: 60)
+    #[clap(
+        long = "llm-token-window",
+        value_name = "SECONDS",
+        default_value = "60",
+        help = "Time window in seconds for token limit enforcement."
+    )]
+    pub llm_token_window: u64,
+
     /// Disable scripting (LLM will only use actions, no script generation)
     #[clap(
         long = "no-scripts",
@@ -377,6 +402,15 @@ impl Args {
                 };
                 Ok(Some(parsed_mode))
             }
+        }
+    }
+
+    /// Build a RateLimiterConfig from CLI arguments
+    pub fn build_rate_limiter_config(&self) -> crate::llm::RateLimiterConfig {
+        crate::llm::RateLimiterConfig {
+            max_concurrent: self.llm_max_concurrent.unwrap_or(1),
+            token_limit: self.llm_token_limit,
+            token_window_secs: self.llm_token_window,
         }
     }
 }

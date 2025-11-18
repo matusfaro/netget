@@ -158,6 +158,49 @@ fn summarize_common_action(action: &CommonAction) -> String {
             };
             format!("update_client_instruction: #{} \"{}\"", client_id, preview)
         }
+        CommonAction::ProvideFeedback { feedback } => {
+            let summary = if let Some(obj) = feedback.as_object() {
+                format!("provide_feedback: {} fields", obj.len())
+            } else {
+                "provide_feedback".to_string()
+            };
+            summary
+        }
+        #[cfg(feature = "sqlite")]
+        CommonAction::CreateDatabase {
+            name,
+            is_memory,
+            owner,
+            schema_ddl,
+        } => {
+            let storage_type = if *is_memory { "in-memory" } else { "file-based" };
+            let owner_display = owner.as_deref().unwrap_or("auto");
+            format!(
+                "create_database: {} ({}, owner: {}, schema: {})",
+                name,
+                storage_type,
+                owner_display,
+                if schema_ddl.is_some() { "yes" } else { "no" }
+            )
+        }
+        #[cfg(feature = "sqlite")]
+        CommonAction::ExecuteSql {
+            database_id,
+            query,
+        } => {
+            let query_preview = if query.len() > 40 {
+                format!("{}...", &query[..37])
+            } else {
+                query.clone()
+            };
+            format!("execute_sql: db-{} \"{}\"", database_id, query_preview)
+        }
+        #[cfg(feature = "sqlite")]
+        CommonAction::ListDatabases => "list_databases".to_string(),
+        #[cfg(feature = "sqlite")]
+        CommonAction::DeleteDatabase { database_id } => {
+            format!("delete_database: db-{}", database_id)
+        }
     }
 }
 

@@ -209,22 +209,24 @@ impl ImapProtocol {
     }
 
     fn execute_send_imap_fetch(&self, action: serde_json::Value) -> Result<ActionResult> {
+        // Support two formats:
+        // 1. Structured: {"sequence": N, "data": {"FLAGS": [...], "BODY[]": "..."}}
+        // 2. Simple: {"message_id": N, "body": "...", "flags": [...], ...}
+
         let sequence = action
             .get("sequence")
+            .or_else(|| action.get("message_id"))
             .and_then(|v| v.as_u64())
-            .context("Missing 'sequence' field in send_imap_fetch")?;
-
-        let data = action
-            .get("data")
-            .and_then(|v| v.as_object())
-            .context("Missing 'data' object in send_imap_fetch")?;
+            .context("Missing 'sequence' or 'message_id' field in send_imap_fetch")?;
 
         debug!("IMAP sending FETCH response for message: {}", sequence);
 
         let mut items = Vec::new();
 
-        // Build FETCH response items
-        for (key, value) in data {
+        // Check if using structured format with "data" object
+        if let Some(data) = action.get("data").and_then(|v| v.as_object()) {
+            // Structured format - use "data" object
+            for (key, value) in data {
             match key.to_uppercase().as_str() {
                 "FLAGS" => {
                     if let Some(flags_arr) = value.as_array() {
@@ -274,6 +276,30 @@ impl ImapProtocol {
                         items.push(format!("{} {}", key.to_uppercase(), val_str));
                     }
                 }
+            }
+        }
+        } else {
+            // Simple format - check for direct fields
+            if let Some(body) = action.get("body").and_then(|v| v.as_str()) {
+                items.push(format!(
+                    "RFC822 {{{}}}\r\n{}",
+                    body.len(),
+                    body
+                ));
+            }
+
+            if let Some(flags_arr) = action.get("flags").and_then(|v| v.as_array()) {
+                let flags: Vec<&str> =
+                    flags_arr.iter().filter_map(|v| v.as_str()).collect();
+                items.push(format!("FLAGS ({})", flags.join(" ")));
+            }
+
+            if let Some(uid) = action.get("uid").and_then(|v| v.as_u64()) {
+                items.push(format!("UID {}", uid));
+            }
+
+            if let Some(size) = action.get("size").and_then(|v| v.as_u64()) {
+                items.push(format!("RFC822.SIZE {}", size));
             }
         }
 
@@ -351,6 +377,100 @@ impl ImapProtocol {
         let response = format!("* {} EXPUNGE\r\n", sequence);
         Ok(ActionResult::Output(response.into_bytes()))
     }
+
+    fn execute_send_imap_select(&self, action: serde_json::Value) -> Result<ActionResult> {
+        // Generate SELECT/EXAMINE response with mailbox status
+        let exists = action
+            .get("exists")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+
+        let recent = action
+            .get("recent")
+            .and_then(|v| v.as_u64());
+
+        let unseen = action
+            .get("unseen")
+            .and_then(|v| v.as_u64());
+
+        let uidvalidity = action
+            .get("uidvalidity")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1);
+
+        let uidnext = action
+            .get("uidnext")
+            .and_then(|v| v.as_u64());
+
+        let flags = action
+            .get("flags")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .collect::<Vec<&str>>()
+                    .join(" ")
+            });
+
+        let permanent_flags = action
+            .get("permanent_flags")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .collect::<Vec<&str>>()
+                    .join(" ")
+            });
+
+        let read_write = action
+            .get("read_write")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        debug!(
+            "IMAP sending SELECT response: exists={}, recent={:?}, unseen={:?}",
+            exists, recent, unseen
+        );
+
+        let mut response = String::new();
+
+        // Required responses
+        response.push_str(&format!("* {} EXISTS\r\n", exists));
+
+        if let Some(recent) = recent {
+            response.push_str(&format!("* {} RECENT\r\n", recent));
+        }
+
+        // Optional OK responses with codes
+        if let Some(unseen) = unseen {
+            response.push_str(&format!("* OK [UNSEEN {}] Message {} is first unseen\r\n", unseen, unseen));
+        }
+
+        response.push_str(&format!("* OK [UIDVALIDITY {}] UIDs valid\r\n", uidvalidity));
+
+        if let Some(uidnext) = uidnext {
+            response.push_str(&format!("* OK [UIDNEXT {}] Predicted next UID\r\n", uidnext));
+        }
+
+        // FLAGS
+        if let Some(flags) = flags {
+            response.push_str(&format!("* FLAGS ({})\r\n", flags));
+        } else {
+            response.push_str("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n");
+        }
+
+        // PERMANENTFLAGS
+        if let Some(perm_flags) = permanent_flags {
+            response.push_str(&format!("* OK [PERMANENTFLAGS ({})] Limited\r\n", perm_flags));
+        } else {
+            response.push_str("* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)] Limited\r\n");
+        }
+
+        // Note: We don't send the tagged response here - that should be sent separately
+        // via send_imap_response action
+
+        Ok(ActionResult::Output(response.into_bytes()))
+    }
 }
 
 // Implement Protocol trait (common functionality)
@@ -369,6 +489,7 @@ impl Protocol for ImapProtocol {
             send_imap_status_action(),
             send_imap_fetch_action(),
             send_imap_search_action(),
+            send_imap_select_action(),
             send_imap_exists_action(),
             send_imap_recent_action(),
             send_imap_flags_action(),
@@ -446,6 +567,7 @@ impl Server for ImapProtocol {
             "send_imap_status" => self.execute_send_imap_status(action),
             "send_imap_fetch" => self.execute_send_imap_fetch(action),
             "send_imap_search" => self.execute_send_imap_search(action),
+            "send_imap_select" => self.execute_send_imap_select(action),
             "send_imap_exists" => self.execute_send_imap_exists(action),
             "send_imap_recent" => self.execute_send_imap_recent(action),
             "send_imap_flags" => self.execute_send_imap_flags(action),
@@ -748,6 +870,74 @@ fn send_imap_expunge_action() -> ActionDefinition {
         example: json!({
             "type": "send_imap_expunge",
             "sequence": 3
+        }),
+    }
+}
+
+fn send_imap_select_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "send_imap_select".to_string(),
+        description: "Send IMAP SELECT/EXAMINE response with mailbox status".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "exists".to_string(),
+                type_hint: "number".to_string(),
+                description: "Number of messages in mailbox".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "recent".to_string(),
+                type_hint: "number".to_string(),
+                description: "Number of recent messages".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "unseen".to_string(),
+                type_hint: "number".to_string(),
+                description: "Sequence number of first unseen message".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "uidvalidity".to_string(),
+                type_hint: "number".to_string(),
+                description: "UID validity value (default: 1)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "uidnext".to_string(),
+                type_hint: "number".to_string(),
+                description: "Predicted next UID".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "flags".to_string(),
+                type_hint: "array".to_string(),
+                description: "Available message flags".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "permanent_flags".to_string(),
+                type_hint: "array".to_string(),
+                description: "Permanent message flags".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "read_write".to_string(),
+                type_hint: "boolean".to_string(),
+                description: "Whether mailbox is read-write (default: true)".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "send_imap_select",
+            "exists": 5,
+            "recent": 2,
+            "unseen": 3,
+            "uidvalidity": 1,
+            "uidnext": 6,
+            "flags": ["\\Answered", "\\Flagged", "\\Deleted", "\\Seen", "\\Draft"],
+            "permanent_flags": ["\\Deleted", "\\Seen", "\\*"],
+            "read_write": true
         }),
     }
 }

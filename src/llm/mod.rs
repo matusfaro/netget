@@ -11,6 +11,7 @@ pub mod default_instructions; // Default instructions registry
 pub mod event_handler_executor; // Event handler execution (script/static/llm)
 pub mod event_instructions; // Event-specific instructions
 pub mod model_selection;
+pub mod rate_limiter; // Rate limiting for LLM calls (concurrency + token throttling)
 pub mod template_engine; // Handlebars template engine // Model selection utilities
 pub mod ollama_client;
 pub mod prompt;
@@ -46,7 +47,8 @@ pub use action_helper::{
 
 // Current ollama client exports
 pub use ollama_client::{
-    CommandAction, CommandInterpretation, HttpLlmResponse, LlmResponse, OllamaClient,
+    CommandAction, CommandInterpretation, GenerateResponse, HttpLlmResponse, LlmResponse,
+    OllamaClient, TokenUsage,
 };
 pub use prompt::PromptBuilder;
 pub use response_handler::{handle_llm_response, ProcessedResponse};
@@ -83,3 +85,8 @@ pub use config::EmbeddedLlmConfig;
 // Hybrid manager exports
 #[cfg(feature = "embedded-llm")]
 pub use hybrid_manager::{ActiveBackend, HybridLLMManager};
+
+// Rate limiter
+pub use rate_limiter::{
+    RateLimiter, RateLimiterConfig, RateLimiterPermit, RateLimiterStats, RequestSource,
+};

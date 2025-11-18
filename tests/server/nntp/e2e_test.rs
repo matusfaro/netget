@@ -54,12 +54,8 @@ async fn test_nntp_basic_newsgroups() -> E2EResult<()> {
     );
 
     let server_config = NetGetConfig::new(&prompt).with_mock(|mock| {
-        mock.on_instruction_containing("nntp")
-            .respond_with_actions(serde_json::json!([
-                {"type": "open_server", "port": 0, "base_stack": "nntp", "instruction": "3 newsgroups"}
-            ]))
-            .expect_calls(1)
-            .and()
+        mock
+            // Mock 1: LIST command - MUST BE FIRST (most specific)
             .on_event("nntp_command_received")
             .respond_with_actions(serde_json::json!([
                 {"type": "send_nntp_list", "newsgroups": [
@@ -70,21 +66,31 @@ async fn test_nntp_basic_newsgroups() -> E2EResult<()> {
             ]))
             .expect_calls(1)
             .and()
+            // Mock 2: GROUP command - MUST BE SECOND (most specific)
             .on_event("nntp_command_received")
             .respond_with_actions(serde_json::json!([
                 {"type": "send_nntp_response", "code": 211, "message": "50 1 50 comp.lang.rust"}
             ]))
             .expect_calls(1)
             .and()
+            // Mock 3: ARTICLE command - MUST BE THIRD (most specific)
             .on_event("nntp_command_received")
             .respond_with_actions(serde_json::json!([
                 {"type": "send_nntp_article", "headers": {"Subject": "Test Article 1", "From": "test@example.com"}, "body": "This is test article number 1."}
             ]))
             .expect_calls(1)
             .and()
+            // Mock 4: QUIT command - MUST BE FOURTH (most specific)
             .on_event("nntp_command_received")
             .respond_with_actions(serde_json::json!([
                 {"type": "send_nntp_response", "code": 205, "message": "Goodbye"}
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 5: Server startup - MUST BE LAST (less specific)
+            .on_instruction_containing("nntp")
+            .respond_with_actions(serde_json::json!([
+                {"type": "open_server", "port": 0, "base_stack": "nntp", "instruction": "3 newsgroups"}
             ]))
             .expect_calls(1)
             .and()
@@ -219,18 +225,15 @@ async fn test_nntp_article_overview() -> E2EResult<()> {
     );
 
     let server_config = NetGetConfig::new(&prompt).with_mock(|mock| {
-        mock.on_instruction_containing("nntp")
-            .respond_with_actions(serde_json::json!([
-                {"type": "open_server", "port": 0, "base_stack": "nntp", "instruction": "comp.test newsgroup"}
-            ]))
-            .expect_calls(1)
-            .and()
+        mock
+            // Mock 1: GROUP command - MUST BE FIRST (most specific)
             .on_event("nntp_command_received")
             .respond_with_actions(serde_json::json!([
                 {"type": "send_nntp_response", "code": 211, "message": "5 1 5 comp.test"}
             ]))
             .expect_calls(1)
             .and()
+            // Mock 2: XOVER command - MUST BE SECOND (most specific)
             .on_event("nntp_command_received")
             .respond_with_actions(serde_json::json!([
                 {"type": "send_nntp_overview", "articles": [
@@ -243,9 +246,17 @@ async fn test_nntp_article_overview() -> E2EResult<()> {
             ]))
             .expect_calls(1)
             .and()
+            // Mock 3: QUIT command - MUST BE THIRD (most specific)
             .on_event("nntp_command_received")
             .respond_with_actions(serde_json::json!([
                 {"type": "send_nntp_response", "code": 205, "message": "Goodbye"}
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 4: Server startup - MUST BE LAST (less specific)
+            .on_instruction_containing("nntp")
+            .respond_with_actions(serde_json::json!([
+                {"type": "open_server", "port": 0, "base_stack": "nntp", "instruction": "comp.test newsgroup"}
             ]))
             .expect_calls(1)
             .and()

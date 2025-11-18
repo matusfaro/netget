@@ -28,6 +28,10 @@ pub async fn run_non_interactive(
     let ollama_url = args.ollama_url.clone().unwrap_or_else(|| "http://localhost:11434".to_string());
     let state = AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock, ollama_url);
 
+    // Configure rate limiter from CLI args
+    let rate_limiter_config = args.build_rate_limiter_config();
+    state.configure_rate_limiter(rate_limiter_config).await?;
+
     // Determine configured model: args override settings
     let configured_model = args.model.clone().or(settings.model.clone());
 
@@ -241,6 +245,10 @@ pub async fn run_with_actions(
     let ollama_url = args.ollama_url.clone().unwrap_or_else(|| "http://localhost:11434".to_string());
     let state = AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock, ollama_url);
 
+    // Configure rate limiter from CLI args
+    let rate_limiter_config = args.build_rate_limiter_config();
+    state.configure_rate_limiter(rate_limiter_config).await?;
+
     // Determine scripting mode
     let mode_to_set = if let Some(mode) = args.parse_scripting_mode()? {
         Some(mode)
@@ -295,6 +303,7 @@ pub async fn run_with_actions(
                     startup_params,
                     event_handlers,
                     scheduled_tasks,
+                    feedback_instructions,
                 } => {
                     // Execute open_server action
                     match server_startup::start_server_from_action(
@@ -307,6 +316,7 @@ pub async fn run_with_actions(
                         startup_params,
                         event_handlers,
                         scheduled_tasks,
+                        feedback_instructions,
                     )
                     .await
                     {
@@ -332,6 +342,7 @@ pub async fn run_with_actions(
                     initial_memory,
                     event_handlers,
                     scheduled_tasks,
+                    feedback_instructions,
                 } => {
                     // Execute open_client action
                     match client_startup::start_client_from_action(
@@ -343,6 +354,7 @@ pub async fn run_with_actions(
                         initial_memory,
                         event_handlers,
                         scheduled_tasks,
+                        feedback_instructions,
                         llm.clone(),
                     )
                     .await

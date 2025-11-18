@@ -21,6 +21,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::ServerId;
 use anyhow::{Context as AnyhowContext, Result};
+use std::sync::Arc;
 use tracing::{debug, warn};
 
 /// Call LLM with action-based framework
@@ -78,6 +79,9 @@ pub async fn call_llm_with_actions(
     custom_actions: Vec<ActionDefinition>,
     event_data: Option<serde_json::Value>,
 ) -> Result<ExecutionResult> {
+    // NOTE: Easy protocol handling is done in call_llm() since it requires an Event object
+    // This function (call_llm_with_actions) is for legacy code paths that don't have Event objects
+
     // TRY EVENT HANDLER FIRST if configured
     let event_type_id = crate::scripting::ScriptManager::extract_context_type(event_description);
 
@@ -111,6 +115,16 @@ pub async fn call_llm_with_actions(
     // Collect all actions: common + protocol sync + custom
     let mut all_actions = get_network_event_common_actions();
 
+    // Add provide_feedback action only if server has feedback_instructions configured
+    let has_feedback_instructions = state
+        .with_server_mut(server_id, |server| server.feedback_instructions.is_some())
+        .await
+        .unwrap_or(false);
+
+    if has_feedback_instructions {
+        all_actions.push(crate::llm::actions::common::provide_feedback_action());
+    }
+
     // Add protocol sync actions if provided
     if let Some(proto) = protocol {
         all_actions.extend(proto.get_sync_actions());
@@ -141,10 +155,15 @@ pub async fn call_llm_with_actions(
         format!("LLM \"{}\"", event_description)
     };
 
+    // Get rate limiter for network events (discards if rate limited)
+    let rate_limiter = state.get_rate_limiter().await;
+
     let mut conversation = crate::llm::ConversationHandler::new(
         system_prompt,
         std::sync::Arc::new(llm_client.clone()),
         model,
+        rate_limiter,
+        crate::llm::RequestSource::Network, // Network events are discarded if rate limited
     )
     .with_tracking(
         state.clone(),
@@ -177,8 +196,8 @@ pub async fn call_llm_with_actions(
         );
     }
 
-    // Execute all collected actions
-    let result = execute_actions(action_values, state, protocol)
+    // Execute all collected actions with server context
+    let result = execute_actions(action_values, state, protocol, Some(server_id), None)
         .await
         .context("Failed to execute actions")?;
 
@@ -289,6 +308,37 @@ pub async fn call_llm(
     event: &Event,
     protocol: &dyn Server,
 ) -> Result<ExecutionResult> {
+    // TRY EASY PROTOCOL HANDLER FIRST if this server is managed by an easy protocol
+    if let Some(easy_id) = state.get_easy_for_server(server_id).await {
+        use crate::protocol::EASY_REGISTRY;
+        if let Some(easy_instance) = state.get_easy_instance(easy_id).await {
+            if let Some(easy_protocol) = EASY_REGISTRY.get_by_name(&easy_instance.protocol_name) {
+                // Call Easy protocol handler
+                let actions = easy_protocol
+                    .handle_event(
+                        event.clone(),
+                        easy_instance.user_instruction.clone(),
+                        Arc::new(llm_client.clone()),
+                        Arc::new(state.clone()),
+                    )
+                    .await
+                    .context("Easy protocol handler failed")?;
+
+                // Execute actions and return result
+                let result = crate::llm::execute_actions(
+                    actions,
+                    state,
+                    Some(protocol),
+                    Some(server_id),
+                    None, // client_id
+                )
+                .await?;
+
+                return Ok(result);
+            }
+        }
+    }
+
     // TRY SCRIPT FIRST if configured
     // Note: Script handling is done via event handlers, not through this path anymore
     // This section needs refactoring to use the new event handler system
@@ -303,6 +353,16 @@ pub async fn call_llm(
 
     // Collect all actions: common + event-specific actions
     let mut all_actions = get_network_event_common_actions();
+
+    // Add provide_feedback action only if server has feedback_instructions configured
+    let has_feedback_instructions = state
+        .with_server_mut(server_id, |server| server.feedback_instructions.is_some())
+        .await
+        .unwrap_or(false);
+
+    if has_feedback_instructions {
+        all_actions.push(crate::llm::actions::common::provide_feedback_action());
+    }
 
     // Add event-specific actions (these are the actions available for this event type)
     all_actions.extend(event.event_type.actions.clone());
@@ -333,10 +393,15 @@ pub async fn call_llm(
         format!("LLM \"{}\"", event_description)
     };
 
+    // Get rate limiter for network events (discards if rate limited)
+    let rate_limiter = state.get_rate_limiter().await;
+
     let mut conversation = crate::llm::ConversationHandler::new(
         system_prompt,
         std::sync::Arc::new(llm_client.clone()),
         model,
+        rate_limiter,
+        crate::llm::RequestSource::Network, // Network events are discarded if rate limited
     )
     .with_tracking(
         state.clone(),
@@ -369,8 +434,8 @@ pub async fn call_llm(
         warn!("LLM returned empty actions array for event: {}", event.id());
     }
 
-    // Execute actions
-    let result = execute_actions(actions, state, Some(protocol))
+    // Execute actions with server context
+    let result = execute_actions(actions, state, Some(protocol), Some(server_id), None)
         .await
         .context("Failed to execute actions")?;
 
@@ -398,7 +463,7 @@ pub struct ClientLlmResult {
 pub async fn call_llm_for_client(
     llm_client: &OllamaClient,
     state: &AppState,
-    _client_id: String,
+    client_id: String,
     instruction: &str,
     memory: &str,
     event: Option<&Event>,
@@ -406,7 +471,20 @@ pub async fn call_llm_for_client(
     status_tx: &tokio::sync::mpsc::UnboundedSender<String>,
 ) -> Result<ClientLlmResult> {
     // Get client actions
-    let all_actions = protocol.get_async_actions(state);
+    let mut all_actions = protocol.get_async_actions(state);
+
+    // Add provide_feedback action only if client has feedback_instructions configured
+    // Parse client_id from string format "client-123"
+    if let Some(cid) = crate::state::ClientId::from_string(&client_id) {
+        let has_feedback_instructions = state
+            .with_client_mut(cid, |client| client.feedback_instructions.is_some())
+            .await
+            .unwrap_or(false);
+
+        if has_feedback_instructions {
+            all_actions.push(crate::llm::actions::common::provide_feedback_action());
+        }
+    }
 
     // Build simple prompt for client
     let system_prompt =
@@ -449,11 +527,16 @@ pub async fn call_llm_for_client(
         ));
     }
 
+    // Get rate limiter for client calls (network-like, discards if rate limited)
+    let rate_limiter = state.get_rate_limiter().await;
+
     // Create conversation with correct parameter order
     let mut conversation = crate::llm::ConversationHandler::new(
         system_prompt,
         std::sync::Arc::new(llm_client.clone()),
         model,
+        rate_limiter,
+        crate::llm::RequestSource::Network, // Client calls are network-initiated, discarded if rate limited
     )
     .with_status_tx(status_tx.clone());
 
@@ -477,4 +560,158 @@ pub async fn call_llm_for_client(
         actions,
         memory_updates,
     })
+}
+
+/// Call LLM for feedback processing (server or client adjustment)
+///
+/// This is invoked when feedback has accumulated for a server/client with feedback_instructions.
+/// The LLM analyzes the feedback and returns actions to adjust the instance behavior.
+///
+/// # Arguments
+/// * `llm_client` - Ollama client for LLM invocations
+/// * `state` - Application state
+/// * `server_id` - Server ID if processing server feedback
+/// * `client_id` - Client ID if processing client feedback
+/// * `feedback_instructions` - Instructions for how to process feedback
+/// * `current_instruction` - Current instruction of the instance
+/// * `memory` - Current memory of the instance
+/// * `feedback_entries` - Accumulated feedback entries
+/// * `status_tx` - Channel for status messages
+///
+/// # Returns
+/// * `Ok(Vec<serde_json::Value>)` - Actions to adjust the instance
+/// * `Err(_)` - If LLM invocation fails
+#[allow(clippy::too_many_arguments)]
+pub async fn call_llm_for_feedback(
+    llm_client: &OllamaClient,
+    state: &AppState,
+    server_id: Option<crate::state::ServerId>,
+    client_id: Option<crate::state::ClientId>,
+    feedback_instructions: &str,
+    current_instruction: &str,
+    memory: &str,
+    feedback_entries: &[serde_json::Value],
+    status_tx: &tokio::sync::mpsc::UnboundedSender<String>,
+) -> Result<Vec<serde_json::Value>> {
+    use crate::llm::actions::get_user_input_common_actions;
+    use crate::llm::prompt::PromptBuilder;
+
+    // Get available adjustment actions (user input actions for modifying server/client)
+    let selected_mode = state.get_selected_scripting_mode().await;
+    let scripting_env = state.get_scripting_env().await;
+    let is_open_server_enabled = true;
+    let is_open_client_enabled = true;
+    let available_actions = get_user_input_common_actions(
+        selected_mode,
+        &scripting_env,
+        is_open_server_enabled,
+        is_open_client_enabled,
+    );
+
+    // Build feedback processing prompt
+    let system_prompt = PromptBuilder::build_feedback_system_prompt(
+        state,
+        server_id,
+        client_id,
+        feedback_instructions,
+        current_instruction,
+        memory,
+        feedback_entries,
+        available_actions,
+    )
+    .await;
+
+    // Get current model from state, auto-select if not set
+    let current_model = state.get_ollama_model().await;
+    let model = crate::llm::ensure_model_selected(current_model.clone())
+        .await
+        .context("Failed to ensure model is selected")?;
+
+    // If model was auto-selected, notify via status_tx
+    if current_model.is_none() {
+        let _ = status_tx.send(format!(
+            "⚠  Auto-selected model: {} (no model was configured)",
+            model
+        ));
+    }
+
+    let instance_type = if server_id.is_some() {
+        "server"
+    } else {
+        "client"
+    };
+    let instance_id = server_id
+        .map(|id| id.as_u32())
+        .or_else(|| client_id.map(|id| id.as_u32()))
+        .unwrap_or(0);
+
+    debug!(
+        "LLM feedback processing for {} #{} ({} feedback entries)",
+        instance_type,
+        instance_id,
+        feedback_entries.len()
+    );
+
+    // Get rate limiter for feedback processing (user-initiated, should not be discarded)
+    let rate_limiter = state.get_rate_limiter().await;
+
+    // Create conversation handler with tracking
+    let conversation_source = if let Some(sid) = server_id {
+        crate::state::app_state::ConversationSource::Network {
+            server_id: sid,
+            connection_id: None,
+        }
+    } else {
+        // Client feedback source (use Task as placeholder since we don't have a Client variant yet)
+        crate::state::app_state::ConversationSource::Task {
+            task_name: format!("feedback-client-{}", instance_id),
+        }
+    };
+
+    let mut conversation = crate::llm::ConversationHandler::new(
+        system_prompt,
+        std::sync::Arc::new(llm_client.clone()),
+        model,
+        rate_limiter,
+        crate::llm::RequestSource::User, // Feedback is user-initiated (via debounce timer)
+    )
+    .with_status_tx(status_tx.clone())
+    .with_tracking(
+        state.clone(),
+        conversation_source,
+        format!(
+            "Feedback processing ({} entries)",
+            feedback_entries.len()
+        ),
+    );
+
+    // Add user message to trigger feedback processing
+    conversation.add_user_message("Analyze the accumulated feedback and suggest adjustments.".to_string());
+
+    // Generate actions with retry (no tools for feedback processing)
+    let web_search_mode = state.get_web_search_mode().await;
+    let actions = conversation
+        .generate_with_tools_and_retry(
+            state.get_web_approval_channel().await,
+            web_search_mode,
+            Vec::new(), // No additional actions
+        )
+        .await
+        .context("✗  LLM failed to generate feedback processing response after retries")?;
+
+    if actions.is_empty() {
+        warn!(
+            "LLM returned empty actions for {} #{} feedback processing (no adjustments needed)",
+            instance_type, instance_id
+        );
+    } else {
+        debug!(
+            "LLM feedback processing completed for {} #{}: {} adjustment actions",
+            instance_type,
+            instance_id,
+            actions.len()
+        );
+    }
+
+    Ok(actions)
 }

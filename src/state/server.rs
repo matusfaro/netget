@@ -9,7 +9,7 @@ use tokio::task::JoinHandle;
 use crate::server::connection::ConnectionId;
 
 /// Unique identifier for a server instance
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct ServerId(u32);
 
 impl ServerId {
@@ -245,6 +245,14 @@ pub struct ServerInstance {
     pub protocol_data: serde_json::Value,
     /// Log file paths (output_name -> log_file_path)
     pub log_files: HashMap<String, PathBuf>,
+    /// Feedback instructions for automatic server adjustment
+    /// When set, network requests can provide feedback that triggers LLM-based server adjustments
+    pub feedback_instructions: Option<String>,
+    /// Accumulated feedback buffer (cleared after processing)
+    /// Each entry is a JSON value containing feedback data
+    pub feedback_buffer: Vec<serde_json::Value>,
+    /// Last time feedback was processed (for debouncing)
+    pub last_feedback_processed: Option<Instant>,
 }
 
 impl ServerInstance {
@@ -267,6 +275,9 @@ impl ServerInstance {
             event_handler_config: None,
             protocol_data: serde_json::Value::Object(serde_json::Map::new()),
             log_files: HashMap::new(),
+            feedback_instructions: None,
+            feedback_buffer: Vec::new(),
+            last_feedback_processed: None,
         }
     }
 
