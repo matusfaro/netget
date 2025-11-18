@@ -141,10 +141,15 @@ pub async fn call_llm_with_actions(
         format!("LLM \"{}\"", event_description)
     };
 
+    // Get rate limiter for network events (discards if rate limited)
+    let rate_limiter = state.get_rate_limiter().await;
+
     let mut conversation = crate::llm::ConversationHandler::new(
         system_prompt,
         std::sync::Arc::new(llm_client.clone()),
         model,
+        rate_limiter,
+        crate::llm::RequestSource::Network, // Network events are discarded if rate limited
     )
     .with_tracking(
         state.clone(),
@@ -333,10 +338,15 @@ pub async fn call_llm(
         format!("LLM \"{}\"", event_description)
     };
 
+    // Get rate limiter for network events (discards if rate limited)
+    let rate_limiter = state.get_rate_limiter().await;
+
     let mut conversation = crate::llm::ConversationHandler::new(
         system_prompt,
         std::sync::Arc::new(llm_client.clone()),
         model,
+        rate_limiter,
+        crate::llm::RequestSource::Network, // Network events are discarded if rate limited
     )
     .with_tracking(
         state.clone(),
@@ -449,11 +459,16 @@ pub async fn call_llm_for_client(
         ));
     }
 
+    // Get rate limiter for client calls (network-like, discards if rate limited)
+    let rate_limiter = state.get_rate_limiter().await;
+
     // Create conversation with correct parameter order
     let mut conversation = crate::llm::ConversationHandler::new(
         system_prompt,
         std::sync::Arc::new(llm_client.clone()),
         model,
+        rate_limiter,
+        crate::llm::RequestSource::Network, // Client calls are network-initiated, discarded if rate limited
     )
     .with_status_tx(status_tx.clone());
 

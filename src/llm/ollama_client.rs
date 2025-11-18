@@ -20,6 +20,40 @@ pub struct Message {
     pub content: String,
 }
 
+/// Token usage statistics from an LLM response
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TokenUsage {
+    /// Number of tokens in the prompt (input)
+    pub prompt_tokens: u64,
+    /// Number of tokens in the response (output)
+    pub completion_tokens: u64,
+    /// Total tokens (prompt + completion)
+    pub total_tokens: u64,
+}
+
+impl TokenUsage {
+    /// Create from ollama-rs GenerationResponse
+    pub fn from_response(response: &ollama_rs::generation::completion::GenerationResponse) -> Self {
+        let prompt_tokens = response.prompt_eval_count.unwrap_or(0) as u64;
+        let completion_tokens = response.eval_count.unwrap_or(0) as u64;
+
+        Self {
+            prompt_tokens,
+            completion_tokens,
+            total_tokens: prompt_tokens + completion_tokens,
+        }
+    }
+}
+
+/// Response from generate_with_format including token usage
+#[derive(Debug, Clone)]
+pub struct GenerateResponse {
+    /// The generated text
+    pub text: String,
+    /// Token usage statistics
+    pub token_usage: TokenUsage,
+}
+
 impl Message {
     /// Create a system message
     pub fn system(content: impl Into<String>) -> Self {
@@ -344,7 +378,7 @@ impl OllamaClient {
     /// Only use this directly in:
     /// - action_helper module (the primary consumer)
     /// - handler for user input commands
-    pub(crate) async fn generate(&self, model: &str, prompt: &str) -> Result<String> {
+    pub(crate) async fn generate(&self, model: &str, prompt: &str) -> Result<GenerateResponse> {
         self.generate_with_format(model, prompt, None).await
     }
 
@@ -358,7 +392,7 @@ impl OllamaClient {
         model: &str,
         prompt: &str,
         format: Option<serde_json::Value>,
-    ) -> Result<String> {
+    ) -> Result<GenerateResponse> {
         // DEBUG: Summary
         debug!(
             "LLM request: model={}, prompt_len={} chars, format={}",
@@ -413,7 +447,7 @@ impl OllamaClient {
             request = request.format(FormatType::Json);
         }
 
-        let response = tokio::time::timeout(
+        let api_response = tokio::time::timeout(
             std::time::Duration::from_secs(120),
             self.ollama.generate(request),
         )
@@ -435,21 +469,30 @@ impl OllamaClient {
             }
         })?;
 
-        // DEBUG: Summary
+        // Extract token usage
+        let token_usage = TokenUsage::from_response(&api_response);
+
+        // DEBUG: Summary with token info
         debug!(
-            "LLM response: response_len={} chars",
-            response.response.len()
+            "LLM response: response_len={} chars, tokens={}i/{}o/{}t",
+            api_response.response.len(),
+            token_usage.prompt_tokens,
+            token_usage.completion_tokens,
+            token_usage.total_tokens
         );
         if let Some(ref tx) = self.status_tx {
             let _ = tx.send(format!(
-                "[DEBUG] LLM response: response_len={} chars",
-                response.response.len()
+                "[DEBUG] LLM response: response_len={} chars, tokens={} prompt + {} completion = {} total",
+                api_response.response.len(),
+                token_usage.prompt_tokens,
+                token_usage.completion_tokens,
+                token_usage.total_tokens
             ));
         }
 
         // TRACE: Full payload with pretty-printed JSON if possible
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&response.response) {
-            let pretty = serde_json::to_string_pretty(&json).unwrap_or(response.response.clone());
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&api_response.response) {
+            let pretty = serde_json::to_string_pretty(&json).unwrap_or(api_response.response.clone());
             trace!("Full LLM response (JSON):\n{}", pretty);
             if let Some(ref tx) = self.status_tx {
                 // Send each line separately to ensure proper formatting
@@ -459,16 +502,19 @@ impl OllamaClient {
                 }
             }
         } else {
-            trace!("Full LLM response (text):\n{}", response.response);
+            trace!("Full LLM response (text):\n{}", api_response.response);
             if let Some(ref tx) = self.status_tx {
                 let _ = tx.send("[TRACE] LLM response (text):".to_string());
-                for line in response.response.lines() {
+                for line in api_response.response.lines() {
                     let _ = tx.send(format!("[TRACE] {}", line));
                 }
             }
         }
 
-        Ok(response.response)
+        Ok(GenerateResponse {
+            text: api_response.response,
+            token_usage,
+        })
     }
 
     /// Generate with automatic retry on parse errors (for legacy protocols)
@@ -495,16 +541,16 @@ impl OllamaClient {
             debug!("Generate attempt {}/{}", attempt, MAX_RETRIES + 1);
 
             // Generate response
-            let response = self.generate(model, prompt).await?;
+            let generate_response = self.generate(model, prompt).await?;
 
             // Try to parse as ActionResponse to check format
-            match ActionResponse::from_str(&response) {
+            match ActionResponse::from_str(&generate_response.text) {
                 Ok(_) => {
                     // Valid format!
                     if attempt > 1 {
                         info!("Retry successful on attempt {}", attempt);
                     }
-                    return Ok(response);
+                    return Ok(generate_response.text);
                 }
                 Err(e) => {
                     if attempt <= MAX_RETRIES {
@@ -512,10 +558,10 @@ impl OllamaClient {
                         warn!("Parse error on attempt {}: {}", attempt, e);
                         warn!(
                             "Malformed response: {}",
-                            if response.len() > 500 {
-                                format!("{}...", &response[..500])
+                            if generate_response.text.len() > 500 {
+                                format!("{}...", &generate_response.text[..500])
                             } else {
-                                response.clone()
+                                generate_response.text.clone()
                             }
                         );
 
@@ -595,12 +641,14 @@ impl OllamaClient {
             // Generate response with full conversation history
             debug!("Conversation turn {}/{}", turn, max_iterations);
 
-            let response_text = self
+            let generate_response = self
                 .generate_with_format(model, &conversation_history, None)
                 .await?;
 
+            let response_text = &generate_response.text;
+
             // Parse as action response
-            let action_response = ActionResponse::from_str(&response_text)
+            let action_response = ActionResponse::from_str(response_text)
                 .context("Failed to parse action response")?;
 
             // Log action summary
@@ -642,7 +690,7 @@ impl OllamaClient {
 
             // Append assistant's tool call actions to conversation
             conversation_history.push_str("\n\n--- Assistant Response ---\n");
-            conversation_history.push_str(&response_text);
+            conversation_history.push_str(response_text);
 
             // Execute tool calls and append results to conversation
             conversation_history.push_str("\n\n--- Tool Results ---\n");

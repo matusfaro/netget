@@ -280,15 +280,23 @@ impl EventHandler {
         // Get or create persistent conversation state
         let conversation_state = self.state.get_or_create_user_conversation_state().await;
 
-        let mut conversation =
-            ConversationHandler::new(system_prompt, std::sync::Arc::new(llm_with_status), model)
-                .with_status_tx(status_tx.clone())
-                .with_tracking(
-                    self.state.clone(),
-                    crate::state::app_state::ConversationSource::User,
-                    input.clone(),
-                )
-                .with_conversation_state(conversation_state);
+        // Get rate limiter for user requests
+        let rate_limiter = self.state.get_rate_limiter().await;
+
+        let mut conversation = ConversationHandler::new(
+            system_prompt,
+            std::sync::Arc::new(llm_with_status),
+            model,
+            rate_limiter,
+            crate::llm::RequestSource::User, // User input always waits for rate limits
+        )
+        .with_status_tx(status_tx.clone())
+        .with_tracking(
+            self.state.clone(),
+            crate::state::app_state::ConversationSource::User,
+            input.clone(),
+        )
+        .with_conversation_state(conversation_state);
 
         // Register conversation immediately so it shows in UI
         self.state
