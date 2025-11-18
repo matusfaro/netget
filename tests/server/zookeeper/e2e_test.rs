@@ -91,19 +91,7 @@ Return zxid=100, error_code=0 (success)."#;
     let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
-                // Mock 1: Server startup
-                .on_instruction_containing("ZooKeeper")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "ZooKeeper",
-                        "instruction": "Return database config"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: getData request
+                // Mock 1: getData request - MUST BE FIRST (most specific)
                 .on_event("zookeeper_request")
                 .and_event_data_contains("operation", "getData")
                 .and_event_data_contains("path", "/config/database")
@@ -114,6 +102,18 @@ Return zxid=100, error_code=0 (success)."#;
                         "zxid": 100,
                         "error_code": 0,
                         "data_hex": hex::encode("postgres://localhost:5432")
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Server startup - MUST BE LAST (less specific)
+                .on_instruction_containing("ZooKeeper")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "ZooKeeper",
+                        "instruction": "Return database config"
                     }
                 ]))
                 .expect_calls(1)
@@ -182,19 +182,7 @@ Return zxid=200, error_code=0 (success)."#;
     let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
-                // Mock 1: Server startup
-                .on_instruction_containing("ZooKeeper")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "ZooKeeper",
-                        "instruction": "Return service list"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: getChildren request
+                // Mock 1: getChildren request - MUST BE FIRST (most specific)
                 .on_event("zookeeper_request")
                 .and_event_data_contains("operation", "getChildren")
                 .and_event_data_contains("path", "/services")
@@ -205,6 +193,18 @@ Return zxid=200, error_code=0 (success)."#;
                         "zxid": 200,
                         "error_code": 0,
                         "data_hex": "00000003000000037765620000000361706900000002646200" // Array with 3 strings
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Server startup - MUST BE LAST (less specific)
+                .on_instruction_containing("ZooKeeper")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "ZooKeeper",
+                        "instruction": "Return service list"
                     }
                 ]))
                 .expect_calls(1)
@@ -273,19 +273,7 @@ Return zxid=300."#;
     let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
-                // Mock 1: Server startup
-                .on_instruction_containing("ZooKeeper")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "ZooKeeper",
-                        "instruction": "Return error for missing nodes"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: getData request for nonexistent path
+                // Mock 1: getData request for nonexistent path - MUST BE FIRST (most specific)
                 .on_event("zookeeper_request")
                 .and_event_data_contains("operation", "getData")
                 .and_event_data_contains("path", "/nonexistent")
@@ -296,6 +284,18 @@ Return zxid=300."#;
                         "zxid": 300,
                         "error_code": -101, // NONODE error
                         "data_hex": ""
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 2: Server startup - MUST BE LAST (less specific)
+                .on_instruction_containing("ZooKeeper")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "ZooKeeper",
+                        "instruction": "Return error for missing nodes"
                     }
                 ]))
                 .expect_calls(1)

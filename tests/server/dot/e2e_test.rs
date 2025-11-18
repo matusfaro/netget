@@ -125,20 +125,21 @@ async fn test_dot_server() -> E2EResult<()> {
         .with_log_level("info")
         .with_mock(|mock| {
             mock
-                // Mock 1: Server startup (user command)
-                .on_instruction_containing("Listen on port")
-                .and_instruction_containing("DoT")
+                // Mock 1: Third DNS query - foo.example.com - MUST BE FIRST (most specific, avoids substring match)
+                .on_event("dot_query")
+                .and_event_data_contains("domain", "foo.example.com")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "DoT",
-                        "instruction": "Respond to all A record queries for example.com with IP 93.184.216.34 and TTL 300"
+                        "type": "send_dns_a_response",
+                        "query_id": 1,
+                        "domain": "foo.example.com",
+                        "ip": "93.184.216.34",
+                        "ttl": 300
                     }
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: First DNS query - example.com
+                // Mock 2: First DNS query - example.com - MUST BE SECOND (specific)
                 .on_event("dot_query")
                 .and_event_data_contains("domain", "example.com")
                 .respond_with_actions(serde_json::json!([
@@ -152,7 +153,7 @@ async fn test_dot_server() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 3: Second DNS query - test.com (returns same response for all)
+                // Mock 3: Second DNS query - test.com - MUST BE THIRD (specific)
                 .on_event("dot_query")
                 .and_event_data_contains("domain", "test.com")
                 .respond_with_actions(serde_json::json!([
@@ -166,16 +167,15 @@ async fn test_dot_server() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 4: Third DNS query - foo.example.com
-                .on_event("dot_query")
-                .and_event_data_contains("domain", "foo.example.com")
+                // Mock 4: Server startup - MUST BE LAST (less specific)
+                .on_instruction_containing("Listen on port")
+                .and_instruction_containing("DoT")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_dns_a_response",
-                        "query_id": 1,
-                        "domain": "foo.example.com",
-                        "ip": "93.184.216.34",
-                        "ttl": 300
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "DoT",
+                        "instruction": "Respond to all A record queries for example.com with IP 93.184.216.34 and TTL 300"
                     }
                 ]))
                 .expect_calls(1)

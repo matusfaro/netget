@@ -8,6 +8,7 @@ pub mod mock_config;
 pub mod mock_matcher;
 pub mod mock_ollama;
 pub mod netget;
+pub mod ollama_test_builder;
 pub mod server;
 
 // Re-export commonly used types and functions for convenience
@@ -19,4 +20,5 @@ pub use common::{
 };
 pub use mock_config::{MockLlmConfig, MockResponse, MockRule, ResponseGenerator, SerializedMockRule};
 pub use mock_matcher::{LlmContext, MockMatcher};
+pub use ollama_test_builder::OllamaTestBuilder;
 pub use server::{start_netget_server, wait_for_server_startup};

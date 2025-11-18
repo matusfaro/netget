@@ -43,6 +43,7 @@ pub enum FooterContent {
         servers: Vec<ServerDisplayInfo>,
         clients: Vec<ClientDisplayInfo>,
         connections: Vec<ConnectionDisplayInfo>,
+        tasks: Vec<crate::ui::app::TaskDisplayInfo>,
         expand_all: bool,
         conversations: Vec<ConversationInfo>,
     },
@@ -123,6 +124,7 @@ impl StickyFooter {
                 servers: Vec::new(),
                 clients: Vec::new(),
                 connections: Vec::new(),
+                tasks: Vec::new(),
                 expand_all: false,
                 conversations: Vec::new(),
             },
@@ -234,6 +236,7 @@ impl StickyFooter {
         servers: &[ServerDisplayInfo],
         clients: &[ClientDisplayInfo],
         connections: &[ConnectionDisplayInfo],
+        tasks: &[crate::ui::app::TaskDisplayInfo],
         expand_all: bool,
         conversations: &[ConversationInfo],
     ) -> u16 {
@@ -242,17 +245,8 @@ impl StickyFooter {
             return custom.lines().count() as u16;
         }
 
-        // Calculate inputs column height (User + Scripting conversations)
-        let input_convs: Vec<_> = conversations
-            .iter()
-            .filter(|c| {
-                matches!(
-                    &c.source,
-                    crate::state::app_state::ConversationSource::User
-                        | crate::state::app_state::ConversationSource::Scripting
-                )
-            })
-            .collect();
+        // Calculate inputs column height (All LLM conversations)
+        let input_convs: Vec<_> = conversations.iter().collect();
 
         let mut inputs_height = 0u16;
         if !input_convs.is_empty() {
@@ -459,12 +453,14 @@ impl StickyFooter {
                 servers,
                 clients,
                 connections,
+                tasks,
                 expand_all,
                 conversations,
             } => self.calculate_normal_content_lines(
                 servers,
                 clients,
                 connections,
+                tasks,
                 *expand_all,
                 conversations,
             ),
@@ -481,6 +477,7 @@ impl StickyFooter {
                     servers,
                     clients,
                     connections,
+                    tasks,
                     expand_all,
                     conversations,
                 } => self.render_normal_content(
@@ -489,6 +486,7 @@ impl StickyFooter {
                     servers,
                     clients,
                     connections,
+                    tasks,
                     *expand_all,
                     conversations,
                 )?,
@@ -591,12 +589,14 @@ impl StickyFooter {
                 servers,
                 clients,
                 connections,
+                tasks,
                 expand_all,
                 conversations,
             } => self.calculate_normal_content_lines(
                 servers,
                 clients,
                 connections,
+                tasks,
                 *expand_all,
                 conversations,
             ),
@@ -628,6 +628,7 @@ impl StickyFooter {
         servers: &[ServerDisplayInfo],
         clients: &[ClientDisplayInfo],
         connections: &[ConnectionDisplayInfo],
+        tasks: &[crate::ui::app::TaskDisplayInfo],
         expand_all: bool,
         conversations: &[ConversationInfo],
     ) -> Result<u16> {
@@ -647,17 +648,8 @@ impl StickyFooter {
             return Ok(current_line);
         }
 
-        // Filter conversations for inputs column
-        let input_convs: Vec<_> = conversations
-            .iter()
-            .filter(|c| {
-                matches!(
-                    &c.source,
-                    crate::state::app_state::ConversationSource::User
-                        | crate::state::app_state::ConversationSource::Scripting
-                )
-            })
-            .collect();
+        // All conversations shown in LLM column
+        let input_convs: Vec<_> = conversations.iter().collect();
 
         // Calculate heights for each column
         let inputs_height = if input_convs.is_empty() {
@@ -666,7 +658,7 @@ impl StickyFooter {
             1 + input_convs.len() as u16
         };
         let mut servers_height = 0u16;
-        if !servers.is_empty() {
+        if !servers.is_empty() || !tasks.is_empty() {
             servers_height = 1; // Header
             for server in servers {
                 servers_height += 1; // Server line
@@ -695,10 +687,24 @@ impl StickyFooter {
                     servers_height += conn_convs.len() as u16;
                 }
 
+                // Add tasks for this server
+                let server_tasks: Vec<_> = tasks
+                    .iter()
+                    .filter(|t| t.scope.starts_with(&server.id))
+                    .collect();
+                servers_height += server_tasks.len() as u16;
+
                 if !expand_all && server_conns.len() > 10 {
                     servers_height += 1;
                 }
             }
+
+            // Add global tasks
+            let global_tasks: Vec<_> = tasks
+                .iter()
+                .filter(|t| t.scope == "Global")
+                .collect();
+            servers_height += global_tasks.len() as u16;
         }
 
         // Calculate clients height
@@ -751,7 +757,7 @@ impl StickyFooter {
                         SetForegroundColor(self.palette.separator),
                         Print("┌──── "),
                         ResetColor,
-                        Print("Running")
+                        Print("LLM")
                     )?;
                 } else {
                     // Content line
@@ -914,6 +920,50 @@ impl StickyFooter {
                             }
                             content_line_idx -= 1;
                         }
+
+                        // Render tasks for this server
+                        let server_tasks: Vec<_> = tasks
+                            .iter()
+                            .filter(|t| t.scope.starts_with(&server.id))
+                            .collect();
+
+                        if content_line_idx < server_tasks.len() as u16 {
+                            let task = server_tasks[content_line_idx as usize];
+                            let text = format!("  [T] {} - {}", task.name, task.status);
+                            execute!(
+                                stdout,
+                                cursor::MoveTo(servers_column_start, current_line),
+                                SetForegroundColor(self.palette.separator),
+                                Print("│ "),
+                                ResetColor,
+                                SetForegroundColor(self.palette.dimmed),
+                                Print(&text),
+                                ResetColor
+                            )?;
+                            break;
+                        }
+                        content_line_idx -= server_tasks.len() as u16;
+                    }
+
+                    // After all servers, render global tasks
+                    let global_tasks: Vec<_> = tasks
+                        .iter()
+                        .filter(|t| t.scope == "Global")
+                        .collect();
+
+                    if content_line_idx < global_tasks.len() as u16 {
+                        let task = global_tasks[content_line_idx as usize];
+                        let text = format!("[Global Task] {} - {}", task.name, task.status);
+                        execute!(
+                            stdout,
+                            cursor::MoveTo(servers_column_start, current_line),
+                            SetForegroundColor(self.palette.separator),
+                            Print("│ "),
+                            ResetColor,
+                            SetForegroundColor(self.palette.dimmed),
+                            Print(&text),
+                            ResetColor
+                        )?;
                     }
                 }
             }
@@ -1045,29 +1095,21 @@ impl StickyFooter {
 
         if let FooterContent::Normal {
             servers,
+            tasks,
             conversations,
             ..
         } = content
         {
-            // Filter conversations for inputs column
-            let input_convs: Vec<_> = conversations
-                .iter()
-                .filter(|c| {
-                    matches!(
-                        &c.source,
-                        crate::state::app_state::ConversationSource::User
-                            | crate::state::app_state::ConversationSource::Scripting
-                    )
-                })
-                .collect();
+            // All conversations shown in LLM column
+            let input_convs: Vec<_> = conversations.iter().collect();
 
             // Add ┴ at inputs column position if inputs exist
             if !input_convs.is_empty() {
                 join_positions.push(INPUTS_LEFT_MARGIN);
             }
 
-            // Add ┴ at servers column position if servers exist
-            if !servers.is_empty() {
+            // Add ┴ at servers column position if servers or tasks exist
+            if !servers.is_empty() || !tasks.is_empty() {
                 let servers_column_start = INPUTS_LEFT_MARGIN + INPUTS_COLUMN_WIDTH + COLUMN_MARGIN;
                 join_positions.push(servers_column_start);
             }

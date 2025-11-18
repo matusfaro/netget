@@ -340,10 +340,16 @@ async fn handle_generate(
     // DEBUG: Log extracted context
     eprintln!("🔍🔍🔍 Mock generate context extracted:");
     eprintln!("  event_type: {:?}", context.event_type);
-    eprintln!("  instruction: {}", &context.instruction[..context.instruction.len().min(200)]);
+    // Use chars().take() to avoid splitting UTF-8 characters
+    let instruction_preview: String = context.instruction.chars().take(200).collect();
+    eprintln!("  instruction: {}", instruction_preview);
     eprintln!("  prompt length: {} chars", request.prompt.len());
-    eprintln!("  prompt first 500 chars: {}", &request.prompt[..request.prompt.len().min(500)]);
-    eprintln!("  prompt last 500 chars: {}", &request.prompt[request.prompt.len().saturating_sub(500)..]);
+    let first_500: String = request.prompt.chars().take(500).collect();
+    eprintln!("  prompt first 500 chars: {}", first_500);
+    // For last 500 chars, skip first N chars and take remaining
+    let skip_count = request.prompt.chars().count().saturating_sub(500);
+    let last_500: String = request.prompt.chars().skip(skip_count).collect();
+    eprintln!("  prompt last 500 chars: {}", last_500);
 
     // Get mock response
     let config = state.config.lock().await;

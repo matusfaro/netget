@@ -769,11 +769,16 @@ async fn execute_single_task(
         task.instruction.clone()
     };
 
+    // Get rate limiter for scheduled tasks (discards if rate limited)
+    let rate_limiter = state.get_rate_limiter().await;
+
     // Create conversation handler with tracking
     let mut conversation = crate::llm::ConversationHandler::new(
         prompt.clone(),
         std::sync::Arc::new(llm_client.clone()),
         model.clone(),
+        rate_limiter,
+        crate::llm::RequestSource::Network, // Scheduled tasks are discarded if rate limited
     )
     .with_status_tx(status_tx.clone())
     .with_tracking(state.clone(), conversation_source, truncated_instruction);
@@ -1243,6 +1248,7 @@ async fn handle_key_event(
                         servers: app.servers.clone(),
                         clients: app.clients.clone(),
                         connections: app.connections.clone(),
+                        tasks: app.tasks.clone(),
                         expand_all: app.expand_all_connections,
                         conversations: app.conversations.clone(),
                     });
@@ -1578,6 +1584,12 @@ async fn handle_key_event(
                         update_ui_from_state(app, state, footer).await;
                         footer.render(&mut stdout())?;
                     }
+                    #[cfg(feature = "sqlite")]
+                    UserCommand::Sqlite { db_id, query } => {
+                        // Handle SQLite database commands
+                        handle_sqlite(db_id, query, state, footer, &palette).await?;
+                        footer.render(&mut stdout())?;
+                    }
                     UserCommand::Quit => {
                         return Ok(true);
                     }
@@ -1862,6 +1874,7 @@ fn update_slash_suggestions_and_render(
                 servers: app.servers.clone(),
                 clients: app.clients.clone(),
                 connections: app.connections.clone(),
+                tasks: app.tasks.clone(),
                 expand_all: app.expand_all_connections,
                 conversations: app.conversations.clone(),
             });
@@ -1942,12 +1955,55 @@ async fn update_ui_from_state(app: &mut App, state: &AppState, footer: &mut Stic
     // Fetch active conversations from state
     app.conversations = state.get_active_conversations().await;
 
+    // Fetch scheduled tasks from state
+    use crate::ui::app::TaskDisplayInfo;
+    let all_tasks = state.get_all_tasks().await;
+    app.tasks = all_tasks
+        .iter()
+        .map(|t| {
+            let scope = match &t.scope {
+                crate::state::task::TaskScope::Global => "Global".to_string(),
+                crate::state::task::TaskScope::Server(sid) => format!("#{}", sid.as_u32()),
+                crate::state::task::TaskScope::Connection(sid, cid) => {
+                    format!("#{}:{}", sid.as_u32(), cid)
+                }
+                crate::state::task::TaskScope::Client(cid) => format!("Client #{}", cid.as_u32()),
+            };
+            let task_type = match &t.task_type {
+                crate::state::task::TaskType::OneShot { delay_secs } => {
+                    format!("OneShot({}s)", delay_secs)
+                }
+                crate::state::task::TaskType::Recurring {
+                    interval_secs,
+                    executions_count,
+                    ..
+                } => {
+                    format!("Recurring({}s, {} runs)", interval_secs, executions_count)
+                }
+            };
+            let status = match &t.status {
+                crate::state::task::TaskStatus::Scheduled => "Scheduled".to_string(),
+                crate::state::task::TaskStatus::Executing => "Executing".to_string(),
+                crate::state::task::TaskStatus::Completed => "Completed".to_string(),
+                crate::state::task::TaskStatus::Failed(err) => format!("Failed: {}", err),
+            };
+            TaskDisplayInfo {
+                id: format!("T{}", t.id.as_u64()),
+                name: t.name.clone(),
+                scope,
+                status,
+                task_type,
+            }
+        })
+        .collect();
+
     // Update footer content (this recalculates scroll region)
     if app.slash_suggestions.is_empty() {
         footer.set_content(FooterContent::Normal {
             servers: app.servers.clone(),
             clients: app.clients.clone(),
             connections: app.connections.clone(),
+            tasks: app.tasks.clone(),
             expand_all: app.expand_all_connections,
             conversations: app.conversations.clone(),
         });
@@ -2574,5 +2630,136 @@ async fn handle_load(
     }
 
     print_output_line("[LOAD] Configuration loaded successfully", footer, palette)?;
+    Ok(())
+}
+
+#[cfg(feature = "sqlite")]
+async fn handle_sqlite(
+    db_id: Option<u32>,
+    query: Option<String>,
+    state: &AppState,
+    footer: &mut StickyFooter,
+    palette: &ColorPalette,
+) -> Result<()> {
+    use crate::state::sqlite::DatabaseId;
+
+    match (db_id, query) {
+        (None, None) => {
+            // List all databases
+            let databases = state.get_all_databases().await;
+            if databases.is_empty() {
+                print_output_line("[SQLITE] No databases found", footer, palette)?;
+            } else {
+                print_output_line(
+                    &format!("[SQLITE] Found {} database(s):", databases.len()),
+                    footer,
+                    palette,
+                )?;
+                for db in databases {
+                    print_output_line(
+                        &format!(
+                            "  {} - {} ({}) - {} table(s), {} queries",
+                            db.id, db.name, db.owner, db.tables.len(), db.query_count
+                        ),
+                        footer,
+                        palette,
+                    )?;
+                }
+            }
+        }
+        (Some(id), None) => {
+            // Show schema for specific database
+            let db_id = DatabaseId::new(id);
+            if let Some(db) = state.get_database(db_id).await {
+                print_output_line(
+                    &format!(
+                        "[SQLITE] Database: {} ({}) - {} ({} table(s))",
+                        db.id,
+                        db.name,
+                        db.owner,
+                        db.tables.len()
+                    ),
+                    footer,
+                    palette,
+                )?;
+                if db.tables.is_empty() {
+                    print_output_line("  No tables", footer, palette)?;
+                } else {
+                    for table in &db.tables {
+                        print_output_line(
+                            &format!("  Table: {} ({} rows)", table.name, table.row_count),
+                            footer,
+                            palette,
+                        )?;
+                        for column in &table.columns {
+                            print_output_line(&format!("    {}", column), footer, palette)?;
+                        }
+                    }
+                }
+            } else {
+                print_output_line(
+                    &format!("[ERROR] Database {} not found", id),
+                    footer,
+                    palette,
+                )?;
+            }
+        }
+        (Some(id), Some(sql)) => {
+            // Execute query on specific database
+            let db_id = DatabaseId::new(id);
+            match state.execute_sql(db_id, &sql).await {
+                Ok(result) => {
+                    print_output_line(
+                        &format!("[SQLITE] Query executed on {}:", db_id),
+                        footer,
+                        palette,
+                    )?;
+                    // Format and display result
+                    let formatted = result.format();
+                    for line in formatted.lines() {
+                        print_output_line(&format!("  {}", line), footer, palette)?;
+                    }
+                }
+                Err(e) => {
+                    print_output_line(
+                        &format!("[ERROR] Query failed: {}", e),
+                        footer,
+                        palette,
+                    )?;
+                }
+            }
+        }
+        (None, Some(sql)) => {
+            // Execute query on first database
+            let databases = state.get_all_databases().await;
+            if let Some(db) = databases.first() {
+                let db_id = db.id;
+                match state.execute_sql(db_id, &sql).await {
+                    Ok(result) => {
+                        print_output_line(
+                            &format!("[SQLITE] Query executed on {}:", db_id),
+                            footer,
+                            palette,
+                        )?;
+                        // Format and display result
+                        let formatted = result.format();
+                        for line in formatted.lines() {
+                            print_output_line(&format!("  {}", line), footer, palette)?;
+                        }
+                    }
+                    Err(e) => {
+                        print_output_line(
+                            &format!("[ERROR] Query failed: {}", e),
+                            footer,
+                            palette,
+                        )?;
+                    }
+                }
+            } else {
+                print_output_line("[ERROR] No databases found", footer, palette)?;
+            }
+        }
+    }
+
     Ok(())
 }

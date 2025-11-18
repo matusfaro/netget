@@ -98,6 +98,16 @@ pub struct ConnectionDisplayInfo {
     pub state: String,
 }
 
+/// Scheduled task information for display
+#[derive(Debug, Clone)]
+pub struct TaskDisplayInfo {
+    pub id: String,
+    pub name: String,
+    pub scope: String,
+    pub status: String,
+    pub task_type: String,
+}
+
 /// Connection information for status bar
 #[derive(Default, Clone)]
 pub struct ConnectionInfo {
@@ -138,6 +148,8 @@ pub struct App {
     pub clients: Vec<ClientDisplayInfo>,
     /// Connection list for display
     pub connections: Vec<ConnectionDisplayInfo>,
+    /// Scheduled tasks for display
+    pub tasks: Vec<TaskDisplayInfo>,
     /// Whether to expand all connections (E key toggle)
     pub expand_all_connections: bool,
     /// Next global connection ID to assign
@@ -163,6 +175,7 @@ impl Default for App {
             servers: Vec::new(),
             clients: Vec::new(),
             connections: Vec::new(),
+            tasks: Vec::new(),
             expand_all_connections: false,
             next_global_connection_id: 1,
             connection_id_map: std::collections::HashMap::new(),

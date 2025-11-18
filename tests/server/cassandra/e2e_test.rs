@@ -81,11 +81,17 @@ mod e2e_cassandra {
 
         // The session will close when dropped
         drop(session);
+        // Wait for connection cleanup to complete
+        sleep(Duration::from_millis(500)).await;
 
-        // Verify mock expectations were met
-        server.verify_mocks().await?;
+        // Verify mock expectations were met (with timeout to prevent hanging)
+        tokio::time::timeout(Duration::from_secs(10), server.verify_mocks())
+            .await
+            .map_err(|_| "Mock verification timed out after 10s")??;
 
-        server.stop().await?;
+        tokio::time::timeout(Duration::from_secs(5), server.stop())
+            .await
+            .map_err(|_| "Server stop timed out after 5s")??;
         println!("  [TEST] ✓ Test completed successfully\n");
 
         Ok(())
@@ -196,11 +202,17 @@ mod e2e_cassandra {
         println!("  [TEST] ✓ Received expected rows");
 
         drop(session);
+        // Wait for connection cleanup to complete
+        sleep(Duration::from_millis(500)).await;
 
-        // Verify mock expectations were met
-        server.verify_mocks().await?;
+        // Verify mock expectations were met (with timeout to prevent hanging)
+        tokio::time::timeout(Duration::from_secs(10), server.verify_mocks())
+            .await
+            .map_err(|_| "Mock verification timed out after 10s")??;
 
-        server.stop().await?;
+        tokio::time::timeout(Duration::from_secs(5), server.stop())
+            .await
+            .map_err(|_| "Server stop timed out after 5s")??;
         println!("  [TEST] ✓ Test completed successfully\n");
 
         Ok(())
@@ -982,11 +994,17 @@ mod e2e_cassandra {
         println!("  [TEST] ✓ Received expected error for parameter mismatch");
 
         drop(session);
+        // Wait for connection cleanup to complete
+        sleep(Duration::from_millis(500)).await;
 
-        // Verify mock expectations were met
-        server.verify_mocks().await?;
+        // Verify mock expectations were met (with timeout to prevent hanging)
+        tokio::time::timeout(Duration::from_secs(10), server.verify_mocks())
+            .await
+            .map_err(|_| "Mock verification timed out after 10s")??;
 
-        server.stop().await?;
+        tokio::time::timeout(Duration::from_secs(5), server.stop())
+            .await
+            .map_err(|_| "Server stop timed out after 5s")??;
         println!("  [TEST] ✓ Test completed successfully\n");
 
         Ok(())

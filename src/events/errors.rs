@@ -23,6 +23,14 @@ pub enum ActionExecutionError {
 
     /// Fatal error that should not be retried
     Fatal(anyhow::Error),
+
+    /// SQL execution error - retryable with error context
+    #[cfg(feature = "sqlite")]
+    SqlError {
+        database_id: u32,
+        query: String,
+        error: String,
+    },
 }
 
 impl fmt::Display for ActionExecutionError {
@@ -46,6 +54,14 @@ impl fmt::Display for ActionExecutionError {
                 write!(f, "Privilege denied ({}): {}", requirement, message)
             }
             Self::Fatal(e) => write!(f, "Fatal error: {}", e),
+            #[cfg(feature = "sqlite")]
+            Self::SqlError {
+                database_id,
+                error,
+                ..
+            } => {
+                write!(f, "SQL error in database {}: {}", database_id, error)
+            }
         }
     }
 }
@@ -55,7 +71,12 @@ impl std::error::Error for ActionExecutionError {}
 impl ActionExecutionError {
     /// Check if this error is retryable
     pub fn is_retryable(&self) -> bool {
-        matches!(self, Self::PortConflict { .. })
+        matches!(
+            self,
+            Self::PortConflict { .. }
+                | Self::SqlError { .. }
+                    if cfg!(feature = "sqlite")
+        )
     }
 
     /// Build a correction message for the LLM
@@ -108,6 +129,31 @@ Error: {}
 
 This error cannot be automatically resolved. Please inform the user of the error."#,
                     e
+                )
+            }
+            #[cfg(feature = "sqlite")]
+            Self::SqlError {
+                database_id,
+                query,
+                error,
+            } => {
+                format!(
+                    r#"Your previous SQL query failed during execution.
+
+Database ID: {}
+Query: {}
+Error: {}
+
+The SQL query syntax or logic had an error. Please review the error message and provide a corrected execute_sql action.
+
+Common issues:
+- Table or column names don't exist (check schema with list_databases)
+- SQL syntax errors (check SQL statement structure)
+- Type mismatches or constraint violations
+- Missing WHERE clause or incorrect conditions
+
+Please provide a corrected execute_sql action with valid SQL."#,
+                    database_id, query, error
                 )
             }
         }

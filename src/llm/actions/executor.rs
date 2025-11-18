@@ -251,6 +251,14 @@ async fn execute_common_action(
                 warn!("provide_feedback action called without server_id or client_id context");
             }
         }
+
+        #[cfg(feature = "sqlite")]
+        CommonAction::CreateDatabase { .. }
+        | CommonAction::ExecuteSql { .. }
+        | CommonAction::ListDatabases
+        | CommonAction::DeleteDatabase { .. } => {
+            // SQLite operations handled by event handler, not executor
+        }
     }
 
     Ok(())

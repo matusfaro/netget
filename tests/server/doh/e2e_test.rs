@@ -104,20 +104,7 @@ async fn test_doh_server() -> E2EResult<()> {
     )
     .with_mock(|mock| {
         mock
-            // Mock 1: Server startup
-            .on_instruction_containing("listen")
-            .and_instruction_containing("doh")
-            .respond_with_actions(serde_json::json!([
-                {
-                    "type": "open_server",
-                    "port": 0,
-                    "base_stack": "DoH",
-                    "instruction": "DNS-over-HTTPS server responding to queries"
-                }
-            ]))
-            .expect_calls(1)
-            .and()
-            // Mock 2: First GET query for example.com
+            // Mock 1: First GET query for example.com - MUST BE FIRST (most specific)
             .on_event("doh_query")
             .and_event_data_contains("domain", "example.com")
             .and_event_data_contains("method", "GET")
@@ -131,7 +118,7 @@ async fn test_doh_server() -> E2EResult<()> {
             ]))
             .expect_calls(1)
             .and()
-            // Mock 3: POST query for example.com
+            // Mock 2: POST query for example.com - MUST BE SECOND (most specific)
             .on_event("doh_query")
             .and_event_data_contains("domain", "example.com")
             .and_event_data_contains("method", "POST")
@@ -145,7 +132,7 @@ async fn test_doh_server() -> E2EResult<()> {
             ]))
             .expect_calls(1)
             .and()
-            // Mock 4: Second GET query for test.com
+            // Mock 3: Second GET query for test.com - MUST BE THIRD (most specific)
             .on_event("doh_query")
             .and_event_data_contains("domain", "test.com")
             .and_event_data_contains("method", "GET")
@@ -155,6 +142,19 @@ async fn test_doh_server() -> E2EResult<()> {
                     "domain": "test.com",
                     "ip": "93.184.216.34",
                     "ttl": 300
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 4: Server startup - MUST BE LAST (less specific)
+            .on_instruction_containing("listen")
+            .and_instruction_containing("doh")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "DoH",
+                    "instruction": "DNS-over-HTTPS server responding to queries"
                 }
             ]))
             .expect_calls(1)
