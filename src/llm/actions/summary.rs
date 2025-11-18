@@ -161,16 +161,16 @@ fn summarize_common_action(action: &CommonAction) -> String {
         #[cfg(feature = "sqlite")]
         CommonAction::CreateDatabase {
             name,
-            path,
+            is_memory,
             owner,
             schema_ddl,
         } => {
-            let path_display = path.as_deref().unwrap_or(":memory:");
+            let storage_type = if *is_memory { "in-memory" } else { "file-based" };
             let owner_display = owner.as_deref().unwrap_or("auto");
             format!(
-                "create_database: {} (path: {}, owner: {}, schema: {})",
+                "create_database: {} ({}, owner: {}, schema: {})",
                 name,
-                path_display,
+                storage_type,
                 owner_display,
                 if schema_ddl.is_some() { "yes" } else { "no" }
             )

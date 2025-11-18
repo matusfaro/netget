@@ -28,7 +28,7 @@ async fn test_create_in_memory_database() -> Result<()> {
     let db_id = state
         .create_database(
             "test_memory_db".to_string(),
-            ":memory:".to_string(),
+            ":memory:".to_string(), // path still works directly for test helpers
             DatabaseOwner::Global,
             None,
         )

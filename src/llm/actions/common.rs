@@ -155,7 +155,7 @@ pub enum CommonAction {
     CreateDatabase {
         name: String,
         #[serde(default)]
-        path: Option<String>, // None = in-memory, Some(path) = file-based
+        is_memory: bool, // true = in-memory (:memory:), false = file-based (./netget_db_<name>.db)
         #[serde(default)]
         owner: Option<String>, // "server-N", "client-N", or "global"
         #[serde(default)]
@@ -800,13 +800,13 @@ pub fn create_database_action() -> ActionDefinition {
             Parameter {
                 name: "name".to_string(),
                 type_hint: "string".to_string(),
-                description: "Database name (user-friendly identifier)".to_string(),
+                description: "Database name (user-friendly identifier). This will be used to construct the filename as './netget_db_<name>.db' for file-based databases.".to_string(),
                 required: true,
             },
             Parameter {
-                name: "path".to_string(),
-                type_hint: "string".to_string(),
-                description: "File path for database (e.g., '/tmp/nfs_data.db'). Omit or use ':memory:' for in-memory database.".to_string(),
+                name: "is_memory".to_string(),
+                type_hint: "boolean".to_string(),
+                description: "true = in-memory database (fast, data lost on close), false = file-based database (persistent, saved to ./netget_db_<name>.db). Defaults to false (file-based).".to_string(),
                 required: false,
             },
             Parameter {
@@ -825,7 +825,7 @@ pub fn create_database_action() -> ActionDefinition {
         example: json!({
             "type": "create_database",
             "name": "nfs_storage",
-            "path": ":memory:",
+            "is_memory": true,
             "owner": "server-1",
             "schema_ddl": "CREATE TABLE files (path TEXT PRIMARY KEY, content BLOB, size INTEGER, modified INTEGER);"
         }),

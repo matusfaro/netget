@@ -1101,14 +1101,18 @@ impl EventHandler {
             #[cfg(feature = "sqlite")]
             CommonAction::CreateDatabase {
                 name,
-                path,
+                is_memory,
                 owner,
                 schema_ddl,
             } => {
                 use crate::state::DatabaseOwner;
 
-                // Determine path (default to in-memory)
-                let db_path = path.unwrap_or_else(|| ":memory:".to_string());
+                // Construct path based on is_memory flag
+                let db_path = if is_memory {
+                    ":memory:".to_string()
+                } else {
+                    format!("./netget_db_{}.db", name)
+                };
 
                 // Determine owner (default to global)
                 let db_owner = if let Some(owner_str) = owner {
@@ -1192,7 +1196,12 @@ impl EventHandler {
                         }
                     }
                     Err(e) => {
-                        let _ = status_tx.send(format!("[ERROR] SQL error: {}", e));
+                        // Return SqlError to allow LLM retry with error context
+                        return Err(crate::events::ActionExecutionError::SqlError {
+                            database_id,
+                            query: query.clone(),
+                            error: e.to_string(),
+                        });
                     }
                 }
             }
