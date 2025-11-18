@@ -2469,6 +2469,7 @@ async fn handle_load(
                     startup_params,
                     event_handlers,
                     scheduled_tasks,
+                    feedback_instructions,
                 } => {
                     // Execute open_server action via server startup
                     match server_startup::start_server_from_action(
@@ -2481,6 +2482,7 @@ async fn handle_load(
                         startup_params,
                         event_handlers,
                         scheduled_tasks,
+                        feedback_instructions,
                     )
                     .await
                     {
@@ -2513,6 +2515,7 @@ async fn handle_load(
                     initial_memory,
                     event_handlers,
                     scheduled_tasks,
+                    feedback_instructions,
                 } => {
                     // Execute open_client action via client startup
                     match client_startup::start_client_from_action(
@@ -2524,6 +2527,7 @@ async fn handle_load(
                         initial_memory,
                         event_handlers,
                         scheduled_tasks,
+                        feedback_instructions,
                         llm.clone(),
                     )
                     .await

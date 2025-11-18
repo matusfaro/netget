@@ -295,6 +295,7 @@ pub async fn run_with_actions(
                     startup_params,
                     event_handlers,
                     scheduled_tasks,
+                    feedback_instructions,
                 } => {
                     // Execute open_server action
                     match server_startup::start_server_from_action(
@@ -307,6 +308,7 @@ pub async fn run_with_actions(
                         startup_params,
                         event_handlers,
                         scheduled_tasks,
+                        feedback_instructions,
                     )
                     .await
                     {
@@ -332,6 +334,7 @@ pub async fn run_with_actions(
                     initial_memory,
                     event_handlers,
                     scheduled_tasks,
+                    feedback_instructions,
                 } => {
                     // Execute open_client action
                     match client_startup::start_client_from_action(
@@ -343,6 +346,7 @@ pub async fn run_with_actions(
                         initial_memory,
                         event_handlers,
                         scheduled_tasks,
+                        feedback_instructions,
                         llm.clone(),
                     )
                     .await

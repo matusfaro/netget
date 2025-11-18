@@ -417,6 +417,9 @@ impl AppState {
                 event_handler_config: s.event_handler_config.clone(),
                 protocol_data: s.protocol_data.clone(),
                 log_files: s.log_files.clone(),
+                feedback_instructions: s.feedback_instructions.clone(),
+                feedback_buffer: s.feedback_buffer.clone(),
+                last_feedback_processed: s.last_feedback_processed,
             }
         })
     }
@@ -449,6 +452,9 @@ impl AppState {
                 event_handler_config: s.event_handler_config.clone(),
                 protocol_data: s.protocol_data.clone(),
                 log_files: s.log_files.clone(),
+                feedback_instructions: s.feedback_instructions.clone(),
+                feedback_buffer: s.feedback_buffer.clone(),
+                last_feedback_processed: s.last_feedback_processed,
             })
             .collect()
     }
@@ -1271,6 +1277,9 @@ impl AppState {
                 event_handler_config: c.event_handler_config.clone(),
                 protocol_data: c.protocol_data.clone(),
                 log_files: c.log_files.clone(),
+                feedback_instructions: c.feedback_instructions.clone(),
+                feedback_buffer: c.feedback_buffer.clone(),
+                last_feedback_processed: c.last_feedback_processed,
             }
         })
     }
@@ -1297,6 +1306,9 @@ impl AppState {
                 connection: c.connection.clone(),
                 handle: None,
                 created_at: c.created_at,
+                feedback_instructions: c.feedback_instructions.clone(),
+                feedback_buffer: c.feedback_buffer.clone(),
+                last_feedback_processed: c.last_feedback_processed,
                 status_changed_at: c.status_changed_at,
                 startup_params: c.startup_params.clone(),
                 event_handler_config: c.event_handler_config.clone(),

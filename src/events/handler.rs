@@ -1104,6 +1104,10 @@ impl EventHandler {
             CommonAction::ShowMessage { message } => {
                 let _ = status_tx.send(format!("[CLIENT] {}", message));
             }
+            CommonAction::ProvideFeedback { .. } => {
+                // ProvideFeedback is handled by the action executor, not here
+                // This match arm exists to satisfy exhaustiveness checking
+            }
         }
 
         Ok(())
@@ -1643,6 +1647,7 @@ impl EventHandler {
                         startup_params,
                         event_handlers,
                         scheduled_tasks,
+                        feedback_instructions,
                     } => {
                         // Execute open_server action via server startup
                         match server_startup::start_server_from_action(
@@ -1655,6 +1660,7 @@ impl EventHandler {
                             startup_params,
                             event_handlers,
                             scheduled_tasks,
+                            feedback_instructions,
                         )
                         .await
                         {
@@ -1683,6 +1689,7 @@ impl EventHandler {
                         initial_memory,
                         event_handlers,
                         scheduled_tasks,
+                        feedback_instructions,
                     } => {
                         // Execute open_client action via client startup
                         use crate::cli::client_startup;
@@ -1696,6 +1703,7 @@ impl EventHandler {
                             initial_memory,
                             event_handlers,
                             scheduled_tasks,
+                            feedback_instructions,
                             self.llm.clone(),
                         )
                         .await

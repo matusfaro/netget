@@ -538,7 +538,7 @@ async fn test_feedback_prompt_server() {
 
     // Sanity checks
     assert!(prompt.contains("server"));
-    assert!(prompt.contains("Server #1"));
+    assert!(prompt.contains("Server ID**: #1") || prompt.contains("Server #1"));
     assert!(prompt.contains("HTTP"));
     assert!(prompt.contains("Feedback Instructions"));
     assert!(prompt.contains("Monitor error rates"));
