@@ -399,7 +399,10 @@ impl EventHandler {
                     let protocol_ref: Option<&dyn Server> =
                         protocol.as_ref().map(|p| p.as_ref() as &dyn Server);
 
-                    match execute_actions(action_values.clone(), &self.state, protocol_ref).await {
+                    // User input context - no specific server/client (global actions)
+                    match execute_actions(action_values.clone(), &self.state, protocol_ref, None, None)
+                        .await
+                    {
                         Ok(result) => {
                             // Display messages
                             for msg in result.messages {

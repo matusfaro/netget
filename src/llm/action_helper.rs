@@ -177,8 +177,8 @@ pub async fn call_llm_with_actions(
         );
     }
 
-    // Execute all collected actions
-    let result = execute_actions(action_values, state, protocol)
+    // Execute all collected actions with server context
+    let result = execute_actions(action_values, state, protocol, Some(server_id), None)
         .await
         .context("Failed to execute actions")?;
 
@@ -369,8 +369,8 @@ pub async fn call_llm(
         warn!("LLM returned empty actions array for event: {}", event.id());
     }
 
-    // Execute actions
-    let result = execute_actions(actions, state, Some(protocol))
+    // Execute actions with server context
+    let result = execute_actions(actions, state, Some(protocol), Some(server_id), None)
         .await
         .context("Failed to execute actions")?;
 

@@ -822,8 +822,23 @@ async fn execute_single_task(
         TaskScope::Global => None,
     };
 
-    // Execute actions
-    match crate::llm::execute_actions(actions.clone(), &state, protocol.as_deref()).await {
+    // Extract server_id and client_id from task scope for context
+    let (server_id, client_id) = match &task.scope {
+        TaskScope::Server(sid) | TaskScope::Connection(sid, _) => (Some(*sid), None),
+        TaskScope::Client(cid) => (None, Some(*cid)),
+        TaskScope::Global => (None, None),
+    };
+
+    // Execute actions with task context
+    match crate::llm::execute_actions(
+        actions.clone(),
+        &state,
+        protocol.as_deref(),
+        server_id,
+        client_id,
+    )
+    .await
+    {
         Ok(_exec_result) => {
             // Success
             let _ = status_tx.send(format!(
