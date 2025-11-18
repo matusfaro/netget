@@ -355,17 +355,20 @@ pub async fn initialize_llm(config: LlmConfig) -> Result<Arc<HybridLLMManager>> 
 
 ### Phase 3: Model Management (Week 3)
 
-**Goal**: User-friendly model downloading and management
+**Goal**: User-friendly model downloading and management via unified `/model` command
 
 **Tasks**:
-1. Add slash command `/download-model <name>`
-2. Implement Hugging Face Hub integration (optional `hf-hub` crate)
-3. Add model listing `/list-models`
-4. Add model switching `/use-model <path>`
-5. Store models in `~/.netget/models/`
+1. Implement unified `/model` command (lists both Ollama and llama.cpp models)
+2. Add `/model llama pull <name>` for downloading GGUF models
+3. Add `/model llama run <model>` for switching to a model
+4. Add `/model llama rm <model>` for deleting models
+5. Add `/model ollama run/pull/rm <model>` for Ollama management (passthrough)
+6. Store llama.cpp models in `~/.netget/models/`
+7. Implement Hugging Face Hub integration (optional `hf-hub` crate)
 
 **Deliverables**:
-- ✅ Can download popular models (Mistral, Llama, Qwen)
+- ✅ Unified interface for both Ollama and embedded models
+- ✅ Can download popular GGUF models (Mistral, Llama, Qwen)
 - ✅ User can switch models at runtime
 - ✅ Models cached locally
 
@@ -684,14 +687,20 @@ mod embedded_llm_tests {
 
 ## Slash Commands
 
-### New Commands
+### Unified `/model` Command
 
 ```
-/download-model <name>        Download popular GGUF model
-/list-models                  List available models
-/use-model <path>             Switch to different model
-/model-info                   Show current model information
-/backend-status               Show active LLM backend (Ollama vs Embedded)
+/model                              List all models (both Ollama and llama.cpp)
+/model llama pull <name>            Download GGUF model from Hugging Face
+/model llama run <model>            Switch to llama.cpp model
+/model llama rm <model>             Delete llama.cpp model
+/model llama list                   List llama.cpp models only
+/model ollama pull <model>          Pull Ollama model (passthrough to ollama pull)
+/model ollama run <model>           Switch to Ollama model
+/model ollama rm <model>            Remove Ollama model (passthrough to ollama rm)
+/model ollama list                  List Ollama models (passthrough to ollama list)
+/model info                         Show current active model information
+/model status                       Show active LLM backend (Ollama vs Embedded)
 ```
 
 ### Implementation
@@ -699,7 +708,59 @@ mod embedded_llm_tests {
 ```rust
 // cli/slash_commands.rs (new)
 
-pub async fn handle_download_model(name: &str, status_tx: Sender<String>) -> Result<()> {
+pub async fn handle_model_command(args: &[&str], status_tx: Sender<String>) -> Result<()> {
+    match args {
+        [] => {
+            // List all models (both Ollama and llama.cpp)
+            list_all_models(status_tx).await
+        }
+        ["llama", "pull", name] => {
+            // Download GGUF model from Hugging Face
+            download_gguf_model(name, status_tx).await
+        }
+        ["llama", "run", model] => {
+            // Switch to llama.cpp model
+            switch_to_llama_model(model, status_tx).await
+        }
+        ["llama", "rm", model] => {
+            // Delete llama.cpp model
+            remove_llama_model(model, status_tx).await
+        }
+        ["llama", "list"] => {
+            // List llama.cpp models
+            list_llama_models(status_tx).await
+        }
+        ["ollama", "pull", model] => {
+            // Passthrough to ollama pull
+            ollama_pull(model, status_tx).await
+        }
+        ["ollama", "run", model] => {
+            // Switch to Ollama model
+            switch_to_ollama_model(model, status_tx).await
+        }
+        ["ollama", "rm", model] => {
+            // Passthrough to ollama rm
+            ollama_rm(model, status_tx).await
+        }
+        ["ollama", "list"] => {
+            // List Ollama models
+            list_ollama_models(status_tx).await
+        }
+        ["info"] => {
+            // Show current model info
+            show_model_info(status_tx).await
+        }
+        ["status"] => {
+            // Show backend status
+            show_backend_status(status_tx).await
+        }
+        _ => {
+            Err(anyhow!("Invalid /model command. Try /model (no args) for help"))
+        }
+    }
+}
+
+pub async fn download_gguf_model(name: &str, status_tx: Sender<String>) -> Result<()> {
     let model_url = match name {
         "mistral-7b" => "https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.1-GGUF/resolve/main/Mistral-7B-Instruct-v0.1.Q4_K_M.gguf",
         "llama-2-7b" => "https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGUF/resolve/main/Llama-2-7B-Chat.Q4_K_M.gguf",

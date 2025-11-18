@@ -16,6 +16,10 @@ pub mod ollama_client;
 pub mod prompt;
 pub mod response_handler; // Keep the old client module for reference
 
+// Embedded LLM inference (feature-gated)
+#[cfg(feature = "embedded-llm")]
+pub mod embedded_inference;
+
 // Re-exports from new action system
 pub use actions::{
     common::{
@@ -59,3 +63,7 @@ pub use event_instructions::{
 pub use model_selection::{
     check_ollama_availability, ensure_model_selected, select_or_validate_model, ModelInfo,
 };
+
+// Embedded LLM inference (feature-gated exports)
+#[cfg(feature = "embedded-llm")]
+pub use embedded_inference::{EmbeddedLLMBackend, InferenceConfig};
