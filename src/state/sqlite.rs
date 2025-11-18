@@ -12,8 +12,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 #[cfg(feature = "sqlite")]
 use std::sync::Mutex;
-#[cfg(feature = "sqlite")]
-use std::time::Instant;
+use std::time::Instant; // Always import for DatabaseInstance fields
 
 use crate::state::{ClientId, ServerId};
 
@@ -103,6 +102,7 @@ pub struct DatabaseInstance {
 
 impl DatabaseInstance {
     /// Create a new database instance
+    #[cfg(feature = "sqlite")]
     pub fn new(
         id: DatabaseId,
         name: String,
@@ -198,12 +198,14 @@ impl DatabaseInstance {
     }
 
     /// Increment query count and update last query time
+    #[cfg(feature = "sqlite")]
     pub fn record_query(&mut self) {
         self.query_count += 1;
         self.last_query_at = Some(Instant::now());
     }
 
     /// Update row counts for all tables (more efficient than full schema refresh)
+    #[cfg(feature = "sqlite")]
     pub fn update_row_counts(&mut self, conn: &Connection) -> Result<()> {
         for table in &mut self.tables {
             table.row_count = conn.query_row(

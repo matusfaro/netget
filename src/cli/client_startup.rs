@@ -114,6 +114,7 @@ pub async fn start_client_from_action(
     initial_memory: Option<String>,
     event_handlers: Option<Vec<serde_json::Value>>,
     scheduled_tasks: Option<Vec<crate::llm::actions::common::ServerTaskDefinition>>,
+    feedback_instructions: Option<String>,
     llm_client: OllamaClient,
 ) -> Result<ClientId> {
     use crate::state::client::ClientStatus;
@@ -139,6 +140,9 @@ pub async fn start_client_from_action(
         event_handler_config: None,
         protocol_data: serde_json::Value::Null,
         log_files: Default::default(),
+        feedback_instructions,
+        feedback_buffer: Vec::new(),
+        last_feedback_processed: None,
     };
 
     let client_id = state.add_client(client).await;

@@ -158,6 +158,14 @@ fn summarize_common_action(action: &CommonAction) -> String {
             };
             format!("update_client_instruction: #{} \"{}\"", client_id, preview)
         }
+        CommonAction::ProvideFeedback { feedback } => {
+            let summary = if let Some(obj) = feedback.as_object() {
+                format!("provide_feedback: {} fields", obj.len())
+            } else {
+                "provide_feedback".to_string()
+            };
+            summary
+        }
         #[cfg(feature = "sqlite")]
         CommonAction::CreateDatabase {
             name,

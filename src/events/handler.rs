@@ -412,7 +412,10 @@ impl EventHandler {
                     let protocol_ref: Option<&dyn Server> =
                         protocol.as_ref().map(|p| p.as_ref() as &dyn Server);
 
-                    match execute_actions(action_values.clone(), &self.state, protocol_ref).await {
+                    // User input context - no specific server/client (global actions)
+                    match execute_actions(action_values.clone(), &self.state, protocol_ref, None, None)
+                        .await
+                    {
                         Ok(result) => {
                             // Display messages
                             for msg in result.messages {
@@ -456,6 +459,7 @@ impl EventHandler {
                 startup_params,
                 event_handlers,
                 scheduled_tasks,
+                feedback_instructions,
             } => {
                 use crate::state::server::{ServerInstance, ServerStatus};
 
@@ -488,6 +492,9 @@ impl EventHandler {
 
                 // Set startup params if provided
                 server.startup_params = startup_params;
+
+                // Set feedback instructions if provided
+                server.feedback_instructions = feedback_instructions;
 
                 server.status = ServerStatus::Starting;
 
@@ -853,6 +860,7 @@ impl EventHandler {
                 initial_memory,
                 event_handlers,
                 scheduled_tasks,
+                feedback_instructions,
             } => {
                 use crate::state::client::{ClientInstance, ClientStatus};
 
@@ -869,6 +877,7 @@ impl EventHandler {
                     client.memory = mem;
                 }
                 client.startup_params = startup_params.clone();
+                client.feedback_instructions = feedback_instructions;
 
                 // Add client to state (this allocates the real client ID)
                 let client_id = self.state.add_client(client).await;
@@ -1243,6 +1252,10 @@ impl EventHandler {
 
             CommonAction::ShowMessage { message } => {
                 let _ = status_tx.send(format!("[CLIENT] {}", message));
+            }
+            CommonAction::ProvideFeedback { .. } => {
+                // ProvideFeedback is handled by the action executor, not here
+                // This match arm exists to satisfy exhaustiveness checking
             }
         }
 
@@ -1783,6 +1796,7 @@ impl EventHandler {
                         startup_params,
                         event_handlers,
                         scheduled_tasks,
+                        feedback_instructions,
                     } => {
                         // Execute open_server action via server startup
                         match server_startup::start_server_from_action(
@@ -1795,6 +1809,7 @@ impl EventHandler {
                             startup_params,
                             event_handlers,
                             scheduled_tasks,
+                            feedback_instructions,
                         )
                         .await
                         {
@@ -1823,6 +1838,7 @@ impl EventHandler {
                         initial_memory,
                         event_handlers,
                         scheduled_tasks,
+                        feedback_instructions,
                     } => {
                         // Execute open_client action via client startup
                         use crate::cli::client_startup;
@@ -1836,6 +1852,7 @@ impl EventHandler {
                             initial_memory,
                             event_handlers,
                             scheduled_tasks,
+                            feedback_instructions,
                             self.llm.clone(),
                         )
                         .await

@@ -130,6 +130,9 @@ pub async fn save_server(state: &AppState, server_id: ServerId, filename: &str) 
         event_handler_config: None,
         protocol_data: serde_json::Value::Null,
         log_files: Default::default(),
+        feedback_instructions: None,
+        feedback_buffer: Vec::new(),
+        last_feedback_processed: None,
     };
 
     let actions = vec![server_to_action(&server)];
@@ -166,6 +169,9 @@ pub async fn save_client(state: &AppState, client_id: ClientId, filename: &str) 
         event_handler_config: None,
         protocol_data: serde_json::Value::Null,
         log_files: Default::default(),
+        feedback_instructions: None,
+        feedback_buffer: Vec::new(),
+        last_feedback_processed: None,
     };
 
     let actions = vec![client_to_action(&client)];

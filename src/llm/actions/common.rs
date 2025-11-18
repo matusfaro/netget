@@ -54,6 +54,9 @@ pub enum CommonAction {
         // Scheduled tasks to create with this server
         #[serde(default)]
         scheduled_tasks: Option<Vec<ServerTaskDefinition>>,
+        // Feedback instructions for automatic server adjustment
+        #[serde(default)]
+        feedback_instructions: Option<String>,
     },
 
     /// Close a specific server
@@ -77,6 +80,9 @@ pub enum CommonAction {
         // Scheduled tasks to create with this client
         #[serde(default)]
         scheduled_tasks: Option<Vec<ServerTaskDefinition>>,
+        // Feedback instructions for automatic client adjustment
+        #[serde(default)]
+        feedback_instructions: Option<String>,
     },
 
     /// Close a specific client
@@ -149,6 +155,13 @@ pub enum CommonAction {
 
     /// List all scheduled tasks
     ListTasks,
+
+    /// Provide feedback for automatic server/client adjustment
+    /// This action accumulates feedback for later LLM processing (if feedback_instructions is set)
+    ProvideFeedback {
+        /// Feedback data (free-form JSON describing what to learn/adjust)
+        feedback: serde_json::Value,
+    },
 
     /// Create a new SQLite database (file-based or in-memory)
     #[cfg(feature = "sqlite")]
@@ -284,6 +297,13 @@ pub fn open_server_action(
         required: false,
     });
 
+    parameters.push(Parameter {
+        name: "feedback_instructions".to_string(),
+        type_hint: "string".to_string(),
+        description: "Optional: Instructions for automatic server adjustment based on network request feedback. When set, network requests can provide feedback via the 'provide_feedback' action. Feedback is accumulated and debounced (leading edge), then the LLM is invoked with these instructions to decide how to adjust the server behavior (e.g., update instructions, modify handlers, change configuration). Example: \"Adjust response time if clients are timing out\" or \"Learn from failed requests and improve error handling\".".to_string(),
+        required: false,
+    });
+
     let example = json!({
         "type": "open_server",
         "port": 21,
@@ -403,6 +423,13 @@ pub fn open_client_action(
         name: "event_handlers".to_string(),
         type_hint: "array".to_string(),
         description: event_handlers_description,
+        required: false,
+    });
+
+    parameters.push(Parameter {
+        name: "feedback_instructions".to_string(),
+        type_hint: "string".to_string(),
+        description: "Optional: Instructions for automatic client adjustment based on server response feedback. When set, server responses can provide feedback via the 'provide_feedback' action. Feedback is accumulated and debounced (leading edge), then the LLM is invoked with these instructions to decide how to adjust the client behavior (e.g., update request strategy, modify retry logic, change authentication method). Example: \"Adjust request rate if server is throttling\" or \"Learn from error responses and modify request format\".".to_string(),
         required: false,
     });
 
@@ -616,6 +643,31 @@ pub fn append_to_log_action() -> ActionDefinition {
             "type": "append_to_log",
             "output_name": "access_logs",
             "content": "127.0.0.1 - - [29/Oct/2025:12:34:56 +0000] \"GET /index.html HTTP/1.1\" 200 1234"
+        }),
+    }
+}
+
+/// Get action definition for provide_feedback
+pub fn provide_feedback_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "provide_feedback".to_string(),
+        description: "Provide feedback for automatic server/client adjustment. Only available when feedback_instructions was set during server/client creation. Feedback is accumulated and debounced (leading edge), then periodically the LLM is invoked with the feedback_instructions to decide how to adjust the server/client behavior. Use this to signal issues, patterns, or learning opportunities that should trigger automatic adaptation.".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "feedback".to_string(),
+                type_hint: "object".to_string(),
+                description: "Structured feedback data describing what should be learned or adjusted. Can include any relevant context like error rates, performance metrics, client behaviors, failed requests, etc. Example: {\"issue\": \"client_timeout\", \"details\": \"Client disconnected after 5s\", \"suggestion\": \"Increase response speed\"}".to_string(),
+                required: true,
+            },
+        ],
+        example: json!({
+            "type": "provide_feedback",
+            "feedback": {
+                "issue": "authentication_failed",
+                "username": "guest",
+                "attempts": 3,
+                "suggestion": "Consider blocking IP after multiple failures"
+            }
         }),
     }
 }
@@ -976,6 +1028,9 @@ pub fn get_network_event_common_actions() -> Vec<ActionDefinition> {
         // === System/Utility ===
         show_message_action(),
         append_to_log_action(),
+        // === Feedback/Learning ===
+        // Note: provide_feedback is added conditionally in action_helper.rs
+        // only when feedback_instructions is set on the server/client
     ]
 }
 

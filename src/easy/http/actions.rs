@@ -144,7 +144,7 @@ impl Easy for HttpEasyProtocol {
                 .context("Failed to call LLM for HTTP-easy response")?;
 
             // Convert Markdown to HTML
-            let html = markdown_to_html(&response);
+            let html = markdown_to_html(&response.text);
 
             // Generate send_http_response action
             let action = json!({

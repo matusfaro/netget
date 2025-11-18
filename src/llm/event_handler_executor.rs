@@ -86,7 +86,15 @@ pub async fn try_execute_event_handler(
 
         EventHandlerType::Static { actions } => {
             // Execute static handler
-            execute_static_handler(state, event_type_id, event_description, actions, protocol).await
+            execute_static_handler(
+                state,
+                server_id,
+                event_type_id,
+                event_description,
+                actions,
+                protocol,
+            )
+            .await
         }
     }
 }
@@ -215,8 +223,8 @@ async fn execute_script_handler(
                 )
                 .await;
 
-            // Execute the script's actions
-            let result = execute_actions(response.actions, state, protocol)
+            // Execute the script's actions with server context
+            let result = execute_actions(response.actions, state, protocol, Some(server_id), None)
                 .await
                 .context("Failed to execute script actions")?;
 
@@ -235,6 +243,7 @@ async fn execute_script_handler(
 /// Execute a static handler
 async fn execute_static_handler(
     state: &AppState,
+    server_id: ServerId,
     event_type_id: &str,
     event_description: &str,
     actions: &[serde_json::Value],
@@ -246,8 +255,8 @@ async fn execute_static_handler(
         actions.len()
     );
 
-    // Execute the static actions
-    let result = execute_actions(actions.to_vec(), state, protocol)
+    // Execute the static actions with server context
+    let result = execute_actions(actions.to_vec(), state, protocol, Some(server_id), None)
         .await
         .context("Failed to execute static actions")?;
 

@@ -54,6 +54,8 @@ impl ExecutionResult {
 /// * `actions` - Array of action JSON objects from LLM
 /// * `state` - Application state
 /// * `protocol` - Optional protocol for protocol-specific actions
+/// * `server_id` - Optional server ID for context (used for feedback, memory, etc.)
+/// * `client_id` - Optional client ID for context (used for client feedback)
 ///
 /// # Returns
 /// * `Ok(ExecutionResult)` - Results of execution
@@ -62,6 +64,8 @@ pub async fn execute_actions(
     actions: Vec<serde_json::Value>,
     state: &AppState,
     protocol: Option<&dyn Server>,
+    server_id: Option<crate::state::ServerId>,
+    client_id: Option<crate::state::ClientId>,
 ) -> Result<ExecutionResult> {
     let mut result = ExecutionResult::new();
 
@@ -73,7 +77,7 @@ pub async fn execute_actions(
 
         // Try to parse as common action first
         if let Ok(common_action) = CommonAction::from_json(action) {
-            execute_common_action(common_action, state, &mut result)
+            execute_common_action(common_action, state, &mut result, server_id, client_id)
                 .await
                 .with_context(|| format!("Failed to execute common action: {:?}", action))?;
             continue;
@@ -114,6 +118,8 @@ async fn execute_common_action(
     action: CommonAction,
     state: &AppState,
     _result: &mut ExecutionResult,
+    server_id: Option<crate::state::ServerId>,
+    client_id: Option<crate::state::ClientId>,
 ) -> Result<()> {
     match action {
         CommonAction::ShowMessage { .. } => {
@@ -148,14 +154,16 @@ async fn execute_common_action(
         }
 
         CommonAction::SetMemory { value } => {
-            if let Some(server_id) = state.get_first_server_id().await {
+            let sid = server_id.or_else(|| state.get_first_server_id_sync());
+            if let Some(server_id) = sid {
                 state.set_memory(server_id, value).await;
                 debug!("Server #{} memory set", server_id.as_u32());
             }
         }
 
         CommonAction::AppendMemory { value } => {
-            if let Some(server_id) = state.get_first_server_id().await {
+            let sid = server_id.or_else(|| state.get_first_server_id_sync());
+            if let Some(server_id) = sid {
                 let current = state.get_memory(server_id).await.unwrap_or_default();
                 let new_memory = if current.is_empty() {
                     value
@@ -171,7 +179,8 @@ async fn execute_common_action(
             output_name,
             content,
         } => {
-            if let Some(server_id) = state.get_first_server_id().await {
+            let sid = server_id.or_else(|| state.get_first_server_id_sync());
+            if let Some(server_id) = sid {
                 // Get or create the log file path
                 let log_path = state
                     .with_server_mut(server_id, |server| {
@@ -218,6 +227,29 @@ async fn execute_common_action(
         | CommonAction::ReconnectClient { .. }
         | CommonAction::UpdateClientInstruction { .. } => {
             // Client and connection management handled by event handler, not executor
+        }
+
+        CommonAction::ProvideFeedback { feedback } => {
+            // Accumulate feedback for later processing (debounced + LLM invocation)
+            if let Some(sid) = server_id {
+                state
+                    .add_server_feedback(sid, feedback)
+                    .await
+                    .unwrap_or_else(|e| {
+                        warn!("Failed to add server feedback: {}", e);
+                    });
+                debug!("Server #{} feedback accumulated", sid.as_u32());
+            } else if let Some(cid) = client_id {
+                state
+                    .add_client_feedback(cid, feedback)
+                    .await
+                    .unwrap_or_else(|e| {
+                        warn!("Failed to add client feedback: {}", e);
+                    });
+                debug!("Client #{} feedback accumulated", cid.as_u32());
+            } else {
+                warn!("provide_feedback action called without server_id or client_id context");
+            }
         }
 
         #[cfg(feature = "sqlite")]

@@ -436,6 +436,9 @@ impl AppState {
                 event_handler_config: s.event_handler_config.clone(),
                 protocol_data: s.protocol_data.clone(),
                 log_files: s.log_files.clone(),
+                feedback_instructions: s.feedback_instructions.clone(),
+                feedback_buffer: s.feedback_buffer.clone(),
+                last_feedback_processed: s.last_feedback_processed,
             }
         })
     }
@@ -468,6 +471,9 @@ impl AppState {
                 event_handler_config: s.event_handler_config.clone(),
                 protocol_data: s.protocol_data.clone(),
                 log_files: s.log_files.clone(),
+                feedback_instructions: s.feedback_instructions.clone(),
+                feedback_buffer: s.feedback_buffer.clone(),
+                last_feedback_processed: s.last_feedback_processed,
             })
             .collect()
     }
@@ -529,6 +535,61 @@ impl AppState {
             }
             server.memory.push_str(&text);
         }
+    }
+
+    /// Add feedback to a server's feedback buffer
+    ///
+    /// Feedback is accumulated and processed later via debounced LLM invocation
+    /// Returns Ok if feedback was added, Err if server not found or feedback_instructions not set
+    pub async fn add_server_feedback(
+        &self,
+        server_id: ServerId,
+        feedback: serde_json::Value,
+    ) -> anyhow::Result<()> {
+        let mut inner = self.inner.write().await;
+        if let Some(server) = inner.servers.get_mut(&server_id) {
+            // Only accumulate feedback if feedback_instructions is set
+            if server.feedback_instructions.is_some() {
+                server.feedback_buffer.push(feedback);
+                Ok(())
+            } else {
+                anyhow::bail!("Server {} has no feedback_instructions configured", server_id)
+            }
+        } else {
+            anyhow::bail!("Server {} not found", server_id)
+        }
+    }
+
+    /// Add feedback to a client's feedback buffer
+    ///
+    /// Feedback is accumulated and processed later via debounced LLM invocation
+    /// Returns Ok if feedback was added, Err if client not found or feedback_instructions not set
+    pub async fn add_client_feedback(
+        &self,
+        client_id: super::ClientId,
+        feedback: serde_json::Value,
+    ) -> anyhow::Result<()> {
+        let mut inner = self.inner.write().await;
+        if let Some(client) = inner.clients.get_mut(&client_id) {
+            // Only accumulate feedback if feedback_instructions is set
+            if client.feedback_instructions.is_some() {
+                client.feedback_buffer.push(feedback);
+                Ok(())
+            } else {
+                anyhow::bail!("Client {} has no feedback_instructions configured", client_id)
+            }
+        } else {
+            anyhow::bail!("Client {} not found", client_id)
+        }
+    }
+
+    /// Get first server ID (synchronous version for use in non-async contexts)
+    ///
+    /// This is a non-blocking helper that attempts to get the first server ID
+    /// Returns None if unable to acquire lock or no servers exist
+    pub fn get_first_server_id_sync(&self) -> Option<ServerId> {
+        // Try non-blocking read
+        self.inner.try_read().ok()?.servers.keys().next().copied()
     }
 
     /// Get the Ollama model name
@@ -1246,6 +1307,9 @@ impl AppState {
                 event_handler_config: c.event_handler_config.clone(),
                 protocol_data: c.protocol_data.clone(),
                 log_files: c.log_files.clone(),
+                feedback_instructions: c.feedback_instructions.clone(),
+                feedback_buffer: c.feedback_buffer.clone(),
+                last_feedback_processed: c.last_feedback_processed,
             }
         })
     }
@@ -1272,6 +1336,9 @@ impl AppState {
                 connection: c.connection.clone(),
                 handle: None,
                 created_at: c.created_at,
+                feedback_instructions: c.feedback_instructions.clone(),
+                feedback_buffer: c.feedback_buffer.clone(),
+                last_feedback_processed: c.last_feedback_processed,
                 status_changed_at: c.status_changed_at,
                 startup_params: c.startup_params.clone(),
                 event_handler_config: c.event_handler_config.clone(),

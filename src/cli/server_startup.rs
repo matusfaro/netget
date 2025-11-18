@@ -209,6 +209,7 @@ pub async fn start_server_from_action(
     startup_params: Option<serde_json::Value>,
     event_handlers: Option<Vec<serde_json::Value>>,
     scheduled_tasks: Option<Vec<crate::llm::actions::common::ServerTaskDefinition>>,
+    feedback_instructions: Option<String>,
 ) -> Result<ServerId> {
     use crate::state::server::ServerStatus;
 
@@ -267,6 +268,9 @@ pub async fn start_server_from_action(
         event_handler_config: None,
         protocol_data: serde_json::Value::Null,
         log_files: Default::default(),
+        feedback_instructions,
+        feedback_buffer: Vec::new(),
+        last_feedback_processed: None,
     };
 
     let server_id = state.add_server(server).await;
