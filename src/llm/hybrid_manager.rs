@@ -217,10 +217,11 @@ impl HybridLLMManager {
     pub async fn generate(&self, model: &str, prompt: &str) -> Result<String> {
         match &*self.backend.read().await {
             ActiveBackend::Ollama(client) => {
-                client
+                let response = client
                     .generate(model, prompt)
                     .await
-                    .context("Ollama generation failed")
+                    .context("Ollama generation failed")?;
+                Ok(response.text)
             }
             #[cfg(feature = "embedded-llm")]
             ActiveBackend::Embedded(backend) => {
