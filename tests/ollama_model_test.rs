@@ -168,6 +168,27 @@ async fn test_close_server() -> Result<()> {
 /// for implementing custom logic.
 #[tokio::test]
 async fn test_http_script_sum_query_params() -> Result<()> {
+    // Create test event (HTTP request with query params)
+    let test_event = Event::new(
+        &EventType::new("http_request", "HTTP request received")
+            .with_parameters(vec![
+                ("method".to_string(), "GET".to_string()),
+                ("path".to_string(), "/?x=5&y=3".to_string()),
+            ]),
+        json!({
+            "method": "GET",
+            "path": "/?x=5&y=3",
+            "query": {"x": "5", "y": "3"}
+        }),
+    );
+
+    // Expected actions from script
+    let expected_actions = vec![json!({
+        "type": "send_http_response",
+        "status": 200,
+        "body": "8"
+    })];
+
     OllamaTestBuilder::new()
         .with_user_input(
             "create an http server that receives query parameters x and y \
@@ -177,6 +198,7 @@ async fn test_http_script_sum_query_params() -> Result<()> {
         .expect_protocol("http")
         .expect_script_handler()
         .expect_field_contains("instruction", "sum")
+        .expect_script_execution(test_event, expected_actions)
         .run()
         .await?
         .assert_success()
@@ -188,11 +210,29 @@ async fn test_http_script_sum_query_params() -> Result<()> {
 /// echo functionality.
 #[tokio::test]
 async fn test_tcp_echo_script() -> Result<()> {
+    // Create test event (TCP data received)
+    let test_event = Event::new(
+        &EventType::new("tcp_data_received", "TCP data received")
+            .with_parameters(vec![
+                ("data_hex".to_string(), "48656c6c6f".to_string()), // "Hello"
+            ]),
+        json!({
+            "data_hex": "48656c6c6f"
+        }),
+    );
+
+    // Expected actions from script (echo back same data)
+    let expected_actions = vec![json!({
+        "type": "send_tcp_data",
+        "data_hex": "48656c6c6f"
+    })];
+
     OllamaTestBuilder::new()
         .with_user_input("create a tcp echo server using a script")
         .expect_action_type("open_server")
         .expect_protocol("tcp")
         .expect_script_handler()
+        .expect_script_execution(test_event, expected_actions)
         .run()
         .await?
         .assert_success()
@@ -204,6 +244,26 @@ async fn test_tcp_echo_script() -> Result<()> {
 /// is required.
 #[tokio::test]
 async fn test_http_conditional_script() -> Result<()> {
+    // Create test event (GET request)
+    let test_event_get = Event::new(
+        &EventType::new("http_request", "HTTP request received")
+            .with_parameters(vec![
+                ("method".to_string(), "GET".to_string()),
+                ("path".to_string(), "/".to_string()),
+            ]),
+        json!({
+            "method": "GET",
+            "path": "/"
+        }),
+    );
+
+    // Expected actions for GET request
+    let expected_actions_get = vec![json!({
+        "type": "send_http_response",
+        "status": 200,
+        "body": "Hello GET"
+    })];
+
     OllamaTestBuilder::new()
         .with_user_input(
             "create an http server that responds with 'Hello GET' for GET requests \
@@ -214,6 +274,7 @@ async fn test_http_conditional_script() -> Result<()> {
         .expect_script_handler()
         .expect_field_contains("instruction", "GET")
         .expect_field_contains("instruction", "POST")
+        .expect_script_execution(test_event_get, expected_actions_get)
         .run()
         .await?
         .assert_success()

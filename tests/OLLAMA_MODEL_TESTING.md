@@ -9,6 +9,7 @@ The framework consists of:
 1. **`OllamaTestBuilder`** (`tests/helpers/ollama_test_builder.rs`) - Builder pattern for creating tests
 2. **Example tests** (`tests/ollama_model_test.rs`) - Comprehensive test scenarios demonstrating usage
 3. **Model selection** - Configurable via environment variables
+4. **Script execution testing** - Actually runs generated scripts and validates output
 
 ## Quick Start
 
@@ -100,6 +101,10 @@ OllamaTestBuilder::new()
 
 // Expect script with specific language
 .expect_script_with_language("python")
+
+// Test script execution with input/output
+// This actually RUNS the generated script and validates output!
+.expect_script_execution(input_event, expected_actions)
 ```
 
 #### Custom Assertions
@@ -195,6 +200,8 @@ async fn test_http_request_with_instruction() -> Result<()> {
 
 ### Script Handler Tests
 
+#### Basic Script Validation
+
 ```rust
 #[tokio::test]
 async fn test_http_script_handler() -> Result<()> {
@@ -212,6 +219,63 @@ async fn test_http_script_handler() -> Result<()> {
         .assert_success()
 }
 ```
+
+#### Script Execution Testing (IMPORTANT!)
+
+**The framework can actually execute generated scripts and validate their output:**
+
+```rust
+#[tokio::test]
+async fn test_http_script_sum_query_params() -> Result<()> {
+    // Create test event (HTTP request with query params)
+    let test_event = Event::new(
+        &EventType::new("http_request", "HTTP request received")
+            .with_parameters(vec![
+                ("method".to_string(), "GET".to_string()),
+                ("path".to_string(), "/?x=5&y=3".to_string()),
+            ]),
+        json!({
+            "method": "GET",
+            "path": "/?x=5&y=3",
+            "query": {"x": "5", "y": "3"}
+        }),
+    );
+
+    // Expected actions from script (should return sum = 8)
+    let expected_actions = vec![json!({
+        "type": "send_http_response",
+        "status": 200,
+        "body": "8"
+    })];
+
+    OllamaTestBuilder::new()
+        .with_user_input(
+            "create an http server that receives query parameters x and y \
+             and returns their mathematical sum. write this as a script."
+        )
+        .expect_action_type("open_server")
+        .expect_protocol("http")
+        .expect_script_handler()
+        .expect_script_execution(test_event, expected_actions)  // <- Actually runs script!
+        .run()
+        .await?
+        .assert_success()
+}
+```
+
+**How it works:**
+1. LLM generates a script in the action's `handler.script` field
+2. Framework extracts the script code and language
+3. Creates a `ScriptInput` with your test event data
+4. **Executes the script** using NetGet's script executor
+5. Compares the script's output actions with your expected actions
+6. Fails the test if they don't match exactly
+
+**Benefits:**
+- Validates that generated scripts are **syntactically correct**
+- Validates that scripts **produce correct output**
+- Tests **actual code execution**, not just structure
+- Catches bugs in LLM-generated logic
 
 ### Model Comparison Tests
 
@@ -457,11 +521,12 @@ Reserve custom validation for complex logic that can't be expressed with built-i
 
 Potential additions to the framework:
 
-1. **Script Execution Testing** - Actually run generated scripts and validate output
+1. ✅ **Script Execution Testing** - Actually run generated scripts and validate output (IMPLEMENTED!)
 2. **Multi-Turn Conversations** - Test follow-up prompts and context retention
 3. **Performance Metrics** - Track response time and token usage
 4. **Failure Analysis** - Categorize and analyze common failure patterns
 5. **Benchmark Suite** - Standard set of tests for model comparison
+6. **Script Output Assertions** - More flexible assertions on script output (regex, contains, custom)
 
 ## Troubleshooting
 

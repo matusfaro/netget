@@ -4,6 +4,10 @@ use std::sync::Arc;
 
 use netget::events::{Event, EventType};
 use netget::llm::OllamaClient;
+use netget::scripting::{
+    ScriptConfig, ScriptInput, ScriptLanguage, ScriptSource,
+    ServerContext, ConnectionContext, execute_script,
+};
 
 /// Builder for testing Ollama model responses
 pub struct OllamaTestBuilder {
@@ -52,6 +56,12 @@ pub enum Expectation {
 
     /// Expect script handler with language validation
     ScriptWithLanguage(String),
+
+    /// Test script execution with input/output
+    ScriptTest {
+        input_event: Event,
+        expected_actions: Vec<Value>,
+    },
 
     /// Custom validation function
     Custom {
@@ -192,6 +202,24 @@ impl OllamaTestBuilder {
     /// Expect script handler with specific language
     pub fn expect_script_with_language(mut self, language: impl Into<String>) -> Self {
         self.expectations.push(Expectation::ScriptWithLanguage(language.into()));
+        self
+    }
+
+    /// Test script execution with input/output
+    ///
+    /// This will:
+    /// 1. Extract the script from the LLM's response
+    /// 2. Execute it with the provided input event
+    /// 3. Validate the output matches expected actions
+    pub fn expect_script_execution(
+        mut self,
+        input_event: Event,
+        expected_actions: Vec<Value>,
+    ) -> Self {
+        self.expectations.push(Expectation::ScriptTest {
+            input_event,
+            expected_actions,
+        });
         self
     }
 
@@ -539,6 +567,74 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
             Ok(())
         }
 
+        Expectation::ScriptTest { input_event, expected_actions } => {
+            if actions.is_empty() {
+                bail!("No actions returned");
+            }
+            let action = &actions[0];
+            let handler = action.get("handler")
+                .ok_or_else(|| anyhow!("Action has no 'handler' field"))?;
+
+            // Get script code
+            let script_code = handler.get("script")
+                .and_then(|s| s.as_str())
+                .ok_or_else(|| anyhow!("Action does not have a script handler"))?;
+
+            // Get script language (default to Python if not specified)
+            let language_str = handler.get("language")
+                .and_then(|l| l.as_str())
+                .unwrap_or("python");
+            let language = ScriptLanguage::parse(language_str)
+                .ok_or_else(|| anyhow!("Invalid script language: {}", language_str))?;
+
+            // Create script config
+            let config = ScriptConfig {
+                language,
+                source: ScriptSource::Inline(script_code.to_string()),
+                handles_contexts: vec!["all".to_string()],
+            };
+
+            // Create script input from event
+            let input = ScriptInput {
+                event_type_id: input_event.event_type.id.clone(),
+                server: ServerContext {
+                    id: 1,
+                    port: 8080,
+                    stack: "test".to_string(),
+                    memory: String::new(),
+                    instruction: "test".to_string(),
+                },
+                connection: None,
+                event: input_event.to_json()?,
+            };
+
+            // Execute the script
+            let response = execute_script(&config, &input)
+                .context("Failed to execute script")?;
+
+            // Compare actions
+            if response.actions.len() != expected_actions.len() {
+                bail!(
+                    "Expected {} actions from script, got {}",
+                    expected_actions.len(),
+                    response.actions.len()
+                );
+            }
+
+            for (i, (expected, actual)) in expected_actions.iter().zip(response.actions.iter()).enumerate() {
+                if expected != actual {
+                    bail!(
+                        "Script action {} mismatch:\nExpected: {}\nActual: {}",
+                        i,
+                        serde_json::to_string_pretty(expected)?,
+                        serde_json::to_string_pretty(actual)?
+                    );
+                }
+            }
+
+            Ok(())
+        }
+
         Expectation::Custom { name, validator } => {
             if actions.is_empty() {
                 bail!("No actions returned");
@@ -568,6 +664,7 @@ fn expectation_description(expectation: &Expectation) -> String {
         Expectation::ScriptWithLanguage(lang) => {
             format!("Has script handler with language '{}'", lang)
         }
+        Expectation::ScriptTest { .. } => "Script execution test".to_string(),
         Expectation::Custom { name, .. } => format!("Custom: {}", name),
     }
 }
