@@ -446,6 +446,7 @@ impl EventHandler {
                 startup_params,
                 event_handlers,
                 scheduled_tasks,
+                feedback_instructions,
             } => {
                 use crate::state::server::{ServerInstance, ServerStatus};
 
@@ -478,6 +479,9 @@ impl EventHandler {
 
                 // Set startup params if provided
                 server.startup_params = startup_params;
+
+                // Set feedback instructions if provided
+                server.feedback_instructions = feedback_instructions;
 
                 server.status = ServerStatus::Starting;
 
@@ -843,6 +847,7 @@ impl EventHandler {
                 initial_memory,
                 event_handlers,
                 scheduled_tasks,
+                feedback_instructions,
             } => {
                 use crate::state::client::{ClientInstance, ClientStatus};
 
@@ -859,6 +864,7 @@ impl EventHandler {
                     client.memory = mem;
                 }
                 client.startup_params = startup_params.clone();
+                client.feedback_instructions = feedback_instructions;
 
                 // Add client to state (this allocates the real client ID)
                 let client_id = self.state.add_client(client).await;
