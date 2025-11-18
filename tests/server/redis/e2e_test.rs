@@ -65,6 +65,11 @@ mod redis_server_tests {
 
         println!("✅ Redis server responded to PING with mocks");
 
+        // Explicitly drop connection before mock verification to prevent hanging
+        drop(con);
+        drop(client);
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
         server.verify_mocks().await?;
         server.stop().await?;
 
@@ -143,6 +148,11 @@ mod redis_server_tests {
 
         println!("✅ Redis server handled GET/SET commands with mocks");
 
+        // Explicitly drop connection before mock verification to prevent hanging
+        drop(con);
+        drop(client);
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
         server.verify_mocks().await?;
         server.stop().await?;
 
@@ -205,6 +215,11 @@ mod redis_server_tests {
         assert_eq!(result, 42, "Expected INCR to return 42");
 
         println!("✅ Redis server returned integer response with mocks");
+
+        // Explicitly drop connection before mock verification to prevent hanging
+        drop(con);
+        drop(client);
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         server.verify_mocks().await?;
         server.stop().await?;
@@ -269,6 +284,11 @@ mod redis_server_tests {
 
         println!("✅ Redis server returned array response with mocks");
 
+        // Explicitly drop connection before mock verification to prevent hanging
+        drop(con);
+        drop(client);
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
         server.verify_mocks().await?;
         server.stop().await?;
 
@@ -330,6 +350,11 @@ mod redis_server_tests {
         assert_eq!(value, None, "Expected GET nonexistent to return None");
 
         println!("✅ Redis server returned null response with mocks");
+
+        // Explicitly drop connection before mock verification to prevent hanging
+        drop(con);
+        drop(client);
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         server.verify_mocks().await?;
         server.stop().await?;
@@ -406,6 +431,11 @@ mod redis_server_tests {
         }
 
         println!("✅ Redis server returned error response with mocks");
+
+        // Explicitly drop connection before mock verification to prevent hanging
+        drop(con);
+        drop(client);
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         server.verify_mocks().await?;
         server.stop().await?;
