@@ -112,6 +112,23 @@ pub struct Args {
     )]
     pub ollama_url: Option<String>,
 
+    /// Path to embedded GGUF model file (enables embedded LLM inference)
+    #[cfg(feature = "embedded-llm")]
+    #[clap(
+        long = "embedded-model",
+        value_name = "PATH",
+        help = "Path to GGUF model file for embedded inference (e.g., mistral-7b.Q4_K_M.gguf). When specified, NetGet will use embedded llama.cpp instead of or alongside Ollama."
+    )]
+    pub embedded_model: Option<std::path::PathBuf>,
+
+    /// Force use of embedded LLM backend (skip Ollama)
+    #[cfg(feature = "embedded-llm")]
+    #[clap(
+        long = "use-embedded",
+        help = "Use embedded LLM backend exclusively, skipping Ollama health check. Requires --embedded-model to be set or configured in ~/.netget/config.toml"
+    )]
+    pub use_embedded: bool,
+
     /// Terminal color theme (auto, light, dark, neutral)
     #[clap(
         long = "theme",
