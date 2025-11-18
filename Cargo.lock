@@ -7696,6 +7696,7 @@ dependencies = [
  "tokio-test",
  "tokio-util",
  "tokio-xmpp",
+ "toml 0.8.23",
  "tonic",
  "tonic-build",
  "tonic-reflection",
