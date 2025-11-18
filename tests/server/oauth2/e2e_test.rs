@@ -21,19 +21,7 @@ async fn test_oauth2_authorization_code_flow() -> E2EResult<()> {
     let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
-                // Mock 1: User command to open OAuth2 server
-                .on_instruction_containing("Open oauth2")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "OAuth2",
-                        "instruction": "Handle OAuth2 authorization code flow"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Authorization request (GET /authorize)
+                // Mock 1: Authorization request - MUST BE FIRST (most specific)
                 .on_event("oauth2_authorize")
                 .and_event_data_contains("client_id", "testapp")
                 .respond_with_actions(serde_json::json!([
@@ -46,7 +34,7 @@ async fn test_oauth2_authorization_code_flow() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 3: Token request (POST /token with authorization_code)
+                // Mock 2: Token request - MUST BE SECOND (most specific)
                 .on_event("oauth2_token")
                 .and_event_data_contains("grant_type", "authorization_code")
                 .respond_with_actions(serde_json::json!([
@@ -56,6 +44,18 @@ async fn test_oauth2_authorization_code_flow() -> E2EResult<()> {
                         "token_type": "Bearer",
                         "expires_in": 3600,
                         "refresh_token": "REFRESH_token_789"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: Server startup - MUST BE LAST (less specific)
+                .on_instruction_containing("Open oauth2")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "OAuth2",
+                        "instruction": "Handle OAuth2 authorization code flow"
                     }
                 ]))
                 .expect_calls(1)
@@ -306,19 +306,7 @@ async fn test_oauth2_token_introspection() -> E2EResult<()> {
     let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
-                // Mock 1: User command to open OAuth2 server
-                .on_instruction_containing("Open oauth2")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "OAuth2",
-                        "instruction": "Handle OAuth2 token introspection"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Valid token introspection
+                // Mock 1: Valid token introspection - MUST BE FIRST (most specific)
                 .on_event("oauth2_introspect")
                 .and_event_data_contains("token", "VALID_token_123")
                 .respond_with_actions(serde_json::json!([
@@ -331,13 +319,25 @@ async fn test_oauth2_token_introspection() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 3: Invalid token introspection
+                // Mock 2: Invalid token introspection - MUST BE SECOND (most specific)
                 .on_event("oauth2_introspect")
                 .and_event_data_contains("token", "INVALID_token_xyz")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_introspect_response",
                         "active": false
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: Server startup - MUST BE LAST (less specific)
+                .on_instruction_containing("Open oauth2")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "OAuth2",
+                        "instruction": "Handle OAuth2 token introspection"
                     }
                 ]))
                 .expect_calls(1)
