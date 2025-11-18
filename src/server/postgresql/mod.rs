@@ -310,15 +310,18 @@ impl SimpleQueryHandler for PostgresqlHandler {
                                         })
                                         .collect();
 
+                                    // Create Arc once and reuse it for both encoder and response
+                                    let field_infos_arc = Arc::new(field_infos);
+
                                     // Create data rows as a stream
                                     let mut data_rows = Vec::new();
                                     for row_data in &rows {
                                         if let Some(row_values) = row_data.as_array() {
                                             let mut encoder =
-                                                DataRowEncoder::new(Arc::new(field_infos.clone()));
+                                                DataRowEncoder::new(Arc::clone(&field_infos_arc));
 
                                             for (idx, value) in row_values.iter().enumerate() {
-                                                if idx < field_infos.len() {
+                                                if idx < field_infos_arc.len() {
                                                     let value_str = json_value_to_string(value);
                                                     encoder.encode_field(&value_str.as_str()).map_err(|e| {
                                                         PgWireError::ApiError(Box::new(std::io::Error::new(
@@ -335,7 +338,7 @@ impl SimpleQueryHandler for PostgresqlHandler {
                                     // Convert Vec to Stream
                                     let row_stream = futures::stream::iter(data_rows);
                                     return Ok(vec![Response::Query(QueryResponse::new(
-                                        Arc::new(field_infos),
+                                        field_infos_arc,
                                         row_stream,
                                     ))]);
                                 }
@@ -530,15 +533,18 @@ impl ExtendedQueryHandler for PostgresqlHandler {
                                         })
                                         .collect();
 
+                                    // Create Arc once and reuse it for both encoder and response
+                                    let field_infos_arc = Arc::new(field_infos);
+
                                     // Create data rows as a stream
                                     let mut data_rows = Vec::new();
                                     for row_data in &rows {
                                         if let Some(row_values) = row_data.as_array() {
                                             let mut encoder =
-                                                DataRowEncoder::new(Arc::new(field_infos.clone()));
+                                                DataRowEncoder::new(Arc::clone(&field_infos_arc));
 
                                             for (idx, value) in row_values.iter().enumerate() {
-                                                if idx < field_infos.len() {
+                                                if idx < field_infos_arc.len() {
                                                     let value_str = json_value_to_string(value);
                                                     encoder.encode_field(&value_str.as_str()).map_err(|e| {
                                                         PgWireError::ApiError(Box::new(std::io::Error::new(
@@ -555,7 +561,7 @@ impl ExtendedQueryHandler for PostgresqlHandler {
                                     // Convert Vec to Stream
                                     let row_stream = futures::stream::iter(data_rows);
                                     return Ok(Response::Query(QueryResponse::new(
-                                        Arc::new(field_infos),
+                                        field_infos_arc,
                                         row_stream,
                                     )));
                                 }
