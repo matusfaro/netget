@@ -245,6 +245,10 @@ pub async fn run_rolling_tui(
     // Create tick interval for UI updates
     let mut tick_interval = interval(Duration::from_millis(100));
 
+    // Create system stats monitor and update interval (1 second)
+    let stats_monitor = Arc::new(crate::system_stats::SystemStatsMonitor::new());
+    let mut stats_update_interval = interval(Duration::from_secs(1));
+
     // Cleanup configuration constants
     const CLEANUP_INTERVAL_SECS: u64 = 5;
     const SERVER_CLEANUP_TIMEOUT_SECS: u64 = 30;
@@ -372,6 +376,28 @@ pub async fn run_rolling_tui(
             // Execute due tasks
             _ = task_execution_interval.tick() => {
                 execute_due_tasks(&state, &llm_client, &status_tx).await;
+            }
+
+            // Periodic stats update (1 second)
+            _ = stats_update_interval.tick() => {
+                // Get system stats
+                let system_stats = stats_monitor.get_stats().await;
+
+                // Get LLM stats
+                let (input_tokens, output_tokens, llm_calls) = state.get_llm_stats().await;
+
+                // Update app state
+                app.system_stats = system_stats.clone();
+
+                // Update footer with stats
+                footer.set_show_usage_stats(app.show_usage_stats);
+                footer.set_system_stats(system_stats);
+                footer.set_llm_stats(input_tokens, output_tokens, llm_calls);
+
+                // Re-render if usage stats are visible
+                if app.show_usage_stats {
+                    footer.render(&mut stdout())?;
+                }
             }
 
             // Periodic cleanup of old servers and connections

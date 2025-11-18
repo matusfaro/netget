@@ -97,6 +97,12 @@ pub struct StickyFooter {
     last_footer_height: u16,
     /// Track last terminal width to detect resize and clear extra lines
     last_terminal_width: u16,
+    /// Whether to show usage stats section
+    show_usage_stats: bool,
+    /// LLM token statistics (input, output, calls)
+    llm_stats: (u64, u64, u64),
+    /// System statistics (CPU, memory, GPU)
+    system_stats: crate::system_stats::SystemStats,
     /// Track last scroll region height to clear from old position after resize
     last_scroll_region_height: u16,
     /// Pending web approval request (if any)
@@ -134,6 +140,9 @@ impl StickyFooter {
             blank_lines_buffer: 0,
             last_footer_height: 0,
             last_terminal_width: width,
+            show_usage_stats: false,
+            llm_stats: (0, 0, 0),
+            system_stats: crate::system_stats::SystemStats::default(),
             last_scroll_region_height: height.saturating_sub(10),
             pending_approval: None,
             system_capabilities,
@@ -182,6 +191,22 @@ impl StickyFooter {
     pub fn set_custom_status(&mut self, status: Option<String>) {
         self.custom_status = status;
         self.recalculate_scroll_region();
+    }
+
+    /// Set usage stats visibility
+    pub fn set_show_usage_stats(&mut self, show: bool) {
+        self.show_usage_stats = show;
+        self.recalculate_scroll_region();
+    }
+
+    /// Set LLM statistics
+    pub fn set_llm_stats(&mut self, input_tokens: u64, output_tokens: u64, calls: u64) {
+        self.llm_stats = (input_tokens, output_tokens, calls);
+    }
+
+    /// Set system statistics
+    pub fn set_system_stats(&mut self, stats: crate::system_stats::SystemStats) {
+        self.system_stats = stats;
     }
 
     /// Get scroll region height
@@ -501,11 +526,20 @@ impl StickyFooter {
             };
         }
 
+        // Render usage stats if enabled (2 lines, positioned above input box)
+        let usage_lines = if self.show_usage_stats { 2 } else { 0 };
+        let adjusted_input_top = input_box_top_line - usage_lines;
+
+        if self.show_usage_stats {
+            let usage_start = adjusted_input_top;
+            self.render_usage_stats(stdout, usage_start)?;
+        }
+
         // Render top border of input box (with column connections if we have content)
         if content_lines > 0 {
-            self.render_input_box_top_with_columns(stdout, input_box_top_line, &self.content)?;
+            self.render_input_box_top_with_columns(stdout, adjusted_input_top, &self.content)?;
         } else {
-            self.render_input_box_top(stdout, input_box_top_line)?;
+            self.render_input_box_top(stdout, adjusted_input_top)?;
         }
 
         // Render input or approval prompt (fixed position)
@@ -607,6 +641,9 @@ impl StickyFooter {
         let input_box_borders = 2; // Top and bottom borders of input box
         let status_lines = 1;
 
+        // Add usage stats lines if enabled (compact 2-line display)
+        let usage_lines = if self.show_usage_stats { 2 } else { 0 };
+
         // Add separator lines based on content type:
         // - Normal mode (servers/inputs): 0 separators (columns connect directly to input box top border)
         // - SlashCommands mode: 2 separators (one above content, one between content and input box)
@@ -616,7 +653,7 @@ impl StickyFooter {
             FooterContent::SlashCommands { .. } if content_lines > 0 => 2,
             _ => 0,
         };
-        content_lines + separator_lines + input_box_borders + input_lines + status_lines
+        content_lines + separator_lines + usage_lines + input_box_borders + input_lines + status_lines
     }
 
     /// Render normal content (two-column layout with floating headers)
@@ -1009,6 +1046,44 @@ impl StickyFooter {
             ResetColor,
         )?;
         Ok(line + 1)
+    }
+
+    /// Render usage stats (compact 2-line display)
+    fn render_usage_stats(&self, stdout: &mut impl Write, line: u16) -> Result<()> {
+        let (input_tokens, output_tokens, llm_calls) = self.llm_stats;
+        let total_tokens = input_tokens + output_tokens;
+
+        // Line 1: System stats (CPU, Memory, GPU)
+        let cpu_pct = format!("{:.1}%", self.system_stats.cpu_usage);
+        let mem_pct = format!("{:.1}%", self.system_stats.memory_percent());
+        let mem_used = self.system_stats.memory_used_str();
+        let mem_total = self.system_stats.memory_total_str();
+
+        let gpu_display = if let Some(gpu_pct) = self.system_stats.gpu_usage {
+            format!(" GPU:{:.1}%", gpu_pct)
+        } else {
+            String::new()
+        };
+
+        execute!(
+            stdout,
+            cursor::MoveTo(0, line),
+            SetForegroundColor(self.palette.dimmed),
+            Print(format!("CPU:{} Mem:{} ({}/{}){}", cpu_pct, mem_pct, mem_used, mem_total, gpu_display)),
+            ResetColor,
+        )?;
+
+        // Line 2: LLM stats (calls, tokens)
+        execute!(
+            stdout,
+            cursor::MoveTo(0, line + 1),
+            SetForegroundColor(self.palette.dimmed),
+            Print(format!("LLM: {} calls, {} in, {} out, {} total tokens",
+                llm_calls, input_tokens, output_tokens, total_tokens)),
+            ResetColor,
+        )?;
+
+        Ok(())
     }
 
     /// Render top border of input box (┌─────┐)
