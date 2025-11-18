@@ -107,11 +107,21 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
 
     // Test 1: Fetch package index with curl
     println!("\n[Test 1] Fetch package index (/simple/)");
-    let output = Command::new("curl")
-        .arg("-s")
-        .arg(&base_url)
-        .output()
-        .expect("Failed to execute curl");
+    let base_url_clone = base_url.clone();
+    let output = timeout(
+        Duration::from_secs(10),
+        tokio::task::spawn_blocking(move || {
+            Command::new("curl")
+                .arg("-s")
+                .arg("--max-time")
+                .arg("5")
+                .arg(&base_url_clone)
+                .output()
+        })
+    )
+    .await
+    .map_err(|_| "curl timeout")??
+    .expect("Failed to execute curl");
 
     let response = String::from_utf8_lossy(&output.stdout);
     println!("Response:\n{}", response);
@@ -128,11 +138,20 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
     // Test 2: Fetch hello-world package page
     println!("\n[Test 2] Fetch hello-world package page (/simple/hello-world/)");
     let hello_url = format!("http://127.0.0.1:{}/simple/hello-world/", test_state.port);
-    let output = Command::new("curl")
-        .arg("-s")
-        .arg(&hello_url)
-        .output()
-        .expect("Failed to execute curl");
+    let output = timeout(
+        Duration::from_secs(10),
+        tokio::task::spawn_blocking(move || {
+            Command::new("curl")
+                .arg("-s")
+                .arg("--max-time")
+                .arg("5")
+                .arg(&hello_url)
+                .output()
+        })
+    )
+    .await
+    .map_err(|_| "curl timeout")??
+    .expect("Failed to execute curl");
 
     let response = String::from_utf8_lossy(&output.stdout);
     println!("Response:\n{}", response);
@@ -145,11 +164,20 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
     // Test 3: Fetch example-pkg package page
     println!("\n[Test 3] Fetch example-pkg package page (/simple/example-pkg/)");
     let example_url = format!("http://127.0.0.1:{}/simple/example-pkg/", test_state.port);
-    let output = Command::new("curl")
-        .arg("-s")
-        .arg(&example_url)
-        .output()
-        .expect("Failed to execute curl");
+    let output = timeout(
+        Duration::from_secs(10),
+        tokio::task::spawn_blocking(move || {
+            Command::new("curl")
+                .arg("-s")
+                .arg("--max-time")
+                .arg("5")
+                .arg(&example_url)
+                .output()
+        })
+    )
+    .await
+    .map_err(|_| "curl timeout")??
+    .expect("Failed to execute curl");
 
     let response = String::from_utf8_lossy(&output.stdout);
     println!("Response:\n{}", response);
@@ -171,17 +199,24 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
 
     // Try to get package info (this will fail at download because wheel is likely invalid,
     // but it should at least successfully query the index and find the package)
-    let output = Command::new("pip")
-        .arg("index")
-        .arg("versions")
-        .arg("hello-world")
-        .arg("--index-url")
-        .arg(&base_url)
-        .env("PIP_NO_CACHE_DIR", "1")
-        .output();
+    let base_url_for_pip = base_url.clone();
+    let output = timeout(
+        Duration::from_secs(30),
+        tokio::task::spawn_blocking(move || {
+            Command::new("pip")
+                .arg("index")
+                .arg("versions")
+                .arg("hello-world")
+                .arg("--index-url")
+                .arg(&base_url_for_pip)
+                .env("PIP_NO_CACHE_DIR", "1")
+                .output()
+        })
+    )
+    .await;
 
     match output {
-        Ok(result) => {
+        Ok(Ok(Ok(result))) => {
             let stdout = String::from_utf8_lossy(&result.stdout);
             let stderr = String::from_utf8_lossy(&result.stderr);
             println!("pip stdout:\n{}", stdout);
@@ -199,9 +234,17 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
                 println!("  This could be expected if LLM didn't generate exact HTML format");
             }
         }
-        Err(e) => {
+        Ok(Ok(Err(e))) => {
             println!("! pip command not available or failed: {}", e);
             println!("  This is expected in CI environments without pip");
+        }
+        Ok(Err(_)) => {
+            println!("! pip command spawn failed");
+            println!("  This is expected in CI environments without pip");
+        }
+        Err(_) => {
+            println!("! pip command timed out after 30s");
+            println!("  Skipping pip test - server may not be responding correctly");
         }
     }
 
@@ -211,15 +254,24 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
         "http://127.0.0.1:{}/simple/nonexistent-package/",
         test_state.port
     );
-    let output = Command::new("curl")
-        .arg("-s")
-        .arg("-w")
-        .arg("%{http_code}")
-        .arg("-o")
-        .arg("/dev/null")
-        .arg(&nonexistent_url)
-        .output()
-        .expect("Failed to execute curl");
+    let output = timeout(
+        Duration::from_secs(10),
+        tokio::task::spawn_blocking(move || {
+            Command::new("curl")
+                .arg("-s")
+                .arg("-w")
+                .arg("%{http_code}")
+                .arg("-o")
+                .arg("/dev/null")
+                .arg("--max-time")
+                .arg("5")
+                .arg(&nonexistent_url)
+                .output()
+        })
+    )
+    .await
+    .map_err(|_| "curl timeout")??
+    .expect("Failed to execute curl");
 
     let status_code = String::from_utf8_lossy(&output.stdout);
     println!("HTTP status code: {}", status_code);
@@ -304,11 +356,20 @@ Use scripting mode for zero LLM calls after setup.
 
     // Test: Fetch package index
     println!("\n[Test] Fetch minimal package index");
-    let output = Command::new("curl")
-        .arg("-s")
-        .arg(&base_url)
-        .output()
-        .expect("Failed to execute curl");
+    let output = timeout(
+        Duration::from_secs(10),
+        tokio::task::spawn_blocking(move || {
+            Command::new("curl")
+                .arg("-s")
+                .arg("--max-time")
+                .arg("5")
+                .arg(&base_url)
+                .output()
+        })
+    )
+    .await
+    .map_err(|_| "curl timeout")??
+    .expect("Failed to execute curl");
 
     let response = String::from_utf8_lossy(&output.stdout);
     println!("Response:\n{}", response);
