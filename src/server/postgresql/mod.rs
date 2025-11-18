@@ -366,7 +366,7 @@ impl SimpleQueryHandler for PostgresqlHandler {
                                         }
                                     }
 
-                                    // Convert Vec to Stream
+                                    // Convert Vec<PgWireResult<DataRow>> to Stream
                                     let row_stream = futures::stream::iter(data_rows);
                                     return Ok(vec![Response::Query(QueryResponse::new(
                                         field_infos_arc,
