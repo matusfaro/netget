@@ -24,7 +24,7 @@ use crate::ui::app::{
 use super::input_state::InputState;
 use super::theme::ColorPalette;
 
-// Layout constants for two-column footer
+// Layout constants for multi-column footer
 const INPUTS_LEFT_MARGIN: u16 = 6;
 const INPUTS_COLUMN_WIDTH: u16 = 30;
 const COLUMN_MARGIN: u16 = 4;
@@ -341,8 +341,11 @@ impl StickyFooter {
             clients_height += clients.len() as u16; // Each client is 1 line
         }
 
-        // Return the max of the three columns (or 0 if all empty)
-        inputs_height.max(servers_height).max(clients_height)
+        // Calculate usage stats height (header + 2 stat lines if enabled)
+        let usage_height = if self.show_usage_stats { 3 } else { 0 };
+
+        // Return the max of all columns (or 0 if all empty)
+        inputs_height.max(servers_height).max(clients_height).max(usage_height)
     }
 
     /// Calculate lines needed for input (or approval prompt if pending)
@@ -526,16 +529,7 @@ impl StickyFooter {
             };
         }
 
-        // Render usage stats if enabled (2 lines, positioned above input box)
-        let usage_lines = if self.show_usage_stats { 2 } else { 0 };
-
-        if self.show_usage_stats {
-            // Render usage stats ABOVE the input box (2 lines before input_box_top_line)
-            let usage_start = input_box_top_line - usage_lines;
-            self.render_usage_stats(stdout, usage_start)?;
-        }
-
-        // Render top border of input box (stays in fixed position)
+        // Render top border of input box
         if content_lines > 0 {
             self.render_input_box_top_with_columns(stdout, input_box_top_line, &self.content)?;
         } else {
@@ -641,9 +635,6 @@ impl StickyFooter {
         let input_box_borders = 2; // Top and bottom borders of input box
         let status_lines = 1;
 
-        // Add usage stats lines if enabled (compact 2-line display)
-        let usage_lines = if self.show_usage_stats { 2 } else { 0 };
-
         // Add separator lines based on content type:
         // - Normal mode (servers/inputs): 0 separators (columns connect directly to input box top border)
         // - SlashCommands mode: 2 separators (one above content, one between content and input box)
@@ -653,7 +644,7 @@ impl StickyFooter {
             FooterContent::SlashCommands { .. } if content_lines > 0 => 2,
             _ => 0,
         };
-        content_lines + separator_lines + usage_lines + input_box_borders + input_lines + status_lines
+        content_lines + separator_lines + input_box_borders + input_lines + status_lines
     }
 
     /// Render normal content (two-column layout with floating headers)
@@ -745,14 +736,19 @@ impl StickyFooter {
             1 + clients.len() as u16
         };
 
+        // Calculate usage stats height (header + 2 stat lines if enabled)
+        let usage_height = if self.show_usage_stats { 3 } else { 0 };
+
         // If all columns are empty, don't render anything
-        if inputs_height == 0 && servers_height == 0 && clients_height == 0 {
+        if inputs_height == 0 && servers_height == 0 && clients_height == 0 && usage_height == 0 {
             return Ok(start_line);
         }
 
-        let total_height = inputs_height.max(servers_height).max(clients_height);
+        let total_height = inputs_height.max(servers_height).max(clients_height).max(usage_height);
         let servers_column_start = INPUTS_LEFT_MARGIN + INPUTS_COLUMN_WIDTH + COLUMN_MARGIN;
         let clients_column_start = servers_column_start + INPUTS_COLUMN_WIDTH + COLUMN_MARGIN;
+        // Usage shares the same column position as clients (third column)
+        let usage_column_start = clients_column_start;
 
         // Render line by line
         for line_offset in 0..total_height {
@@ -769,6 +765,10 @@ impl StickyFooter {
             // Determine if we should render clients column content for this line
             let clients_start_offset = total_height.saturating_sub(clients_height);
             let render_clients = line_offset >= clients_start_offset;
+
+            // Determine if we should render usage column content for this line
+            let usage_start_offset = total_height.saturating_sub(usage_height);
+            let render_usage = line_offset >= usage_start_offset;
 
             // Clear the line first
             execute!(
@@ -993,6 +993,63 @@ impl StickyFooter {
                     }
                 }
             }
+
+            // Render usage stats column
+            if render_usage {
+                let usage_line_idx = line_offset - usage_start_offset;
+                if usage_line_idx == 0 {
+                    // Header line
+                    execute!(
+                        stdout,
+                        cursor::MoveTo(usage_column_start, current_line),
+                        SetForegroundColor(self.palette.separator),
+                        Print("┌──── "),
+                        ResetColor,
+                        Print("Usage")
+                    )?;
+                } else if usage_line_idx == 1 {
+                    // Line 1: CPU and Memory stats
+                    let (input_tokens, output_tokens, llm_calls) = self.llm_stats;
+                    let cpu_pct = format!("{:.1}%", self.system_stats.cpu_usage);
+                    let mem_pct = format!("{:.1}%", self.system_stats.memory_percent());
+                    let mem_used = self.system_stats.memory_used_str();
+                    let mem_total = self.system_stats.memory_total_str();
+
+                    let gpu_display = if let Some(gpu_pct) = self.system_stats.gpu_usage {
+                        format!(" GPU:{:.1}%", gpu_pct)
+                    } else {
+                        String::new()
+                    };
+
+                    let text = format!("CPU:{} Mem:{} ({}/{}){}", cpu_pct, mem_pct, mem_used, mem_total, gpu_display);
+                    execute!(
+                        stdout,
+                        cursor::MoveTo(usage_column_start, current_line),
+                        SetForegroundColor(self.palette.separator),
+                        Print("│ "),
+                        ResetColor,
+                        SetForegroundColor(self.palette.dimmed),
+                        Print(&text),
+                        ResetColor
+                    )?;
+                } else if usage_line_idx == 2 {
+                    // Line 2: LLM stats
+                    let (input_tokens, output_tokens, llm_calls) = self.llm_stats;
+                    let total_tokens = input_tokens + output_tokens;
+                    let text = format!("LLM: {} calls, {} in, {} out, {} total",
+                        llm_calls, input_tokens, output_tokens, total_tokens);
+                    execute!(
+                        stdout,
+                        cursor::MoveTo(usage_column_start, current_line),
+                        SetForegroundColor(self.palette.separator),
+                        Print("│ "),
+                        ResetColor,
+                        SetForegroundColor(self.palette.dimmed),
+                        Print(&text),
+                        ResetColor
+                    )?;
+                }
+            }
         }
 
         Ok(start_line + total_height)
@@ -1046,44 +1103,6 @@ impl StickyFooter {
             ResetColor,
         )?;
         Ok(line + 1)
-    }
-
-    /// Render usage stats (compact 2-line display)
-    fn render_usage_stats(&self, stdout: &mut impl Write, line: u16) -> Result<()> {
-        let (input_tokens, output_tokens, llm_calls) = self.llm_stats;
-        let total_tokens = input_tokens + output_tokens;
-
-        // Line 1: System stats (CPU, Memory, GPU)
-        let cpu_pct = format!("{:.1}%", self.system_stats.cpu_usage);
-        let mem_pct = format!("{:.1}%", self.system_stats.memory_percent());
-        let mem_used = self.system_stats.memory_used_str();
-        let mem_total = self.system_stats.memory_total_str();
-
-        let gpu_display = if let Some(gpu_pct) = self.system_stats.gpu_usage {
-            format!(" GPU:{:.1}%", gpu_pct)
-        } else {
-            String::new()
-        };
-
-        execute!(
-            stdout,
-            cursor::MoveTo(0, line),
-            SetForegroundColor(self.palette.dimmed),
-            Print(format!("CPU:{} Mem:{} ({}/{}){}", cpu_pct, mem_pct, mem_used, mem_total, gpu_display)),
-            ResetColor,
-        )?;
-
-        // Line 2: LLM stats (calls, tokens)
-        execute!(
-            stdout,
-            cursor::MoveTo(0, line + 1),
-            SetForegroundColor(self.palette.dimmed),
-            Print(format!("LLM: {} calls, {} in, {} out, {} total tokens",
-                llm_calls, input_tokens, output_tokens, total_tokens)),
-            ResetColor,
-        )?;
-
-        Ok(())
     }
 
     /// Render top border of input box (┌─────┐)
@@ -1145,6 +1164,15 @@ impl StickyFooter {
             if !servers.is_empty() {
                 let servers_column_start = INPUTS_LEFT_MARGIN + INPUTS_COLUMN_WIDTH + COLUMN_MARGIN;
                 join_positions.push(servers_column_start);
+            }
+
+            // Add ┴ at usage/clients column position (third column) if either exists
+            // Note: clients and usage share the same column position
+            let servers_column_start = INPUTS_LEFT_MARGIN + INPUTS_COLUMN_WIDTH + COLUMN_MARGIN;
+            let third_column_start = servers_column_start + INPUTS_COLUMN_WIDTH + COLUMN_MARGIN;
+
+            if self.show_usage_stats {
+                join_positions.push(third_column_start);
             }
         }
 
