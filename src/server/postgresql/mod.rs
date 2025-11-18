@@ -311,6 +311,10 @@ impl SimpleQueryHandler for PostgresqlHandler {
                                         .collect();
 
                                     // Create Arc once and reuse it for both encoder and response
+                                    debug!("Creating field_infos_arc with {} fields", field_infos.len());
+                                    for (idx, field) in field_infos.iter().enumerate() {
+                                        debug!("  Field {}: name={:?}, type={:?}", idx, field.name(), field.datatype());
+                                    }
                                     let field_infos_arc = Arc::new(field_infos);
 
                                     // Create data rows as a stream
@@ -323,7 +327,12 @@ impl SimpleQueryHandler for PostgresqlHandler {
                                             for (idx, value) in row_values.iter().enumerate() {
                                                 if idx < field_infos_arc.len() {
                                                     let value_str = json_value_to_string(value);
-                                                    encoder.encode_field(&value_str.as_str()).map_err(|e| {
+                                                    let field_type = field_infos_arc[idx].datatype();
+                                                    encoder.encode_field_with_type_and_format(
+                                                        &value_str,
+                                                        &field_type,
+                                                        FieldFormat::Text,
+                                                    ).map_err(|e| {
                                                         PgWireError::ApiError(Box::new(std::io::Error::new(
                                                             std::io::ErrorKind::InvalidData,
                                                             format!("Failed to encode field: {}", e),
@@ -534,6 +543,10 @@ impl ExtendedQueryHandler for PostgresqlHandler {
                                         .collect();
 
                                     // Create Arc once and reuse it for both encoder and response
+                                    debug!("Creating field_infos_arc with {} fields", field_infos.len());
+                                    for (idx, field) in field_infos.iter().enumerate() {
+                                        debug!("  Field {}: name={:?}, type={:?}", idx, field.name(), field.datatype());
+                                    }
                                     let field_infos_arc = Arc::new(field_infos);
 
                                     // Create data rows as a stream
@@ -546,7 +559,12 @@ impl ExtendedQueryHandler for PostgresqlHandler {
                                             for (idx, value) in row_values.iter().enumerate() {
                                                 if idx < field_infos_arc.len() {
                                                     let value_str = json_value_to_string(value);
-                                                    encoder.encode_field(&value_str.as_str()).map_err(|e| {
+                                                    let field_type = field_infos_arc[idx].datatype();
+                                                    encoder.encode_field_with_type_and_format(
+                                                        &value_str,
+                                                        &field_type,
+                                                        FieldFormat::Text,
+                                                    ).map_err(|e| {
                                                         PgWireError::ApiError(Box::new(std::io::Error::new(
                                                             std::io::ErrorKind::InvalidData,
                                                             format!("Failed to encode field: {}", e),
