@@ -202,6 +202,18 @@ impl DatabaseInstance {
         self.query_count += 1;
         self.last_query_at = Some(Instant::now());
     }
+
+    /// Update row counts for all tables (more efficient than full schema refresh)
+    pub fn update_row_counts(&mut self, conn: &Connection) -> Result<()> {
+        for table in &mut self.tables {
+            table.row_count = conn.query_row(
+                &format!("SELECT COUNT(*) FROM '{}'", table.name),
+                [],
+                |row| row.get(0),
+            )?;
+        }
+        Ok(())
+    }
 }
 
 /// Database connection wrapper (single connection protected by Mutex)
@@ -301,6 +313,12 @@ impl DatabaseConnection {
                 || sql_upper.starts_with("ALTER")
             {
                 self.instance.refresh_schema(&conn)?;
+            } else if sql_upper.starts_with("INSERT")
+                || sql_upper.starts_with("UPDATE")
+                || sql_upper.starts_with("DELETE")
+            {
+                // For DML operations, just update row counts (more efficient than full schema refresh)
+                self.instance.update_row_counts(&conn)?;
             }
 
             Ok(QueryResult::Modified { affected_rows })
@@ -410,7 +428,10 @@ impl DatabaseManager {
 
         // Execute initialization SQL if provided
         if let Some(sql) = init_sql {
-            conn.execute_query(sql)?;
+            // Use execute_batch for multi-statement SQL
+            let db_conn = conn.conn.lock().unwrap();
+            db_conn.execute_batch(sql)?;
+            drop(db_conn);
         }
 
         // Refresh schema
