@@ -10,6 +10,7 @@ use crate::state::app_state::AppState;
 use crate::{console_debug, console_error};
 use actions::{PostgresqlProtocol, POSTGRESQL_QUERY_EVENT};
 use anyhow::Result;
+use pgwire::api::auth::noop::NoopStartupHandler;
 use pgwire::api::auth::{DefaultServerParameterProvider, StartupHandler};
 use pgwire::api::portal::Portal;
 use pgwire::api::query::{ExtendedQueryHandler, SimpleQueryHandler};
@@ -145,33 +146,12 @@ impl PostgresqlServer {
 }
 
 /// No-auth startup handler for PostgreSQL
-struct NoAuthStartupHandler {
-    parameters: Arc<DefaultServerParameterProvider>,
-}
+struct PostgresqlNoopHandler;
 
-impl NoAuthStartupHandler {
-    fn new() -> Self {
-        let mut parameters = DefaultServerParameterProvider::default();
-        parameters.server_version = "PostgreSQL 16.0 (NetGet)".to_string();
-        Self {
-            parameters: Arc::new(parameters),
-        }
-    }
-}
-
+// Implement NoopStartupHandler trait
+// StartupHandler is automatically implemented for types implementing NoopStartupHandler
 #[async_trait::async_trait]
-impl StartupHandler for NoAuthStartupHandler {
-    async fn on_startup<C>(
-        &self,
-        _client: &mut C,
-        _message: pgwire::messages::PgWireFrontendMessage,
-    ) -> PgWireResult<()>
-    where
-        C: ClientInfo + Unpin + Send + Sync,
-    {
-        Ok(())
-    }
-}
+impl NoopStartupHandler for PostgresqlNoopHandler {}
 
 /// Factory for creating PostgreSQL handlers
 struct PostgresqlHandlerFactory {
@@ -217,7 +197,7 @@ impl PgWireServerHandlers for PostgresqlHandlerFactory {
     }
 
     fn startup_handler(&self) -> Arc<impl StartupHandler> {
-        Arc::new(NoAuthStartupHandler::new())
+        Arc::new(PostgresqlNoopHandler)
     }
 }
 
