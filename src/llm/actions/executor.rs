@@ -219,6 +219,14 @@ async fn execute_common_action(
         | CommonAction::UpdateClientInstruction { .. } => {
             // Client and connection management handled by event handler, not executor
         }
+
+        #[cfg(feature = "sqlite")]
+        CommonAction::CreateDatabase { .. }
+        | CommonAction::ExecuteSql { .. }
+        | CommonAction::ListDatabases
+        | CommonAction::DeleteDatabase { .. } => {
+            // SQLite operations handled by event handler, not executor
+        }
     }
 
     Ok(())

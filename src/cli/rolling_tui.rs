@@ -1564,6 +1564,12 @@ async fn handle_key_event(
                         update_ui_from_state(app, state, footer).await;
                         footer.render(&mut stdout())?;
                     }
+                    #[cfg(feature = "sqlite")]
+                    UserCommand::Sqlite { db_id, query } => {
+                        // Handle SQLite database commands
+                        handle_sqlite(db_id, query, state, footer, &palette).await?;
+                        footer.render(&mut stdout())?;
+                    }
                     UserCommand::Quit => {
                         return Ok(true);
                     }
@@ -2600,5 +2606,136 @@ async fn handle_load(
     }
 
     print_output_line("[LOAD] Configuration loaded successfully", footer, palette)?;
+    Ok(())
+}
+
+#[cfg(feature = "sqlite")]
+async fn handle_sqlite(
+    db_id: Option<u32>,
+    query: Option<String>,
+    state: &AppState,
+    footer: &mut StickyFooter,
+    palette: &ColorPalette,
+) -> Result<()> {
+    use crate::state::sqlite::DatabaseId;
+
+    match (db_id, query) {
+        (None, None) => {
+            // List all databases
+            let databases = state.get_all_databases().await;
+            if databases.is_empty() {
+                print_output_line("[SQLITE] No databases found", footer, palette)?;
+            } else {
+                print_output_line(
+                    &format!("[SQLITE] Found {} database(s):", databases.len()),
+                    footer,
+                    palette,
+                )?;
+                for db in databases {
+                    print_output_line(
+                        &format!(
+                            "  {} - {} ({}) - {} table(s), {} queries",
+                            db.id, db.name, db.owner, db.tables.len(), db.query_count
+                        ),
+                        footer,
+                        palette,
+                    )?;
+                }
+            }
+        }
+        (Some(id), None) => {
+            // Show schema for specific database
+            let db_id = DatabaseId::new(id);
+            if let Some(db) = state.get_database(db_id).await {
+                print_output_line(
+                    &format!(
+                        "[SQLITE] Database: {} ({}) - {} ({} table(s))",
+                        db.id,
+                        db.name,
+                        db.owner,
+                        db.tables.len()
+                    ),
+                    footer,
+                    palette,
+                )?;
+                if db.tables.is_empty() {
+                    print_output_line("  No tables", footer, palette)?;
+                } else {
+                    for table in &db.tables {
+                        print_output_line(
+                            &format!("  Table: {} ({} rows)", table.name, table.row_count),
+                            footer,
+                            palette,
+                        )?;
+                        for column in &table.columns {
+                            print_output_line(&format!("    {}", column), footer, palette)?;
+                        }
+                    }
+                }
+            } else {
+                print_output_line(
+                    &format!("[ERROR] Database {} not found", id),
+                    footer,
+                    palette,
+                )?;
+            }
+        }
+        (Some(id), Some(sql)) => {
+            // Execute query on specific database
+            let db_id = DatabaseId::new(id);
+            match state.execute_sql(db_id, &sql).await {
+                Ok(result) => {
+                    print_output_line(
+                        &format!("[SQLITE] Query executed on {}:", db_id),
+                        footer,
+                        palette,
+                    )?;
+                    // Format and display result
+                    let formatted = result.format();
+                    for line in formatted.lines() {
+                        print_output_line(&format!("  {}", line), footer, palette)?;
+                    }
+                }
+                Err(e) => {
+                    print_output_line(
+                        &format!("[ERROR] Query failed: {}", e),
+                        footer,
+                        palette,
+                    )?;
+                }
+            }
+        }
+        (None, Some(sql)) => {
+            // Execute query on first database
+            let databases = state.get_all_databases().await;
+            if let Some(db) = databases.first() {
+                let db_id = db.id;
+                match state.execute_sql(db_id, &sql).await {
+                    Ok(result) => {
+                        print_output_line(
+                            &format!("[SQLITE] Query executed on {}:", db_id),
+                            footer,
+                            palette,
+                        )?;
+                        // Format and display result
+                        let formatted = result.format();
+                        for line in formatted.lines() {
+                            print_output_line(&format!("  {}", line), footer, palette)?;
+                        }
+                    }
+                    Err(e) => {
+                        print_output_line(
+                            &format!("[ERROR] Query failed: {}", e),
+                            footer,
+                            palette,
+                        )?;
+                    }
+                }
+            } else {
+                print_output_line("[ERROR] No databases found", footer, palette)?;
+            }
+        }
+    }
+
     Ok(())
 }
