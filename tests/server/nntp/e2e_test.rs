@@ -59,7 +59,7 @@ async fn test_nntp_basic_newsgroups() -> E2EResult<()> {
             .on_event("nntp_command_received")
             .and_event_data_contains("command", "GREETING")
             .respond_with_actions(serde_json::json!([
-                {"type": "send_nntp_response", "code": 200, "message": "NetGet NNTP Test Server Ready"}
+                {"type": "send_nntp_response", "code": 200, "text": "NetGet NNTP Test Server Ready"}
             ]))
             .expect_calls(1)
             .and()
@@ -79,7 +79,7 @@ async fn test_nntp_basic_newsgroups() -> E2EResult<()> {
             .on_event("nntp_command_received")
             .and_event_data_contains("command", "GROUP")
             .respond_with_actions(serde_json::json!([
-                {"type": "send_nntp_response", "code": 211, "message": "50 1 50 comp.lang.rust"}
+                {"type": "send_nntp_response", "code": 211, "text": "50 1 50 comp.lang.rust"}
             ]))
             .expect_calls(1)
             .and()
@@ -95,7 +95,7 @@ async fn test_nntp_basic_newsgroups() -> E2EResult<()> {
             .on_event("nntp_command_received")
             .and_event_data_contains("command", "QUIT")
             .respond_with_actions(serde_json::json!([
-                {"type": "send_nntp_response", "code": 205, "message": "Goodbye"}
+                {"type": "send_nntp_response", "code": 205, "text": "Goodbye"}
             ]))
             .expect_calls(1)
             .and()
@@ -256,7 +256,7 @@ async fn test_nntp_article_overview() -> E2EResult<()> {
             .on_event("nntp_command_received")
             .and_event_data_contains("command", "GREETING")
             .respond_with_actions(serde_json::json!([
-                {"type": "send_nntp_response", "code": 200, "message": "NetGet NNTP Ready"}
+                {"type": "send_nntp_response", "code": 200, "text": "NetGet NNTP Ready"}
             ]))
             .expect_calls(1)
             .and()
@@ -264,7 +264,7 @@ async fn test_nntp_article_overview() -> E2EResult<()> {
             .on_event("nntp_command_received")
             .and_event_data_contains("command", "GROUP")
             .respond_with_actions(serde_json::json!([
-                {"type": "send_nntp_response", "code": 211, "message": "5 1 5 comp.test"}
+                {"type": "send_nntp_response", "code": 211, "text": "5 1 5 comp.test"}
             ]))
             .expect_calls(1)
             .and()
@@ -286,7 +286,7 @@ async fn test_nntp_article_overview() -> E2EResult<()> {
             .on_event("nntp_command_received")
             .and_event_data_contains("command", "QUIT")
             .respond_with_actions(serde_json::json!([
-                {"type": "send_nntp_response", "code": 205, "message": "Goodbye"}
+                {"type": "send_nntp_response", "code": 205, "text": "Goodbye"}
             ]))
             .expect_calls(1)
             .and()

@@ -217,9 +217,13 @@ impl SmbServer {
             // SMB2 header is 64 bytes minimum
             let mut header_buf = vec![0u8; 64];
 
+            debug!("SMB: Waiting for next message from {}", peer_addr);
+            let _ = status_tx.send(format!("[DEBUG] SMB: Waiting for message from {}", peer_addr));
+
             match stream.read_exact(&mut header_buf).await {
                 Ok(_) => {
                     trace!("SMB2 message received from {}", peer_addr);
+                    let _ = status_tx.send(format!("[DEBUG] SMB: Received 64-byte header from {}", peer_addr));
 
                     // Update connection stats for received data
                     app_state

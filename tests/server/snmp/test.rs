@@ -42,46 +42,45 @@ async fn test_snmp_basic_get() -> E2EResult<()> {
                     // Mock 2: SNMP GET for sysDescr (1.3.6.1.2.1.1.1.0) - DYNAMIC request_id
                     .on_event("snmp_request")
                     .and_event_data_contains("request_type", "GetRequest")
-                    .and_event_data_contains("oids", "1.3.6.1.2.1.1.1.0")
                     .respond_with_actions_from_event(|event_data| {
-                        let request_id = event_data["request_id"].as_u64().unwrap_or(0);
-                        serde_json::json!([
-                            {
-                                "type": "send_snmp_response",
-                                "request_id": request_id,
-                                "varbinds": [
-                                    {
-                                        "oid": "1.3.6.1.2.1.1.1.0",
-                                        "value_type": "string",
-                                        "value": "NetGet SNMP Server v1.0"
-                                    }
-                                ]
-                            }
-                        ])
+                        // Check which OID was requested and return appropriate response
+                        let oids = event_data["oids"].as_array().unwrap();
+                        if oids.iter().any(|oid| oid.as_str() == Some("1.3.6.1.2.1.1.1.0")) {
+                            serde_json::json!([
+                                {
+                                    "type": "send_snmp_response",
+                                    "variables": [
+                                        {
+                                            "oid": "1.3.6.1.2.1.1.1.0",
+                                            "type": "string",
+                                            "value": "NetGet SNMP Server v1.0"
+                                        }
+                                    ]
+                                }
+                            ])
+                        } else if oids.iter().any(|oid| oid.as_str() == Some("1.3.6.1.2.1.1.5.0")) {
+                            serde_json::json!([
+                                {
+                                    "type": "send_snmp_response",
+                                    "variables": [
+                                        {
+                                            "oid": "1.3.6.1.2.1.1.5.0",
+                                            "type": "string",
+                                            "value": "netget.local"
+                                        }
+                                    ]
+                                }
+                            ])
+                        } else {
+                            serde_json::json!([
+                                {
+                                    "type": "send_snmp_error",
+                                    "error_message": "Unknown OID"
+                                }
+                            ])
+                        }
                     })
-                    .expect_calls(1)
-                    .and()
-                    // Mock 3: SNMP GET for sysName (1.3.6.1.2.1.1.5.0) - DYNAMIC request_id
-                    .on_event("snmp_request")
-                    .and_event_data_contains("request_type", "GetRequest")
-                    .and_event_data_contains("oids", "1.3.6.1.2.1.1.5.0")
-                    .respond_with_actions_from_event(|event_data| {
-                        let request_id = event_data["request_id"].as_u64().unwrap_or(0);
-                        serde_json::json!([
-                            {
-                                "type": "send_snmp_response",
-                                "request_id": request_id,
-                                "varbinds": [
-                                    {
-                                        "oid": "1.3.6.1.2.1.1.5.0",
-                                        "value_type": "string",
-                                        "value": "netget.local"
-                                    }
-                                ]
-                            }
-                        ])
-                    })
-                    .expect_calls(1)
+                    .expect_calls(2)
                     .and()
             })
     ).await?;
@@ -194,17 +193,14 @@ async fn test_snmp_get_next() -> E2EResult<()> {
                     // Mock 2: SNMP GETNEXT
                     .on_event("snmp_request")
                     .and_event_data_contains("request_type", "GetNextRequest")
-                    .and_event_data_contains("oids", "1.3.6.1.2.1.1")
-                    .respond_with_actions_from_event(|event_data| {
-                        let request_id = event_data["request_id"].as_u64().unwrap_or(0);
+                    .respond_with_actions_from_event(|_event_data| {
                         serde_json::json!([
                             {
                                 "type": "send_snmp_response",
-                                "request_id": request_id,
-                                "varbinds": [
+                                "variables": [
                                     {
                                         "oid": "1.3.6.1.2.1.1.1.0",
-                                        "value_type": "string",
+                                        "type": "string",
                                         "value": "NetGet SNMP"
                                     }
                                 ]
@@ -285,69 +281,45 @@ async fn test_snmp_interface_stats() -> E2EResult<()> {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: ifIndex query
+                    // Mock 2: Handle all interface stat queries
                     .on_event("snmp_request")
                     .and_event_data_contains("request_type", "GetRequest")
-                    .and_event_data_contains("oids", "1.3.6.1.2.1.2.2.1.1.1")
                     .respond_with_actions_from_event(|event_data| {
-                        let request_id = event_data["request_id"].as_u64().unwrap_or(0);
-                        serde_json::json!([
-                            {
+                        let oids = event_data["oids"].as_array().unwrap();
+
+                        // Determine which OID was requested and return appropriate response
+                        if oids.iter().any(|oid| oid.as_str() == Some("1.3.6.1.2.1.2.2.1.1.1")) {
+                            // ifIndex
+                            serde_json::json!([{
                                 "type": "send_snmp_response",
-                                "request_id": request_id,
-                                "varbinds": [{"oid": "1.3.6.1.2.1.2.2.1.1.1", "value_type": "integer", "value": 1}]
-                            }
-                        ])
-                    })
-                    .expect_calls(1)
-                    .and()
-                    // Mock 3: ifDescr query
-                    .on_event("snmp_request")
-                    .and_event_data_contains("request_type", "GetRequest")
-                    .and_event_data_contains("oids", "1.3.6.1.2.1.2.2.1.2.1")
-                    .respond_with_actions_from_event(|event_data| {
-                        let request_id = event_data["request_id"].as_u64().unwrap_or(0);
-                        serde_json::json!([
-                            {
+                                "variables": [{"oid": "1.3.6.1.2.1.2.2.1.1.1", "type": "integer", "value": 1}]
+                            }])
+                        } else if oids.iter().any(|oid| oid.as_str() == Some("1.3.6.1.2.1.2.2.1.2.1")) {
+                            // ifDescr
+                            serde_json::json!([{
                                 "type": "send_snmp_response",
-                                "request_id": request_id,
-                                "varbinds": [{"oid": "1.3.6.1.2.1.2.2.1.2.1", "value_type": "string", "value": "eth0"}]
-                            }
-                        ])
-                    })
-                    .expect_calls(1)
-                    .and()
-                    // Mock 4: ifSpeed query
-                    .on_event("snmp_request")
-                    .and_event_data_contains("request_type", "GetRequest")
-                    .and_event_data_contains("oids", "1.3.6.1.2.1.2.2.1.5.1")
-                    .respond_with_actions_from_event(|event_data| {
-                        let request_id = event_data["request_id"].as_u64().unwrap_or(0);
-                        serde_json::json!([
-                            {
+                                "variables": [{"oid": "1.3.6.1.2.1.2.2.1.2.1", "type": "string", "value": "eth0"}]
+                            }])
+                        } else if oids.iter().any(|oid| oid.as_str() == Some("1.3.6.1.2.1.2.2.1.5.1")) {
+                            // ifSpeed
+                            serde_json::json!([{
                                 "type": "send_snmp_response",
-                                "request_id": request_id,
-                                "varbinds": [{"oid": "1.3.6.1.2.1.2.2.1.5.1", "value_type": "gauge", "value": 1000000000}]
-                            }
-                        ])
-                    })
-                    .expect_calls(1)
-                    .and()
-                    // Mock 5: ifOperStatus query
-                    .on_event("snmp_request")
-                    .and_event_data_contains("request_type", "GetRequest")
-                    .and_event_data_contains("oids", "1.3.6.1.2.1.2.2.1.8.1")
-                    .respond_with_actions_from_event(|event_data| {
-                        let request_id = event_data["request_id"].as_u64().unwrap_or(0);
-                        serde_json::json!([
-                            {
+                                "variables": [{"oid": "1.3.6.1.2.1.2.2.1.5.1", "type": "gauge", "value": 1000000000}]
+                            }])
+                        } else if oids.iter().any(|oid| oid.as_str() == Some("1.3.6.1.2.1.2.2.1.8.1")) {
+                            // ifOperStatus
+                            serde_json::json!([{
                                 "type": "send_snmp_response",
-                                "request_id": request_id,
-                                "varbinds": [{"oid": "1.3.6.1.2.1.2.2.1.8.1", "value_type": "integer", "value": 1}]
-                            }
-                        ])
+                                "variables": [{"oid": "1.3.6.1.2.1.2.2.1.8.1", "type": "integer", "value": 1}]
+                            }])
+                        } else {
+                            serde_json::json!([{
+                                "type": "send_snmp_error",
+                                "error_message": "Unknown OID"
+                            }])
+                        }
                     })
-                    .expect_calls(1)
+                    .expect_calls(4)
                     .and()
             })
     ).await?;
@@ -426,53 +398,39 @@ async fn test_snmp_custom_mib() -> E2EResult<()> {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: Application Name query
+                    // Mock 2: Handle all custom MIB queries
                     .on_event("snmp_request")
                     .and_event_data_contains("request_type", "GetRequest")
-                    .and_event_data_contains("oids", "1.3.6.1.4.1.99999.1.1.0")
                     .respond_with_actions_from_event(|event_data| {
-                        let request_id = event_data["request_id"].as_u64().unwrap_or(0);
-                        serde_json::json!([
-                            {
+                        let oids = event_data["oids"].as_array().unwrap();
+
+                        // Determine which OID was requested and return appropriate response
+                        if oids.iter().any(|oid| oid.as_str() == Some("1.3.6.1.4.1.99999.1.1.0")) {
+                            // Application Name
+                            serde_json::json!([{
                                 "type": "send_snmp_response",
-                                "request_id": request_id,
-                                "varbinds": [{"oid": "1.3.6.1.4.1.99999.1.1.0", "value_type": "string", "value": "Custom Application v1.0"}]
-                            }
-                        ])
-                    })
-                    .expect_calls(1)
-                    .and()
-                    // Mock 3: Counter query
-                    .on_event("snmp_request")
-                    .and_event_data_contains("request_type", "GetRequest")
-                    .and_event_data_contains("oids", "1.3.6.1.4.1.99999.1.2.0")
-                    .respond_with_actions_from_event(|event_data| {
-                        let request_id = event_data["request_id"].as_u64().unwrap_or(0);
-                        serde_json::json!([
-                            {
+                                "variables": [{"oid": "1.3.6.1.4.1.99999.1.1.0", "type": "string", "value": "Custom Application v1.0"}]
+                            }])
+                        } else if oids.iter().any(|oid| oid.as_str() == Some("1.3.6.1.4.1.99999.1.2.0")) {
+                            // Counter
+                            serde_json::json!([{
                                 "type": "send_snmp_response",
-                                "request_id": request_id,
-                                "varbinds": [{"oid": "1.3.6.1.4.1.99999.1.2.0", "value_type": "counter", "value": 42}]
-                            }
-                        ])
-                    })
-                    .expect_calls(1)
-                    .and()
-                    // Mock 4: Status query
-                    .on_event("snmp_request")
-                    .and_event_data_contains("request_type", "GetRequest")
-                    .and_event_data_contains("oids", "1.3.6.1.4.1.99999.1.3.0")
-                    .respond_with_actions_from_event(|event_data| {
-                        let request_id = event_data["request_id"].as_u64().unwrap_or(0);
-                        serde_json::json!([
-                            {
+                                "variables": [{"oid": "1.3.6.1.4.1.99999.1.2.0", "type": "counter", "value": 42}]
+                            }])
+                        } else if oids.iter().any(|oid| oid.as_str() == Some("1.3.6.1.4.1.99999.1.3.0")) {
+                            // Status
+                            serde_json::json!([{
                                 "type": "send_snmp_response",
-                                "request_id": request_id,
-                                "varbinds": [{"oid": "1.3.6.1.4.1.99999.1.3.0", "value_type": "string", "value": "active"}]
-                            }
-                        ])
+                                "variables": [{"oid": "1.3.6.1.4.1.99999.1.3.0", "type": "string", "value": "active"}]
+                            }])
+                        } else {
+                            serde_json::json!([{
+                                "type": "send_snmp_error",
+                                "error_message": "Unknown OID"
+                            }])
+                        }
                     })
-                    .expect_calls(1)
+                    .expect_calls(3)
                     .and()
             })
     ).await?;

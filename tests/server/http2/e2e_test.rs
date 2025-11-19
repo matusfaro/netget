@@ -72,6 +72,11 @@ Set Content-Type header appropriately (text/plain for /, application/json for /a
                 .and()
                 // Mock 4: GET / request (use custom exact match to avoid catching other paths)
                 .on_custom(|ctx| {
+                    // CRITICAL: Check event_type is present (network event, not user input)
+                    if ctx.event_type.is_none() {
+                        return false;
+                    }
+                    // Then check it's the right event with exact path match
                     ctx.event_type.as_deref() == Some("http2_request") &&
                     ctx.event_data.get("uri").and_then(|v| v.as_str()) == Some("/") &&
                     ctx.event_data.get("method").and_then(|v| v.as_str()) == Some("GET")
