@@ -25,19 +25,10 @@ Set Content-Type header appropriately (text/plain for /, application/json for /a
     let server_config = helpers::NetGetConfig::new(prompt.to_string())
         .with_mock(|mock| {
             mock
-                // Mock 1: Server startup (matches on instruction pattern from user input)
-                .on_instruction_containing("Content-Type")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "HTTP2",
-                        "instruction": "Handle GET requests for /, /api/users, /api/status with JSON responses"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: GET /api/users request (most specific first)
+                // IMPORTANT: Event-specific mocks MUST come first (before user-input mock)
+                // The mock system uses the FIRST matching rule
+
+                // Mock 1: GET /api/users request
                 .on_event("http2_request")
                 .and_event_data_contains("uri", "/api/users")
                 .and_event_data_contains("method", "GET")
@@ -51,7 +42,7 @@ Set Content-Type header appropriately (text/plain for /, application/json for /a
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 3: GET /api/status request
+                // Mock 2: GET /api/status request
                 .on_event("http2_request")
                 .and_event_data_contains("uri", "/api/status")
                 .and_event_data_contains("method", "GET")
@@ -65,7 +56,7 @@ Set Content-Type header appropriately (text/plain for /, application/json for /a
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 4: GET /nonexistent request (404)
+                // Mock 3: GET /nonexistent request (404)
                 .on_event("http2_request")
                 .and_event_data_contains("uri", "/nonexistent")
                 .and_event_data_contains("method", "GET")
@@ -79,7 +70,7 @@ Set Content-Type header appropriately (text/plain for /, application/json for /a
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 5: GET / request (use custom exact match to avoid catching other paths)
+                // Mock 4: GET / request (use custom exact match to avoid catching other paths)
                 .on_custom(|ctx| {
                     ctx.event_type.as_deref() == Some("http2_request") &&
                     ctx.event_data.get("uri").and_then(|v| v.as_str()) == Some("/") &&
@@ -91,6 +82,18 @@ Set Content-Type header appropriately (text/plain for /, application/json for /a
                         "status": 200,
                         "headers": {"Content-Type": "text/plain"},
                         "body": "Welcome to HTTP/2"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 5: Server startup (catch-all for user input, MUST come LAST)
+                .on_custom(|ctx| !ctx.instruction.contains("Event ID:"))
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "HTTP2",
+                        "instruction": "Handle GET requests for /, /api/users, /api/status with JSON responses"
                     }
                 ]))
                 .expect_calls(1)
@@ -217,19 +220,10 @@ Set Content-Type: application/json for all responses."#;
     let server_config = helpers::NetGetConfig::new(prompt.to_string())
         .with_mock(|mock| {
             mock
-                // Mock 1: Server startup (matches on instruction pattern from user input)
-                .on_instruction_containing("Content-Type")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "HTTP2",
-                        "instruction": "Handle POST requests for /echo and /api/users"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: POST /echo request
+                // IMPORTANT: Event-specific mocks MUST come first (before user-input mock)
+                // The mock system uses the FIRST matching rule
+
+                // Mock 1: POST /echo request
                 .on_event("http2_request")
                 .and_event_data_contains("uri", "/echo")
                 .and_event_data_contains("method", "POST")
@@ -243,7 +237,7 @@ Set Content-Type: application/json for all responses."#;
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 3: POST /api/users request
+                // Mock 2: POST /api/users request
                 .on_event("http2_request")
                 .and_event_data_contains("uri", "/api/users")
                 .and_event_data_contains("method", "POST")
@@ -253,6 +247,18 @@ Set Content-Type: application/json for all responses."#;
                         "status": 201,
                         "headers": {"Content-Type": "application/json"},
                         "body": "{\"success\": true, \"message\": \"User Charlie created successfully\"}"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: Server startup (catch-all for user input, MUST come LAST)
+                .on_custom(|ctx| !ctx.instruction.contains("Event ID:"))
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "HTTP2",
+                        "instruction": "Handle POST requests for /echo and /api/users"
                     }
                 ]))
                 .expect_calls(1)
@@ -344,19 +350,7 @@ Set Content-Type: application/json."#;
     let server_config = helpers::NetGetConfig::new(prompt.to_string())
         .with_mock(|mock| {
             mock
-                // Mock 1: Server startup (matches on instruction pattern from user input)
-                .on_instruction_containing("Content-Type")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "HTTP2",
-                        "instruction": "Handle GET /data with JSON response"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2-4: Three concurrent GET /data requests
+                // Mock 1: Three concurrent GET /data requests (MUST come first - more specific)
                 .on_event("http2_request")
                 .and_event_data_contains("uri", "/data")
                 .and_event_data_contains("method", "GET")
@@ -369,6 +363,18 @@ Set Content-Type: application/json."#;
                     }
                 ]))
                 .expect_calls(3)  // Expecting 3 concurrent requests
+                .and()
+                // Mock 2: Server startup (catch-all for user input, MUST come last)
+                .on_custom(|ctx| !ctx.instruction.contains("Event ID:"))
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "HTTP2",
+                        "instruction": "Handle GET /data with JSON response"
+                    }
+                ]))
+                .expect_calls(1)
                 .and()
         });
 

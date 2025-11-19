@@ -17,19 +17,10 @@ async fn test_http3_echo() -> E2EResult<()> {
         .with_log_level("debug")
         .with_mock(|mock| {
             mock
-                // Mock 1: Server startup
-                .on_instruction_containing("HTTP3 server")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "HTTP3",
-                        "instruction": "Echo back all data received"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Connection opened - just acknowledge
+                // IMPORTANT: Event-specific mocks MUST come first
+                // The mock system uses the FIRST matching rule
+
+                // Mock 1: Connection opened - just acknowledge
                 .on_event("http3_connection_opened")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -38,7 +29,7 @@ async fn test_http3_echo() -> E2EResult<()> {
                     }
                 ]))
                 .and()
-                // Mock 3: Stream opened - just acknowledge
+                // Mock 2: Stream opened - just acknowledge
                 .on_event("http3_stream_opened")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -47,13 +38,25 @@ async fn test_http3_echo() -> E2EResult<()> {
                     }
                 ]))
                 .and()
-                // Mock 4: LLM receives data and echoes it back
+                // Mock 3: LLM receives data and echoes it back
                 .on_event("http3_data_received")
                 .and_event_data_contains("data", "Hello")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_http3_data",
                         "data": "Hello, HTTP3!"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 4: Server startup (catch-all for user input, MUST come LAST)
+                .on_custom(|ctx| !ctx.instruction.contains("Event ID:"))
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "HTTP3",
+                        "instruction": "Echo back all data received"
                     }
                 ]))
                 .expect_calls(1)
@@ -153,19 +156,10 @@ async fn test_http3_custom_response() -> E2EResult<()> {
         .with_log_level("debug")
         .with_mock(|mock| {
             mock
-                // Mock 1: Server startup
-                .on_instruction_containing("HTTP3 server")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "HTTP3",
-                        "instruction": "Respond to PING with PONG"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Connection opened - just acknowledge
+                // IMPORTANT: Event-specific mocks MUST come first
+                // The mock system uses the FIRST matching rule
+
+                // Mock 1: Connection opened - just acknowledge
                 .on_event("http3_connection_opened")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -174,7 +168,7 @@ async fn test_http3_custom_response() -> E2EResult<()> {
                     }
                 ]))
                 .and()
-                // Mock 3: Stream opened - just acknowledge
+                // Mock 2: Stream opened - just acknowledge
                 .on_event("http3_stream_opened")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -183,7 +177,7 @@ async fn test_http3_custom_response() -> E2EResult<()> {
                     }
                 ]))
                 .and()
-                // Mock 4: LLM receives PING and responds with PONG
+                // Mock 3: LLM receives PING and responds with PONG
                 .on_event("http3_data_received")
                 .and_event_data_contains("data", "PING")
                 .respond_with_actions(serde_json::json!([
@@ -193,6 +187,18 @@ async fn test_http3_custom_response() -> E2EResult<()> {
                     },
                     {
                         "type": "close_this_stream"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 4: Server startup (catch-all for user input, MUST come LAST)
+                .on_custom(|ctx| !ctx.instruction.contains("Event ID:"))
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "HTTP3",
+                        "instruction": "Respond to PING with PONG"
                     }
                 ]))
                 .expect_calls(1)
@@ -288,19 +294,10 @@ async fn test_http3_multiple_streams() -> E2EResult<()> {
         .with_log_level("debug")
         .with_mock(|mock| {
             mock
-                // Mock 1: Server startup
-                .on_instruction_containing("HTTP3 server")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "HTTP3",
-                        "instruction": "Echo back all data on multiple streams"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Connection opened - just acknowledge
+                // IMPORTANT: Event-specific mocks MUST come first
+                // The mock system uses the FIRST matching rule
+
+                // Mock 1: Connection opened - just acknowledge
                 .on_event("http3_connection_opened")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -309,7 +306,7 @@ async fn test_http3_multiple_streams() -> E2EResult<()> {
                     }
                 ]))
                 .and()
-                // Mock 3: Stream opened - just acknowledge
+                // Mock 2: Stream opened - just acknowledge
                 .on_event("http3_stream_opened")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -318,7 +315,7 @@ async fn test_http3_multiple_streams() -> E2EResult<()> {
                     }
                 ]))
                 .and()
-                // Mock 4: LLM receives data and echoes it back (matches any stream)
+                // Mock 3: LLM receives data and echoes it back (matches any stream)
                 .on_event("http3_data_received")
                 .and_event_data_contains("data", "Stream")
                 .respond_with_actions_from_event(|event_data| {
@@ -332,6 +329,18 @@ async fn test_http3_multiple_streams() -> E2EResult<()> {
                     ])
                 })
                 .expect_calls(3)  // Expecting 3 streams
+                .and()
+                // Mock 4: Server startup (catch-all for user input, MUST come LAST)
+                .on_custom(|ctx| !ctx.instruction.contains("Event ID:"))
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "HTTP3",
+                        "instruction": "Echo back all data on multiple streams"
+                    }
+                ]))
+                .expect_calls(1)
                 .and()
         });
 

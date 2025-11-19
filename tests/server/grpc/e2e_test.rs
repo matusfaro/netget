@@ -528,23 +528,10 @@ When you receive GetUser requests, respond with a User message where the id matc
     let server_config = NetGetConfig::new_no_scripts(prompt)
         .with_mock(|mock| {
             mock
-                // Mock 1: Server startup
-                .on_instruction_containing("gRPC server")
-                .and_instruction_containing("GetUser")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "gRPC",
-                        "instruction": "Respond to GetUser with id from request, name User<id>, email user<id>@test.com",
-                        "startup_params": {
-                            "proto_schema": proto_text
-                        }
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2-4: Handle 3 concurrent requests
+                // IMPORTANT: Event-specific mocks MUST come first
+                // The mock system uses the FIRST matching rule
+
+                // Mock 1: Handle 3 concurrent requests
                 .on_event("grpc_unary_request")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -557,6 +544,21 @@ When you receive GetUser requests, respond with a User message where the id matc
                     }
                 ]))
                 .expect_calls(3)  // 3 concurrent requests
+                .and()
+                // Mock 2: Server startup (catch-all for user input, MUST come LAST)
+                .on_custom(|ctx| !ctx.instruction.contains("Event ID:"))
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "gRPC",
+                        "instruction": "Respond to GetUser with id from request, name User<id>, email user<id>@test.com",
+                        "startup_params": {
+                            "proto_schema": proto_text
+                        }
+                    }
+                ]))
+                .expect_calls(1)
                 .and()
         });
 
