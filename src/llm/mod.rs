@@ -17,6 +17,17 @@ pub mod ollama_client;
 pub mod prompt;
 pub mod response_handler; // Keep the old client module for reference
 
+// Embedded LLM inference (feature-gated)
+#[cfg(feature = "embedded-llm")]
+pub mod embedded_inference;
+
+// Configuration persistence
+pub mod config;
+
+// Hybrid LLM manager (Ollama + embedded fallback)
+#[cfg(feature = "embedded-llm")]
+pub mod hybrid_manager;
+
 // Re-exports from new action system
 pub use actions::{
     common::{
@@ -61,6 +72,19 @@ pub use event_instructions::{
 pub use model_selection::{
     check_ollama_availability, ensure_model_selected, select_or_validate_model, ModelInfo,
 };
+
+// Embedded LLM inference (feature-gated exports)
+#[cfg(feature = "embedded-llm")]
+pub use embedded_inference::{EmbeddedLLMBackend, InferenceConfig};
+
+// Configuration exports
+pub use config::{LlmBackendType, NetGetConfig, OllamaConfig};
+#[cfg(feature = "embedded-llm")]
+pub use config::EmbeddedLlmConfig;
+
+// Hybrid manager exports
+#[cfg(feature = "embedded-llm")]
+pub use hybrid_manager::{ActiveBackend, HybridLLMManager};
 
 // Rate limiter
 pub use rate_limiter::{

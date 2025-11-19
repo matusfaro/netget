@@ -666,7 +666,7 @@ impl StickyFooter {
             for line in custom.lines() {
                 execute!(
                     stdout,
-                    cursor::MoveTo(0, current_line),
+                    cursor::MoveTo(INPUTS_LEFT_MARGIN, current_line),
                     SetForegroundColor(self.palette.dimmed),
                     Print(line),
                     ResetColor,

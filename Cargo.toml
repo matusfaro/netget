@@ -224,6 +224,7 @@ torrent-tracker = ["dep:serde_bencode"]  # BitTorrent Tracker (HTTP-based peer d
 torrent-dht = ["dep:serde_bencode"]  # BitTorrent DHT (Kademlia-based distributed peer discovery)
 torrent-peer = ["dep:serde_bencode"]  # BitTorrent Peer Wire Protocol (peer-to-peer data transfer)
 tls = ["dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]  # TLS server for custom protocols on top of encrypted transport
+embedded-llm = ["dep:llama-cpp-2", "dep:hf-hub"]  # Embedded LLM inference via llama.cpp (fallback when Ollama unavailable)
 sqlite = ["dep:rusqlite"]  # SQLite database support for protocols (in-memory or file-based)
 all-protocols = [
     "tcp",
@@ -339,6 +340,7 @@ all-protocols = [
     "bluetooth-ble-weight-scale",
     "nfc",
     "nfc-client",
+    "embedded-llm",
 ]
 
 [dependencies]
@@ -375,6 +377,7 @@ http = "1.3"  # Needed for h2 Request/Response types
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+toml = "0.8"  # TOML serialization for config files
 
 # Error handling
 anyhow = "1.0"
@@ -698,6 +701,10 @@ serde_cbor = { version = "0.11", optional = true }  # CBOR encoding for CTAP2
 # USB Smart Card dependencies
 rsa = { version = "0.9", optional = true, features = ["sha2"] }  # RSA cryptography for smart cards
 # sha2 already defined above for wireguard/tor
+
+# Embedded LLM inference (llama.cpp bindings)
+llama-cpp-2 = { version = "0.1", optional = true }  # Rust bindings to llama.cpp for local GGUF model inference
+hf-hub = { version = "0.3", optional = true, features = ["tokio"] }  # Hugging Face Hub API for model downloading
 
 # SQLite database support (in-memory or file-based)
 rusqlite = { version = "0.37", optional = true, features = ["bundled"] }  # SQLite library with bundled SQLite (matches tor-dirmgr dependency)
