@@ -9,6 +9,14 @@ use netget::scripting::{
     execute_script,
 };
 
+/// Helper function to convert Event to JSON for serialization
+fn event_to_json(event: &Event) -> Result<Value> {
+    Ok(json!({
+        "type": event.event_type.id,
+        "data": event.data,
+    }))
+}
+
 /// Builder for testing Ollama model responses
 pub struct OllamaTestBuilder {
     prompt_context: Option<PromptContext>,
@@ -267,7 +275,7 @@ impl OllamaTestBuilder {
                      Available actions:\n{}\n\n\
                      Respond with a JSON array of action objects to handle this request.",
                     instruction,
-                    serde_json::to_string_pretty(&event.to_json()?)?,
+                    serde_json::to_string_pretty(&event_to_json(&event)?)?,
                     serde_json::to_string_pretty(&available_actions)?
                 );
                 (full_prompt, available_actions)
@@ -278,8 +286,7 @@ impl OllamaTestBuilder {
         let ollama_client = OllamaClient::new(
             std::env::var("OLLAMA_BASE_URL")
                 .unwrap_or_else(|_| "http://localhost:11434".to_string()),
-            model.clone(),
-        )?;
+        );
 
         let response = ollama_client.chat(&prompt).await
             .context("Failed to call Ollama API")?;
@@ -636,7 +643,7 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
                     instruction: "test".to_string(),
                 },
                 connection: None,
-                event: input_event.to_json()?,
+                event: event_to_json(&input_event)?,
             };
 
             // Execute the script

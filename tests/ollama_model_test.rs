@@ -53,7 +53,7 @@ use anyhow::Result;
 use serde_json::json;
 
 use helpers::ollama_test_builder::OllamaTestBuilder;
-use netget::events::{Event, EventType};
+use netget::protocol::{Event, EventType};
 
 // ============================================================================
 // User Input Tests - Testing global action generation
