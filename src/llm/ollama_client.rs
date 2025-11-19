@@ -303,6 +303,7 @@ pub struct OllamaClient {
     ollama: Ollama,
     status_tx: Option<mpsc::UnboundedSender<String>>,
     mock_config_file: Option<std::path::PathBuf>,
+    app_state: Option<crate::state::AppState>,
 }
 
 impl OllamaClient {
@@ -337,6 +338,7 @@ impl OllamaClient {
             ollama,
             status_tx: None,
             mock_config_file: None,
+            app_state: None,
         }
     }
 
@@ -348,6 +350,7 @@ impl OllamaClient {
             ollama,
             status_tx: None,
             mock_config_file: None,
+            app_state: None,
         }
     }
 
@@ -366,6 +369,12 @@ impl OllamaClient {
     /// Set the mock configuration file path (for testing)
     pub fn with_mock_config_file(mut self, path: Option<std::path::PathBuf>) -> Self {
         self.mock_config_file = path;
+        self
+    }
+
+    /// Set the app state for token tracking
+    pub fn with_app_state(mut self, state: crate::state::AppState) -> Self {
+        self.app_state = Some(state);
         self
     }
 
@@ -471,6 +480,11 @@ impl OllamaClient {
 
         // Extract token usage
         let token_usage = TokenUsage::from_response(&api_response);
+
+        // Record tokens in app state if available (for /usage command)
+        if let Some(ref state) = self.app_state {
+            state.record_llm_tokens(token_usage.prompt_tokens, token_usage.completion_tokens).await;
+        }
 
         // DEBUG: Summary with token info
         debug!(

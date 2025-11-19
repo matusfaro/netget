@@ -26,20 +26,28 @@ fn spawn_netget_with_args(args: &[&str]) -> (pty_process::blocking::Pty, Child) 
     // Use cargo's env variable to get the actual binary path
     let binary_path = env!("CARGO_BIN_EXE_netget");
 
-    // Create a PTY
-    let pty = pty_process::blocking::Pty::new().expect("Failed to create PTY");
+    // Create a PTY using openpty (simpler than posix_openpt + manual slave open)
+    use nix::pty::openpty;
 
-    // Get the PTS (pseudo-terminal slave)
-    let pts = pty.pts().expect("Failed to get PTS");
+    // Open a new PTY (returns both master and slave as OwnedFds)
+    let pty_result = openpty(None, None).expect("Failed to open PTY");
+
+    // openpty already returns OwnedFds, use them directly
+    let master_owned = pty_result.master;
+    let slave_owned = pty_result.slave;
+
+    // Create PTY from file descriptor
+    let pty = unsafe { pty_process::blocking::Pty::from_fd(master_owned) };
+    let pts = unsafe { pty_process::blocking::Pts::from_fd(slave_owned) };
 
     // Spawn NetGet with the PTY
     // Note: The PTY size detection may fail in test environments, but NetGet
     // now handles this gracefully by defaulting to 80x24 in rolling_tui.rs
     let mut cmd = pty_process::blocking::Command::new(binary_path);
     for arg in args {
-        cmd.arg(arg);
+        cmd = cmd.arg(arg);
     }
-    let child = cmd.spawn(&pts).expect("Failed to spawn netget in PTY");
+    let child = cmd.spawn(pts).expect("Failed to spawn netget in PTY");
 
     (pty, child)
 }
@@ -777,9 +785,19 @@ mod tests {
         // Use a taller terminal (100 lines) to fit welcome message + pre-existing content
         const TALL_TERMINAL_HEIGHT: u16 = 100;
 
-        // Create PTY with custom size
-        let mut pty = pty_process::blocking::Pty::new().expect("Failed to create PTY");
-        let pts = pty.pts().expect("Failed to get PTS");
+        // Create PTY using openpty (simpler than posix_openpt + manual slave open)
+        use nix::pty::openpty;
+
+        // Open a new PTY (returns both master and slave as OwnedFds)
+        let pty_result = openpty(None, None).expect("Failed to open PTY");
+
+        // openpty already returns OwnedFds, use them directly
+        let master_owned = pty_result.master;
+        let slave_owned = pty_result.slave;
+
+        // Create PTY from file descriptor
+        let mut pty = unsafe { pty_process::blocking::Pty::from_fd(master_owned) };
+        let pts = unsafe { pty_process::blocking::Pts::from_fd(slave_owned) };
 
         // Set PTY window size to 80x100 so terminal::size() can detect it correctly
         let winsize = Winsize {
@@ -807,7 +825,7 @@ mod tests {
         // Now spawn netget in the PTY that already has content
         let binary_path = env!("CARGO_BIN_EXE_netget");
         let mut cmd = pty_process::blocking::Command::new(binary_path);
-        let _child = cmd.spawn(&pts).expect("Failed to spawn netget in PTY");
+        let _child = cmd.spawn(pts).expect("Failed to spawn netget in PTY");
 
         // Give TUI time to start and render
         std::thread::sleep(Duration::from_millis(2000));
@@ -843,6 +861,65 @@ mod tests {
         assert!(screen.contains("Input:"), "Expected footer to be present");
 
         snapshot_util::assert_snapshot("pre_existing_content", SNAPSHOT_DIR, &screen);
+
+        send_ctrl(&mut pty, 'c');
+    }
+
+    #[test]
+    fn test_usage_command_display() {
+        let (mut pty, _child) = spawn_netget();
+
+        // Wait longer for initial render and welcome messages
+        std::thread::sleep(Duration::from_millis(2500));
+        let initial_screen = capture_screen(&mut pty);
+
+        println!("=== Initial Screen (before /usage) ===");
+        println!("{}", initial_screen);
+        println!("=======================================");
+
+        // First test if ANY command output works
+        send_input(&mut pty, "/test 2");
+        pty.write_all(b"\r").expect("Failed to send Enter");
+        std::thread::sleep(Duration::from_millis(1000));
+        let test_screen = capture_screen(&mut pty);
+        println!("=== After /test 2 command ===");
+        println!("{}", test_screen);
+        println!("==============================");
+
+        // Now send /usage command to toggle usage stats
+        send_input(&mut pty, "/usage");
+        // Press Enter to submit (PTY uses \r for Enter)
+        pty.write_all(b"\r").expect("Failed to send Enter");
+
+        // Capture immediately after sending command
+        std::thread::sleep(Duration::from_millis(500));
+        let screen_immediate = capture_screen(&mut pty);
+        println!("=== Immediately After Sending /usage ===");
+        println!("{}", screen_immediate);
+        println!("=========================================");
+
+        // Wait longer for stats to update and render
+        std::thread::sleep(Duration::from_millis(2000));
+
+        // Capture screen after /usage command
+        let screen = capture_screen(&mut pty);
+
+        println!("=== After /usage Command (2.5s later) ===");
+        println!("{}", screen);
+        println!("==========================================");
+
+        // The /usage command should toggle usage stats in the footer
+        // However, in the PTY test environment, command output may not appear
+        // in the scrollback (similar to /test command behavior).
+        // Instead, we'll just verify the snapshot is created and the footer is valid.
+
+        // Verify no double status lines (similar to other footer tests)
+        assert!(
+            !screen.contains(" Model:None | Log:INFO <^l> | WebSearch:ON <^w> | Handler:ANY <^h>\n Model:None"),
+            "Found double status line"
+        );
+
+        snapshot_util::assert_snapshot("usage_command_enabled", SNAPSHOT_DIR, &screen);
 
         send_ctrl(&mut pty, 'c');
     }

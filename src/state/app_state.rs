@@ -291,6 +291,12 @@ struct AppStateInner {
     system_capabilities: crate::privilege::SystemCapabilities,
     /// Active and recently-completed LLM conversations
     conversations: Vec<ConversationInfo>,
+    /// Total LLM input tokens (prompt tokens)
+    total_input_tokens: u64,
+    /// Total LLM output tokens (completion tokens)
+    total_output_tokens: u64,
+    /// Total number of LLM calls made
+    total_llm_calls: u64,
     /// SQLite database manager
     database_manager: crate::state::DatabaseManager,
 }
@@ -352,6 +358,9 @@ impl AppState {
                 task_names: HashMap::new(),
                 system_capabilities,
                 conversations: Vec::new(),
+                total_input_tokens: 0,
+                total_output_tokens: 0,
+                total_llm_calls: 0,
                 database_manager: crate::state::DatabaseManager::new(),
             })),
         }
@@ -1980,6 +1989,34 @@ impl AppState {
             }
         }
         None
+    }
+
+    // ===== LLM Token Tracking Methods =====
+
+    /// Record LLM call tokens
+    pub async fn record_llm_tokens(&self, input_tokens: u64, output_tokens: u64) {
+        let mut inner = self.inner.write().await;
+        inner.total_input_tokens += input_tokens;
+        inner.total_output_tokens += output_tokens;
+        inner.total_llm_calls += 1;
+    }
+
+    /// Get LLM token statistics
+    pub async fn get_llm_stats(&self) -> (u64, u64, u64) {
+        let inner = self.inner.read().await;
+        (
+            inner.total_input_tokens,
+            inner.total_output_tokens,
+            inner.total_llm_calls,
+        )
+    }
+
+    /// Reset LLM token statistics
+    pub async fn reset_llm_stats(&self) {
+        let mut inner = self.inner.write().await;
+        inner.total_input_tokens = 0;
+        inner.total_output_tokens = 0;
+        inner.total_llm_calls = 0;
     }
 
     // ===== Database Management =====

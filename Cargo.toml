@@ -6,6 +6,12 @@ edition = "2021"
 [features]
 default = ["all-protocols"]
 
+# Terminal snapshot testing (PTY-based TUI tests)
+terminal-snapshot = []
+
+# GPU monitoring (cross-platform: NVIDIA, AMD, Intel)
+gpu = ["dep:gfxinfo"]
+
 # Android Termux: Pure-Rust protocols compatible with Android/Termux environment
 # Excludes: BLE (needs BlueZ), NFC (needs PC/SC), USB (needs USB/IP), packet capture (needs libpcap/root), STUN/TURN (old nix crate), WireGuard/OpenVPN (not gated for Android)
 # Uses vendored OpenSSL to compile from source (no system OpenSSL needed)
@@ -404,6 +410,8 @@ rand = "0.8"  # Random number generation for crypto
 handlebars = "5.1"
 walkdir = "2.4"
 include_dir = "0.7"  # Embed template directory in binary
+sysinfo = "0.32"  # System monitoring (CPU, memory, processes)
+gfxinfo = { version = "0.1", optional = true, default-features = false, features = ["gpu_info"] }  # Cross-platform GPU monitoring (NVIDIA, AMD, Intel)
 
 # CLI argument parsing
 clap = { version = "4.5", features = ["derive"] }
