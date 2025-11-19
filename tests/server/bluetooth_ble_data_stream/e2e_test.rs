@@ -20,7 +20,7 @@ async fn test_data_stream_service_startup() -> E2EResult<()> {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "BluetoothBLE",
+                            "base_stack": "BLUETOOTH_BLE_DATA_STREAM",
                             "instruction": "Create data stream service",
                             "startup_params": {
                                 "device_name": "NetGet-DataStream",

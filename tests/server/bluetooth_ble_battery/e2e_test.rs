@@ -29,23 +29,33 @@ async fn test_battery_service_startup() -> E2EResult<()> {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "BluetoothBLE",
+                            "base_stack": "BLUETOOTH_BLE_BATTERY",
                             "instruction": "Create Battery Service with Battery Level characteristic. Set battery level to 80%",
                             "startup_params": {
                                 "device_name": "NetGet-Battery",
-                                "services": [
-                                    {
-                                        "uuid": "0000180f-0000-1000-8000-00805f9b34fb",
-                                        "characteristics": [
-                                            {
-                                                "uuid": "00002a19-0000-1000-8000-00805f9b34fb",
-                                                "properties": ["read"],
-                                                "value": "50"
-                                            }
-                                        ]
-                                    }
-                                ]
+                                "initial_level": 80
                             }
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Server started event - add Battery Service
+                    .on_event("bluetooth_ble_started")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "add_service",
+                            "uuid": "0000180f-0000-1000-8000-00805f9b34fb",
+                            "primary": true,
+                            "characteristics": [{
+                                "uuid": "00002a19-0000-1000-8000-00805f9b34fb",
+                                "properties": ["read", "notify"],
+                                "permissions": ["readable"],
+                                "initial_value": "50"
+                            }]
+                        },
+                        {
+                            "type": "start_advertising",
+                            "device_name": "NetGet-Battery"
                         }
                     ]))
                     .expect_calls(1)
@@ -87,37 +97,36 @@ async fn test_battery_level_update() -> E2EResult<()> {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "BluetoothBLE",
+                            "base_stack": "BLUETOOTH_BLE_BATTERY",
                             "instruction": "Create battery service with updates",
                             "startup_params": {
                                 "device_name": "NetGet-Battery-Drain",
-                                "services": [
-                                    {
-                                        "uuid": "0000180f-0000-1000-8000-00805f9b34fb",
-                                        "characteristics": [
-                                            {
-                                                "uuid": "00002a19-0000-1000-8000-00805f9b34fb",
-                                                "properties": ["read", "notify"],
-                                                "value": "64"
-                                            }
-                                        ]
-                                    }
-                                ]
+                                "initial_level": 100
                             }
                         }
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: Battery level update (if LLM triggers it)
-                    .on_event("ble_notification_request")
+                    // Mock 2: Server started event - add Battery Service
+                    .on_event("bluetooth_ble_started")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "send_ble_notification",
-                            "characteristic_uuid": "00002a19-0000-1000-8000-00805f9b34fb",
-                            "value": "5A"
+                            "type": "add_service",
+                            "uuid": "0000180f-0000-1000-8000-00805f9b34fb",
+                            "primary": true,
+                            "characteristics": [{
+                                "uuid": "00002a19-0000-1000-8000-00805f9b34fb",
+                                "properties": ["read", "notify"],
+                                "permissions": ["readable"],
+                                "initial_value": "64"
+                            }]
+                        },
+                        {
+                            "type": "start_advertising",
+                            "device_name": "NetGet-Battery-Drain"
                         }
                     ]))
-                    .expect_at_most(1)
+                    .expect_calls(1)
                     .and()
             })
     ).await?;

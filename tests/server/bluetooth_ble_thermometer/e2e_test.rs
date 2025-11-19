@@ -23,7 +23,7 @@ async fn test_thermometer_service_startup() -> E2EResult<()> {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "BluetoothBLE",
+                            "base_stack": "BLUETOOTH_BLE_THERMOMETER",
                             "instruction": "Create thermometer service at 36.6°C",
                             "startup_params": {
                                 "device_name": "NetGet-Thermometer",

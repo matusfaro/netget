@@ -29,23 +29,32 @@ async fn test_heart_rate_service_startup() -> E2EResult<()> {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "BluetoothBLE",
+                            "base_stack": "BLUETOOTH_BLE_HEART_RATE",
                             "instruction": "Create Heart Rate Service. Set initial BPM to 72",
                             "startup_params": {
-                                "device_name": "NetGet-HeartRate",
-                                "services": [
-                                    {
-                                        "uuid": "0000180d-0000-1000-8000-00805f9b34fb",
-                                        "characteristics": [
-                                            {
-                                                "uuid": "00002a37-0000-1000-8000-00805f9b34fb",
-                                                "properties": ["read", "notify"],
-                                                "value": "0048"
-                                            }
-                                        ]
-                                    }
-                                ]
+                                "device_name": "NetGet-HeartRate"
                             }
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Server started event - add Heart Rate Service
+                    .on_event("bluetooth_ble_started")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "add_service",
+                            "uuid": "0000180d-0000-1000-8000-00805f9b34fb",
+                            "primary": true,
+                            "characteristics": [{
+                                "uuid": "00002a37-0000-1000-8000-00805f9b34fb",
+                                "properties": ["read", "notify"],
+                                "permissions": ["readable"],
+                                "initial_value": "0048"
+                            }]
+                        },
+                        {
+                            "type": "start_advertising",
+                            "device_name": "NetGet-HeartRate"
                         }
                     ]))
                     .expect_calls(1)
@@ -86,37 +95,35 @@ async fn test_heart_rate_updates() -> E2EResult<()> {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "BluetoothBLE",
+                            "base_stack": "BLUETOOTH_BLE_HEART_RATE",
                             "instruction": "Create Heart Rate Service with dynamic updates",
                             "startup_params": {
-                                "device_name": "NetGet-HR-Dynamic",
-                                "services": [
-                                    {
-                                        "uuid": "0000180d-0000-1000-8000-00805f9b34fb",
-                                        "characteristics": [
-                                            {
-                                                "uuid": "00002a37-0000-1000-8000-00805f9b34fb",
-                                                "properties": ["read", "notify"],
-                                                "value": "0048"
-                                            }
-                                        ]
-                                    }
-                                ]
+                                "device_name": "NetGet-HR-Dynamic"
                             }
                         }
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: Heart rate notification (if triggered)
-                    .on_event("ble_notification_request")
+                    // Mock 2: Server started event - add Heart Rate Service
+                    .on_event("bluetooth_ble_started")
                     .respond_with_actions(serde_json::json!([
                         {
-                            "type": "send_ble_notification",
-                            "characteristic_uuid": "00002a37-0000-1000-8000-00805f9b34fb",
-                            "value": "0078"
+                            "type": "add_service",
+                            "uuid": "0000180d-0000-1000-8000-00805f9b34fb",
+                            "primary": true,
+                            "characteristics": [{
+                                "uuid": "00002a37-0000-1000-8000-00805f9b34fb",
+                                "properties": ["read", "notify"],
+                                "permissions": ["readable"],
+                                "initial_value": "0048"
+                            }]
+                        },
+                        {
+                            "type": "start_advertising",
+                            "device_name": "NetGet-HR-Dynamic"
                         }
                     ]))
-                    .expect_at_most(1)
+                    .expect_calls(1)
                     .and()
             })
     ).await?;

@@ -50,6 +50,26 @@ Black-box E2E tests using the NetGet binary with mock LLM responses. Tests verif
 1. **No Real Packet Capture**: Tests don't actually capture packets (would require root)
 2. **No Event Testing**: Tests don't simulate `datalink_packet_captured` events
 3. **Interface Availability**: Tests assume lo0 interface exists (common on macOS/Linux)
+4. **Privilege Requirements**: DataLink requires root/CAP_NET_RAW for raw socket access
+
+## Running Tests
+
+**IMPORTANT**: These tests require root/sudo privileges on macOS to access BPF devices.
+
+```bash
+# Run with sudo (required on macOS)
+sudo -E ./cargo-isolated.sh test --no-default-features --features datalink --test server -- datalink_server_tests
+
+# Or use test-e2e.sh
+sudo -E ./test-e2e.sh datalink
+```
+
+**Why sudo is needed on macOS**:
+- BPF devices (`/dev/bpf*`) are owned by `root:wheel` with `0600` permissions
+- Even users in the `access_bpf` group cannot access them without proper device permissions
+- NetGet checks for raw socket capability at startup and will refuse to start DataLink servers without it
+
+**Without sudo**: Tests will fail with "Raw socket access unavailable" errors.
 
 ## Why Only Server Startup?
 

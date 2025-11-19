@@ -11,6 +11,7 @@ mod datalink_server_tests {
 
     /// Test DataLink server setup with ARP packet capture
     /// LLM calls: 1 (server startup with interface - no packet events since mocks don't trigger network events)
+    /// REQUIRES: root/sudo (for BPF device access on macOS)
     #[tokio::test]
     async fn test_datalink_arp_capture_with_mocks() -> E2EResult<()> {
         // Start a DataLink server on a network interface with mocks
@@ -26,7 +27,7 @@ mod datalink_server_tests {
                     {
                         "type": "open_server",
                         "port": 0,
-                        "base_stack": "DataLink",
+                        "base_stack": "ETH",
                         "startup_params": {
                             "interface": "lo0",
                             "filter": "arp"
@@ -60,6 +61,7 @@ mod datalink_server_tests {
 
     /// Test DataLink server with custom protocol monitoring
     /// LLM calls: 1 (server startup)
+    /// REQUIRES: root/sudo (for BPF device access on macOS)
     #[tokio::test]
     async fn test_datalink_custom_protocol_with_mocks() -> E2EResult<()> {
         // Start a DataLink server monitoring custom protocol
@@ -75,7 +77,7 @@ mod datalink_server_tests {
                     {
                         "type": "open_server",
                         "port": 0,
-                        "base_stack": "DataLink",
+                        "base_stack": "ETH",
                         "startup_params": {
                             "interface": "lo0",
                             "filter": "ether proto 0x88B5"
@@ -106,6 +108,7 @@ mod datalink_server_tests {
 
     /// Test DataLink server can ignore uninteresting packets
     /// LLM calls: 1 (server startup)
+    /// REQUIRES: root/sudo (for BPF device access on macOS)
     #[tokio::test]
     async fn test_datalink_ignore_packet_with_mocks() -> E2EResult<()> {
         // Start a DataLink server that ignores certain packets
@@ -121,7 +124,7 @@ mod datalink_server_tests {
                     {
                         "type": "open_server",
                         "port": 0,
-                        "base_stack": "DataLink",
+                        "base_stack": "ETH",
                         "startup_params": {
                             "interface": "lo0"
                         },

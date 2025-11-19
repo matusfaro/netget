@@ -23,7 +23,7 @@ async fn test_remote_service_startup() -> E2EResult<()> {
                             {
                                 "type": "open_server",
                                 "port": 0,
-                                "base_stack": "BluetoothBLE",
+                                "base_stack": "BLUETOOTH_BLE_REMOTE",
                                 "instruction": "Create remote control HID service",
                                 "startup_params": {
                                     "device_name": "NetGet-Remote",

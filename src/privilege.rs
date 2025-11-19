@@ -1,6 +1,9 @@
 use std::net::{TcpListener, UdpSocket};
 use tracing::{debug, warn};
 
+#[cfg(feature = "datalink")]
+use pcap;
+
 /// System capabilities detected at startup
 #[derive(Debug, Clone)]
 pub struct SystemCapabilities {
@@ -116,55 +119,82 @@ fn can_bind_privileged_port() -> bool {
 }
 
 /// Check if we have raw socket access (needed for pcap/DataLink)
+/// This actually tests if we can access pcap devices, not just if we're root
 fn has_raw_socket_capability() -> bool {
-    #[cfg(target_os = "linux")]
+    // Try to list pcap devices - this is what DataLink actually needs to work
+    // This will fail if:
+    // - Linux: Don't have CAP_NET_RAW capability
+    // - macOS: Can't access /dev/bpf* devices
+    // - Windows: Can't access WinPcap/Npcap driver
+    #[cfg(feature = "datalink")]
     {
-        // If root, we have it
-        if is_running_as_root() {
-            return true;
+        match pcap::Device::list() {
+            Ok(devices) => {
+                debug!(
+                    "Successfully listed {} pcap devices - have raw socket access",
+                    devices.len()
+                );
+                true
+            }
+            Err(e) => {
+                debug!("Failed to list pcap devices: {} - no raw socket access", e);
+                false
+            }
         }
+    }
 
-        // Check for CAP_NET_RAW capability
-        // Try to parse /proc/self/status for CapEff
-        if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
-            for line in status.lines() {
-                if line.starts_with("CapEff:") {
-                    if let Some(cap_hex) = line.split_whitespace().nth(1) {
-                        if let Ok(caps) = u64::from_str_radix(cap_hex, 16) {
-                            // CAP_NET_RAW is bit 13 (0x2000)
-                            const CAP_NET_RAW: u64 = 1 << 13;
-                            let has_cap = (caps & CAP_NET_RAW) != 0;
-                            debug!(
-                                "Checked CAP_NET_RAW via /proc: caps=0x{:x}, has_cap={}",
-                                caps, has_cap
-                            );
-                            return has_cap;
+    #[cfg(not(feature = "datalink"))]
+    {
+        // If datalink feature not enabled, fall back to platform-specific checks
+        #[cfg(target_os = "linux")]
+        {
+            // If root, we have it
+            if is_running_as_root() {
+                return true;
+            }
+
+            // Check for CAP_NET_RAW capability
+            // Try to parse /proc/self/status for CapEff
+            if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
+                for line in status.lines() {
+                    if line.starts_with("CapEff:") {
+                        if let Some(cap_hex) = line.split_whitespace().nth(1) {
+                            if let Ok(caps) = u64::from_str_radix(cap_hex, 16) {
+                                // CAP_NET_RAW is bit 13 (0x2000)
+                                const CAP_NET_RAW: u64 = 1 << 13;
+                                let has_cap = (caps & CAP_NET_RAW) != 0;
+                                debug!(
+                                    "Checked CAP_NET_RAW via /proc: caps=0x{:x}, has_cap={}",
+                                    caps, has_cap
+                                );
+                                return has_cap;
+                            }
                         }
                     }
                 }
             }
+
+            debug!("Could not detect CAP_NET_RAW capability");
+            false
         }
 
-        debug!("Could not detect CAP_NET_RAW capability");
-        false
-    }
+        #[cfg(target_os = "macos")]
+        {
+            // macOS doesn't have fine-grained capabilities
+            // Need root or BPF device access
+            is_running_as_root()
+        }
 
-    #[cfg(target_os = "macos")]
-    {
-        // macOS doesn't have fine-grained capabilities
-        // Need root for BPF device access
-        is_running_as_root()
-    }
+        #[cfg(target_os = "windows")]
+        {
+            // Windows requires administrator privileges for WinPcap/Npcap
+            is_running_as_root()
+        }
 
-    #[cfg(target_os = "windows")]
-    {
-        // Windows requires administrator privileges for WinPcap/Npcap
-        is_running_as_root()
-    }
-
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    {
-        // Unknown platform - assume root is needed
-        is_running_as_root()
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        {
+            // Unknown platform - assume root is needed
+            is_running_as_root()
+        }
     }
 }

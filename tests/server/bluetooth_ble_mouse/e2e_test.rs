@@ -21,7 +21,7 @@ async fn test_mouse_service_startup() -> E2EResult<()> {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "BluetoothBLE",
+                            "base_stack": "BLUETOOTH_BLE_MOUSE",
                             "instruction": "Create mouse HID service",
                             "startup_params": {
                                 "device_name": "NetGet-Mouse",

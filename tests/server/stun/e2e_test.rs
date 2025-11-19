@@ -19,6 +19,7 @@ async fn test_stun_basic_binding_request() -> E2EResult<()> {
             mock
                 // Mock 1: Server startup (user command)
                 .on_instruction_containing("Start a STUN server")
+                .and_instruction_containing("on port")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -145,6 +146,7 @@ async fn test_stun_multiple_clients() -> E2EResult<()> {
             mock
                 // Mock 1: Server startup
                 .on_instruction_containing("Start a STUN server")
+                .and_instruction_containing("on port")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -239,6 +241,7 @@ async fn test_stun_xor_mapped_address() -> E2EResult<()> {
         .with_mock(|mock| {
             mock
                 .on_instruction_containing("STUN server")
+                .and_instruction_containing("on port")
                 .respond_with_actions(serde_json::json!([
                     {"type": "open_server", "port": 0, "base_stack": "STUN", "instruction": "STUN server"}
                 ]))
@@ -335,6 +338,7 @@ async fn test_stun_invalid_magic_cookie() -> E2EResult<()> {
     .with_mock(|mock| {
         mock
             .on_instruction_containing("STUN server")
+            .and_instruction_containing("on port")
             .respond_with_actions(serde_json::json!([
                 {"type": "open_server", "port": 0, "base_stack": "STUN", "instruction": "STUN server"}
             ]))
@@ -409,6 +413,7 @@ async fn test_stun_malformed_short_packet() -> E2EResult<()> {
         .with_mock(|mock| {
             mock
                 .on_instruction_containing("STUN server")
+                .and_instruction_containing("on port")
                 .respond_with_actions(serde_json::json!([
                     {"type": "open_server", "port": 0, "base_stack": "STUN", "instruction": "STUN server"}
                 ]))
@@ -479,6 +484,7 @@ async fn test_stun_request_with_attributes() -> E2EResult<()> {
             .with_mock(|mock| {
                 mock
                     .on_instruction_containing("STUN server")
+                    .and_instruction_containing("on port")
                     .respond_with_actions(serde_json::json!([
                         {"type": "open_server", "port": 0, "base_stack": "STUN", "instruction": "STUN server"}
                     ]))
@@ -554,6 +560,7 @@ async fn test_stun_rapid_requests() -> E2EResult<()> {
         .with_mock(|mock| {
             mock
                 .on_instruction_containing("STUN server")
+                .and_instruction_containing("on port")
                 .respond_with_actions(serde_json::json!([
                     {"type": "open_server", "port": 0, "base_stack": "STUN", "instruction": "STUN server"}
                 ]))

@@ -20,7 +20,7 @@ async fn test_file_transfer_service_startup() -> E2EResult<()> {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "BluetoothBLE",
+                            "base_stack": "BLUETOOTH_BLE_FILE_TRANSFER",
                             "instruction": "Create file transfer service",
                             "startup_params": {
                                 "device_name": "NetGet-FileTransfer",

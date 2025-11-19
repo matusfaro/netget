@@ -20,7 +20,7 @@ async fn test_environmental_service_startup() -> E2EResult<()> {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "BluetoothBLE",
+                            "base_stack": "BLUETOOTH_BLE_ENVIRONMENTAL",
                             "instruction": "Create environmental service",
                             "startup_params": {
                                 "device_name": "NetGet-Environment",

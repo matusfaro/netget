@@ -21,7 +21,7 @@ async fn test_keyboard_service_startup() -> E2EResult<()> {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "BluetoothBLE",
+                            "base_stack": "BLUETOOTH_BLE_KEYBOARD",
                             "instruction": "Create keyboard HID service",
                             "startup_params": {
                                 "device_name": "NetGet-Keyboard",

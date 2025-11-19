@@ -13,18 +13,15 @@
 //! - Linux may require user in `bluetooth` group or sudo
 //! - These tests are resource-intensive (real Bluetooth hardware)
 
-#![cfg(all(test, feature = "bluetooth-ble"))]
+#![cfg(all(test, feature = "bluetooth-ble", feature = "bluetooth-ble-client"))]
 
 use super::super::super::helpers::{self, E2EResult, NetGetConfig};
 use std::time::Duration;
 
-#[cfg(feature = "bluetooth-ble")]
 use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter};
-#[cfg(feature = "bluetooth-ble")]
 use btleplug::platform::{Adapter, Manager};
 
 /// Helper: Get BLE adapter for testing
-#[cfg(feature = "bluetooth-ble")]
 async fn get_ble_adapter() -> E2EResult<Adapter> {
     let manager = Manager::new().await?;
     let adapters = manager.adapters().await?;
@@ -36,7 +33,6 @@ async fn get_ble_adapter() -> E2EResult<Adapter> {
 }
 
 /// Helper: Find peripheral by name
-#[cfg(feature = "bluetooth-ble")]
 async fn find_peripheral_by_name(
     adapter: &Adapter,
     device_name: &str,
@@ -78,7 +74,6 @@ async fn find_peripheral_by_name(
 }
 
 #[tokio::test]
-#[cfg(feature = "bluetooth-ble")]
 async fn test_bluetooth_heart_rate_server() -> E2EResult<()> {
     println!("\n=== E2E Test: Bluetooth Heart Rate Server ===");
     println!("NOTE: This test requires a real Bluetooth adapter");
@@ -100,28 +95,40 @@ async fn test_bluetooth_heart_rate_server() -> E2EResult<()> {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "BluetoothBLE",
+                            "base_stack": "BLUETOOTH_BLE",
                             "instruction": "Create the Heart Rate Service with Heart Rate Measurement characteristic. Set initial BPM to 72. Start advertising as 'NetGet-HeartRate'",
                             "startup_params": {
                                 "device_name": "NetGet-HeartRate",
-                                "services": [
-                                    {
-                                        "uuid": "0000180d-0000-1000-8000-00805f9b34fb",
-                                        "characteristics": [
-                                            {
-                                                "uuid": "00002a37-0000-1000-8000-00805f9b34fb",
-                                                "properties": ["read", "notify"],
-                                                "value": "0048"
-                                            }
-                                        ]
-                                    }
-                                ]
+                                "auto_advertise": false
                             }
                         }
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: BLE characteristic read
+                    // Mock 2: Server started event - add service
+                    .on_event("bluetooth_ble_started")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "add_service",
+                            "uuid": "0000180d-0000-1000-8000-00805f9b34fb",
+                            "primary": true,
+                            "characteristics": [
+                                {
+                                    "uuid": "00002a37-0000-1000-8000-00805f9b34fb",
+                                    "properties": ["read", "notify"],
+                                    "permissions": ["readable"],
+                                    "initial_value": "0048"
+                                }
+                            ]
+                        },
+                        {
+                            "type": "start_advertising",
+                            "device_name": "NetGet-HeartRate"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: BLE characteristic read
                     .on_event("ble_characteristic_read")
                     .and_event_data_contains("characteristic_uuid", "00002a37")
                     .respond_with_actions(serde_json::json!([
@@ -245,7 +252,6 @@ async fn test_bluetooth_heart_rate_server() -> E2EResult<()> {
 }
 
 #[tokio::test]
-#[cfg(feature = "bluetooth-ble")]
 async fn test_bluetooth_battery_service() -> E2EResult<()> {
     println!("\n=== E2E Test: Bluetooth Battery Service ===");
 
@@ -265,28 +271,40 @@ async fn test_bluetooth_battery_service() -> E2EResult<()> {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "BluetoothBLE",
+                            "base_stack": "BLUETOOTH_BLE",
                             "instruction": "Create Battery Service with Battery Level characteristic. Set battery level to 95%. Start advertising as 'NetGet-Battery'",
                             "startup_params": {
                                 "device_name": "NetGet-Battery",
-                                "services": [
-                                    {
-                                        "uuid": "0000180f-0000-1000-8000-00805f9b34fb",
-                                        "characteristics": [
-                                            {
-                                                "uuid": "00002a19-0000-1000-8000-00805f9b34fb",
-                                                "properties": ["read"],
-                                                "value": "5f"
-                                            }
-                                        ]
-                                    }
-                                ]
+                                "auto_advertise": false
                             }
                         }
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: BLE characteristic read
+                    // Mock 2: Server started event - add service
+                    .on_event("bluetooth_ble_started")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "add_service",
+                            "uuid": "0000180f-0000-1000-8000-00805f9b34fb",
+                            "primary": true,
+                            "characteristics": [
+                                {
+                                    "uuid": "00002a19-0000-1000-8000-00805f9b34fb",
+                                    "properties": ["read"],
+                                    "permissions": ["readable"],
+                                    "initial_value": "5f"
+                                }
+                            ]
+                        },
+                        {
+                            "type": "start_advertising",
+                            "device_name": "NetGet-Battery"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: BLE characteristic read
                     .on_event("ble_characteristic_read")
                     .and_event_data_contains("characteristic_uuid", "00002a19")
                     .respond_with_actions(serde_json::json!([
@@ -412,23 +430,35 @@ async fn test_bluetooth_ble_startup() -> E2EResult<()> {
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "BluetoothBLE",
+                            "base_stack": "BLUETOOTH_BLE",
                             "instruction": "Create custom service with characteristic. Set value to 'TEST'. Start advertising as 'NetGet-Test'",
                             "startup_params": {
                                 "device_name": "NetGet-Test",
-                                "services": [
-                                    {
-                                        "uuid": "12345678-1234-5678-1234-567812345678",
-                                        "characteristics": [
-                                            {
-                                                "uuid": "12345678-1234-5678-1234-567812345679",
-                                                "properties": ["read"],
-                                                "value": "54455354"
-                                            }
-                                        ]
-                                    }
-                                ]
+                                "auto_advertise": false
                             }
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Server started event - add service
+                    .on_event("bluetooth_ble_started")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "add_service",
+                            "uuid": "12345678-1234-5678-1234-567812345678",
+                            "primary": true,
+                            "characteristics": [
+                                {
+                                    "uuid": "12345678-1234-5678-1234-567812345679",
+                                    "properties": ["read"],
+                                    "permissions": ["readable"],
+                                    "initial_value": "54455354"
+                                }
+                            ]
+                        },
+                        {
+                            "type": "start_advertising",
+                            "device_name": "NetGet-Test"
                         }
                     ]))
                     .expect_calls(1)
