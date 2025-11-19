@@ -29,14 +29,21 @@ use tokio_stream::StreamExt;
 /// # Example
 ///
 /// ```no_run
-/// let status_tx_clone = status_tx.clone();
-/// tokio::spawn(async move {
-///     let _ = generate_and_stream_ascii_banner(
-///         "http://localhost:11434",
-///         "qwen3-coder:30b",
-///         status_tx_clone
-///     ).await;
-/// });
+/// use tokio::sync::mpsc;
+/// use netget::cli::banner::generate_and_stream_ascii_banner;
+///
+/// #[tokio::main]
+/// async fn main() {
+///     let (status_tx, _status_rx) = mpsc::unbounded_channel();
+///     let status_tx_clone = status_tx.clone();
+///     tokio::spawn(async move {
+///         let _ = generate_and_stream_ascii_banner(
+///             "http://localhost:11434",
+///             "qwen3-coder:30b",
+///             status_tx_clone
+///         ).await;
+///     });
+/// }
 /// ```
 pub async fn generate_and_stream_ascii_banner(
     ollama_url: &str,

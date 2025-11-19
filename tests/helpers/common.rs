@@ -139,27 +139,47 @@ pub async fn replace_port_placeholders(prompt: &str) -> E2EResult<String> {
 
 /// Get the path to the NetGet binary
 pub fn get_netget_binary_path() -> E2EResult<PathBuf> {
-    // First try release build
     let release_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("target")
         .join("release")
         .join("netget");
 
-    if release_path.exists() {
-        return Ok(release_path);
-    }
-
-    // Fall back to debug build
     let debug_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("target")
         .join("debug")
         .join("netget");
 
-    if debug_path.exists() {
+    // Check which binaries exist and their modification times
+    let release_exists = release_path.exists();
+    let debug_exists = debug_path.exists();
+
+    if !release_exists && !debug_exists {
+        return Err("NetGet binary not found. Please run 'cargo build --release --all-features' or 'cargo build --all-features' first.".into());
+    }
+
+    // If only one exists, use it
+    if release_exists && !debug_exists {
+        return Ok(release_path);
+    }
+    if debug_exists && !release_exists {
         return Ok(debug_path);
     }
 
-    Err("NetGet binary not found. Please run 'cargo build --release' first.".into())
+    // Both exist - use the newer one (most recently built)
+    // This ensures we use the binary that matches the current build profile
+    let release_mtime = std::fs::metadata(&release_path)
+        .and_then(|m| m.modified())
+        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+
+    let debug_mtime = std::fs::metadata(&debug_path)
+        .and_then(|m| m.modified())
+        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+
+    if debug_mtime > release_mtime {
+        Ok(debug_path)
+    } else {
+        Ok(release_path)
+    }
 }
 
 /// Kill all running netget processes (useful for cleanup)
