@@ -1,7 +1,7 @@
 //! Sticky footer rendering for rolling terminal
 //!
 //! Manages the fixed footer area at the bottom of the terminal that displays:
-//! - Servers and connections (normal mode)
+//! - Connections and servers (normal mode)
 //! - Slash command suggestions (slash command mode)
 //! - Input field (always)
 //! - Status bar (always)
@@ -24,10 +24,10 @@ use crate::ui::app::{
 use super::input_state::InputState;
 use super::theme::ColorPalette;
 
-// Layout constants for two-column footer
+// Layout constants for multi-column footer
 const INPUTS_LEFT_MARGIN: u16 = 6;
-const INPUTS_COLUMN_WIDTH: u16 = 30;
-const COLUMN_MARGIN: u16 = 4;
+const INPUTS_COLUMN_WIDTH: u16 = 22;  // Reduced from 30 to fit three columns in 80-char terminal
+const COLUMN_MARGIN: u16 = 2;  // Reduced from 4 to save space
 
 /// Pending web approval request
 pub struct PendingApproval {
@@ -98,6 +98,12 @@ pub struct StickyFooter {
     last_footer_height: u16,
     /// Track last terminal width to detect resize and clear extra lines
     last_terminal_width: u16,
+    /// Whether to show usage stats section
+    show_usage_stats: bool,
+    /// LLM token statistics (input, output, calls)
+    llm_stats: (u64, u64, u64),
+    /// System statistics (CPU, memory, GPU)
+    system_stats: crate::system_stats::SystemStats,
     /// Track last scroll region height to clear from old position after resize
     last_scroll_region_height: u16,
     /// Pending web approval request (if any)
@@ -136,6 +142,9 @@ impl StickyFooter {
             blank_lines_buffer: 0,
             last_footer_height: 0,
             last_terminal_width: width,
+            show_usage_stats: false,
+            llm_stats: (0, 0, 0),
+            system_stats: crate::system_stats::SystemStats::default(),
             last_scroll_region_height: height.saturating_sub(10),
             pending_approval: None,
             system_capabilities,
@@ -184,6 +193,22 @@ impl StickyFooter {
     pub fn set_custom_status(&mut self, status: Option<String>) {
         self.custom_status = status;
         self.recalculate_scroll_region();
+    }
+
+    /// Set usage stats visibility
+    pub fn set_show_usage_stats(&mut self, show: bool) {
+        self.show_usage_stats = show;
+        self.recalculate_scroll_region();
+    }
+
+    /// Set LLM statistics
+    pub fn set_llm_stats(&mut self, input_tokens: u64, output_tokens: u64, calls: u64) {
+        self.llm_stats = (input_tokens, output_tokens, calls);
+    }
+
+    /// Set system statistics
+    pub fn set_system_stats(&mut self, stats: crate::system_stats::SystemStats) {
+        self.system_stats = stats;
     }
 
     /// Get scroll region height
@@ -310,8 +335,11 @@ impl StickyFooter {
             clients_height += clients.len() as u16; // Each client is 1 line
         }
 
-        // Return the max of the three columns (or 0 if all empty)
-        inputs_height.max(servers_height).max(clients_height)
+        // Calculate usage stats height (header + 2 stat lines if enabled)
+        let usage_height = if self.show_usage_stats { 3 } else { 0 };
+
+        // Return the max of all columns (or 0 if all empty)
+        inputs_height.max(servers_height).max(clients_height).max(usage_height)
     }
 
     /// Calculate lines needed for input (or approval prompt if pending)
@@ -499,7 +527,7 @@ impl StickyFooter {
             };
         }
 
-        // Render top border of input box (with column connections if we have content)
+        // Render top border of input box
         if content_lines > 0 {
             self.render_input_box_top_with_columns(stdout, input_box_top_line, &self.content)?;
         } else {
@@ -714,14 +742,19 @@ impl StickyFooter {
             1 + clients.len() as u16
         };
 
+        // Calculate usage stats height (header + 2 stat lines if enabled)
+        let usage_height = if self.show_usage_stats { 3 } else { 0 };
+
         // If all columns are empty, don't render anything
-        if inputs_height == 0 && servers_height == 0 && clients_height == 0 {
+        if inputs_height == 0 && servers_height == 0 && clients_height == 0 && usage_height == 0 {
             return Ok(start_line);
         }
 
-        let total_height = inputs_height.max(servers_height).max(clients_height);
+        let total_height = inputs_height.max(servers_height).max(clients_height).max(usage_height);
         let servers_column_start = INPUTS_LEFT_MARGIN + INPUTS_COLUMN_WIDTH + COLUMN_MARGIN;
         let clients_column_start = servers_column_start + INPUTS_COLUMN_WIDTH + COLUMN_MARGIN;
+        // Usage shares the same column position as clients (third column)
+        let usage_column_start = clients_column_start;
 
         // Render line by line
         for line_offset in 0..total_height {
@@ -738,6 +771,10 @@ impl StickyFooter {
             // Determine if we should render clients column content for this line
             let clients_start_offset = total_height.saturating_sub(clients_height);
             let render_clients = line_offset >= clients_start_offset;
+
+            // Determine if we should render usage column content for this line
+            let usage_start_offset = total_height.saturating_sub(usage_height);
+            let render_usage = line_offset >= usage_start_offset;
 
             // Clear the line first
             execute!(
@@ -793,7 +830,7 @@ impl StickyFooter {
                         SetForegroundColor(self.palette.separator),
                         Print("┌──── "),
                         ResetColor,
-                        Print("Servers")
+                        Print("Connections")
                     )?;
                 } else {
                     // Content line - need to build server/connection content
@@ -1006,6 +1043,73 @@ impl StickyFooter {
                     }
                 }
             }
+
+            // Render usage stats column
+            if render_usage {
+                let usage_line_idx = line_offset - usage_start_offset;
+                if usage_line_idx == 0 {
+                    // Header line
+                    execute!(
+                        stdout,
+                        cursor::MoveTo(usage_column_start, current_line),
+                        SetForegroundColor(self.palette.separator),
+                        Print("┌──── "),
+                        ResetColor,
+                        Print("Usage")
+                    )?;
+                } else if usage_line_idx == 1 {
+                    // Line 1: CPU and Memory stats (compact format)
+                    let cpu = format!("{:.0}%", self.system_stats.cpu_usage);
+                    let mem_used = self.system_stats.memory_used_str();
+                    let mem_total = self.system_stats.memory_total_str();
+
+                    let gpu_display = if let Some(gpu_pct) = self.system_stats.gpu_usage {
+                        format!(" G:{:.0}%", gpu_pct)
+                    } else {
+                        String::new()
+                    };
+
+                    let text = format!("C:{} M:{}/{}{}", cpu, mem_used, mem_total, gpu_display);
+                    execute!(
+                        stdout,
+                        cursor::MoveTo(usage_column_start, current_line),
+                        SetForegroundColor(self.palette.separator),
+                        Print("│ "),
+                        ResetColor,
+                        SetForegroundColor(self.palette.dimmed),
+                        Print(&text),
+                        ResetColor
+                    )?;
+                } else if usage_line_idx == 2 {
+                    // Line 2: LLM stats (compact format)
+                    let (input_tokens, output_tokens, llm_calls) = self.llm_stats;
+                    let total_tokens = input_tokens + output_tokens;
+                    // Format: "L:5 12k/8k" (calls, in/out in thousands)
+                    let format_tokens = |t: u64| {
+                        if t >= 1_000_000 {
+                            format!("{}m", t / 1_000_000)
+                        } else if t >= 1_000 {
+                            format!("{}k", t / 1_000)
+                        } else {
+                            format!("{}", t)
+                        }
+                    };
+                    let text = format!("L:{} {}/{}",
+                        llm_calls,
+                        format_tokens(input_tokens),
+                        format_tokens(output_tokens));
+                    execute!(
+                        stdout,
+                        cursor::MoveTo(usage_column_start, current_line),
+                        SetForegroundColor(self.palette.separator),
+                        Print("│ "),
+                        ResetColor,
+                        SetForegroundColor(self.palette.dimmed),
+                        Print(&text),
+                        ResetColor
+                    )?;
+                }
+            }
         }
 
         Ok(start_line + total_height)
@@ -1112,6 +1216,15 @@ impl StickyFooter {
             if !servers.is_empty() || !tasks.is_empty() {
                 let servers_column_start = INPUTS_LEFT_MARGIN + INPUTS_COLUMN_WIDTH + COLUMN_MARGIN;
                 join_positions.push(servers_column_start);
+            }
+
+            // Add ┴ at usage/clients column position (third column) if either exists
+            // Note: clients and usage share the same column position
+            let servers_column_start = INPUTS_LEFT_MARGIN + INPUTS_COLUMN_WIDTH + COLUMN_MARGIN;
+            let third_column_start = servers_column_start + INPUTS_COLUMN_WIDTH + COLUMN_MARGIN;
+
+            if self.show_usage_stats {
+                join_positions.push(third_column_start);
             }
         }
 

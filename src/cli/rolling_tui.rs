@@ -245,6 +245,10 @@ pub async fn run_rolling_tui(
     // Create tick interval for UI updates
     let mut tick_interval = interval(Duration::from_millis(100));
 
+    // Create system stats monitor and update interval (1 second)
+    let stats_monitor = Arc::new(crate::system_stats::SystemStatsMonitor::new());
+    let mut stats_update_interval = interval(Duration::from_secs(1));
+
     // Cleanup configuration constants
     const CLEANUP_INTERVAL_SECS: u64 = 5;
     const SERVER_CLEANUP_TIMEOUT_SECS: u64 = 30;
@@ -334,7 +338,7 @@ pub async fn run_rolling_tui(
                         pending_resize = Some((width, height));
                     }
                     Some(Ok(event)) => {
-                        if handle_event(event, &mut app, &state, &mut event_handler, &status_tx, &mut footer, settings.clone(), palette.clone()).await? {
+                        if handle_event(event, &mut app, &state, &mut event_handler, &status_tx, &mut footer, settings.clone(), palette.clone(), &stats_monitor).await? {
                             info!("Quit requested by user");
                             break; // Quit requested
                         }
@@ -372,6 +376,28 @@ pub async fn run_rolling_tui(
             // Execute due tasks
             _ = task_execution_interval.tick() => {
                 execute_due_tasks(&state, &llm_client, &status_tx).await;
+            }
+
+            // Periodic stats update (1 second)
+            _ = stats_update_interval.tick() => {
+                // Get system stats
+                let system_stats = stats_monitor.get_stats().await;
+
+                // Get LLM stats
+                let (input_tokens, output_tokens, llm_calls) = state.get_llm_stats().await;
+
+                // Update app state
+                app.system_stats = system_stats.clone();
+
+                // Update footer with stats
+                footer.set_show_usage_stats(app.show_usage_stats);
+                footer.set_system_stats(system_stats);
+                footer.set_llm_stats(input_tokens, output_tokens, llm_calls);
+
+                // Re-render if usage stats are visible
+                if app.show_usage_stats {
+                    footer.render(&mut stdout())?;
+                }
             }
 
             // Periodic cleanup of old servers and connections
@@ -1009,6 +1035,7 @@ async fn handle_event(
     footer: &mut StickyFooter,
     settings: Arc<Mutex<Settings>>,
     palette: Arc<ColorPalette>,
+    stats_monitor: &Arc<crate::system_stats::SystemStatsMonitor>,
 ) -> Result<bool> {
     match event {
         Event::Key(key) => {
@@ -1022,6 +1049,7 @@ async fn handle_event(
                 footer,
                 settings,
                 palette,
+                stats_monitor,
             )
             .await
         }
@@ -1041,6 +1069,7 @@ async fn handle_key_event(
     footer: &mut StickyFooter,
     settings: Arc<Mutex<Settings>>,
     palette: Arc<ColorPalette>,
+    stats_monitor: &Arc<crate::system_stats::SystemStatsMonitor>,
 ) -> Result<bool> {
     // Handle web approval prompt first (if active)
     if let Some(approval) = footer.pending_approval.take() {
@@ -1276,7 +1305,8 @@ async fn handle_key_event(
                     | UserCommand::ShowLogLevel
                     | UserCommand::ShowWebSearch
                     | UserCommand::ShowEventHandler
-                    | UserCommand::ShowEnvironment => {
+                    | UserCommand::ShowEnvironment
+                    | UserCommand::ShowUsage => {
                         // Handle status/info commands
                         handle_status_command(
                             &command,
@@ -1285,6 +1315,7 @@ async fn handle_key_event(
                             event_handler,
                             footer,
                             &palette,
+                            &stats_monitor,
                         )
                         .await?;
                     }
@@ -2100,11 +2131,12 @@ async fn update_ui_from_state(app: &mut App, state: &AppState, footer: &mut Stic
 /// Handle status/info commands
 async fn handle_status_command(
     command: &UserCommand,
-    app: &App,
+    app: &mut App,
     state: &AppState,
     event_handler: &mut EventHandler,
     footer: &mut StickyFooter,
     palette: &ColorPalette,
+    stats_monitor: &Arc<crate::system_stats::SystemStatsMonitor>,
 ) -> Result<()> {
     match command {
         UserCommand::Status => {
@@ -2242,6 +2274,32 @@ async fn handle_status_command(
                 footer,
                 palette,
             )?;
+        }
+        UserCommand::ShowUsage => {
+            // Toggle usage stats display
+            app.toggle_usage_stats();
+            if app.show_usage_stats {
+                print_output_line("Usage stats section enabled.", footer, palette)?;
+                print_output_line("The usage panel is now visible in the footer.", footer, palette)?;
+
+                // Get current stats and update footer immediately
+                let system_stats = stats_monitor.get_stats().await;
+                let (input_tokens, output_tokens, llm_calls) = state.get_llm_stats().await;
+
+                app.system_stats = system_stats.clone();
+                footer.set_show_usage_stats(true);
+                footer.set_system_stats(system_stats);
+                footer.set_llm_stats(input_tokens, output_tokens, llm_calls);
+
+                // Render footer to show stats immediately
+                footer.render(&mut std::io::stdout())?;
+            } else {
+                print_output_line("Usage stats section disabled.", footer, palette)?;
+
+                // Hide stats and re-render footer
+                footer.set_show_usage_stats(false);
+                footer.render(&mut std::io::stdout())?;
+            }
         }
         _ => {}
     }

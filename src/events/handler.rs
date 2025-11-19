@@ -211,6 +211,13 @@ impl EventHandler {
                 self.handle_show_environment(ui).await?;
                 Ok(false)
             }
+            UserCommand::ShowUsage => {
+                // This command is only supported in rolling TUI mode
+                ui.add_llm_message(
+                    "Usage command is only supported in rolling TUI mode".to_string(),
+                );
+                Ok(false)
+            }
         }
     }
 

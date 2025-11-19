@@ -139,7 +139,9 @@ pub async fn run() -> Result<()> {
                 // For backward compatibility, extract OllamaClient if using Ollama backend
                 if let Some(client) = hybrid.ollama_client().await {
                     debug!("Using Ollama backend from HybridLLMManager");
-                    client.with_mock_config_file(args.mock_config_file.clone())
+                    client
+                        .with_mock_config_file(args.mock_config_file.clone())
+                        .with_app_state(state.clone())
                 } else {
                     // Using embedded backend - need to create a dummy OllamaClient for now
                     // TODO: Refactor code to use HybridLLMManager directly instead of OllamaClient
@@ -147,12 +149,14 @@ pub async fn run() -> Result<()> {
                     let ollama_url = args.ollama_url.as_deref().unwrap_or("http://localhost:11434");
                     OllamaClient::new_with_options(ollama_url, lock_enabled)
                         .with_mock_config_file(args.mock_config_file.clone())
+                        .with_app_state(state.clone())
                 }
             } else {
                 debug!("Creating OllamaClient...");
                 let ollama_url = args.ollama_url.as_deref().unwrap_or("http://localhost:11434");
                 OllamaClient::new_with_options(ollama_url, lock_enabled)
                     .with_mock_config_file(args.mock_config_file.clone())
+                    .with_app_state(state.clone())
             }
         };
 
@@ -162,6 +166,7 @@ pub async fn run() -> Result<()> {
             let ollama_url = args.ollama_url.as_deref().unwrap_or("http://localhost:11434");
             OllamaClient::new_with_options(ollama_url, lock_enabled)
                 .with_mock_config_file(args.mock_config_file.clone())
+                .with_app_state(state.clone())
         };
 
         // Store the configured LLM client in state so spawned servers can use it
