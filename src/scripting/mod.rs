@@ -15,4 +15,7 @@ pub use environment::ScriptingEnvironment;
 pub use event_handler::{EventHandler, EventHandlerConfig, EventHandlerType, EventPattern};
 pub use executor::{execute_script, SCRIPT_TIMEOUT_SECS};
 pub use manager::ScriptManager;
-pub use types::{ScriptConfig, ScriptInput, ScriptLanguage, ScriptResponse, ScriptSource};
+pub use types::{
+    ConnectionContext, ScriptConfig, ScriptInput, ScriptLanguage, ScriptResponse, ScriptSource,
+    ServerContext,
+};

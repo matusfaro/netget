@@ -2,11 +2,11 @@ use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-use netget::events::{Event, EventType};
 use netget::llm::OllamaClient;
+use netget::protocol::{Event, EventType};
 use netget::scripting::{
-    ScriptConfig, ScriptInput, ScriptLanguage, ScriptSource,
-    ServerContext, ConnectionContext, execute_script,
+    ConnectionContext, ScriptConfig, ScriptInput, ScriptLanguage, ScriptSource, ServerContext,
+    execute_script,
 };
 
 /// Builder for testing Ollama model responses
