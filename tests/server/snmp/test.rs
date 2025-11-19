@@ -215,31 +215,35 @@ async fn test_snmp_get_next() -> E2EResult<()> {
     // Wait for SNMP server to fully initialize
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
-    // Wait longer for SNMP server to fully initialize (needs LLM call to set up)
+    // VALIDATION: Use snmpgetnext command-line tool (more reliable than Rust snmp crate)
+    println!("Querying with snmpgetnext...");
+    let output = tokio::process::Command::new("snmpgetnext")
+        .args(&[
+            "-v",
+            "2c",
+            "-c",
+            "public",
+            "-t",
+            "5",
+            &format!("127.0.0.1:{}", server.port),
+            "1.3.6.1.2.1.1",
+        ])
+        .output()
+        .await?;
 
-    // VALIDATION: Send GETNEXT request
-    println!("Sending GETNEXT request...");
-    let agent_addr = format!("127.0.0.1:{}", server.port);
-    let mut sess = SyncSession::new(
-        agent_addr.as_str(),
-        b"public",
-        Some(Duration::from_secs(5)),
-        0,
-    )?;
-
-    let oid = &[1, 3, 6, 1, 2, 1, 1];
-    match sess.getnext(oid) {
-        Ok(mut response) => {
-            println!("GETNEXT response:");
-            if let Some((oid, value)) = response.varbinds.next() {
-                println!("  OID: {:?}, Value: {:?}", oid, value);
-            }
-            println!("✓ SNMP GETNEXT verified");
-        }
-        Err(e) => {
-            println!("Note: SNMP operation failed: {:?}", e);
-        }
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        return Err(format!(
+            "snmpgetnext query failed:\nstdout: {}\nstderr: {}",
+            stdout, stderr
+        )
+        .into());
     }
+
+    let response_str = String::from_utf8_lossy(&output.stdout);
+    println!("GETNEXT response: {}", response_str);
+    println!("✓ SNMP GETNEXT verified");
 
     // Verify mock expectations were met
     server.verify_mocks().await?;
@@ -327,37 +331,43 @@ async fn test_snmp_interface_stats() -> E2EResult<()> {
     // Wait for SNMP server to fully initialize
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
-    // Wait longer for SNMP server to fully initialize (needs LLM call to set up)
-
-    // VALIDATION: Query interface statistics
-    let agent_addr = format!("127.0.0.1:{}", server.port);
-    let mut sess = SyncSession::new(
-        agent_addr.as_str(),
-        b"public",
-        Some(Duration::from_secs(5)),
-        0,
-    )?;
-
+    // VALIDATION: Query interface statistics using command-line snmpget (more reliable)
     let oids = vec![
-        (&[1, 3, 6, 1, 2, 1, 2, 2, 1, 1, 1][..], "ifIndex"),
-        (&[1, 3, 6, 1, 2, 1, 2, 2, 1, 2, 1][..], "ifDescr"),
-        (&[1, 3, 6, 1, 2, 1, 2, 2, 1, 5, 1][..], "ifSpeed"),
-        (&[1, 3, 6, 1, 2, 1, 2, 2, 1, 8, 1][..], "ifOperStatus"),
+        ("1.3.6.1.2.1.2.2.1.1.1", "ifIndex"),
+        ("1.3.6.1.2.1.2.2.1.2.1", "ifDescr"),
+        ("1.3.6.1.2.1.2.2.1.5.1", "ifSpeed"),
+        ("1.3.6.1.2.1.2.2.1.8.1", "ifOperStatus"),
     ];
 
     for (oid, name) in oids {
         println!("Querying {} ...", name);
-        match sess.get(oid) {
-            Ok(mut response) => {
-                if let Some((_oid, value)) = response.varbinds.next() {
-                    println!("  {}: {:?}", name, value);
-                    println!("  ✓ {} retrieved", name);
-                }
-            }
-            Err(e) => {
-                println!("  Note: SNMP operation failed: {:?}", e);
-            }
+        let output = tokio::process::Command::new("snmpget")
+            .args(&[
+                "-v",
+                "2c",
+                "-c",
+                "public",
+                "-t",
+                "5",
+                &format!("127.0.0.1:{}", server.port),
+                oid,
+            ])
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            return Err(format!(
+                "{} query failed:\nstdout: {}\nstderr: {}",
+                name, stdout, stderr
+            )
+            .into());
         }
+
+        let response_str = String::from_utf8_lossy(&output.stdout);
+        println!("  {}: {}", name, response_str.trim());
+        println!("  ✓ {} retrieved", name);
     }
 
     // Verify mock expectations were met
@@ -438,36 +448,42 @@ async fn test_snmp_custom_mib() -> E2EResult<()> {
     // Wait for SNMP server to fully initialize
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
-    // Wait longer for SNMP server to fully initialize (needs LLM call to set up)
-
-    // VALIDATION: Query custom enterprise OIDs
-    let agent_addr = format!("127.0.0.1:{}", server.port);
-    let mut sess = SyncSession::new(
-        agent_addr.as_str(),
-        b"public",
-        Some(Duration::from_secs(5)),
-        0,
-    )?;
-
+    // VALIDATION: Query custom enterprise OIDs using command-line snmpget (more reliable)
     let custom_oids = vec![
-        (&[1, 3, 6, 1, 4, 1, 99999, 1, 1, 0][..], "Application Name"),
-        (&[1, 3, 6, 1, 4, 1, 99999, 1, 2, 0][..], "Counter"),
-        (&[1, 3, 6, 1, 4, 1, 99999, 1, 3, 0][..], "Status"),
+        ("1.3.6.1.4.1.99999.1.1.0", "Application Name"),
+        ("1.3.6.1.4.1.99999.1.2.0", "Counter"),
+        ("1.3.6.1.4.1.99999.1.3.0", "Status"),
     ];
 
     for (oid, name) in custom_oids {
         println!("Querying custom OID {} ...", name);
-        match sess.get(oid) {
-            Ok(mut response) => {
-                if let Some((_oid, value)) = response.varbinds.next() {
-                    println!("  {}: {:?}", name, value);
-                    println!("  ✓ Custom OID retrieved");
-                }
-            }
-            Err(e) => {
-                println!("  Note: SNMP operation failed: {:?}", e);
-            }
+        let output = tokio::process::Command::new("snmpget")
+            .args(&[
+                "-v",
+                "2c",
+                "-c",
+                "public",
+                "-t",
+                "5",
+                &format!("127.0.0.1:{}", server.port),
+                oid,
+            ])
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            return Err(format!(
+                "{} query failed:\nstdout: {}\nstderr: {}",
+                name, stdout, stderr
+            )
+            .into());
         }
+
+        let response_str = String::from_utf8_lossy(&output.stdout);
+        println!("  {}: {}", name, response_str.trim());
+        println!("  ✓ Custom OID retrieved");
     }
 
     // Verify mock expectations were met

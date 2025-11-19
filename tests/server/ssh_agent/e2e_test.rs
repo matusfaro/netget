@@ -165,6 +165,9 @@ async fn test_ssh_agent_request_identities_with_mocks() -> E2EResult<()> {
             Ok(mut stream) => {
                 println!("✓ Connected to SSH Agent server");
 
+                // Wait for connection_opened event to complete
+                tokio::time::sleep(Duration::from_millis(500)).await;
+
                 // Send REQUEST_IDENTITIES
                 let request = build_request_identities();
                 stream.write_all(&request).await?;
@@ -288,6 +291,9 @@ async fn test_ssh_agent_sign_request_with_mocks() -> E2EResult<()> {
             Ok(mut stream) => {
                 println!("✓ Connected to SSH Agent server");
 
+                // Wait for connection_opened event to complete
+                tokio::time::sleep(Duration::from_millis(500)).await;
+
                 // Send SIGN_REQUEST
                 let key_blob = b"test_public_key";
                 let data_to_sign = b"test_data";
@@ -394,6 +400,9 @@ async fn test_ssh_agent_add_identity_with_mocks() -> E2EResult<()> {
         match UnixStream::connect(&socket_path).await {
             Ok(mut stream) => {
                 println!("✓ Connected to SSH Agent server");
+
+                // Wait for connection_opened event to complete
+                tokio::time::sleep(Duration::from_millis(500)).await;
 
                 // Send ADD_IDENTITY
                 let public_key = b"test_public_key_32_bytes_here!!";
@@ -517,6 +526,9 @@ async fn test_ssh_agent_multiple_operations_with_mocks() -> E2EResult<()> {
         match UnixStream::connect(&socket_path).await {
             Ok(mut stream) => {
                 println!("✓ Connected to SSH Agent server");
+
+                // Wait for connection_opened event to complete
+                tokio::time::sleep(Duration::from_millis(500)).await;
 
                 // Operation 1: REQUEST_IDENTITIES
                 println!("\n→ Operation 1: REQUEST_IDENTITIES");

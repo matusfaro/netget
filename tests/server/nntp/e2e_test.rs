@@ -77,7 +77,7 @@ async fn test_nntp_basic_newsgroups() -> E2EResult<()> {
             .and()
             // Mock 2: GROUP command
             .on_event("nntp_command_received")
-            .and_event_data_contains("command", "GROUP")
+            .and_event_data_contains("command", "GROUP comp.lang.rust")
             .respond_with_actions(serde_json::json!([
                 {"type": "send_nntp_response", "code": 211, "text": "50 1 50 comp.lang.rust"}
             ]))
@@ -85,7 +85,7 @@ async fn test_nntp_basic_newsgroups() -> E2EResult<()> {
             .and()
             // Mock 3: ARTICLE command
             .on_event("nntp_command_received")
-            .and_event_data_contains("command", "ARTICLE")
+            .and_event_data_contains("command", "ARTICLE 1")
             .respond_with_actions(serde_json::json!([
                 {"type": "send_nntp_article", "headers": "Subject: Test Article 1\r\nFrom: test@example.com", "body": "This is test article number 1."}
             ]))
@@ -262,7 +262,7 @@ async fn test_nntp_article_overview() -> E2EResult<()> {
             .and()
             // Mock 1: GROUP command
             .on_event("nntp_command_received")
-            .and_event_data_contains("command", "GROUP")
+            .and_event_data_contains("command", "GROUP comp.test")
             .respond_with_actions(serde_json::json!([
                 {"type": "send_nntp_response", "code": 211, "text": "5 1 5 comp.test"}
             ]))
@@ -270,7 +270,7 @@ async fn test_nntp_article_overview() -> E2EResult<()> {
             .and()
             // Mock 2: XOVER command
             .on_event("nntp_command_received")
-            .and_event_data_contains("command", "XOVER")
+            .and_event_data_contains("command", "XOVER 1-5")
             .respond_with_actions(serde_json::json!([
                 {"type": "send_nntp_overview", "articles": [
                     {"number": 1, "subject": "Article 1", "from": "test@example.com", "date": "Mon, 1 Jan 2024 00:00:00 +0000", "message_id": "<1@example.com>", "references": "", "bytes": 100, "lines": 5},
