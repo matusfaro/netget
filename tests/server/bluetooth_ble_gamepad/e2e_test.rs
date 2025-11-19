@@ -15,7 +15,7 @@ async fn test_gamepad_service_startup() -> E2EResult<()> {
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    .on_instruction_containing("gamepad")
+                    .on_instruction_containing("Act as a BLE gamepad")
                     .and_instruction_containing("Human Interface Device")
                     .respond_with_actions(serde_json::json!([
                         {

@@ -15,7 +15,8 @@ async fn test_cycling_service_startup() -> E2EResult<()> {
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    .on_instruction_containing("cycling")
+                    .on_instruction_containing("Act as a BLE")
+                    .and_instruction_containing("cycling speed and cadence sensor")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "open_server",

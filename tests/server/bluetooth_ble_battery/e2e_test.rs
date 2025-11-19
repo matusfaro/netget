@@ -23,7 +23,7 @@ async fn test_battery_service_startup() -> E2EResult<()> {
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
-                    .on_instruction_containing("BLE battery-powered device")
+                    .on_instruction_containing("Act as a BLE battery-powered device")
                     .and_instruction_containing("Battery Service")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -76,7 +76,7 @@ async fn test_battery_level_update() -> E2EResult<()> {
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
-                    .on_instruction_containing("BLE battery service")
+                    .on_instruction_containing("Act as a BLE battery service")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "open_server",

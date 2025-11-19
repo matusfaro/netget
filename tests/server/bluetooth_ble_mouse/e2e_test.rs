@@ -15,7 +15,7 @@ async fn test_mouse_service_startup() -> E2EResult<()> {
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    .on_instruction_containing("mouse")
+                    .on_instruction_containing("Act as a BLE mouse")
                     .and_instruction_containing("Human Interface Device")
                     .respond_with_actions(serde_json::json!([
                         {

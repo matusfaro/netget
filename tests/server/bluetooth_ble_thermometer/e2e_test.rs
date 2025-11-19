@@ -17,7 +17,7 @@ async fn test_thermometer_service_startup() -> E2EResult<()> {
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    .on_instruction_containing("thermometer")
+                    .on_instruction_containing("Act as a BLE thermometer")
                     .and_instruction_containing("Health Thermometer Service")
                     .respond_with_actions(serde_json::json!([
                         {
