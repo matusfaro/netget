@@ -67,7 +67,7 @@ async fn test_nntp_basic_newsgroups() -> E2EResult<()> {
             .on_event("nntp_command_received")
             .and_event_data_contains("command", "LIST")
             .respond_with_actions(serde_json::json!([
-                {"type": "send_nntp_list", "newsgroups": [
+                {"type": "send_nntp_list", "groups": [
                     {"name": "comp.lang.rust", "high": 50, "low": 1, "status": "y"},
                     {"name": "comp.lang.python", "high": 100, "low": 1, "status": "y"},
                     {"name": "misc.test", "high": 10, "low": 1, "status": "y"}
@@ -87,7 +87,7 @@ async fn test_nntp_basic_newsgroups() -> E2EResult<()> {
             .on_event("nntp_command_received")
             .and_event_data_contains("command", "ARTICLE")
             .respond_with_actions(serde_json::json!([
-                {"type": "send_nntp_article", "headers": {"Subject": "Test Article 1", "From": "test@example.com"}, "body": "This is test article number 1."}
+                {"type": "send_nntp_article", "headers": "Subject: Test Article 1\r\nFrom: test@example.com", "body": "This is test article number 1."}
             ]))
             .expect_calls(1)
             .and()
@@ -273,11 +273,11 @@ async fn test_nntp_article_overview() -> E2EResult<()> {
             .and_event_data_contains("command", "XOVER")
             .respond_with_actions(serde_json::json!([
                 {"type": "send_nntp_overview", "articles": [
-                    {"id": 1, "subject": "Article 1", "from": "test@example.com"},
-                    {"id": 2, "subject": "Article 2", "from": "test@example.com"},
-                    {"id": 3, "subject": "Article 3", "from": "test@example.com"},
-                    {"id": 4, "subject": "Article 4", "from": "test@example.com"},
-                    {"id": 5, "subject": "Article 5", "from": "test@example.com"}
+                    {"number": 1, "subject": "Article 1", "from": "test@example.com", "date": "Mon, 1 Jan 2024 00:00:00 +0000", "message_id": "<1@example.com>", "references": "", "bytes": 100, "lines": 5},
+                    {"number": 2, "subject": "Article 2", "from": "test@example.com", "date": "Mon, 1 Jan 2024 00:00:00 +0000", "message_id": "<2@example.com>", "references": "", "bytes": 100, "lines": 5},
+                    {"number": 3, "subject": "Article 3", "from": "test@example.com", "date": "Mon, 1 Jan 2024 00:00:00 +0000", "message_id": "<3@example.com>", "references": "", "bytes": 100, "lines": 5},
+                    {"number": 4, "subject": "Article 4", "from": "test@example.com", "date": "Mon, 1 Jan 2024 00:00:00 +0000", "message_id": "<4@example.com>", "references": "", "bytes": 100, "lines": 5},
+                    {"number": 5, "subject": "Article 5", "from": "test@example.com", "date": "Mon, 1 Jan 2024 00:00:00 +0000", "message_id": "<5@example.com>", "references": "", "bytes": 100, "lines": 5}
                 ]}
             ]))
             .expect_calls(1)
