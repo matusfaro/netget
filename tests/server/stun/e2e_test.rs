@@ -571,7 +571,7 @@ async fn test_stun_rapid_requests() -> E2EResult<()> {
                         "mapped_address": peer_addr         // ← DYNAMIC from event!
                     }])
                 })
-                .expect_at_least(1)  // UDP is unreliable - accept at least 1 of 5
+                .expect_calls(5)  // All 5 rapid requests should be processed
                 .and()
         });
 
@@ -600,6 +600,9 @@ async fn test_stun_rapid_requests() -> E2EResult<()> {
             .send_to(&request, server_addr)
             .await
             .expect("Failed to send request");
+
+        // Small delay to allow server to process each request
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
 
     println!("Sent 5 rapid STUN requests");
