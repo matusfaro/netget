@@ -395,7 +395,7 @@ requests_intercepted: 5
 
 - **Privileged ports (<1024)**: ✗ Not available — Warn user if they request port <1024
 
-- **Raw socket access**: ✗ Not available — DataLink protocol unavailable
+- **Raw socket access**: ✓ Available
 
 
 Trigger: Event: Intercepted HTTP request:

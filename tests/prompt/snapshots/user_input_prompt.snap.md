@@ -134,6 +134,7 @@ Parameters:
 - `startup_params` (object): Optional protocol-specific startup parameters. See protocol documentation for available parameters.
 - `scheduled_tasks` (array): Optional: Array of scheduled tasks to create with this server. Each task will be attached to the server and execute at specified intervals or delays. Tasks are automatically cleaned up when the server stops. Each task has: task_id, recurring (boolean), delay_secs (for one-shot or initial delay), interval_secs (for recurring), max_executions (optional), instruction, context (optional).
 - `event_handlers` (array): Optional: Array of event handlers to configure how events are processed. You can configure different handlers for different events. Each handler specifies an event_pattern (specific event ID or "*" for all events) and a handler type (script, static, or llm). Handlers are matched in order - first match wins.\n\nEach handler has:\n- event_pattern: Event ID to match (e.g., \"tcp_data_received\") or \"*\" for all events\n- handler: Object with:\n  - type: \"script\" (inline code), \"static\" (predefined actions), or \"llm\" (dynamic processing)\n  - For script: language (Python (Python 3.11.0), Node.js (v20.0.0), Go (go version go1.21.0), Perl (perl 5.38.0)), code (inline script)\n  - For static: actions (array of action objects)\n\nExample script handler: {\"event_pattern\": \"ssh_auth\", \"handler\": {\"type\": \"script\", \"language\": \"python\", \"code\": \"import json,sys;data=json.load(sys.stdin);print(json.dumps({'actions':[{'type':'send_data','data':'OK'}]}))\"}}\n\nExample static handler: {\"event_pattern\": \"*\", \"handler\": {\"type\": \"static\", \"actions\": [{\"type\": \"send_data\", \"data\": \"Welcome\"}]}}\n\nExample LLM handler: {\"event_pattern\": \"http_request\", \"handler\": {\"type\": \"llm\"}}
+- `feedback_instructions` (string): Optional: Instructions for automatic server adjustment based on network request feedback. When set, network requests can provide feedback via the 'provide_feedback' action. Feedback is accumulated and debounced (leading edge), then the LLM is invoked with these instructions to decide how to adjust the server behavior (e.g., update instructions, modify handlers, change configuration). Example: "Adjust response time if clients are timing out" or "Learn from failed requests and improve error handling".
 
 Example:
 ```json
@@ -174,6 +175,7 @@ Parameters:
 - `startup_params` (object): Optional protocol-specific startup parameters. For example, HTTP clients may accept default headers or user agent settings.
 - `scheduled_tasks` (array): Optional: Array of scheduled tasks to create with this client. Each task will be attached to the client and execute at specified intervals or delays. Tasks are automatically cleaned up when the client disconnects.
 - `event_handlers` (array): Optional: Array of event handlers to configure how client events are processed. You can configure different handlers for different client events. Each handler specifies an event_pattern (specific event ID or "*" for all events) and a handler type (script, static, or llm). Handlers are matched in order - first match wins.\n\nEach handler has:\n- event_pattern: Event ID to match (e.g., \"http_response_received\") or \"*\" for all events\n- handler: Object with:\n  - type: \"script\" (inline code), \"static\" (predefined actions), or \"llm\" (dynamic processing)\n  - For script: language (Python (Python 3.11.0), Node.js (v20.0.0), Go (go version go1.21.0), Perl (perl 5.38.0)), code (inline script)\n  - For static: actions (array of action objects)\n\nExample script handler: {\"event_pattern\": \"redis_response_received\", \"handler\": {\"type\": \"script\", \"language\": \"python\", \"code\": \"import json,sys;data=json.load(sys.stdin);print(json.dumps({'actions':[{'type':'execute_redis_command','command':'PING'}]}))\"}}\n\nExample static handler: {\"event_pattern\": \"*\", \"handler\": {\"type\": \"static\", \"actions\": [{\"type\": \"send_http_request\", \"method\": \"GET\", \"path\": \"/\"}]}}
+- `feedback_instructions` (string): Optional: Instructions for automatic client adjustment based on server response feedback. When set, server responses can provide feedback via the 'provide_feedback' action. Feedback is accumulated and debounced (leading edge), then the LLM is invoked with these instructions to decide how to adjust the client behavior (e.g., update request strategy, modify retry logic, change authentication method). Example: "Adjust request rate if server is throttling" or "Learn from error responses and modify request format".
 
 Example:
 ```json
@@ -778,7 +780,7 @@ No servers currently running.
 
 - **Privileged ports (<1024)**: ✗ Not available — Warn user if they request port <1024
 
-- **Raw socket access**: ✗ Not available — DataLink protocol unavailable
+- **Raw socket access**: ✓ Available
 
 
 Trigger: User input: "start a DNS server on port 53"

@@ -75,7 +75,7 @@ Start a new server.
 
 Parameters:
 - `port` (number, required): Port number to listen on. Use 0 to automatically find an available port.
-- `base_stack` (string, required): Protocol stack to use. Choose the best stack for the task. Available: HTTP
+- `base_stack` (string, required): Protocol stack to use. Choose the best stack for the task. Available: AMQP, ARP, BLUETOOTH_BLE, BLUETOOTH_BLE_BATTERY, BLUETOOTH_BLE_BEACON, BLUETOOTH_BLE_CYCLING, BLUETOOTH_BLE_DATA_STREAM, BLUETOOTH_BLE_ENVIRONMENTAL, BLUETOOTH_BLE_FILE_TRANSFER, BLUETOOTH_BLE_GAMEPAD, BLUETOOTH_BLE_HEART_RATE, BLUETOOTH_BLE_KEYBOARD, BLUETOOTH_BLE_MOUSE, BLUETOOTH_BLE_PRESENTER, BLUETOOTH_BLE_PROXIMITY, BLUETOOTH_BLE_REMOTE, BLUETOOTH_BLE_RUNNING, BLUETOOTH_BLE_THERMOMETER, BLUETOOTH_BLE_WEIGHT_SCALE, BOOTP, Bitcoin P2P, Cassandra, DC, DHCP, DNS, DataLink, DoH, DoT, DynamoDB, Elasticsearch, Git, HTTP, HTTP2, HTTP3, IGMP, IMAP, IPP, IPSec/IKEv2, IRC, ISIS, JSON-RPC, KAFKA, LDAP, MCP, MQTT, Maven, Mercurial, MySQL, NFS, NNTP, NPM, NTP, OAuth2, OSPF, Ollama, OpenAI, OpenAPI, OpenID, OpenVPN, POP3, PostgreSQL, Proxy, PyPI, RIP, RSS, Redis, S3, SIP, SMB, SMTP, SNMP, SOCKET_FILE, SOCKS5, SQS, SSH, SSH Agent, STUN, SVN, SamlIdp, SamlSp, Syslog, TCP, TLS, TURN, Telnet, Tor Directory, Tor Relay, Torrent-DHT, Torrent-Peer, Torrent-Tracker, UDP, USB-Keyboard, USB-MassStorage, USB-Mouse, USB-Serial, VNC, WHOIS, WebDAV, WireGuard, XML-RPC, XMPP, ZooKeeper, etcd, gRPC, mDNS, usb-fido2
 - `send_first` (boolean): True if server sends data first (FTP, SMTP), false if it waits for client (HTTP)
 - `initial_memory` (string): Optional initial memory as a string. Use for storing persistent context across connections. Example: "user_count: 0"
 - `instruction` (string, required): Detailed instructions for handling network events
@@ -398,7 +398,7 @@ No servers currently running.
 
 ## System Capabilities
 
-- **Privileged ports (<1024)**: ✓ Available
+- **Privileged ports (<1024)**: ✗ Not available — Warn user if they request port <1024
 
 - **Raw socket access**: ✓ Available
 
