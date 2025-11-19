@@ -23,20 +23,9 @@ async fn test_data_stream_service_startup() -> E2EResult<()> {
                             "base_stack": "BLUETOOTH_BLE_DATA_STREAM",
                             "instruction": "Create data stream service",
                             "startup_params": {
-                                "device_name": "NetGet-DataStream",
-                                "services": [
-                                    {
-                                        "uuid": "e0001000-0451-4000-b000-000000000000",
-                                        "characteristics": [
-                                            {
-                                                "uuid": "e0001001-0451-4000-b000-000000000000",
-                                                "properties": ["notify"],
-                                                "value": "00"
-                                            }
-                                        ]
-                                    }
-                                ]
+                                "device_name": "NetGet-DataStream"
                             }
+                                
                         }
                     ]))
                     .expect_calls(1)

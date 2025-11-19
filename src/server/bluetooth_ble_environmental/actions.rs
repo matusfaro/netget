@@ -16,7 +16,15 @@ impl BluetoothBleEnvironmentalProtocol {
 
 impl Protocol for BluetoothBleEnvironmentalProtocol {
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-        vec![]
+        vec![
+            ParameterDefinition {
+                name: "device_name".to_string(),
+                type_hint: "string".to_string(),
+                description: "Environmental sensor device name for advertising (default: NetGet-Environment)".to_string(),
+                required: false,
+                example: json!("NetGet-Environment"),
+            },
+        ]
     }
     fn get_async_actions(&self, _: &AppState) -> Vec<ActionDefinition> {
         vec![]

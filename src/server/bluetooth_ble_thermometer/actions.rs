@@ -29,7 +29,15 @@ impl BluetoothBleThermometerProtocol {
 
 impl Protocol for BluetoothBleThermometerProtocol {
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-        vec![]
+        vec![
+            ParameterDefinition {
+                name: "device_name".to_string(),
+                type_hint: "string".to_string(),
+                description: "Thermometer device name for advertising (default: NetGet-Thermometer)".to_string(),
+                required: false,
+                example: json!("NetGet-Thermometer"),
+            },
+        ]
     }
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![ActionDefinition {

@@ -23,20 +23,9 @@ async fn test_file_transfer_service_startup() -> E2EResult<()> {
                             "base_stack": "BLUETOOTH_BLE_FILE_TRANSFER",
                             "instruction": "Create file transfer service",
                             "startup_params": {
-                                "device_name": "NetGet-FileTransfer",
-                                "services": [
-                                    {
-                                        "uuid": "f0001000-0451-4000-b000-000000000000",
-                                        "characteristics": [
-                                            {
-                                                "uuid": "f0001001-0451-4000-b000-000000000000",
-                                                "properties": ["read", "write"],
-                                                "value": "00"
-                                            }
-                                        ]
-                                    }
-                                ]
+                                "device_name": "NetGet-FileTransfer"
                             }
+                                
                         }
                     ]))
                     .expect_calls(1)

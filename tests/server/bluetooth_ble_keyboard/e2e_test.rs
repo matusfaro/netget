@@ -24,20 +24,9 @@ async fn test_keyboard_service_startup() -> E2EResult<()> {
                             "base_stack": "BLUETOOTH_BLE_KEYBOARD",
                             "instruction": "Create keyboard HID service",
                             "startup_params": {
-                                "device_name": "NetGet-Keyboard",
-                                "services": [
-                                    {
-                                        "uuid": "00001812-0000-1000-8000-00805f9b34fb",
-                                        "characteristics": [
-                                            {
-                                                "uuid": "00002a4d-0000-1000-8000-00805f9b34fb",
-                                                "properties": ["read", "notify"],
-                                                "value": "0000000000000000"
-                                            }
-                                        ]
-                                    }
-                                ]
+                                "device_name": "NetGet-Keyboard"
                             }
+                                
                         }
                     ]))
                     .expect_calls(1)

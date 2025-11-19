@@ -24,20 +24,9 @@ async fn test_mouse_service_startup() -> E2EResult<()> {
                             "base_stack": "BLUETOOTH_BLE_MOUSE",
                             "instruction": "Create mouse HID service",
                             "startup_params": {
-                                "device_name": "NetGet-Mouse",
-                                "services": [
-                                    {
-                                        "uuid": "00001812-0000-1000-8000-00805f9b34fb",
-                                        "characteristics": [
-                                            {
-                                                "uuid": "00002a4d-0000-1000-8000-00805f9b34fb",
-                                                "properties": ["read", "notify"],
-                                                "value": "000000"
-                                            }
-                                        ]
-                                    }
-                                ]
+                                "device_name": "NetGet-Mouse"
                             }
+                                
                         }
                     ]))
                     .expect_calls(1)

@@ -24,20 +24,9 @@ async fn test_gamepad_service_startup() -> E2EResult<()> {
                             "base_stack": "BLUETOOTH_BLE_GAMEPAD",
                             "instruction": "Create gamepad HID service",
                             "startup_params": {
-                                "device_name": "NetGet-Gamepad",
-                                "services": [
-                                    {
-                                        "uuid": "00001812-0000-1000-8000-00805f9b34fb",
-                                        "characteristics": [
-                                            {
-                                                "uuid": "00002a4d-0000-1000-8000-00805f9b34fb",
-                                                "properties": ["read", "notify"],
-                                                "value": "00000000"
-                                            }
-                                        ]
-                                    }
-                                ]
+                                "device_name": "NetGet-Gamepad"
                             }
+                                
                         }
                     ]))
                     .expect_calls(1)

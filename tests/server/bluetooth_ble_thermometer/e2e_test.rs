@@ -26,19 +26,7 @@ async fn test_thermometer_service_startup() -> E2EResult<()> {
                             "base_stack": "BLUETOOTH_BLE_THERMOMETER",
                             "instruction": "Create thermometer service at 36.6°C",
                             "startup_params": {
-                                "device_name": "NetGet-Thermometer",
-                                "services": [
-                                    {
-                                        "uuid": "00001809-0000-1000-8000-00805f9b34fb",
-                                        "characteristics": [
-                                            {
-                                                "uuid": "00002a1c-0000-1000-8000-00805f9b34fb",
-                                                "properties": ["read", "indicate"],
-                                                "value": "00E6000001FF"
-                                            }
-                                        ]
-                                    }
-                                ]
+                                "device_name": "NetGet-Thermometer"
                             }
                         }
                     ]))

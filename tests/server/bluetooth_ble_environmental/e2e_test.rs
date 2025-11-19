@@ -23,20 +23,9 @@ async fn test_environmental_service_startup() -> E2EResult<()> {
                             "base_stack": "BLUETOOTH_BLE_ENVIRONMENTAL",
                             "instruction": "Create environmental service",
                             "startup_params": {
-                                "device_name": "NetGet-Environment",
-                                "services": [
-                                    {
-                                        "uuid": "0000181a-0000-1000-8000-00805f9b34fb",
-                                        "characteristics": [
-                                            {
-                                                "uuid": "00002a6e-0000-1000-8000-00805f9b34fb",
-                                                "properties": ["read"],
-                                                "value": "DC050000"
-                                            }
-                                        ]
-                                    }
-                                ]
+                                "device_name": "NetGet-Environment"
                             }
+                                
                         }
                     ]))
                     .expect_calls(1)

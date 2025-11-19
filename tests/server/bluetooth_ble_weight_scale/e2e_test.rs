@@ -24,20 +24,9 @@ async fn test_weight_scale_service_startup() -> E2EResult<()> {
                             "base_stack": "BLUETOOTH_BLE_WEIGHT_SCALE",
                             "instruction": "Create weight scale service",
                             "startup_params": {
-                                "device_name": "NetGet-WeightScale",
-                                "services": [
-                                    {
-                                        "uuid": "0000181d-0000-1000-8000-00805f9b34fb",
-                                        "characteristics": [
-                                            {
-                                                "uuid": "00002a9d-0000-1000-8000-00805f9b34fb",
-                                                "properties": ["indicate"],
-                                                "value": "00F301"
-                                            }
-                                        ]
-                                    }
-                                ]
+                                "device_name": "NetGet-WeightScale"
                             }
+                                
                         }
                     ]))
                     .expect_calls(1)

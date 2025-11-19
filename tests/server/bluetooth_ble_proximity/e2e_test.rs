@@ -23,20 +23,9 @@ async fn test_proximity_service_startup() -> E2EResult<()> {
                             "base_stack": "BLUETOOTH_BLE_PROXIMITY",
                             "instruction": "Create proximity service",
                             "startup_params": {
-                                "device_name": "NetGet-Proximity",
-                                "services": [
-                                    {
-                                        "uuid": "00001802-0000-1000-8000-00805f9b34fb",
-                                        "characteristics": [
-                                            {
-                                                "uuid": "00002a06-0000-1000-8000-00805f9b34fb",
-                                                "properties": ["write"],
-                                                "value": "00"
-                                            }
-                                        ]
-                                    }
-                                ]
+                                "device_name": "NetGet-Proximity"
                             }
+                                
                         }
                     ]))
                     .expect_calls(1)

@@ -23,19 +23,7 @@ async fn test_cycling_service_startup() -> E2EResult<()> {
                             "base_stack": "BLUETOOTH_BLE_CYCLING",
                             "instruction": "Create cycling service",
                             "startup_params": {
-                                "device_name": "NetGet-Cycling",
-                                "services": [
-                                    {
-                                        "uuid": "00001816-0000-1000-8000-00805f9b34fb",
-                                        "characteristics": [
-                                            {
-                                                "uuid": "00002a5b-0000-1000-8000-00805f9b34fb",
-                                                "properties": ["notify"],
-                                                "value": "00"
-                                            }
-                                        ]
-                                    }
-                                ]
+                                "device_name": "NetGet-Cycling"
                             }
                         }
                     ]))

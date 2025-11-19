@@ -23,20 +23,9 @@ async fn test_running_service_startup() -> E2EResult<()> {
                             "base_stack": "BLUETOOTH_BLE_RUNNING",
                             "instruction": "Create running service",
                             "startup_params": {
-                                "device_name": "NetGet-Running",
-                                "services": [
-                                    {
-                                        "uuid": "00001814-0000-1000-8000-00805f9b34fb",
-                                        "characteristics": [
-                                            {
-                                                "uuid": "00002a53-0000-1000-8000-00805f9b34fb",
-                                                "properties": ["notify"],
-                                                "value": "00"
-                                            }
-                                        ]
-                                    }
-                                ]
+                                "device_name": "NetGet-Running"
                             }
+                                
                         }
                     ]))
                     .expect_calls(1)

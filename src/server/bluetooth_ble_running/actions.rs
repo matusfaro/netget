@@ -35,7 +35,15 @@ impl BluetoothBleRunningProtocol {
 
 impl Protocol for BluetoothBleRunningProtocol {
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-        vec![]
+        vec![
+            ParameterDefinition {
+                name: "device_name".to_string(),
+                type_hint: "string".to_string(),
+                description: "Running sensor device name for advertising (default: NetGet-Running)".to_string(),
+                required: false,
+                example: json!("NetGet-Running"),
+            },
+        ]
     }
     fn get_async_actions(&self, _: &AppState) -> Vec<ActionDefinition> {
         vec![

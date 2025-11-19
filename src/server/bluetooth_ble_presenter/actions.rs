@@ -16,7 +16,15 @@ impl BluetoothBlePresenterProtocol {
 
 impl Protocol for BluetoothBlePresenterProtocol {
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-        vec![]
+        vec![
+            ParameterDefinition {
+                name: "device_name".to_string(),
+                type_hint: "string".to_string(),
+                description: "Presenter remote device name for advertising (default: NetGet-Presenter)".to_string(),
+                required: false,
+                example: json!("NetGet-Presenter"),
+            },
+        ]
     }
     fn get_async_actions(&self, _: &AppState) -> Vec<ActionDefinition> {
         vec![]
