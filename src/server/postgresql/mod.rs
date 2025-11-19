@@ -11,15 +11,16 @@ use crate::{console_debug, console_error};
 use actions::{PostgresqlProtocol, POSTGRESQL_QUERY_EVENT};
 use anyhow::Result;
 use pgwire::api::auth::noop::NoopStartupHandler;
-use pgwire::api::copy::NoopCopyHandler;
+use pgwire::api::auth::{DefaultServerParameterProvider, StartupHandler};
 use pgwire::api::portal::Portal;
 use pgwire::api::query::{ExtendedQueryHandler, SimpleQueryHandler};
 use pgwire::api::results::{
     DataRowEncoder, DescribePortalResponse, DescribeStatementResponse, FieldFormat, FieldInfo,
     QueryResponse, Response, Tag,
 };
-use pgwire::api::stmt::StoredStatement;
-use pgwire::api::{ClientInfo, PgWireHandlerFactory, Type};
+use pgwire::types::format::FormatOptions;
+use pgwire::api::stmt::{NoopQueryParser, StoredStatement};
+use pgwire::api::{ClientInfo, PgWireServerHandlers, Type};
 use pgwire::error::{ErrorInfo, PgWireError, PgWireResult};
 use pgwire::tokio::process_socket;
 use std::net::SocketAddr;
@@ -144,6 +145,14 @@ impl PostgresqlServer {
     }
 }
 
+/// No-auth startup handler for PostgreSQL
+struct PostgresqlNoopHandler;
+
+// Implement NoopStartupHandler trait
+// StartupHandler is automatically implemented for types implementing NoopStartupHandler
+#[async_trait::async_trait]
+impl NoopStartupHandler for PostgresqlNoopHandler {}
+
 /// Factory for creating PostgreSQL handlers
 struct PostgresqlHandlerFactory {
     connection_id: ConnectionId,
@@ -154,13 +163,8 @@ struct PostgresqlHandlerFactory {
     remote_addr: SocketAddr,
 }
 
-impl PgWireHandlerFactory for PostgresqlHandlerFactory {
-    type StartupHandler = NoopStartupHandler;
-    type SimpleQueryHandler = PostgresqlHandler;
-    type ExtendedQueryHandler = PostgresqlHandler;
-    type CopyHandler = NoopCopyHandler;
-
-    fn simple_query_handler(&self) -> Arc<Self::SimpleQueryHandler> {
+impl PgWireServerHandlers for PostgresqlHandlerFactory {
+    fn simple_query_handler(&self) -> Arc<impl SimpleQueryHandler> {
         Arc::new(PostgresqlHandler {
             connection_id: self.connection_id,
             llm_client: self.llm_client.clone(),
@@ -176,8 +180,7 @@ impl PgWireHandlerFactory for PostgresqlHandlerFactory {
         })
     }
 
-    fn extended_query_handler(&self) -> Arc<Self::ExtendedQueryHandler> {
-        // Reuse the same handler for extended queries
+    fn extended_query_handler(&self) -> Arc<impl ExtendedQueryHandler> {
         Arc::new(PostgresqlHandler {
             connection_id: self.connection_id,
             llm_client: self.llm_client.clone(),
@@ -193,12 +196,8 @@ impl PgWireHandlerFactory for PostgresqlHandlerFactory {
         })
     }
 
-    fn startup_handler(&self) -> Arc<Self::StartupHandler> {
-        Arc::new(NoopStartupHandler)
-    }
-
-    fn copy_handler(&self) -> Arc<Self::CopyHandler> {
-        Arc::new(NoopCopyHandler)
+    fn startup_handler(&self) -> Arc<impl StartupHandler> {
+        Arc::new(PostgresqlNoopHandler)
     }
 }
 
@@ -218,11 +217,11 @@ pub struct PostgresqlHandler {
 
 #[async_trait::async_trait]
 impl SimpleQueryHandler for PostgresqlHandler {
-    async fn do_query<'a, C>(
+    async fn do_query<C>(
         &self,
         _client: &mut C,
-        query: &'a str,
-    ) -> PgWireResult<Vec<Response<'a>>>
+        query: &str,
+    ) -> PgWireResult<Vec<Response>>
     where
         C: ClientInfo + Unpin + Send + Sync,
     {
@@ -319,55 +318,62 @@ impl SimpleQueryHandler for PostgresqlHandler {
 
                                     // Create data rows as a stream
                                     let mut data_rows = Vec::new();
-                                    for row_data in &rows {
+                                    debug!("Encoding {} rows", rows.len());
+                                    for (row_idx, row_data) in rows.iter().enumerate() {
                                         if let Some(row_values) = row_data.as_array() {
+                                            debug!("  Row {}: {} values", row_idx, row_values.len());
                                             let mut encoder =
                                                 DataRowEncoder::new(Arc::clone(&field_infos_arc));
 
                                             for (idx, value) in row_values.iter().enumerate() {
                                                 if idx < field_infos_arc.len() {
                                                     let field_type = field_infos_arc[idx].datatype();
+                                                    debug!("    Encoding field {}: type={:?}, value={:?}", idx, field_type, value);
 
                                                     // Encode based on the PostgreSQL type
                                                     match field_type {
                                                         &Type::INT2 => {
                                                             let val = value.as_i64().unwrap_or(0) as i16;
-                                                            encoder.encode_field_with_type_and_format(&val, &Type::INT2, FieldFormat::Text)?;
+                                                            encoder.encode_field_with_type_and_format(&val, &Type::INT2, FieldFormat::Text, &FormatOptions::default())?;
                                                         },
                                                         &Type::INT4 => {
                                                             let val = value.as_i64().unwrap_or(0) as i32;
-                                                            encoder.encode_field_with_type_and_format(&val, &Type::INT4, FieldFormat::Text)?;
+                                                            encoder.encode_field_with_type_and_format(&val, &Type::INT4, FieldFormat::Text, &FormatOptions::default())?;
                                                         },
                                                         &Type::INT8 => {
                                                             let val = value.as_i64().unwrap_or(0);
-                                                            encoder.encode_field_with_type_and_format(&val, &Type::INT8, FieldFormat::Text)?;
+                                                            encoder.encode_field_with_type_and_format(&val, &Type::INT8, FieldFormat::Text, &FormatOptions::default())?;
                                                         },
                                                         &Type::FLOAT4 => {
                                                             let val = value.as_f64().unwrap_or(0.0) as f32;
-                                                            encoder.encode_field_with_type_and_format(&val, &Type::FLOAT4, FieldFormat::Text)?;
+                                                            encoder.encode_field_with_type_and_format(&val, &Type::FLOAT4, FieldFormat::Text, &FormatOptions::default())?;
                                                         },
                                                         &Type::FLOAT8 => {
                                                             let val = value.as_f64().unwrap_or(0.0);
-                                                            encoder.encode_field_with_type_and_format(&val, &Type::FLOAT8, FieldFormat::Text)?;
+                                                            encoder.encode_field_with_type_and_format(&val, &Type::FLOAT8, FieldFormat::Text, &FormatOptions::default())?;
                                                         },
                                                         &Type::BOOL => {
                                                             let val = value.as_bool().unwrap_or(false);
-                                                            encoder.encode_field_with_type_and_format(&val, &Type::BOOL, FieldFormat::Text)?;
+                                                            encoder.encode_field_with_type_and_format(&val, &Type::BOOL, FieldFormat::Text, &FormatOptions::default())?;
                                                         },
                                                         _ => {
                                                             // For VARCHAR, TEXT, and other string types
                                                             let value_str = json_value_to_string(value);
-                                                            encoder.encode_field_with_type_and_format(&value_str.as_str(), &field_type, FieldFormat::Text)?;
+                                                            encoder.encode_field_with_type_and_format(&value_str.as_str(), &field_type, FieldFormat::Text, &FormatOptions::default())?;
                                                         }
                                                     }
                                                 }
                                             }
-                                            data_rows.push(encoder.finish());
+                                            let encoded_row = encoder.finish();
+                                            debug!("  Row {} encoded successfully", row_idx);
+                                            data_rows.push(encoded_row);
                                         }
                                     }
 
-                                    // Convert Vec to Stream
+                                    debug!("Total {} data rows encoded, creating stream", data_rows.len());
+                                    // Convert Vec<PgWireResult<DataRow>> to Stream
                                     let row_stream = futures::stream::iter(data_rows);
+                                    debug!("Creating QueryResponse with {} field infos", field_infos_arc.len());
                                     return Ok(vec![Response::Query(QueryResponse::new(
                                         field_infos_arc,
                                         row_stream,
@@ -442,12 +448,12 @@ impl ExtendedQueryHandler for PostgresqlHandler {
         Arc::new(PostgresqlQueryParser)
     }
 
-    async fn do_query<'a, 'b: 'a, C>(
-        &'b self,
+    async fn do_query<C>(
+        &self,
         _client: &mut C,
-        portal: &'a Portal<Self::Statement>,
+        portal: &Portal<Self::Statement>,
         _max_rows: usize,
-    ) -> PgWireResult<Response<'a>>
+    ) -> PgWireResult<Response>
     where
         C: ClientInfo + Unpin + Send + Sync,
     {
@@ -573,55 +579,62 @@ impl ExtendedQueryHandler for PostgresqlHandler {
 
                                     // Create data rows as a stream
                                     let mut data_rows = Vec::new();
-                                    for row_data in &rows {
+                                    debug!("Encoding {} rows", rows.len());
+                                    for (row_idx, row_data) in rows.iter().enumerate() {
                                         if let Some(row_values) = row_data.as_array() {
+                                            debug!("  Row {}: {} values", row_idx, row_values.len());
                                             let mut encoder =
                                                 DataRowEncoder::new(Arc::clone(&field_infos_arc));
 
                                             for (idx, value) in row_values.iter().enumerate() {
                                                 if idx < field_infos_arc.len() {
                                                     let field_type = field_infos_arc[idx].datatype();
+                                                    debug!("    Encoding field {}: type={:?}, value={:?}", idx, field_type, value);
 
                                                     // Encode based on the PostgreSQL type
                                                     match field_type {
                                                         &Type::INT2 => {
                                                             let val = value.as_i64().unwrap_or(0) as i16;
-                                                            encoder.encode_field_with_type_and_format(&val, &Type::INT2, FieldFormat::Text)?;
+                                                            encoder.encode_field_with_type_and_format(&val, &Type::INT2, FieldFormat::Text, &FormatOptions::default())?;
                                                         },
                                                         &Type::INT4 => {
                                                             let val = value.as_i64().unwrap_or(0) as i32;
-                                                            encoder.encode_field_with_type_and_format(&val, &Type::INT4, FieldFormat::Text)?;
+                                                            encoder.encode_field_with_type_and_format(&val, &Type::INT4, FieldFormat::Text, &FormatOptions::default())?;
                                                         },
                                                         &Type::INT8 => {
                                                             let val = value.as_i64().unwrap_or(0);
-                                                            encoder.encode_field_with_type_and_format(&val, &Type::INT8, FieldFormat::Text)?;
+                                                            encoder.encode_field_with_type_and_format(&val, &Type::INT8, FieldFormat::Text, &FormatOptions::default())?;
                                                         },
                                                         &Type::FLOAT4 => {
                                                             let val = value.as_f64().unwrap_or(0.0) as f32;
-                                                            encoder.encode_field_with_type_and_format(&val, &Type::FLOAT4, FieldFormat::Text)?;
+                                                            encoder.encode_field_with_type_and_format(&val, &Type::FLOAT4, FieldFormat::Text, &FormatOptions::default())?;
                                                         },
                                                         &Type::FLOAT8 => {
                                                             let val = value.as_f64().unwrap_or(0.0);
-                                                            encoder.encode_field_with_type_and_format(&val, &Type::FLOAT8, FieldFormat::Text)?;
+                                                            encoder.encode_field_with_type_and_format(&val, &Type::FLOAT8, FieldFormat::Text, &FormatOptions::default())?;
                                                         },
                                                         &Type::BOOL => {
                                                             let val = value.as_bool().unwrap_or(false);
-                                                            encoder.encode_field_with_type_and_format(&val, &Type::BOOL, FieldFormat::Text)?;
+                                                            encoder.encode_field_with_type_and_format(&val, &Type::BOOL, FieldFormat::Text, &FormatOptions::default())?;
                                                         },
                                                         _ => {
                                                             // For VARCHAR, TEXT, and other string types
                                                             let value_str = json_value_to_string(value);
-                                                            encoder.encode_field_with_type_and_format(&value_str.as_str(), &field_type, FieldFormat::Text)?;
+                                                            encoder.encode_field_with_type_and_format(&value_str.as_str(), &field_type, FieldFormat::Text, &FormatOptions::default())?;
                                                         }
                                                     }
                                                 }
                                             }
-                                            data_rows.push(encoder.finish());
+                                            let encoded_row = encoder.finish();
+                                            debug!("  Row {} encoded successfully", row_idx);
+                                            data_rows.push(encoded_row);
                                         }
                                     }
 
+                                    debug!("Total {} data rows encoded, creating stream", data_rows.len());
                                     // Convert Vec to Stream
                                     let row_stream = futures::stream::iter(data_rows);
+                                    debug!("Creating QueryResponse with {} field infos", field_infos_arc.len());
                                     return Ok(Response::Query(QueryResponse::new(
                                         field_infos_arc,
                                         row_stream,
@@ -736,12 +749,22 @@ impl ExtendedQueryHandler for PostgresqlHandler {
     async fn do_describe_portal<C>(
         &self,
         _client: &mut C,
-        _portal: &Portal<Self::Statement>,
+        portal: &Portal<Self::Statement>,
     ) -> PgWireResult<DescribePortalResponse>
     where
         C: ClientInfo + Unpin + Send + Sync,
     {
-        Ok(DescribePortalResponse::new(vec![]))
+        // Extract SQL from portal
+        let sql = &portal.statement.statement;
+
+        debug!("PostgreSQL DESCRIBE (extended): {}", sql);
+
+        // Parse SQL to infer column schema WITHOUT calling LLM
+        // This prevents duplicate LLM calls (Describe + Execute)
+        let field_infos = infer_schema_from_sql(sql);
+
+        debug!("Describe portal returning {} field infos (inferred from SQL)", field_infos.len());
+        Ok(DescribePortalResponse::new(field_infos))
     }
 }
 
@@ -752,9 +775,57 @@ pub struct PostgresqlQueryParser;
 impl pgwire::api::stmt::QueryParser for PostgresqlQueryParser {
     type Statement = String;
 
-    async fn parse_sql(&self, sql: &str, _types: &[Type]) -> PgWireResult<Self::Statement> {
+    async fn parse_sql<C>(
+        &self,
+        _client: &C,
+        sql: &str,
+        _types: &[Type],
+    ) -> PgWireResult<Self::Statement>
+    where
+        C: ClientInfo + Unpin + Send + Sync,
+    {
         Ok(sql.to_string())
     }
+}
+
+/// Infer column schema from SQL query WITHOUT executing it
+/// This is a simple heuristic-based approach for common queries
+fn infer_schema_from_sql(sql: &str) -> Vec<FieldInfo> {
+    let sql_lower = sql.trim().to_lowercase();
+
+    // SELECT 1 -> single integer column
+    if sql_lower.contains("select 1") || sql_lower == "select 1;" {
+        return vec![FieldInfo::new(
+            "?column?".to_string(),
+            None,
+            None,
+            Type::INT4,
+            FieldFormat::Text,
+        )];
+    }
+
+    // SELECT version() -> single text column
+    if sql_lower.contains("version(") {
+        return vec![FieldInfo::new(
+            "version".to_string(),
+            None,
+            None,
+            Type::VARCHAR,
+            FieldFormat::Text,
+        )];
+    }
+
+    // CREATE TABLE, INSERT, UPDATE, DELETE -> no columns
+    if sql_lower.starts_with("create ")
+        || sql_lower.starts_with("insert ")
+        || sql_lower.starts_with("update ")
+        || sql_lower.starts_with("delete ")
+    {
+        return vec![];
+    }
+
+    // Default: return empty (will send NoData)
+    vec![]
 }
 
 /// Convert JSON value to string representation
