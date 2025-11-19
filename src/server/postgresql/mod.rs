@@ -11,7 +11,7 @@ use crate::{console_debug, console_error};
 use actions::{PostgresqlProtocol, POSTGRESQL_QUERY_EVENT};
 use anyhow::Result;
 use pgwire::api::auth::noop::NoopStartupHandler;
-use pgwire::api::auth::{DefaultServerParameterProvider, StartupHandler};
+use pgwire::api::auth::StartupHandler;
 use pgwire::api::portal::Portal;
 use pgwire::api::query::{ExtendedQueryHandler, SimpleQueryHandler};
 use pgwire::api::results::{
@@ -19,7 +19,7 @@ use pgwire::api::results::{
     QueryResponse, Response, Tag,
 };
 use pgwire::types::format::FormatOptions;
-use pgwire::api::stmt::{NoopQueryParser, StoredStatement};
+use pgwire::api::stmt::StoredStatement;
 use pgwire::api::{ClientInfo, PgWireServerHandlers, Type};
 use pgwire::error::{ErrorInfo, PgWireError, PgWireResult};
 use pgwire::tokio::process_socket;

@@ -961,7 +961,7 @@ pub fn get_all_common_actions(
     is_open_server_enabled: bool,
     is_open_client_enabled: bool,
 ) -> Vec<ActionDefinition> {
-    let mut actions = vec![
+    let actions = vec![
         // === Server Management ===
         open_server_action(selected_mode, env, is_open_server_enabled),
         close_server_action(),
