@@ -44,7 +44,18 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(2)
                     .and()
-                    // Mock 3: Server startup (LAST - fallback for initial user command)
+                    // Mock 3: System queries during connection (system.peers, system.local, system_schema.types)
+                    .on_event("cassandra_query")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_result_rows",
+                            "columns": [],
+                            "rows": []
+                        }
+                    ]))
+                    .expect_calls(3)
+                    .and()
+                    // Mock 4: Server startup (LAST - fallback for initial user command)
                     .on_instruction_containing("Cassandra")
                     .and_instruction_containing("CQL")
                     .respond_with_actions(serde_json::json!([
@@ -144,7 +155,7 @@ mod e2e_cassandra {
                             ]
                         }
                     ]))
-                    .expect_calls(3)
+                    .expect_calls(4)
                     .and()
                     // Mock 4: Server startup (LAST - fallback for initial user command)
                     .on_instruction_containing("Cassandra")
@@ -257,7 +268,7 @@ mod e2e_cassandra {
                             "message": "Table does not exist"
                         }
                     ]))
-                    .expect_calls(3)
+                    .expect_calls(4)
                     .and()
                     // Mock 4: Server startup (LAST - fallback for initial user command)
                     .on_instruction_containing("Cassandra")
@@ -479,7 +490,7 @@ mod e2e_cassandra {
                             ]
                         }
                     ]))
-                    .expect_calls(10)
+                    .expect_calls(12)
                     .and()
                     // Mock 4: Server startup (LAST - fallback for initial user command)
                     .on_instruction_containing("Cassandra")
@@ -582,7 +593,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(2)
                     .and()
-                    // Mock 3: PREPARE received (Scylla prepares on each connection)
+                    // Mock 3: PREPARE received (Scylla prepares once, not per connection)
                     .on_event("cassandra_prepare")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -596,7 +607,7 @@ mod e2e_cassandra {
                             ]
                         }
                     ]))
-                    .expect_calls(2)
+                    .expect_calls(1)
                     .and()
                     // Mock 4: EXECUTE received
                     .on_event("cassandra_execute")
@@ -730,20 +741,23 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(2)
                     .and()
-                    // Mock 3: PREPARE calls (catch-all for all prepare statements × 2 connections)
+                    // Mock 3: PREPARE calls (2 prepare statements, each called once)
                     .on_event("cassandra_prepare")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "cassandra_prepared",
+                            "params": [
+                                {"type": "int"}
+                            ],
                             "columns": [
                                 {"name": "id", "type": "int"},
                                 {"name": "name", "type": "varchar"}
                             ]
                         }
                     ]))
-                    .expect_calls(4)
+                    .expect_calls(2)
                     .and()
-                    // Mock 4: EXECUTE calls (3 total)
+                    // Mock 4: EXECUTE calls (3 total: stmt1 with param 1, stmt2, stmt1 with param 2)
                     .on_event("cassandra_execute")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -900,7 +914,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(2)
                     .and()
-                    // Mock 3: PREPARE received (on 2 connections)
+                    // Mock 3: PREPARE received (Scylla prepares once, not per connection)
                     .on_event("cassandra_prepare")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -910,9 +924,9 @@ mod e2e_cassandra {
                             ]
                         }
                     ]))
-                    .expect_calls(2)
+                    .expect_calls(1)
                     .and()
-                    // Mock 4: EXECUTE with wrong param count (error)
+                    // Mock 4: EXECUTE with wrong param count (validation happens before LLM call)
                     .on_event("cassandra_execute")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -921,7 +935,7 @@ mod e2e_cassandra {
                             "message": "Parameter count mismatch"
                         }
                     ]))
-                    .expect_calls(1)
+                    .expect_calls(0)
                     .and()
                     // Mock 5: Catch-all for system queries
                     .on_event("cassandra_query")
