@@ -261,7 +261,7 @@ impl StickyFooter {
         servers: &[ServerDisplayInfo],
         clients: &[ClientDisplayInfo],
         connections: &[ConnectionDisplayInfo],
-        tasks: &[crate::ui::app::TaskDisplayInfo],
+        _tasks: &[crate::ui::app::TaskDisplayInfo],
         expand_all: bool,
         conversations: &[ConversationInfo],
     ) -> u16 {
