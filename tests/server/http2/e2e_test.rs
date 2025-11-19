@@ -70,17 +70,10 @@ Set Content-Type header appropriately (text/plain for /, application/json for /a
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 4: GET / request (use custom exact match to avoid catching other paths)
-                .on_custom(|ctx| {
-                    // CRITICAL: Check event_type is present (network event, not user input)
-                    if ctx.event_type.is_none() {
-                        return false;
-                    }
-                    // Then check it's the right event with exact path match
-                    ctx.event_type.as_deref() == Some("http2_request") &&
-                    ctx.event_data.get("uri").and_then(|v| v.as_str()) == Some("/") &&
-                    ctx.event_data.get("method").and_then(|v| v.as_str()) == Some("GET")
-                })
+                // Mock 4: GET / request
+                .on_event("http2_request")
+                .and_event_data_contains("uri", "/")
+                .and_event_data_contains("method", "GET")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_http2_response",
