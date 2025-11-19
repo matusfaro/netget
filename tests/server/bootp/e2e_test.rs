@@ -327,7 +327,7 @@ Use server IP 192.168.1.1 for all responses.
             mock
                 // Mock 1: BOOTP request received (bootp_request event) for specific MAC - MUST COME FIRST for specificity
                 .on_event("bootp_request")
-                .and_event_data_contains("client_mac", "00:11:22:33:44:55")
+                .and_event_data_contains("client_mac", "001122334455")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_bootp_reply",
