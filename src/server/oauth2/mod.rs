@@ -313,12 +313,29 @@ async fn handle_authorize_request(
     )
     .await
     {
-        Ok(_) => {
-            // LLM should have returned oauth2_authorize_response action
-            // Extract response from action results
-            // For now, return a default authorization code response
-            let code = "AUTH_CODE_123"; // LLM should generate this
-            let state = params.get("state").cloned().unwrap_or_default();
+        Ok(execution_result) => {
+            // Extract authorize response from LLM action results (oauth2_authorize_response action)
+            // The action should contain code and state fields
+            let mut code = "AUTH_CODE_123".to_string(); // Default
+            let mut state_from_llm: Option<String> = None;
+
+            for result in execution_result.protocol_results {
+                if let crate::llm::ActionResult::Output(bytes) = result {
+                    if let Ok(json_str) = String::from_utf8(bytes) {
+                        if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                            // Extract code and state from LLM response
+                            if let Some(code_value) = json_value.get("code").and_then(|v| v.as_str()) {
+                                code = code_value.to_string();
+                            }
+                            if let Some(state_value) = json_value.get("state").and_then(|v| v.as_str()) {
+                                state_from_llm = Some(state_value.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+
+            let state = state_from_llm.or_else(|| params.get("state").cloned()).unwrap_or_default();
             let redirect_uri = params
                 .get("redirect_uri")
                 .cloned()
@@ -419,16 +436,19 @@ async fn handle_token_request(
     )
     .await
     {
-        Ok(_) => {
-            // LLM should have returned oauth2_token_response action
-            // For now, return a default token response
-            info!("OAuth2 token issued");
-            Ok(Response::builder()
-                .status(StatusCode::OK)
-                .header("Content-Type", "application/json")
-                .header("Cache-Control", "no-store")
-                .header("Pragma", "no-cache")
-                .body(Full::new(Bytes::from(
+        Ok(execution_result) => {
+            // Extract token response from LLM action results (oauth2_token_response action)
+            let response_json = execution_result
+                .protocol_results
+                .into_iter()
+                .find_map(|result| match result {
+                    crate::llm::ActionResult::Output(bytes) => {
+                        String::from_utf8(bytes).ok()
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| {
+                    // Default response if LLM didn't provide one
                     json!({
                         "access_token": "ACCESS_TOKEN_123",
                         "token_type": "Bearer",
@@ -436,8 +456,16 @@ async fn handle_token_request(
                         "refresh_token": "REFRESH_TOKEN_123",
                         "scope": params.get("scope").cloned().unwrap_or("".to_string())
                     })
-                    .to_string(),
-                )))
+                    .to_string()
+                });
+
+            info!("OAuth2 token issued");
+            Ok(Response::builder()
+                .status(StatusCode::OK)
+                .header("Content-Type", "application/json")
+                .header("Cache-Control", "no-store")
+                .header("Pragma", "no-cache")
+                .body(Full::new(Bytes::from(response_json)))
                 .unwrap())
         }
         Err(e) => {
@@ -509,14 +537,19 @@ async fn handle_introspect_request(
     )
     .await
     {
-        Ok(_) => {
-            // LLM should have returned oauth2_introspect_response action
-            // For now, return a default active response
-            info!("OAuth2 token introspected");
-            Ok(Response::builder()
-                .status(StatusCode::OK)
-                .header("Content-Type", "application/json")
-                .body(Full::new(Bytes::from(
+        Ok(execution_result) => {
+            // Extract response from LLM action results (oauth2_introspect_response action)
+            let response_json = execution_result
+                .protocol_results
+                .into_iter()
+                .find_map(|result| match result {
+                    crate::llm::ActionResult::Output(bytes) => {
+                        String::from_utf8(bytes).ok()
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| {
+                    // Default response if LLM didn't provide one
                     json!({
                         "active": true,
                         "scope": "read write",
@@ -524,8 +557,14 @@ async fn handle_introspect_request(
                         "token_type": "Bearer",
                         "exp": 1234567890,
                     })
-                    .to_string(),
-                )))
+                    .to_string()
+                });
+
+            info!("OAuth2 token introspected");
+            Ok(Response::builder()
+                .status(StatusCode::OK)
+                .header("Content-Type", "application/json")
+                .body(Full::new(Bytes::from(response_json)))
                 .unwrap())
         }
         Err(_) => Ok(Response::builder()

@@ -76,9 +76,14 @@ impl DotServer {
             .await
             .context("Failed to bind DoT TCP listener")?;
 
+        // Get the actual bound address (important for port 0 dynamic allocation)
+        let local_addr = listener
+            .local_addr()
+            .context("Failed to get DoT listener local address")?;
+
         let acceptor = TlsAcceptor::from(tls_config);
 
-        console_info!(status_tx, "DoT server listening on {}", self.bind_addr);
+        console_info!(status_tx, "DoT server listening on {}", local_addr);
 
         loop {
             match listener.accept().await {
