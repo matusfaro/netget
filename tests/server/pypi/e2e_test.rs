@@ -64,7 +64,8 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
     .with_mock(|mock| {
         mock
             // Mock 1: Server startup
-            .on_instruction_containing("PyPI")
+            .on_instruction_containing("listen on port")
+            .and_instruction_containing("pypi")
             .respond_with_actions(serde_json::json!([
                 {
                     "type": "open_server",
@@ -75,16 +76,28 @@ Use scripting mode to handle all requests without LLM calls after initial setup.
             ]))
             .expect_calls(1)
             .and()
-            // Mock 2-6: PyPI requests
+            // Mock 2-6: PyPI requests - dynamic response based on path
             .on_event("pypi_request")
-            .respond_with_actions(serde_json::json!([
-                {
+            .respond_with_actions_from_event(|event_data| {
+                let path = event_data["path"].as_str().unwrap_or("");
+                let body = if path.contains("hello-world") {
+                    // Package page for hello-world
+                    r#"<!DOCTYPE html><html><body><a href="../../packages/h/hello-world/hello_world-1.0.0-py3-none-any.whl#sha256=abc123def456">hello_world-1.0.0-py3-none-any.whl</a></body></html>"#
+                } else if path.contains("example-pkg") {
+                    // Package page for example-pkg
+                    r#"<!DOCTYPE html><html><body><a href="../../packages/e/example-pkg/example_pkg-2.1.0-py3-none-any.whl#sha256=789xyz">example_pkg-2.1.0-py3-none-any.whl</a></body></html>"#
+                } else {
+                    // Package index
+                    r#"<!DOCTYPE html><html><body><a href="hello-world/">hello-world</a><br><a href="example-pkg/">example-pkg</a></body></html>"#
+                };
+
+                serde_json::json!([{
                     "type": "send_pypi_response",
                     "status": 200,
                     "headers": {"Content-Type": "text/html"},
-                    "body": "<!DOCTYPE html><html><body><a href=\"hello-world/\">hello-world</a><br><a href=\"example-pkg/\">example-pkg</a></body></html>"
-                }
-            ]))
+                    "body": body
+                }])
+            })
             .expect_at_least(1)
             .expect_at_most(10)
             .and()
@@ -318,7 +331,8 @@ Use scripting mode for zero LLM calls after setup.
     .with_mock(|mock| {
         mock
             // Mock 1: Server startup
-            .on_instruction_containing("PyPI")
+            .on_instruction_containing("listen on port")
+            .and_instruction_containing("pypi")
             .respond_with_actions(serde_json::json!([
                 {
                     "type": "open_server",

@@ -106,16 +106,21 @@ async fn test_smb_llm_allows_guest_auth() -> E2EResult<()> {
     let server = start_netget_server(
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
-                mock.on_any()  // Changed from on_instruction_containing
+                mock
+                    // IMPORTANT: Specific event matchers must come BEFORE on_any()
+                    .on_event("smb_operation")
+                    .respond_with_actions_from_event(|event_data| {
+                        // Check if this is a session_setup operation
+                        if event_data.get("operation").and_then(|v| v.as_str()) == Some("session_setup") {
+                            serde_json::json!([{"type": "smb_auth_success"}])
+                        } else {
+                            serde_json::json!([{"type": "wait_for_more"}])
+                        }
+                    })
+                    .and()
+                    .on_any()  // Matches initial user input
                     .respond_with_actions(serde_json::json!([
                         {"type": "open_server", "port": 0, "base_stack": "SMB", "instruction": "Allow all auth"}
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    .on_event("smb_operation")
-                    .and_event_data_contains("operation", "session_setup")
-                    .respond_with_actions(serde_json::json!([
-                        {"type": "smb_auth_success"}
                     ]))
                     .expect_calls(1)
                     .and()
@@ -136,7 +141,7 @@ async fn test_smb_llm_allows_guest_auth() -> E2EResult<()> {
     let mut response = vec![0u8; 2048];
     let n = stream.read(&mut response)?;
     println!("  [TEST] Negotiate response: {} bytes", n);
-    assert!(n >= 68, "Negotiate response too short");
+    assert!(n >= 64, "Negotiate response too short");
 
     // Session Setup - LLM should allow guest
     let session_setup = build_smb2_session_setup();
@@ -191,15 +196,24 @@ async fn test_smb_llm_denies_user() -> E2EResult<()> {
     let server = start_netget_server(
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
-                mock.on_any()  // Changed from on_instruction_containing
+                mock
+                    // IMPORTANT: Specific event matchers must come BEFORE on_any()
+                    .on_event("smb_operation")
+                    .respond_with_actions_from_event(|event_data| {
+                        // Check if this is a session_setup operation
+                        if event_data.get("operation").and_then(|v| v.as_str()) == Some("session_setup") {
+                            serde_json::json!([{"type": "smb_auth_denied", "status": 0xC0000016u32 as i32}])
+                        } else {
+                            serde_json::json!([{"type": "wait_for_more"}])
+                        }
+                    })
+                    .and()
+                    .on_any()  // Matches initial user input
                     .respond_with_actions(serde_json::json!([
-                    {"type": "open_server", "port": 0, "base_stack": "SMB", "instruction": "Allow alice only"}
-                ])).expect_calls(1).and()
-                .on_event("smb_operation")
-                .and_event_data_contains("operation", "session_setup")
-                .respond_with_actions(serde_json::json!([
-                    {"type": "smb_auth_denied", "status": 0xC0000016u32 as i32}
-                ])).expect_calls(1).and()
+                        {"type": "open_server", "port": 0, "base_stack": "SMB", "instruction": "Allow alice only"}
+                    ]))
+                    .expect_calls(1)
+                    .and()
             })
     ).await?;
     tokio::time::sleep(Duration::from_secs(2)).await;

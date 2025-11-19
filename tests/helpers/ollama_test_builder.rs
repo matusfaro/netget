@@ -288,7 +288,9 @@ impl OllamaTestBuilder {
                 .unwrap_or_else(|_| "http://localhost:11434".to_string()),
         );
 
-        let response = ollama_client.chat(&prompt).await
+        let response = ollama_client
+            .generate_with_retry(&model, &prompt, "JSON array of action objects")
+            .await
             .context("Failed to call Ollama API")?;
 
         println!("LLM Response:\n{}", response);

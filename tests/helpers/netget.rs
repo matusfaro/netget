@@ -99,6 +99,8 @@ pub struct NetGetConfig {
     pub include_disabled_protocols: bool,
     /// Enable Ollama lock for concurrent test execution (default: true)
     pub ollama_lock: bool,
+    /// Maximum concurrent LLM requests (default: None, uses netget's default of 1)
+    pub llm_max_concurrent: Option<usize>,
     /// Mock LLM configuration (for testing without Ollama)
     pub mock_config: Option<MockLlmConfig>,
 }
@@ -125,6 +127,7 @@ impl NetGetConfig {
             no_scripts: false,
             include_disabled_protocols: false,
             ollama_lock: true, // Enable by default for concurrent testing
+            llm_max_concurrent: None,
             mock_config: None,
         }
     }
@@ -140,6 +143,7 @@ impl NetGetConfig {
             no_scripts: true,
             include_disabled_protocols: false,
             ollama_lock: true,
+            llm_max_concurrent: None,
             mock_config: None,
         }
     }
@@ -162,6 +166,7 @@ impl NetGetConfig {
             no_scripts: false,
             include_disabled_protocols: false,
             ollama_lock: true,
+            llm_max_concurrent: None,
             mock_config: None,
         }
     }
@@ -205,6 +210,13 @@ impl NetGetConfig {
     #[allow(dead_code)]
     pub fn with_ollama_lock(mut self, enabled: bool) -> Self {
         self.ollama_lock = enabled;
+        self
+    }
+
+    /// Set maximum concurrent LLM requests (for testing concurrent request handling)
+    #[allow(dead_code)]
+    pub fn with_llm_max_concurrent(mut self, max_concurrent: usize) -> Self {
+        self.llm_max_concurrent = Some(max_concurrent);
         self
     }
 
@@ -312,6 +324,12 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
     // Add --ollama-lock flag if enabled (default: true for concurrent testing)
     if config.ollama_lock {
         cmd.arg("--ollama-lock");
+    }
+
+    // Add --llm-max-concurrent flag if specified (for testing concurrent request handling)
+    if let Some(max_concurrent) = config.llm_max_concurrent {
+        cmd.arg("--llm-max-concurrent")
+            .arg(max_concurrent.to_string());
     }
 
     // Add --ollama-url if using mock server

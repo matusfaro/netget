@@ -35,7 +35,7 @@ async fn test_sqs_basic_queue_operations() {
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
-                .on_instruction_containing("SQS")
+                .on_instruction_containing("Listen on port")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -262,7 +262,7 @@ async fn test_sqs_message_visibility() {
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
-                .on_instruction_containing("SQS")
+                .on_instruction_containing("Listen on port")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -433,7 +433,7 @@ async fn test_sqs_queue_not_found() {
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
-                .on_instruction_containing("SQS")
+                .on_instruction_containing("Listen on port")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",

@@ -24,8 +24,8 @@ async fn test_pop3_greeting() -> E2EResult<()> {
     let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
-                // Mock: Server startup
-                .on_instruction_containing("pop3")
+                // Mock: Server startup (only match initial user prompt)
+                .on_prompt_containing("listen on port")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -106,8 +106,8 @@ async fn test_pop3_authentication() -> E2EResult<()> {
     let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
-                // Mock 1: Server startup
-                .on_instruction_containing("pop3")
+                // Mock 1: Server startup (only match initial user prompt)
+                .on_prompt_containing("listen on port")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -233,8 +233,8 @@ async fn test_pop3_stat() -> E2EResult<()> {
     let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
-                // Mock 1: Server startup
-                .on_instruction_containing("pop3")
+                // Mock 1: Server startup (only match initial user prompt)
+                .on_prompt_containing("listen on port")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -349,8 +349,8 @@ async fn test_pop3_quit() -> E2EResult<()> {
     let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
-                // Mock 1: Server startup
-                .on_instruction_containing("pop3")
+                // Mock 1: Server startup (only match initial user prompt)
+                .on_prompt_containing("listen on port")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",

@@ -304,8 +304,8 @@ async fn test_telnet_concurrent_connections() -> E2EResult<()> {
     let config = NetGetConfig::new(prompt).with_mock(|mock| {
         mock
             // Mock 1: Server startup
-            .on_instruction_containing("telnet")
-            .and_instruction_containing("concurrent clients")
+            .on_instruction_containing("listen on port")
+            .and_instruction_containing("Handle multiple concurrent")
             .respond_with_actions(serde_json::json!([
                 {
                     "type": "open_server",

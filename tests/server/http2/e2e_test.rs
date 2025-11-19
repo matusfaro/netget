@@ -347,7 +347,9 @@ For GET /data, return 200 with JSON: {"data": "test", "timestamp": "2025-01-01T0
 Set Content-Type: application/json."#;
 
     // Start the server with mocks
+    // IMPORTANT: Allow 3 concurrent LLM requests for multiplexing test
     let server_config = helpers::NetGetConfig::new(prompt.to_string())
+        .with_llm_max_concurrent(3)  // Allow 3 concurrent requests
         .with_mock(|mock| {
             mock
                 // Mock 1: Three concurrent GET /data requests (MUST come first - more specific)

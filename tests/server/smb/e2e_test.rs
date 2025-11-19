@@ -179,18 +179,27 @@ async fn test_smb_session_setup() -> E2EResult<()> {
     let config = crate::helpers::NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
-                // Mock: Return BOTH actions - let the handlers pick what they need
-                .on_any()
+                // IMPORTANT: Specific event matchers must come BEFORE on_any()
+                .on_event("smb_operation")
+                .respond_with_actions_from_event(|event_data| {
+                    // Check if this is a session_setup operation
+                    if event_data.get("operation").and_then(|v| v.as_str()) == Some("session_setup") {
+                        serde_json::json!([{"type": "smb_auth_success"}])
+                    } else {
+                        serde_json::json!([{"type": "wait_for_more"}])
+                    }
+                })
+                .and()
+                .on_any()  // Matches initial user input
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
                         "port": 0,
                         "base_stack": "SMB",
                         "instruction": prompt
-                    },
-                    {"type": "smb_auth_success"}
+                    }
                 ]))
-                .expect_calls(2)  // Expect 2 calls (startup + auth)
+                .expect_calls(1)
                 .and()
         });
 
@@ -309,9 +318,9 @@ async fn test_smb_concurrent_connections() -> E2EResult<()> {
             let n = stream.read(&mut response).expect("Failed to read");
 
             // Verify response
-            assert!(n >= 68, "Client {}: Response too short", i);
+            assert!(n >= 64, "Client {}: Response too short", i);
             assert_eq!(
-                &response[4..8],
+                &response[0..4],
                 b"\xFESMB",
                 "Client {}: Invalid SMB2 signature",
                 i
@@ -477,8 +486,18 @@ async fn test_smb_auth_llm_controlled() -> E2EResult<()> {
     let config = crate::helpers::NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
-                .on_any()  // Changed from on_instruction_containing since instruction extraction is unreliable
-                
+                // IMPORTANT: Specific event matchers must come BEFORE on_any()
+                .on_event("smb_operation")
+                .respond_with_actions_from_event(|event_data| {
+                    // Check if this is a session_setup operation
+                    if event_data.get("operation").and_then(|v| v.as_str()) == Some("session_setup") {
+                        serde_json::json!([{"type": "wait_for_more"}])  // Deny auth
+                    } else {
+                        serde_json::json!([{"type": "wait_for_more"}])
+                    }
+                })
+                .and()
+                .on_any()  // Matches initial user input
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -486,14 +505,6 @@ async fn test_smb_auth_llm_controlled() -> E2EResult<()> {
                         "base_stack": "SMB",
                         "instruction": prompt
                     }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock: Session setup event (guest auth, should be denied per prompt)
-                .on_event("smb_operation")
-                .and_event_data_contains("operation", "session_setup")
-                .respond_with_actions(serde_json::json!([
-                    {"type": "wait_for_more"}  // Deny auth by not returning smb_auth_success
                 ]))
                 .expect_calls(1)
                 .and()

@@ -455,16 +455,17 @@ impl SshAgentServer {
 
     /// Parse SSH Agent protocol message
     fn parse_message(data: &[u8]) -> Result<Option<Event>> {
-        if data.is_empty() {
+        if data.len() < 5 {
             return Ok(None);
         }
 
         // SSH Agent wire format: [uint32: length][byte: type][data...]
-        // But incoming data might not include the length prefix if already parsed by the reader
-        // For simplicity, we'll assume the data starts with the message type byte
+        // Skip the 4-byte length prefix
+        let _length = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
+        let msg_type = data[4];
+        let mut cursor = &data[5..];
 
-        let msg_type = data[0];
-        let mut cursor = &data[1..];
+        debug!("SSH Agent: parsing message type {} from {} bytes", msg_type, data.len());
 
         match msg_type {
             SSH_AGENTC_REQUEST_IDENTITIES => Ok(Some(Event::new(

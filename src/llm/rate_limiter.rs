@@ -58,8 +58,8 @@ impl Default for RateLimiterConfig {
 /// LLM rate limiter with concurrency and token-based throttling
 #[derive(Clone)]
 pub struct RateLimiter {
-    /// Concurrency control
-    semaphore: Arc<Semaphore>,
+    /// Concurrency control (wrapped in RwLock to allow semaphore replacement)
+    semaphore: Arc<RwLock<Arc<Semaphore>>>,
 
     /// Configuration (can be updated at runtime)
     config: Arc<RwLock<RateLimiterConfig>>,
@@ -102,7 +102,7 @@ impl RateLimiter {
         let max_concurrent = config.max_concurrent;
 
         Self {
-            semaphore: Arc::new(Semaphore::new(max_concurrent)),
+            semaphore: Arc::new(RwLock::new(Arc::new(Semaphore::new(max_concurrent)))),
             config: Arc::new(RwLock::new(config)),
             token_usage: Arc::new(Mutex::new(Vec::new())),
             stats: Arc::new(Mutex::new(RateLimiterStats::default())),
@@ -113,15 +113,22 @@ impl RateLimiter {
     pub async fn update_config(&self, config: RateLimiterConfig) -> Result<()> {
         let mut current_config = self.config.write().await;
 
-        // If max_concurrent changed, we need to adjust the semaphore
-        // Note: Semaphore doesn't allow dynamic resizing, so we log a warning
+        // If max_concurrent changed, recreate the semaphore
         if config.max_concurrent != current_config.max_concurrent {
-            warn!(
-                "Concurrency limit changed from {} to {} (requires restart to take full effect)",
+            info!(
+                "Concurrency limit changed from {} to {} - recreating semaphore",
                 current_config.max_concurrent,
                 config.max_concurrent
             );
-            // TODO: Consider recreating the semaphore, but this requires careful coordination
+
+            // Replace the semaphore with a new one
+            let mut semaphore = self.semaphore.write().await;
+            *semaphore = Arc::new(Semaphore::new(config.max_concurrent));
+
+            debug!(
+                "Semaphore recreated with {} permits",
+                config.max_concurrent
+            );
         }
 
         *current_config = config;
@@ -281,12 +288,14 @@ impl RateLimiter {
             RequestSource::User => {
                 // For user requests, wait for permit
                 debug!("Waiting for concurrency permit (user request)");
-                Arc::clone(&self.semaphore).acquire_owned().await
+                let semaphore = self.semaphore.read().await;
+                Arc::clone(&*semaphore).acquire_owned().await
                     .context("Failed to acquire semaphore permit")?
             }
             RequestSource::Network => {
                 // For network requests, try to acquire without waiting
-                match Arc::clone(&self.semaphore).try_acquire_owned() {
+                let semaphore = self.semaphore.read().await;
+                match Arc::clone(&*semaphore).try_acquire_owned() {
                     Ok(permit) => permit,
                     Err(_) => {
                         let mut stats = self.stats.lock().await;

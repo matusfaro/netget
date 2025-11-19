@@ -19,9 +19,8 @@ mod proxy_server_tests {
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
-                .on_instruction_containing("Listen")
+                .on_instruction_containing("Listen on port")
                 .and_instruction_containing("proxy")
-                .and_instruction_containing("Pass all")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -70,8 +69,8 @@ mod proxy_server_tests {
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
-                .on_instruction_containing("proxy")
-                .and_instruction_containing("Block all")
+                .on_instruction_containing("Listen on port")
+                .and_instruction_containing("proxy")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -118,8 +117,8 @@ mod proxy_server_tests {
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
-                .on_instruction_containing("proxy")
-                .and_instruction_containing("HTTPS")
+                .on_instruction_containing("Listen on port")
+                .and_instruction_containing("proxy")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -167,8 +166,8 @@ mod proxy_server_tests {
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
-                .on_instruction_containing("proxy")
-                .and_instruction_containing("Add header")
+                .on_instruction_containing("Listen on port")
+                .and_instruction_containing("proxy")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",

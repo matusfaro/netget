@@ -6,6 +6,7 @@
 #![cfg(feature = "git")]
 
 use super::super::super::helpers::{self, E2EResult, NetGetConfig};
+use anyhow;
 use std::process::Command;
 use std::time::Duration;
 use tempfile::TempDir;
@@ -52,7 +53,7 @@ Repository contents:
 
 When clients request references (/info/refs?service=git-upload-pack):
 1. Return refs/heads/main with SHA: 1234567890abcdef1234567890abcdef12345678
-2. Include capabilities: multi_ack, side-band-64k, ofs-delta
+2. Include capabilities: multi_ack, multi_ack_detailed, side-band-64k, ofs-delta
 
 When clients request pack file (/git-upload-pack):
 1. Generate a minimal Git pack file containing:
@@ -90,7 +91,7 @@ If you are unsure about pack format, provide minimal pack data and we will test 
                         "refs": [
                             {"name": "refs/heads/main", "sha": "1234567890abcdef1234567890abcdef12345678"}
                         ],
-                        "capabilities": ["multi_ack", "side-band-64k", "ofs-delta"]
+                        "capabilities": ["multi_ack", "multi_ack_detailed", "side-band-64k", "ofs-delta"]
                     }
                 ]))
                 .expect_calls(1)
@@ -138,6 +139,7 @@ If you are unsure about pack format, provide minimal pack data and we will test 
                 &["clone", &clone_url, &clone_path_str],
                 None,
             )
+            .map_err(|e| anyhow::anyhow!(e.to_string()))
         })
     )
     .await;
@@ -160,6 +162,7 @@ If you are unsure about pack format, provide minimal pack data and we will test 
                 Duration::from_secs(10),
                 tokio::task::spawn_blocking(move || {
                     run_git_command(&["status"], Some(&status_clone_path))
+                        .map_err(|e| anyhow::anyhow!(e.to_string()))
                 })
             )
             .await;

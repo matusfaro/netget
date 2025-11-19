@@ -53,6 +53,7 @@ use anyhow::Result;
 use serde_json::json;
 
 use helpers::ollama_test_builder::OllamaTestBuilder;
+use netget::llm::actions::Parameter;
 use netget::protocol::{Event, EventType};
 
 // ============================================================================
@@ -170,11 +171,23 @@ async fn test_close_server() -> Result<()> {
 async fn test_http_script_sum_query_params() -> Result<()> {
     // Create test event (HTTP request with query params)
     let test_event = Event::new(
-        &EventType::new("http_request", "HTTP request received")
-            .with_parameters(vec![
-                ("method".to_string(), "GET".to_string()),
-                ("path".to_string(), "/?x=5&y=3".to_string()),
-            ]),
+        Box::leak(Box::new(
+            EventType::new("http_request", "HTTP request received")
+                .with_parameters(vec![
+                    Parameter {
+                        name: "method".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "HTTP method".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "path".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Request path with query params".to_string(),
+                        required: true,
+                    },
+                ])
+        )),
         json!({
             "method": "GET",
             "path": "/?x=5&y=3",
@@ -212,10 +225,17 @@ async fn test_http_script_sum_query_params() -> Result<()> {
 async fn test_tcp_echo_script() -> Result<()> {
     // Create test event (TCP data received)
     let test_event = Event::new(
-        &EventType::new("tcp_data_received", "TCP data received")
-            .with_parameters(vec![
-                ("data_hex".to_string(), "48656c6c6f".to_string()), // "Hello"
-            ]),
+        Box::leak(Box::new(
+            EventType::new("tcp_data_received", "TCP data received")
+                .with_parameters(vec![
+                    Parameter {
+                        name: "data_hex".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Hex-encoded TCP data".to_string(),
+                        required: true,
+                    },
+                ])
+        )),
         json!({
             "data_hex": "48656c6c6f"
         }),
@@ -246,11 +266,23 @@ async fn test_tcp_echo_script() -> Result<()> {
 async fn test_http_conditional_script() -> Result<()> {
     // Create test event (GET request)
     let test_event_get = Event::new(
-        &EventType::new("http_request", "HTTP request received")
-            .with_parameters(vec![
-                ("method".to_string(), "GET".to_string()),
-                ("path".to_string(), "/".to_string()),
-            ]),
+        Box::leak(Box::new(
+            EventType::new("http_request", "HTTP request received")
+                .with_parameters(vec![
+                    Parameter {
+                        name: "method".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "HTTP method".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "path".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Request path".to_string(),
+                        required: true,
+                    },
+                ])
+        )),
         json!({
             "method": "GET",
             "path": "/"
@@ -291,11 +323,23 @@ async fn test_http_conditional_script() -> Result<()> {
 #[tokio::test]
 async fn test_http_request_with_instruction() -> Result<()> {
     let event = Event::new(
-        &EventType::new("http_request", "HTTP request received")
-            .with_parameters(vec![
-                ("method".to_string(), "GET".to_string()),
-                ("path".to_string(), "/hello".to_string()),
-            ]),
+        Box::leak(Box::new(
+            EventType::new("http_request", "HTTP request received")
+                .with_parameters(vec![
+                    Parameter {
+                        name: "method".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "HTTP method".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "path".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Request path".to_string(),
+                        required: true,
+                    },
+                ])
+        )),
         json!({
             "method": "GET",
             "path": "/hello"
@@ -338,12 +382,29 @@ async fn test_http_request_with_instruction() -> Result<()> {
 #[tokio::test]
 async fn test_dns_query_response() -> Result<()> {
     let event = Event::new(
-        &EventType::new("dns_query", "DNS query received")
-            .with_parameters(vec![
-                ("query_id".to_string(), "12345".to_string()),
-                ("domain".to_string(), "example.com".to_string()),
-                ("query_type".to_string(), "A".to_string()),
-            ]),
+        Box::leak(Box::new(
+            EventType::new("dns_query", "DNS query received")
+                .with_parameters(vec![
+                    Parameter {
+                        name: "query_id".to_string(),
+                        type_hint: "number".to_string(),
+                        description: "DNS query identifier".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "domain".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Domain name being queried".to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "query_type".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "DNS query type (A, AAAA, etc.)".to_string(),
+                        required: true,
+                    },
+                ])
+        )),
         json!({
             "query_id": 12345,
             "domain": "example.com",
@@ -391,10 +452,17 @@ async fn test_dns_query_response() -> Result<()> {
 #[tokio::test]
 async fn test_tcp_hex_response() -> Result<()> {
     let event = Event::new(
-        &EventType::new("tcp_data_received", "TCP data received")
-            .with_parameters(vec![
-                ("data_hex".to_string(), "48656c6c6f".to_string()), // "Hello"
-            ]),
+        Box::leak(Box::new(
+            EventType::new("tcp_data_received", "TCP data received")
+                .with_parameters(vec![
+                    Parameter {
+                        name: "data_hex".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Hex-encoded TCP data".to_string(),
+                        required: true,
+                    },
+                ])
+        )),
         json!({
             "data_hex": "48656c6c6f"
         }),

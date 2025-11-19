@@ -112,9 +112,11 @@ async fn test_ssh_agent_request_identities_with_mocks() -> E2EResult<()> {
                     {
                         "type": "open_server",
                         "port": 0,
-                        "base_stack": "SSH-Agent",
-                        "socket_path": socket_path_str,
-                        "instruction": "SSH Agent server"
+                        "base_stack": "SSH Agent",
+                        "instruction": "SSH Agent server",
+                        "startup_params": {
+                            "socket_path": socket_path_str
+                        }
                     }
                 ]))
                 .expect_calls(1)
@@ -243,14 +245,16 @@ async fn test_ssh_agent_sign_request_with_mocks() -> E2EResult<()> {
                     {
                         "type": "open_server",
                         "port": 0,
-                        "base_stack": "SSH-Agent",
-                        "socket_path": socket_path_str,
-                        "instruction": "SSH Agent with signing"
+                        "base_stack": "SSH Agent",
+                        "instruction": "SSH Agent with signing",
+                        "startup_params": {
+                            "socket_path": socket_path_str
+                        }
                     }
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: SIGN_REQUEST event
+                // Mock 2:SIGN_REQUEST event
                 .on_event("ssh_agent_sign_request")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -344,14 +348,16 @@ async fn test_ssh_agent_add_identity_with_mocks() -> E2EResult<()> {
                     {
                         "type": "open_server",
                         "port": 0,
-                        "base_stack": "SSH-Agent",
-                        "socket_path": socket_path_str,
-                        "instruction": "SSH Agent accepting keys"
+                        "base_stack": "SSH Agent",
+                        "instruction": "SSH Agent accepting keys",
+                        "startup_params": {
+                            "socket_path": socket_path_str
+                        }
                     }
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: ADD_IDENTITY event
+                // Mock 2:ADD_IDENTITY event
                 .on_event("ssh_agent_add_identity")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -444,14 +450,16 @@ async fn test_ssh_agent_multiple_operations_with_mocks() -> E2EResult<()> {
                     {
                         "type": "open_server",
                         "port": 0,
-                        "base_stack": "SSH-Agent",
-                        "socket_path": socket_path_str,
-                        "instruction": "SSH Agent multi-operation server"
+                        "base_stack": "SSH Agent",
+                        "instruction": "SSH Agent multi-operation server",
+                        "startup_params": {
+                            "socket_path": socket_path_str
+                        }
                     }
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: First REQUEST_IDENTITIES (empty list)
+                // Mock 2:First REQUEST_IDENTITIES (empty list)
                 .on_event("ssh_agent_request_identities")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -461,7 +469,7 @@ async fn test_ssh_agent_multiple_operations_with_mocks() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 3: ADD_IDENTITY
+                // Mock 2:ADD_IDENTITY
                 .on_event("ssh_agent_add_identity")
                 .respond_with_actions(serde_json::json!([
                     {
@@ -470,7 +478,7 @@ async fn test_ssh_agent_multiple_operations_with_mocks() -> E2EResult<()> {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 4: Second REQUEST_IDENTITIES (with key)
+                // Mock 3:Second REQUEST_IDENTITIES (with key)
                 .on_event("ssh_agent_request_identities")
                 .respond_with_actions(serde_json::json!([
                     {

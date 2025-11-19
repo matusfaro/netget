@@ -244,6 +244,7 @@ impl SmbServer {
                     // Extract command from header (offset 12-13, little-endian)
                     let command = u16::from_le_bytes([header_buf[12], header_buf[13]]);
                     debug!("SMB2 command: 0x{:04x} from {}", command, peer_addr);
+                    let _ = status_tx.send(format!("[DEBUG] SMB2 command 0x{:04x} received", command));
 
                     // Handle SMB2 command
                     let response = Self::handle_smb2_command(
@@ -357,15 +358,18 @@ impl SmbServer {
             }
             SMB2_SESSION_SETUP => {
                 debug!("SMB2 SESSION_SETUP request");
+                let _ = status_tx.send("[DEBUG] SMB2 SESSION_SETUP - reading body".to_string());
 
                 // Read SESSION_SETUP request body (exactly 24 bytes for guest auth)
                 let mut body_buf = [0u8; 24];
                 match _stream.read_exact(&mut body_buf).await {
                     Ok(_) => {
                         debug!("SESSION_SETUP body: 24 bytes consumed");
+                        let _ = status_tx.send("[DEBUG] SESSION_SETUP body read successfully".to_string());
                     }
                     Err(e) => {
                         warn!("Error reading SESSION_SETUP body: {} - continuing anyway", e);
+                        let _ = status_tx.send(format!("[WARN] SESSION_SETUP body read error: {}", e));
                     }
                 }
                 let bytes_read = body_buf.len();
@@ -774,13 +778,28 @@ impl SmbServer {
         let _ = status_tx.send(format!("[DEBUG] SMB {}: {:?}", operation, params));
 
         // Create SMB operation event
-        let event = Event::new(
-            &SMB_OPERATION_EVENT,
-            serde_json::json!({
-                "operation": operation,
-                "params": params
-            }),
-        );
+        // Extract path from params if available, otherwise use empty string
+        let path = params.get("path").and_then(|p| p.as_str()).unwrap_or("");
+
+        let mut event_data = serde_json::json!({
+            "operation": operation,
+        });
+
+        // Add path if it's not empty
+        if !path.is_empty() {
+            event_data["path"] = serde_json::json!(path);
+        }
+
+        // Add all params as additional fields for the LLM context
+        if let Some(obj) = params.as_object() {
+            for (key, value) in obj {
+                if key != "operation" && key != "path" {
+                    event_data[key] = value.clone();
+                }
+            }
+        }
+
+        let event = Event::new(&SMB_OPERATION_EVENT, event_data);
 
         trace!("Calling LLM for SMB {} operation", operation);
         let _ = status_tx.send(format!("[TRACE] Calling LLM for SMB {}", operation));

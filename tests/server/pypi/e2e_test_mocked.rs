@@ -19,8 +19,8 @@ mod pypi_server_tests {
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
-                .on_instruction_containing("pypi")
-                .and_instruction_containing("package index")
+                .on_instruction_containing("Listen on port")
+                .and_instruction_containing("pypi")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -98,8 +98,8 @@ mod pypi_server_tests {
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
-                .on_instruction_containing("pypi")
-                .and_instruction_containing("hello-world")
+                .on_instruction_containing("Listen on port")
+                .and_instruction_containing("pypi")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -177,8 +177,8 @@ mod pypi_server_tests {
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
-                .on_instruction_containing("pypi")
-                .and_instruction_containing("404")
+                .on_instruction_containing("Listen on port")
+                .and_instruction_containing("pypi")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",

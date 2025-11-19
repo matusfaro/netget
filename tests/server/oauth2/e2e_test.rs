@@ -26,8 +26,7 @@ async fn test_oauth2_authorization_code_flow() -> E2EResult<()> {
                 .and_event_data_contains("client_id", "testapp")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_authorize_response",
-                        "redirect_uri": "http://localhost:3000/callback",
+                        "type": "oauth2_authorize_response",
                         "code": "AUTH_xyz123",
                         "state": "random_state_123"
                     }
@@ -39,7 +38,7 @@ async fn test_oauth2_authorization_code_flow() -> E2EResult<()> {
                 .and_event_data_contains("grant_type", "authorization_code")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_token_response",
+                        "type": "oauth2_token_response",
                         "access_token": "ACCESS_token_456",
                         "token_type": "Bearer",
                         "expires_in": 3600,
@@ -68,7 +67,10 @@ async fn test_oauth2_authorization_code_flow() -> E2EResult<()> {
     // Wait for server to be ready
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    let client = reqwest::Client::new();
+    // Create client that doesn't follow redirects (so we can inspect the 302 response)
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
 
     // Step 1: Authorization request
     println!("\n[1/2] Testing authorization endpoint...");
@@ -107,8 +109,12 @@ async fn test_oauth2_authorization_code_flow() -> E2EResult<()> {
         "Authorization should redirect (302)"
     );
 
-    // Extract code from Location header or final URL
-    let location = auth_response.url().to_string();
+    // Extract code from Location header
+    let location = auth_response
+        .headers()
+        .get("Location")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("");
     println!("✓ Redirect location: {}", location);
 
     // Parse authorization code from redirect
@@ -311,7 +317,7 @@ async fn test_oauth2_token_introspection() -> E2EResult<()> {
                 .and_event_data_contains("token", "VALID_token_123")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_introspect_response",
+                        "type": "oauth2_introspect_response",
                         "active": true,
                         "scope": "read write",
                         "client_id": "testapp"
@@ -324,7 +330,7 @@ async fn test_oauth2_token_introspection() -> E2EResult<()> {
                 .and_event_data_contains("token", "INVALID_token_xyz")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_introspect_response",
+                        "type": "oauth2_introspect_response",
                         "active": false
                     }
                 ]))

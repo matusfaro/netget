@@ -303,8 +303,7 @@ mod tests {
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
-                    .on_instruction_containing("Elasticsearch")
-                    .and_instruction_containing("bulk")
+                    .on_instruction_containing("Start an Elasticsearch")
                     .respond_with_actions(json!([
                         {
                             "type": "open_server",

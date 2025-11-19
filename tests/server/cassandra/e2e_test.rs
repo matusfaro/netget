@@ -20,26 +20,13 @@ mod e2e_cassandra {
     async fn test_cassandra_connection() -> E2EResult<()> {
         println!("\n=== Test: Cassandra Connection ===");
 
-        let prompt = "Start a Cassandra/CQL database server on port 9042. \
+        let prompt = "Start a Cassandra/CQL database server on port {AVAILABLE_PORT}. \
                      Accept all connections and respond to OPTIONS with CQL version 3.0.0.";
 
         let config = NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    // Mock: Server startup
-                    .on_instruction_containing("Cassandra")
-                    .and_instruction_containing("CQL")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 9042,
-                            "base_stack": "Cassandra",
-                            "instruction": "Accept connections and respond to OPTIONS with CQL version 3.0.0"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: OPTIONS frame during connection (Scylla client creates 2 connections)
+                    // Mock 1: OPTIONS frame during connection (Scylla client creates 2 connections)
                     .on_event("cassandra_options")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -48,7 +35,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(2)
                     .and()
-                    // Mock 3: STARTUP frame to complete connection (2 connections)
+                    // Mock 2: STARTUP frame to complete connection (2 connections)
                     .on_event("cassandra_startup")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -56,6 +43,19 @@ mod e2e_cassandra {
                         }
                     ]))
                     .expect_calls(2)
+                    .and()
+                    // Mock 3: Server startup (LAST - fallback for initial user command)
+                    .on_instruction_containing("Cassandra")
+                    .and_instruction_containing("CQL")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "Cassandra",
+                            "instruction": "Accept connections and respond to OPTIONS with CQL version 3.0.0"
+                        }
+                    ]))
+                    .expect_calls(1)
                     .and()
             });
 
@@ -102,7 +102,7 @@ mod e2e_cassandra {
     async fn test_cassandra_select_query() -> E2EResult<()> {
         println!("\n=== Test: Cassandra SELECT Query ===");
 
-        let prompt = "Start a Cassandra/CQL database server on port 9043. \
+        let prompt = "Start a Cassandra/CQL database server on port {AVAILABLE_PORT}. \
                      When receiving query 'SELECT * FROM users', respond with: \
                      columns=[{name:'id',type:'int'},{name:'name',type:'varchar'}] \
                      rows=[[1,'Alice'],[2,'Bob'],[3,'Charlie']]";
@@ -110,20 +110,7 @@ mod e2e_cassandra {
         let config = NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    // Mock 1: Server startup
-                    .on_instruction_containing("Cassandra")
-                    .and_instruction_containing("CQL")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 9043,
-                            "base_stack": "Cassandra",
-                            "instruction": "When receiving query 'SELECT * FROM users', respond with appropriate data"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: OPTIONS frame during connection (Scylla client creates 2 connections)
+                    // Mock 1: OPTIONS frame during connection (Scylla client creates 2 connections)
                     .on_event("cassandra_options")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -132,7 +119,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(2)
                     .and()
-                    // Mock 3: STARTUP frame to complete connection (2 connections)
+                    // Mock 2: STARTUP frame to complete connection (2 connections)
                     .on_event("cassandra_startup")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -141,7 +128,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(2)
                     .and()
-                    // Mock 4: Catch-all for ALL queries (system queries + user query)
+                    // Mock 3: Catch-all for ALL queries (system queries + user query)
                     .on_event("cassandra_query")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -158,6 +145,19 @@ mod e2e_cassandra {
                         }
                     ]))
                     .expect_calls(3)
+                    .and()
+                    // Mock 4: Server startup (LAST - fallback for initial user command)
+                    .on_instruction_containing("Cassandra")
+                    .and_instruction_containing("CQL")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "Cassandra",
+                            "instruction": "When receiving query 'SELECT * FROM users', respond with appropriate data"
+                        }
+                    ]))
+                    .expect_calls(1)
                     .and()
             });
 
@@ -230,7 +230,36 @@ mod e2e_cassandra {
         let config = NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    // Mock 1: Server startup
+                    // Mock 1: OPTIONS frame during connection (Scylla client creates 2 connections)
+                    .on_event("cassandra_options")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_supported"
+                        }
+                    ]))
+                    .expect_calls(2)
+                    .and()
+                    // Mock 2: STARTUP frame to complete connection (2 connections)
+                    .on_event("cassandra_startup")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_ready"
+                        }
+                    ]))
+                    .expect_calls(2)
+                    .and()
+                    // Mock 3: Catch-all for ALL queries (responds with error for demonstration)
+                    .on_event("cassandra_query")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "cassandra_error",
+                            "error_code": 0x2200,
+                            "message": "Table does not exist"
+                        }
+                    ]))
+                    .expect_calls(3)
+                    .and()
+                    // Mock 4: Server startup (LAST - fallback for initial user command)
                     .on_instruction_containing("Cassandra")
                     .and_instruction_containing("CQL")
                     .respond_with_actions(serde_json::json!([
@@ -242,35 +271,6 @@ mod e2e_cassandra {
                         }
                     ]))
                     .expect_calls(1)
-                    .and()
-                    // Mock 2: OPTIONS frame during connection (Scylla client creates 2 connections)
-                    .on_event("cassandra_options")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "cassandra_supported"
-                        }
-                    ]))
-                    .expect_calls(2)
-                    .and()
-                    // Mock 3: STARTUP frame to complete connection (2 connections)
-                    .on_event("cassandra_startup")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "cassandra_ready"
-                        }
-                    ]))
-                    .expect_calls(2)
-                    .and()
-                    // Mock 4: Catch-all for ALL queries (responds with error for demonstration)
-                    .on_event("cassandra_query")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "cassandra_error",
-                            "error_code": 0x2200,
-                            "message": "Table does not exist"
-                        }
-                    ]))
-                    .expect_calls(3)
                     .and()
             });
 
@@ -329,20 +329,7 @@ mod e2e_cassandra {
         let config = NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    // Mock 1: Server startup
-                    .on_instruction_containing("Cassandra")
-                    .and_instruction_containing("CQL")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "Cassandra",
-                            "instruction": "Handle multiple queries"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: OPTIONS frame during connection (Scylla client creates 2 connections)
+                    // Mock 1: OPTIONS frame during connection (Scylla client creates 2 connections)
                     .on_event("cassandra_options")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -351,7 +338,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(2)
                     .and()
-                    // Mock 3: STARTUP frame to complete connection (2 connections)
+                    // Mock 2: STARTUP frame to complete connection (2 connections)
                     .on_event("cassandra_startup")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -360,7 +347,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(2)
                     .and()
-                    // Mock 4: Catch-all for ALL queries (returns generic data for all queries)
+                    // Mock 3: Catch-all for ALL queries (returns generic data for all queries)
                     .on_event("cassandra_query")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -374,6 +361,19 @@ mod e2e_cassandra {
                         }
                     ]))
                     .expect_calls(5)
+                    .and()
+                    // Mock 4: Server startup (LAST - fallback for initial user command)
+                    .on_instruction_containing("Cassandra")
+                    .and_instruction_containing("CQL")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "Cassandra",
+                            "instruction": "Handle multiple queries"
+                        }
+                    ]))
+                    .expect_calls(1)
                     .and()
             });
 
@@ -448,20 +448,7 @@ mod e2e_cassandra {
         let config = NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    // Mock 1: Server startup
-                    .on_instruction_containing("Cassandra")
-                    .and_instruction_containing("CQL")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "Cassandra",
-                            "instruction": "When receiving any SELECT query, respond with value 42"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: OPTIONS frame during connection (3 concurrent clients × 2 connections each = 6)
+                    // Mock 1: OPTIONS frame during connection (3 concurrent clients × 2 connections each = 6)
                     .on_event("cassandra_options")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -470,7 +457,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(6)
                     .and()
-                    // Mock 3: STARTUP frame to complete connection (3 concurrent clients × 2 connections = 6)
+                    // Mock 2: STARTUP frame to complete connection (3 concurrent clients × 2 connections = 6)
                     .on_event("cassandra_startup")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -479,7 +466,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(6)
                     .and()
-                    // Mock 4: Catch-all for ALL queries (3 user queries + system queries from 3 clients)
+                    // Mock 3: Catch-all for ALL queries (3 user queries + system queries from 3 clients)
                     .on_event("cassandra_query")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -493,6 +480,19 @@ mod e2e_cassandra {
                         }
                     ]))
                     .expect_calls(10)
+                    .and()
+                    // Mock 4: Server startup (LAST - fallback for initial user command)
+                    .on_instruction_containing("Cassandra")
+                    .and_instruction_containing("CQL")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "Cassandra",
+                            "instruction": "When receiving any SELECT query, respond with value 42"
+                        }
+                    ]))
+                    .expect_calls(1)
                     .and()
             });
 
@@ -564,20 +564,7 @@ mod e2e_cassandra {
         let config = NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    // Mock 1: Server startup
-                    .on_instruction_containing("Cassandra")
-                    .and_instruction_containing("CQL")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "Cassandra",
-                            "instruction": "Handle prepared statements"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: OPTIONS frame during connection (Scylla client creates 2 connections)
+                    // Mock 1: OPTIONS frame during connection (Scylla client creates 2 connections)
                     .on_event("cassandra_options")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -586,7 +573,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(2)
                     .and()
-                    // Mock 3: STARTUP frame to complete connection (2 connections)
+                    // Mock 2: STARTUP frame to complete connection (2 connections)
                     .on_event("cassandra_startup")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -595,7 +582,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(2)
                     .and()
-                    // Mock 4: PREPARE received (Scylla prepares on each connection)
+                    // Mock 3: PREPARE received (Scylla prepares on each connection)
                     .on_event("cassandra_prepare")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -611,7 +598,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(2)
                     .and()
-                    // Mock 5: EXECUTE received
+                    // Mock 4: EXECUTE received
                     .on_event("cassandra_execute")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -627,7 +614,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 6: Catch-all for system queries
+                    // Mock 5: Catch-all for system queries
                     .on_event("cassandra_query")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -637,6 +624,19 @@ mod e2e_cassandra {
                         }
                     ]))
                     .expect_calls(3)
+                    .and()
+                    // Mock 6: Server startup (LAST - fallback for initial user command)
+                    .on_instruction_containing("Cassandra")
+                    .and_instruction_containing("CQL")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "Cassandra",
+                            "instruction": "Handle prepared statements"
+                        }
+                    ]))
+                    .expect_calls(1)
                     .and()
             });
 
@@ -712,20 +712,7 @@ mod e2e_cassandra {
         let config = NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    // Mock 1: Server startup
-                    .on_instruction_containing("Cassandra")
-                    .and_instruction_containing("CQL")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 0,
-                            "base_stack": "Cassandra",
-                            "instruction": "Handle multiple prepared statements"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: OPTIONS frame during connection (Scylla client creates 2 connections)
+                    // Mock 1: OPTIONS frame during connection (Scylla client creates 2 connections)
                     .on_event("cassandra_options")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -734,7 +721,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(2)
                     .and()
-                    // Mock 3: STARTUP frame to complete connection (2 connections)
+                    // Mock 2: STARTUP frame to complete connection (2 connections)
                     .on_event("cassandra_startup")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -743,7 +730,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(2)
                     .and()
-                    // Mock 4: PREPARE calls (catch-all for all prepare statements × 2 connections)
+                    // Mock 3: PREPARE calls (catch-all for all prepare statements × 2 connections)
                     .on_event("cassandra_prepare")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -756,7 +743,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(4)
                     .and()
-                    // Mock 5: EXECUTE calls (3 total)
+                    // Mock 4: EXECUTE calls (3 total)
                     .on_event("cassandra_execute")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -772,7 +759,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(3)
                     .and()
-                    // Mock 6: Catch-all for system queries
+                    // Mock 5: Catch-all for system queries
                     .on_event("cassandra_query")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -782,6 +769,19 @@ mod e2e_cassandra {
                         }
                     ]))
                     .expect_calls(3)
+                    .and()
+                    // Mock 6: Server startup (LAST - fallback for initial user command)
+                    .on_instruction_containing("Cassandra")
+                    .and_instruction_containing("CQL")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "Cassandra",
+                            "instruction": "Handle multiple prepared statements"
+                        }
+                    ]))
+                    .expect_calls(1)
                     .and()
             });
 
@@ -875,27 +875,14 @@ mod e2e_cassandra {
     async fn test_cassandra_prepared_statement_param_mismatch() -> E2EResult<()> {
         println!("\n=== Test: Cassandra Prepared Statement Parameter Mismatch ===");
 
-        let prompt = "Start a Cassandra/CQL database server on port 9049. \
+        let prompt = "Start a Cassandra/CQL database server on port {AVAILABLE_PORT}. \
                      When receiving PREPARE with 2 parameters, respond with columns=[{name:'id',type:'int'}]. \
                      When receiving EXECUTE with wrong parameter count, respond with error_code=0x2200 message='Parameter count mismatch'.";
 
         let config = NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    // Mock 1: Server startup
-                    .on_instruction_containing("Cassandra")
-                    .and_instruction_containing("CQL")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "open_server",
-                            "port": 9049,
-                            "base_stack": "Cassandra",
-                            "instruction": "Handle prepared statement parameter validation"
-                        }
-                    ]))
-                    .expect_calls(1)
-                    .and()
-                    // Mock 2: OPTIONS frame during connection (Scylla client creates 2 connections)
+                    // Mock 1: OPTIONS frame during connection (Scylla client creates 2 connections)
                     .on_event("cassandra_options")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -904,7 +891,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(2)
                     .and()
-                    // Mock 3: STARTUP frame to complete connection (2 connections)
+                    // Mock 2: STARTUP frame to complete connection (2 connections)
                     .on_event("cassandra_startup")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -913,7 +900,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(2)
                     .and()
-                    // Mock 4: PREPARE received (on 2 connections)
+                    // Mock 3: PREPARE received (on 2 connections)
                     .on_event("cassandra_prepare")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -925,7 +912,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(2)
                     .and()
-                    // Mock 5: EXECUTE with wrong param count (error)
+                    // Mock 4: EXECUTE with wrong param count (error)
                     .on_event("cassandra_execute")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -936,7 +923,7 @@ mod e2e_cassandra {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 6: Catch-all for system queries
+                    // Mock 5: Catch-all for system queries
                     .on_event("cassandra_query")
                     .respond_with_actions(serde_json::json!([
                         {
@@ -946,6 +933,19 @@ mod e2e_cassandra {
                         }
                     ]))
                     .expect_calls(3)
+                    .and()
+                    // Mock 6: Server startup (LAST - fallback for initial user command)
+                    .on_instruction_containing("Cassandra")
+                    .and_instruction_containing("CQL")
+                    .respond_with_actions(serde_json::json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "Cassandra",
+                            "instruction": "Handle prepared statement parameter validation"
+                        }
+                    ]))
+                    .expect_calls(1)
                     .and()
             });
 

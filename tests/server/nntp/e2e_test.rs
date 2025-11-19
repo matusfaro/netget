@@ -7,23 +7,23 @@
 
 use crate::helpers::{start_netget_server, NetGetConfig, E2EResult};
 
-use std::io::{BufRead, BufReader, Write};
-use std::net::TcpStream;
 use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::TcpStream;
 
 /// Helper to read NNTP response line
-fn read_response_line(reader: &mut BufReader<&TcpStream>) -> std::io::Result<String> {
+async fn read_response_line(reader: &mut BufReader<tokio::io::ReadHalf<TcpStream>>) -> std::io::Result<String> {
     let mut line = String::new();
-    reader.read_line(&mut line)?;
+    reader.read_line(&mut line).await?;
     Ok(line)
 }
 
 /// Helper to read multi-line NNTP response (until ".\r\n")
-fn read_multiline_response(reader: &mut BufReader<&TcpStream>) -> std::io::Result<Vec<String>> {
+async fn read_multiline_response(reader: &mut BufReader<tokio::io::ReadHalf<TcpStream>>) -> std::io::Result<Vec<String>> {
     let mut lines = Vec::new();
     loop {
         let mut line = String::new();
-        reader.read_line(&mut line)?;
+        reader.read_line(&mut line).await?;
         if line.trim() == "." {
             break;
         }
@@ -55,8 +55,17 @@ async fn test_nntp_basic_newsgroups() -> E2EResult<()> {
 
     let server_config = NetGetConfig::new(&prompt).with_mock(|mock| {
         mock
-            // Mock 1: LIST command - MUST BE FIRST (most specific)
+            // Mock 0: GREETING (connection established) - MUST BE FIRST
             .on_event("nntp_command_received")
+            .and_event_data_contains("command", "GREETING")
+            .respond_with_actions(serde_json::json!([
+                {"type": "send_nntp_response", "code": 200, "message": "NetGet NNTP Test Server Ready"}
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 1: LIST command
+            .on_event("nntp_command_received")
+            .and_event_data_contains("command", "LIST")
             .respond_with_actions(serde_json::json!([
                 {"type": "send_nntp_list", "newsgroups": [
                     {"name": "comp.lang.rust", "high": 50, "low": 1, "status": "y"},
@@ -66,29 +75,32 @@ async fn test_nntp_basic_newsgroups() -> E2EResult<()> {
             ]))
             .expect_calls(1)
             .and()
-            // Mock 2: GROUP command - MUST BE SECOND (most specific)
+            // Mock 2: GROUP command
             .on_event("nntp_command_received")
+            .and_event_data_contains("command", "GROUP")
             .respond_with_actions(serde_json::json!([
                 {"type": "send_nntp_response", "code": 211, "message": "50 1 50 comp.lang.rust"}
             ]))
             .expect_calls(1)
             .and()
-            // Mock 3: ARTICLE command - MUST BE THIRD (most specific)
+            // Mock 3: ARTICLE command
             .on_event("nntp_command_received")
+            .and_event_data_contains("command", "ARTICLE")
             .respond_with_actions(serde_json::json!([
                 {"type": "send_nntp_article", "headers": {"Subject": "Test Article 1", "From": "test@example.com"}, "body": "This is test article number 1."}
             ]))
             .expect_calls(1)
             .and()
-            // Mock 4: QUIT command - MUST BE FOURTH (most specific)
+            // Mock 4: QUIT command
             .on_event("nntp_command_received")
+            .and_event_data_contains("command", "QUIT")
             .respond_with_actions(serde_json::json!([
                 {"type": "send_nntp_response", "code": 205, "message": "Goodbye"}
             ]))
             .expect_calls(1)
             .and()
             // Mock 5: Server startup - MUST BE LAST (less specific)
-            .on_instruction_containing("nntp")
+            .on_prompt_containing("listen on port")
             .respond_with_actions(serde_json::json!([
                 {"type": "open_server", "port": 0, "base_stack": "nntp", "instruction": "3 newsgroups"}
             ]))
@@ -102,19 +114,15 @@ async fn test_nntp_basic_newsgroups() -> E2EResult<()> {
     tokio::time::sleep(Duration::from_secs(3)).await;
 
     // Connect to NNTP server
-    let stream = TcpStream::connect(format!("127.0.0.1:{}", server.port)).unwrap();
-    stream
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .unwrap();
-    stream
-        .set_write_timeout(Some(Duration::from_secs(10)))
-        .unwrap();
-
-    let mut reader = BufReader::new(&stream);
-    let mut stream_write = stream.try_clone().unwrap();
+    let stream = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
+    let (read_half, mut write_half) = tokio::io::split(stream);
+    let mut reader = BufReader::new(read_half);
 
     // Read greeting
-    let greeting = read_response_line(&mut reader).unwrap();
+    let greeting = tokio::time::timeout(
+        Duration::from_secs(10),
+        read_response_line(&mut reader)
+    ).await??;
     assert!(
         greeting.starts_with("200") || greeting.starts_with("201"),
         "Expected 200/201 greeting, got: {}",
@@ -122,17 +130,23 @@ async fn test_nntp_basic_newsgroups() -> E2EResult<()> {
     );
 
     // Test LIST command
-    stream_write.write_all(b"LIST\r\n").unwrap();
-    stream_write.flush().unwrap();
+    write_half.write_all(b"LIST\r\n").await?;
+    write_half.flush().await?;
 
-    let list_response = read_response_line(&mut reader).unwrap();
+    let list_response = tokio::time::timeout(
+        Duration::from_secs(10),
+        read_response_line(&mut reader)
+    ).await??;
     assert!(
         list_response.starts_with("215"),
         "Expected 215 list follows, got: {}",
         list_response
     );
 
-    let newsgroups = read_multiline_response(&mut reader).unwrap();
+    let newsgroups = tokio::time::timeout(
+        Duration::from_secs(10),
+        read_multiline_response(&mut reader)
+    ).await??;
     assert!(
         newsgroups.len() >= 3,
         "Expected at least 3 newsgroups, got: {}",
@@ -155,10 +169,13 @@ async fn test_nntp_basic_newsgroups() -> E2EResult<()> {
     );
 
     // Test GROUP command
-    stream_write.write_all(b"GROUP comp.lang.rust\r\n").unwrap();
-    stream_write.flush().unwrap();
+    write_half.write_all(b"GROUP comp.lang.rust\r\n").await?;
+    write_half.flush().await?;
 
-    let group_response = read_response_line(&mut reader).unwrap();
+    let group_response = tokio::time::timeout(
+        Duration::from_secs(10),
+        read_response_line(&mut reader)
+    ).await??;
     assert!(
         group_response.starts_with("211"),
         "Expected 211 group selected, got: {}",
@@ -171,17 +188,23 @@ async fn test_nntp_basic_newsgroups() -> E2EResult<()> {
     );
 
     // Test ARTICLE command
-    stream_write.write_all(b"ARTICLE 1\r\n").unwrap();
-    stream_write.flush().unwrap();
+    write_half.write_all(b"ARTICLE 1\r\n").await?;
+    write_half.flush().await?;
 
-    let article_response = read_response_line(&mut reader).unwrap();
+    let article_response = tokio::time::timeout(
+        Duration::from_secs(10),
+        read_response_line(&mut reader)
+    ).await??;
     assert!(
         article_response.starts_with("220"),
         "Expected 220 article follows, got: {}",
         article_response
     );
 
-    let article_lines = read_multiline_response(&mut reader).unwrap();
+    let article_lines = tokio::time::timeout(
+        Duration::from_secs(10),
+        read_multiline_response(&mut reader)
+    ).await??;
     let article_text = article_lines.join("");
 
     // Verify article has headers
@@ -192,10 +215,13 @@ async fn test_nntp_basic_newsgroups() -> E2EResult<()> {
     );
 
     // Send QUIT
-    stream_write.write_all(b"QUIT\r\n").unwrap();
-    stream_write.flush().unwrap();
+    write_half.write_all(b"QUIT\r\n").await?;
+    write_half.flush().await?;
 
-    let quit_response = read_response_line(&mut reader).unwrap();
+    let quit_response = tokio::time::timeout(
+        Duration::from_secs(10),
+        read_response_line(&mut reader)
+    ).await??;
     assert!(
         quit_response.starts_with("205") || quit_response.starts_with("200"),
         "Expected 205 goodbye, got: {}",
@@ -226,15 +252,25 @@ async fn test_nntp_article_overview() -> E2EResult<()> {
 
     let server_config = NetGetConfig::new(&prompt).with_mock(|mock| {
         mock
-            // Mock 1: GROUP command - MUST BE FIRST (most specific)
+            // Mock 0: GREETING (connection established) - MUST BE FIRST
             .on_event("nntp_command_received")
+            .and_event_data_contains("command", "GREETING")
+            .respond_with_actions(serde_json::json!([
+                {"type": "send_nntp_response", "code": 200, "message": "NetGet NNTP Ready"}
+            ]))
+            .expect_calls(1)
+            .and()
+            // Mock 1: GROUP command
+            .on_event("nntp_command_received")
+            .and_event_data_contains("command", "GROUP")
             .respond_with_actions(serde_json::json!([
                 {"type": "send_nntp_response", "code": 211, "message": "5 1 5 comp.test"}
             ]))
             .expect_calls(1)
             .and()
-            // Mock 2: XOVER command - MUST BE SECOND (most specific)
+            // Mock 2: XOVER command
             .on_event("nntp_command_received")
+            .and_event_data_contains("command", "XOVER")
             .respond_with_actions(serde_json::json!([
                 {"type": "send_nntp_overview", "articles": [
                     {"id": 1, "subject": "Article 1", "from": "test@example.com"},
@@ -246,15 +282,16 @@ async fn test_nntp_article_overview() -> E2EResult<()> {
             ]))
             .expect_calls(1)
             .and()
-            // Mock 3: QUIT command - MUST BE THIRD (most specific)
+            // Mock 3: QUIT command
             .on_event("nntp_command_received")
+            .and_event_data_contains("command", "QUIT")
             .respond_with_actions(serde_json::json!([
                 {"type": "send_nntp_response", "code": 205, "message": "Goodbye"}
             ]))
             .expect_calls(1)
             .and()
             // Mock 4: Server startup - MUST BE LAST (less specific)
-            .on_instruction_containing("nntp")
+            .on_prompt_containing("listen on port")
             .respond_with_actions(serde_json::json!([
                 {"type": "open_server", "port": 0, "base_stack": "nntp", "instruction": "comp.test newsgroup"}
             ]))
@@ -266,33 +303,42 @@ async fn test_nntp_article_overview() -> E2EResult<()> {
 
     tokio::time::sleep(Duration::from_secs(3)).await;
 
-    let stream = TcpStream::connect(format!("127.0.0.1:{}", server.port)).unwrap();
-    stream
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .unwrap();
-    let mut reader = BufReader::new(&stream);
-    let mut stream_write = stream.try_clone().unwrap();
+    let stream = TcpStream::connect(format!("127.0.0.1:{}", server.port)).await?;
+    let (read_half, mut write_half) = tokio::io::split(stream);
+    let mut reader = BufReader::new(read_half);
 
     // Read greeting
-    let _greeting = read_response_line(&mut reader).unwrap();
+    let _greeting = tokio::time::timeout(
+        Duration::from_secs(10),
+        read_response_line(&mut reader)
+    ).await??;
 
     // Select group
-    stream_write.write_all(b"GROUP comp.test\r\n").unwrap();
-    stream_write.flush().unwrap();
-    let _group_response = read_response_line(&mut reader).unwrap();
+    write_half.write_all(b"GROUP comp.test\r\n").await?;
+    write_half.flush().await?;
+    let _group_response = tokio::time::timeout(
+        Duration::from_secs(10),
+        read_response_line(&mut reader)
+    ).await??;
 
     // Test XOVER command
-    stream_write.write_all(b"XOVER 1-5\r\n").unwrap();
-    stream_write.flush().unwrap();
+    write_half.write_all(b"XOVER 1-5\r\n").await?;
+    write_half.flush().await?;
 
-    let xover_response = read_response_line(&mut reader).unwrap();
+    let xover_response = tokio::time::timeout(
+        Duration::from_secs(10),
+        read_response_line(&mut reader)
+    ).await??;
     assert!(
         xover_response.starts_with("224"),
         "Expected 224 overview follows, got: {}",
         xover_response
     );
 
-    let overview_lines = read_multiline_response(&mut reader).unwrap();
+    let overview_lines = tokio::time::timeout(
+        Duration::from_secs(10),
+        read_multiline_response(&mut reader)
+    ).await??;
     assert!(
         overview_lines.len() >= 1,
         "Expected at least 1 article in overview, got: {}",
@@ -308,9 +354,12 @@ async fn test_nntp_article_overview() -> E2EResult<()> {
     );
 
     // Send QUIT
-    stream_write.write_all(b"QUIT\r\n").unwrap();
-    stream_write.flush().unwrap();
-    let _quit_response = read_response_line(&mut reader).unwrap();
+    write_half.write_all(b"QUIT\r\n").await?;
+    write_half.flush().await?;
+    let _quit_response = tokio::time::timeout(
+        Duration::from_secs(10),
+        read_response_line(&mut reader)
+    ).await??;
 
     server.verify_mocks().await?;
     server.stop().await?;
