@@ -36,6 +36,29 @@ protocol details.
 
 ## Architecture Decisions
 
+### 0. Manual TCP Accept Loop Pattern
+
+**Design**: Instead of using `russh::server::Server::run_on_address()`, we use manual TCP connection acceptance with `russh::server::run_stream()` for per-connection handling.
+
+**Pattern**:
+```rust
+let listener = TcpListener::bind(listen_addr).await?;
+loop {
+    let (tcp_stream, peer_addr) = listener.accept().await?;
+    let handler = SshHandler::new(...);
+    tokio::spawn(async move {
+        russh::server::run_stream(config, tcp_stream, handler).await
+    });
+}
+```
+
+**Rationale**:
+- `run_on_address()` was observed to hang and never accept connections (see investigation report)
+- Manual accept loop matches proven patterns from DoT and SSH Agent protocols (100% working)
+- Provides explicit control over connection lifecycle and debugging visibility
+- Allows proper connection state tracking before SSH protocol handshake
+- Each connection gets its own spawned task with dedicated `SshHandler`
+
 ### 1. LLM Control Points
 
 The LLM has three integration points:
@@ -90,11 +113,12 @@ Complex terminal emulation for proper SSH client experience:
 
 **Connection Lifecycle**:
 
-1. `new_client()` - Create `SshHandler` for connection, register in `ServerInstance`
-2. Authentication - LLM decides to accept/reject user
-3. Channel open - Client requests session (shell) or subsystem (SFTP)
-4. Shell/SFTP operations - LLM handles commands/file operations
-5. Channel close - Remove from tracking maps
+1. TCP Accept Loop - Manual `TcpListener::accept()` accepts incoming connections
+2. `russh::server::run_stream()` - Processes SSH protocol for each connection with `SshHandler`
+3. Authentication - LLM decides to accept/reject user via `auth_password()` or `auth_publickey()`
+4. Channel open - Client requests session (shell) or subsystem (SFTP)
+5. Shell/SFTP operations - LLM handles commands/file operations
+6. Channel close - Remove from tracking maps
 
 **Multiple Channels Per Connection**:
 

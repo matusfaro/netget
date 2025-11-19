@@ -12,7 +12,7 @@ use crate::state::app_state::AppState;
 use actions::{SshProtocol, SSH_AUTH_EVENT, SSH_BANNER_EVENT, SSH_SHELL_COMMAND_EVENT};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use russh::server::{Auth, Msg, Server as RusshServer, Session};
+use russh::server::{Auth, Msg, Session};
 use russh::{Channel, ChannelId, CryptoVec};
 use russh_keys::key::KeyPair;
 use std::collections::HashMap;
@@ -89,13 +89,6 @@ impl SshServer {
         // Generate host key
         let key_pair = generate_host_key()?;
 
-        let mut server = SshServer::new(
-            config,
-            llm_client,
-            app_state.clone(),
-            status_tx.clone(),
-            server_id,
-        );
         let russh_config = russh::server::Config {
             inactivity_timeout: Some(std::time::Duration::from_secs(3600)),
             auth_rejection_time: std::time::Duration::from_secs(3),
@@ -106,26 +99,110 @@ impl SshServer {
 
         let russh_config = Arc::new(russh_config);
 
-        // Bind TCP listener first to resolve port 0 to actual port
-        // Use reusable socket to allow immediate rebinding
-        let listener = crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        // Bind TCP listener
+        let listener = tokio::net::TcpListener::bind(listen_addr).await?;
         let actual_addr = listener.local_addr()?;
-        drop(listener); // Close the temporary listener
 
         info!(
             "SSH server listening on {} (shell: {}, sftp: {})",
-            actual_addr, server.config.shell_enabled, server.config.sftp_enabled
+            actual_addr, config.shell_enabled, config.sftp_enabled
         );
         let _ = status_tx.send(format!(
             "[INFO] SSH server listening on {}",
             actual_addr
         ));
 
-        // Start the russh server with the resolved address
+        // Spawn accept loop
         tokio::spawn(async move {
-            if let Err(e) = server.run_on_address(russh_config, actual_addr).await {
-                error!("SSH server error: {}", e);
+            debug!("SSH: Accept loop started on {}", actual_addr);
+            let _ = status_tx.send(format!("[DEBUG] SSH: Accept loop started on {}", actual_addr));
+
+            // Counter for connection IDs
+            let mut connection_counter = 0u64;
+
+            loop {
+                match listener.accept().await {
+                    Ok((tcp_stream, peer_addr)) => {
+                        connection_counter += 1;
+                        info!("SSH: Accepted TCP connection #{} from {}", connection_counter, peer_addr);
+                        debug!("SSH: Creating handler for connection from {}", peer_addr);
+                        let _ = status_tx.send(format!("[DEBUG] SSH: Accepted TCP connection from {}", peer_addr));
+
+                        // Get next connection ID
+                        let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+
+                        // Track connection in server state
+                        if let Some(server_id_val) = server_id {
+                            use crate::state::server::{
+                                ConnectionState as ServerConnectionState, ConnectionStatus, ProtocolConnectionInfo,
+                            };
+                            let now = std::time::Instant::now();
+
+                            let conn_state = ServerConnectionState {
+                                id: connection_id,
+                                remote_addr: peer_addr,
+                                local_addr: actual_addr,
+                                bytes_sent: 0,
+                                bytes_received: 0,
+                                packets_sent: 0,
+                                packets_received: 0,
+                                last_activity: now,
+                                status: ConnectionStatus::Active,
+                                status_changed_at: now,
+                                protocol_info: ProtocolConnectionInfo::empty(),
+                            };
+
+                            let app_state_clone = app_state.clone();
+                            let status_tx_clone = status_tx.clone();
+
+                            tokio::spawn(async move {
+                                app_state_clone
+                                    .add_connection_to_server(server_id_val, conn_state)
+                                    .await;
+                                let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
+                            });
+                        }
+
+                        // Create handler for this connection
+                        let handler = SshHandler::new(
+                            connection_id,
+                            config.clone(),
+                            llm_client.clone(),
+                            app_state.clone(),
+                            status_tx.clone(),
+                            server_id,
+                            Some(peer_addr),
+                        );
+
+                        let config_clone = russh_config.clone();
+                        let status_tx_clone = status_tx.clone();
+
+                        // Spawn connection handler
+                        tokio::spawn(async move {
+                            debug!("SSH: Calling russh::server::run_stream() for connection from {}", peer_addr);
+                            let _ = status_tx_clone.send(format!("[DEBUG] SSH: Starting SSH protocol for {}", peer_addr));
+
+                            match russh::server::run_stream(config_clone, tcp_stream, handler).await {
+                                Ok(_) => {
+                                    debug!("SSH: Connection from {} completed successfully", peer_addr);
+                                    let _ = status_tx_clone.send(format!("[DEBUG] SSH: Connection closed: {}", peer_addr));
+                                }
+                                Err(e) => {
+                                    error!("SSH: Connection from {} error: {}", peer_addr, e);
+                                    let _ = status_tx_clone.send(format!("[ERROR] SSH: Connection error from {}: {}", peer_addr, e));
+                                }
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        error!("SSH: Accept error: {}", e);
+                        let _ = status_tx.send(format!("[ERROR] SSH: Accept error: {}", e));
+                        break;
+                    }
+                }
             }
+
+            debug!("SSH: Accept loop ended");
         });
 
         Ok(actual_addr)
@@ -241,7 +318,9 @@ impl SshHandler {
         let server_id = self
             .server_id
             .unwrap_or_else(|| crate::state::ServerId::new(1));
-        debug!("SSH auth request for user '{}' via {}", username, auth_type);
+        info!("SSH: llm_auth_decision() called for user '{}' via {}", username, auth_type);
+        debug!("SSH: llm_auth_decision - server_id={:?}, connection={}", server_id, self.connection_id);
+        let _ = self.status_tx.send(format!("[DEBUG] SSH: llm_auth_decision('{}', '{}')", username, auth_type));
 
         // Create event with auth data
         let event = Event::new(
@@ -404,65 +483,8 @@ impl SshHandler {
     }
 }
 
-impl RusshServer for SshServer {
-    type Handler = SshHandler;
-
-    fn new_client(&mut self, peer_addr: Option<std::net::SocketAddr>) -> Self::Handler {
-        let connection_id = ConnectionId::new(
-            tokio::runtime::Handle::current().block_on(self.app_state.get_next_unified_id()),
-        );
-        let addr = peer_addr.unwrap_or_else(|| "0.0.0.0:0".parse().unwrap());
-
-        info!("SSH connection {} from {}", connection_id, addr);
-        let _ = self.status_tx.send(format!("SSH connection from {}", addr));
-
-        // Track connection in server state if server_id is available
-        if let Some(server_id) = self.server_id {
-            use crate::state::server::{
-                ConnectionState as ServerConnectionState, ConnectionStatus, ProtocolConnectionInfo,
-            };
-            let now = std::time::Instant::now();
-
-            // Assume local address is the bind address (we don't have access to the actual socket here)
-            let local_addr = "0.0.0.0:22".parse().unwrap(); // Placeholder
-
-            let conn_state = ServerConnectionState {
-                id: connection_id,
-                remote_addr: addr,
-                local_addr,
-                bytes_sent: 0,
-                bytes_received: 0,
-                packets_sent: 0,
-                packets_received: 0,
-                last_activity: now,
-                status: ConnectionStatus::Active,
-                status_changed_at: now,
-                protocol_info: ProtocolConnectionInfo::empty(),
-            };
-
-            let app_state = self.app_state.clone();
-            let status_tx = self.status_tx.clone();
-
-            // Spawn task to add connection (new_client is not async)
-            tokio::spawn(async move {
-                app_state
-                    .add_connection_to_server(server_id, conn_state)
-                    .await;
-                let _ = status_tx.send("__UPDATE_UI__".to_string());
-            });
-        }
-
-        SshHandler::new(
-            connection_id,
-            self.config.clone(),
-            self.llm_client.clone(),
-            self.app_state.clone(),
-            self.status_tx.clone(),
-            self.server_id,
-            peer_addr,
-        )
-    }
-}
+// Note: We no longer implement russh::server::Server trait
+// Instead, we manually accept TCP connections and call russh::server::run_stream()
 
 #[async_trait]
 impl russh::server::Handler for SshHandler {
@@ -473,9 +495,14 @@ impl russh::server::Handler for SshHandler {
         user: &str,
         _public_key: &russh_keys::key::PublicKey,
     ) -> Result<Auth, Self::Error> {
+        info!("SSH: auth_publickey() called for user '{}'", user);
+        debug!("SSH: Public key auth for user '{}', connection {}", user, self.connection_id);
+        let _ = self.status_tx.send(format!("[DEBUG] SSH: auth_publickey('{}') called", user));
+
         // Ask LLM if this user should be allowed
         let allowed = self.llm_auth_decision(user, "publickey").await?;
 
+        info!("SSH: auth_publickey result for '{}': {}", user, allowed);
         if allowed {
             Ok(Auth::Accept)
         } else {
@@ -486,10 +513,15 @@ impl russh::server::Handler for SshHandler {
     }
 
     async fn auth_password(&mut self, user: &str, password: &str) -> Result<Auth, Self::Error> {
+        info!("SSH: auth_password() called for user '{}'", user);
+        debug!("SSH: Password auth for user '{}', connection {}", user, self.connection_id);
+        let _ = self.status_tx.send(format!("[DEBUG] SSH: auth_password('{}') called", user));
+
         // Ask LLM if this user/password should be allowed
         let event_desc = format!("password (user='{}', password='{}')", user, password);
         let allowed = self.llm_auth_decision(user, &event_desc).await?;
 
+        info!("SSH: auth_password result for '{}': {}", user, allowed);
         if allowed {
             Ok(Auth::Accept)
         } else {
