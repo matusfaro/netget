@@ -21,7 +21,8 @@ async fn test_openapi_todo_list() -> E2EResult<()> {
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup (user command)
-                .on_instruction_containing("OpenAPI")
+                .on_instruction_containing("Start OpenAPI server")
+                .and_instruction_containing("todo list spec")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -144,7 +145,8 @@ async fn test_openapi_create_todo() -> E2EResult<()> {
         .with_mock(|mock| {
             mock
                 // Mock 1: Server startup
-                .on_instruction_containing("OpenAPI")
+                .on_instruction_containing("Start OpenAPI server")
+                .and_instruction_containing("todo list spec")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -372,7 +374,8 @@ async fn test_openapi_spec_compliant_flag() -> E2EResult<()> {
     let server_config = NetGetConfig::new("Start OpenAPI server on port {AVAILABLE_PORT}")
         .with_mock(|mock| {
             mock
-                .on_instruction_containing("OpenAPI")
+                .on_instruction_containing("Start OpenAPI server")
+                .and_instruction_containing("on port")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",

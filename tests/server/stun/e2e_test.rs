@@ -6,8 +6,9 @@
 #![cfg(feature = "stun")]
 
 use crate::helpers::{start_netget_server, E2EResult, NetGetConfig};
-use std::net::{SocketAddr, UdpSocket};
+use std::net::SocketAddr;
 use std::time::Duration;
+use tokio::net::UdpSocket;
 
 #[tokio::test]
 async fn test_stun_basic_binding_request() -> E2EResult<()> {
@@ -59,11 +60,8 @@ async fn test_stun_basic_binding_request() -> E2EResult<()> {
     // Give tokio time to register the socket with reactor
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // Create UDP client socket
-    let client = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind client socket");
-    client
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .expect("Failed to set read timeout");
+    // Create UDP client socket (using tokio for async compatibility)
+    let client = UdpSocket::bind("127.0.0.1:0").await.expect("Failed to bind client socket");
 
     let server_addr: SocketAddr = format!("127.0.0.1:{}", port)
         .parse()
@@ -76,15 +74,16 @@ async fn test_stun_basic_binding_request() -> E2EResult<()> {
     for i in 0..3 {
         client
             .send_to(&binding_request, server_addr)
+            .await
             .expect("Failed to send STUN request");
         println!("Sent STUN binding request #{} to {}", i+1, server_addr);
-        std::thread::sleep(Duration::from_millis(50));
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
-    // Receive response
+    // Receive response with timeout
     let mut buf = vec![0u8; 2048];
-    match client.recv_from(&mut buf) {
-        Ok((len, from)) => {
+    match tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf)).await {
+        Ok(Ok((len, from))) => {
             println!("Received {} bytes from {}", len, from);
 
             // Parse STUN response
@@ -121,8 +120,11 @@ async fn test_stun_basic_binding_request() -> E2EResult<()> {
 
             println!("✓ STUN binding request/response successful");
         }
-        Err(e) => {
-            panic!("Failed to receive STUN response: {}", e);
+        Ok(Err(e)) => {
+            panic!("Failed to receive STUN response (IO error): {}", e);
+        }
+        Err(_) => {
+            panic!("Failed to receive STUN response: timeout after 5 seconds");
         }
     }
 
@@ -195,25 +197,24 @@ async fn test_stun_multiple_clients() -> E2EResult<()> {
     for i in 0..3 {
         let addr = server_addr;
         let handle = tokio::spawn(async move {
-            let client = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind client socket");
-            client
-                .set_read_timeout(Some(Duration::from_secs(5)))
-                .expect("Failed to set read timeout");
+            let client = UdpSocket::bind("127.0.0.1:0").await.expect("Failed to bind client socket");
 
             let request = build_stun_binding_request_with_tid(&[i; 12]);
             client
                 .send_to(&request, addr)
+                .await
                 .expect("Failed to send request");
 
             let mut buf = vec![0u8; 2048];
-            match client.recv_from(&mut buf) {
-                Ok((len, _)) => {
+            match tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf)).await {
+                Ok(Ok((len, _))) => {
                     let response = &buf[..len];
                     let message_type = u16::from_be_bytes([response[0], response[1]]);
                     assert_eq!(message_type, 0x0101, "Client {} got wrong message type", i);
                     println!("✓ Client {} received valid response", i);
                 }
-                Err(e) => panic!("Client {} failed to receive: {}", i, e),
+                Ok(Err(e)) => panic!("Client {} failed to receive (IO error): {}", i, e),
+                Err(_) => panic!("Client {} failed to receive: timeout after 5 seconds", i),
             }
         });
         handles.push(handle);
@@ -271,10 +272,7 @@ async fn test_stun_xor_mapped_address() -> E2EResult<()> {
     // Give tokio time to register the socket with reactor
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let client = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind client socket");
-    client
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .expect("Failed to set read timeout");
+    let client = UdpSocket::bind("127.0.0.1:0").await.expect("Failed to bind client socket");
 
     let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
         .parse()
@@ -283,10 +281,11 @@ async fn test_stun_xor_mapped_address() -> E2EResult<()> {
     let request = build_stun_binding_request();
     client
         .send_to(&request, server_addr)
+        .await
         .expect("Failed to send request");
 
     let mut buf = vec![0u8; 2048];
-    match client.recv_from(&mut buf) {
+    match client.recv_from(&mut buf).await {
         Ok((len, _)) => {
             let response = &buf[..len];
 
@@ -354,10 +353,7 @@ async fn test_stun_invalid_magic_cookie() -> E2EResult<()> {
     // Give tokio time to register the socket with reactor
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let client = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind client socket");
-    client
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .expect("Failed to set read timeout");
+    let client = UdpSocket::bind("127.0.0.1:0").await.expect("Failed to bind client socket");
 
     let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
         .parse()
@@ -368,6 +364,7 @@ async fn test_stun_invalid_magic_cookie() -> E2EResult<()> {
 
     client
         .send_to(&invalid_request, server_addr)
+        .await
         .expect("Failed to send invalid request");
 
     println!("Sent STUN request with invalid magic cookie");
@@ -376,8 +373,8 @@ async fn test_stun_invalid_magic_cookie() -> E2EResult<()> {
     // 1. Send error response (0x0111 = Binding Error Response)
     // 2. Silently ignore the packet (no response)
     let mut buf = vec![0u8; 2048];
-    match client.recv_from(&mut buf) {
-        Ok((len, _)) => {
+    match tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf)).await {
+        Ok(Ok((len, _))) => {
             let response = &buf[..len];
             if len >= 20 {
                 let message_type = u16::from_be_bytes([response[0], response[1]]);
@@ -389,15 +386,12 @@ async fn test_stun_invalid_magic_cookie() -> E2EResult<()> {
             }
             println!("✓ Server rejected invalid magic cookie");
         }
-        Err(e)
-            if e.kind() == std::io::ErrorKind::WouldBlock
-                || e.kind() == std::io::ErrorKind::TimedOut =>
-        {
+        Ok(Err(e)) => {
+            panic!("Unexpected error: {}", e);
+        }
+        Err(_) => {
             // Timeout is acceptable - server ignored invalid packet
             println!("✓ Server silently ignored invalid packet (no response)");
-        }
-        Err(e) => {
-            panic!("Unexpected error: {}", e);
         }
     }
 
@@ -429,10 +423,7 @@ async fn test_stun_malformed_short_packet() -> E2EResult<()> {
     // Give tokio time to register the socket with reactor
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let client = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind client socket");
-    client
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .expect("Failed to set read timeout");
+    let client = UdpSocket::bind("127.0.0.1:0").await.expect("Failed to bind client socket");
 
     let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
         .parse()
@@ -443,14 +434,15 @@ async fn test_stun_malformed_short_packet() -> E2EResult<()> {
 
     client
         .send_to(&short_packet, server_addr)
+        .await
         .expect("Failed to send short packet");
 
     println!("Sent malformed short packet (10 bytes)");
 
     // Server should silently ignore packets too short to be valid
     let mut buf = vec![0u8; 2048];
-    match client.recv_from(&mut buf) {
-        Ok((len, _)) => {
+    match tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf)).await {
+        Ok(Ok((len, _))) => {
             // If we get a response, it should be an error
             if len >= 20 {
                 let response = &buf[..len];
@@ -460,14 +452,11 @@ async fn test_stun_malformed_short_packet() -> E2EResult<()> {
             }
             println!("✓ Server responded with error to short packet");
         }
-        Err(e)
-            if e.kind() == std::io::ErrorKind::WouldBlock
-                || e.kind() == std::io::ErrorKind::TimedOut =>
-        {
-            println!("✓ Server silently ignored malformed short packet");
-        }
-        Err(e) => {
+        Ok(Err(e)) => {
             panic!("Unexpected error: {}", e);
+        }
+        Err(_) => {
+            println!("✓ Server silently ignored malformed short packet");
         }
     }
 
@@ -513,10 +502,7 @@ async fn test_stun_request_with_attributes() -> E2EResult<()> {
     // Give tokio time to register the socket with reactor
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let client = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind client socket");
-    client
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .expect("Failed to set read timeout");
+    let client = UdpSocket::bind("127.0.0.1:0").await.expect("Failed to bind client socket");
 
     let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
         .parse()
@@ -527,12 +513,13 @@ async fn test_stun_request_with_attributes() -> E2EResult<()> {
 
     client
         .send_to(&request, server_addr)
+        .await
         .expect("Failed to send request");
 
     println!("Sent STUN request with SOFTWARE attribute");
 
     let mut buf = vec![0u8; 2048];
-    match client.recv_from(&mut buf) {
+    match client.recv_from(&mut buf).await {
         Ok((len, _)) => {
             let response = &buf[..len];
 
@@ -589,10 +576,7 @@ async fn test_stun_rapid_requests() -> E2EResult<()> {
     // Give tokio time to register the socket with reactor
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let client = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind client socket");
-    client
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .expect("Failed to set read timeout");
+    let client = UdpSocket::bind("127.0.0.1:0").await.expect("Failed to bind client socket");
 
     let server_addr: SocketAddr = format!("127.0.0.1:{}", test_state.port)
         .parse()
@@ -607,6 +591,7 @@ async fn test_stun_rapid_requests() -> E2EResult<()> {
         let request = build_stun_binding_request_with_tid(&tid);
         client
             .send_to(&request, server_addr)
+            .await
             .expect("Failed to send request");
     }
 
@@ -617,8 +602,8 @@ async fn test_stun_rapid_requests() -> E2EResult<()> {
     let mut buf = vec![0u8; 2048];
 
     for _ in 0..5 {
-        match client.recv_from(&mut buf) {
-            Ok((len, _)) => {
+        match tokio::time::timeout(Duration::from_secs(5), client.recv_from(&mut buf)).await {
+            Ok(Ok((len, _))) => {
                 if len >= 20 {
                     let response = &buf[..len];
                     let message_type = u16::from_be_bytes([response[0], response[1]]);
@@ -628,14 +613,12 @@ async fn test_stun_rapid_requests() -> E2EResult<()> {
                     }
                 }
             }
-            Err(e)
-                if e.kind() == std::io::ErrorKind::WouldBlock
-                    || e.kind() == std::io::ErrorKind::TimedOut =>
-            {
-                break; // No more responses
-            }
-            Err(e) => {
+            Ok(Err(e)) => {
                 panic!("Unexpected error: {}", e);
+            }
+            Err(_) => {
+                // Timeout - no more responses
+                break;
             }
         }
     }

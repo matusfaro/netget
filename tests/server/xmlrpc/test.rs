@@ -168,7 +168,8 @@ async fn test_xmlrpc_introspection_list_methods() -> E2EResult<()> {
     let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
-                .on_instruction_containing("xmlrpc")
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("xmlrpc")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -234,7 +235,8 @@ async fn test_xmlrpc_fault_response() -> E2EResult<()> {
     let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
-                .on_instruction_containing("xmlrpc")
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("xmlrpc")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -306,7 +308,8 @@ async fn test_xmlrpc_string_parameter() -> E2EResult<()> {
     let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
-                .on_instruction_containing("xmlrpc")
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("xmlrpc")
                 .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "XML-RPC", "instruction": "Greet method"}]))
                 .expect_calls(1)
                 .and()
@@ -366,7 +369,8 @@ async fn test_xmlrpc_boolean_parameter() -> E2EResult<()> {
     let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
-                .on_instruction_containing("xmlrpc")
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("xmlrpc")
                 .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "XML-RPC", "instruction": "Toggle method"}]))
                 .expect_calls(1)
                 .and()
@@ -424,7 +428,8 @@ async fn test_xmlrpc_multiple_parameters() -> E2EResult<()> {
     let config = NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
-                .on_instruction_containing("xmlrpc")
+                .on_instruction_containing("listen on port")
+                .and_instruction_containing("xmlrpc")
                 .respond_with_actions(serde_json::json!([{"type": "open_server", "port": 0, "base_stack": "XML-RPC", "instruction": "Concat method"}]))
                 .expect_calls(1)
                 .and()
