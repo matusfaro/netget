@@ -39,25 +39,9 @@ async fn test_battery_service_startup() -> E2EResult<()> {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: Server started event - add Battery Service
+                    // Mock 2: Server started event - battery service auto-configures
                     .on_event("bluetooth_ble_started")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "add_service",
-                            "uuid": "0000180f-0000-1000-8000-00805f9b34fb",
-                            "primary": true,
-                            "characteristics": [{
-                                "uuid": "00002a19-0000-1000-8000-00805f9b34fb",
-                                "properties": ["read", "notify"],
-                                "permissions": ["readable"],
-                                "initial_value": "50"
-                            }]
-                        },
-                        {
-                            "type": "start_advertising",
-                            "device_name": "NetGet-Battery"
-                        }
-                    ]))
+                    .respond_with_actions(serde_json::json!([]))
                     .expect_calls(1)
                     .and()
             })
@@ -107,25 +91,9 @@ async fn test_battery_level_update() -> E2EResult<()> {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: Server started event - add Battery Service
+                    // Mock 2: Server started event - battery service auto-configures
                     .on_event("bluetooth_ble_started")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "add_service",
-                            "uuid": "0000180f-0000-1000-8000-00805f9b34fb",
-                            "primary": true,
-                            "characteristics": [{
-                                "uuid": "00002a19-0000-1000-8000-00805f9b34fb",
-                                "properties": ["read", "notify"],
-                                "permissions": ["readable"],
-                                "initial_value": "64"
-                            }]
-                        },
-                        {
-                            "type": "start_advertising",
-                            "device_name": "NetGet-Battery-Drain"
-                        }
-                    ]))
+                    .respond_with_actions(serde_json::json!([]))
                     .expect_calls(1)
                     .and()
             })

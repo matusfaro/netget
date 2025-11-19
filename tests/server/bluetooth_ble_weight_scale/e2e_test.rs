@@ -15,7 +15,8 @@ async fn test_weight_scale_service_startup() -> E2EResult<()> {
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    .on_instruction_containing("weight scale")
+                    .on_instruction_containing("Act as a BLE weight scale")
+                    .and_instruction_containing("Weight Scale Service")
                     .respond_with_actions(serde_json::json!([
                         {
                             "type": "open_server",
@@ -39,6 +40,11 @@ async fn test_weight_scale_service_startup() -> E2EResult<()> {
                             }
                         }
                     ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: Server started event - service auto-configures
+                    .on_event("bluetooth_ble_started")
+                    .respond_with_actions(serde_json::json!([]))
                     .expect_calls(1)
                     .and()
             })

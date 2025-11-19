@@ -38,25 +38,9 @@ async fn test_heart_rate_service_startup() -> E2EResult<()> {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: Server started event - add Heart Rate Service
+                    // Mock 2: Server started event - heart rate service auto-configures
                     .on_event("bluetooth_ble_started")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "add_service",
-                            "uuid": "0000180d-0000-1000-8000-00805f9b34fb",
-                            "primary": true,
-                            "characteristics": [{
-                                "uuid": "00002a37-0000-1000-8000-00805f9b34fb",
-                                "properties": ["read", "notify"],
-                                "permissions": ["readable"],
-                                "initial_value": "0048"
-                            }]
-                        },
-                        {
-                            "type": "start_advertising",
-                            "device_name": "NetGet-HeartRate"
-                        }
-                    ]))
+                    .respond_with_actions(serde_json::json!([]))
                     .expect_calls(1)
                     .and()
             })
@@ -104,25 +88,9 @@ async fn test_heart_rate_updates() -> E2EResult<()> {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: Server started event - add Heart Rate Service
+                    // Mock 2: Server started event - heart rate service auto-configures
                     .on_event("bluetooth_ble_started")
-                    .respond_with_actions(serde_json::json!([
-                        {
-                            "type": "add_service",
-                            "uuid": "0000180d-0000-1000-8000-00805f9b34fb",
-                            "primary": true,
-                            "characteristics": [{
-                                "uuid": "00002a37-0000-1000-8000-00805f9b34fb",
-                                "properties": ["read", "notify"],
-                                "permissions": ["readable"],
-                                "initial_value": "0048"
-                            }]
-                        },
-                        {
-                            "type": "start_advertising",
-                            "device_name": "NetGet-HR-Dynamic"
-                        }
-                    ]))
+                    .respond_with_actions(serde_json::json!([]))
                     .expect_calls(1)
                     .and()
             })

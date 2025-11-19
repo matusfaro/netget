@@ -24,7 +24,7 @@ async fn test_ibeacon_advertising() -> E2EResult<()> {
                 .with_mock(|mock| {
                     mock
                         // Mock 1: Server startup - use correct protocol name
-                        .on_instruction_containing("iBeacon")
+                        .on_instruction_containing("Act as an iBeacon")
                         .and_instruction_containing("12345678-1234-5678-1234-567812345678")
                         .respond_with_actions(serde_json::json!([
                             {
@@ -34,6 +34,11 @@ async fn test_ibeacon_advertising() -> E2EResult<()> {
                                 "instruction": "Create iBeacon with specified UUID, major, minor"
                             }
                         ]))
+                        .expect_calls(1)
+                        .and()
+                        // Mock 2: Server started event - beacon server ready
+                        .on_event("bluetooth_ble_started")
+                        .respond_with_actions(serde_json::json!([]))
                         .expect_calls(1)
                         .and()
                 })
@@ -70,7 +75,8 @@ async fn test_eddystone_uid_advertising() -> E2EResult<()> {
                 .with_mock(|mock| {
                     mock
                         // Mock 1: Server startup - use correct protocol name
-                        .on_instruction_containing("Eddystone-UID")
+                        .on_instruction_containing("Act as an Eddystone-UID")
+                        .and_instruction_containing("namespace")
                         .respond_with_actions(serde_json::json!([
                             {
                                 "type": "open_server",
@@ -79,6 +85,11 @@ async fn test_eddystone_uid_advertising() -> E2EResult<()> {
                                 "instruction": "Create Eddystone-UID beacon"
                             }
                         ]))
+                        .expect_calls(1)
+                        .and()
+                        // Mock 2: Server started event - beacon server ready
+                        .on_event("bluetooth_ble_started")
+                        .respond_with_actions(serde_json::json!([]))
                         .expect_calls(1)
                         .and()
                 })
@@ -114,7 +125,7 @@ async fn test_eddystone_url_advertising() -> E2EResult<()> {
                 .with_mock(|mock| {
                     mock
                         // Mock 1: Server startup - use correct protocol name
-                        .on_instruction_containing("Eddystone-URL")
+                        .on_instruction_containing("Act as an Eddystone-URL")
                         .and_instruction_containing("example.com")
                         .respond_with_actions(serde_json::json!([
                             {
@@ -124,6 +135,11 @@ async fn test_eddystone_url_advertising() -> E2EResult<()> {
                                 "instruction": "Create Eddystone-URL beacon"
                             }
                         ]))
+                        .expect_calls(1)
+                        .and()
+                        // Mock 2: Server started event - beacon server ready
+                        .on_event("bluetooth_ble_started")
+                        .respond_with_actions(serde_json::json!([]))
                         .expect_calls(1)
                         .and()
                 })

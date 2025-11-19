@@ -44,7 +44,12 @@ async fn test_remote_service_startup() -> E2EResult<()> {
                         ]))
                         .expect_calls(1)
                         .and()
-                })
+                // Mock 2: Server started event - service auto-configures
+                    .on_event("bluetooth_ble_started")
+                    .respond_with_actions(serde_json::json!([]))
+                    .expect_calls(1)
+                    .and()
+            })
         )
     )
     .await
