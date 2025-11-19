@@ -109,7 +109,7 @@ impl SmbServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, peer_addr)) => {
-                        error!("SMB_DEBUG: Connection ACCEPTED from {}", peer_addr);
+                        debug!("SMB connection accepted from {}", peer_addr);
                         let _ =
                             status_tx.send(format!("[DEBUG] SMB connection from {}", peer_addr));
 
@@ -119,9 +119,7 @@ impl SmbServer {
                         let protocol = protocol.clone();
                         let status_tx = status_tx.clone();
 
-                        error!("SMB_DEBUG: About to spawn handle_connection task for {}", peer_addr);
                         tokio::spawn(async move {
-                            error!("SMB_DEBUG: handle_connection task STARTED for {}", peer_addr);
                             if let Err(e) = Self::handle_connection(
                                 stream,
                                 peer_addr,
@@ -139,7 +137,6 @@ impl SmbServer {
                                     peer_addr, e
                                 ));
                             }
-                            error!("SMB_DEBUG: handle_connection task COMPLETED for {}", peer_addr);
                         });
                     }
                     Err(e) => {
@@ -220,12 +217,8 @@ impl SmbServer {
             // SMB2 header is 64 bytes minimum
             let mut header_buf = vec![0u8; 64];
 
-            warn!("SMB_DEBUG: Waiting for next message from {}", peer_addr);
-
             match stream.read_exact(&mut header_buf).await {
                 Ok(_) => {
-                    warn!("SMB_DEBUG: Received 64-byte header from {}", peer_addr);
-
                     // Update connection stats for received data
                     app_state
                         .update_connection_stats(
@@ -248,7 +241,7 @@ impl SmbServer {
 
                     // Extract command from header (offset 12-13, little-endian)
                     let command = u16::from_le_bytes([header_buf[12], header_buf[13]]);
-                    warn!("SMB_DEBUG: SMB2 command 0x{:04x} from {}", command, peer_addr);
+                    debug!("SMB2 command 0x{:04x} from {}", command, peer_addr);
 
                     // Handle SMB2 command
                     let response = Self::handle_smb2_command(
@@ -347,12 +340,12 @@ impl SmbServer {
                 let mut body_buf = [0u8; 38];
                 match _stream.read_exact(&mut body_buf).await {
                     Ok(_) => {
-                        error!("SMB_DEBUG: NEGOTIATE body read SUCCESS - 38 bytes consumed");
+                        debug!("NEGOTIATE body: 38 bytes consumed");
                     }
                     Err(e) => {
                         // ERROR: If we can't read the body, the stream is now out of sync!
                         // This will cause the next header read to fail
-                        error!("SMB_DEBUG: NEGOTIATE body read FAILED: {} - THIS WILL BREAK THE CONNECTION!", e);
+                        warn!("Error reading NEGOTIATE body: {}", e);
                         return Err(e.into());
                     }
                 }
@@ -363,7 +356,7 @@ impl SmbServer {
                 Ok(Some(response))
             }
             SMB2_SESSION_SETUP => {
-                warn!("SMB_DEBUG: SESSION_SETUP request received");
+                debug!("SMB2 SESSION_SETUP request");
 
                 // Read SESSION_SETUP request body (exactly 24 bytes for guest auth)
                 let mut body_buf = [0u8; 24];
@@ -396,7 +389,6 @@ impl SmbServer {
                     _protocol,
                     "session_setup",
                     serde_json::json!({
-                        "operation": "authenticate",
                         "username": username,
                         "auth_type": if username == "guest" { "guest" } else { "password" }
                     }),
