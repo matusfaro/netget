@@ -8,8 +8,6 @@
 // Helper module imported from parent
 
 use super::super::super::helpers::{self, E2EResult, NetGetConfig};
-use snmp::SyncSession;
-use std::time::Duration;
 
 #[tokio::test]
 async fn test_snmp_basic_get() -> E2EResult<()> {
