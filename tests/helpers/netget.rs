@@ -127,7 +127,7 @@ impl NetGetConfig {
             no_scripts: false,
             include_disabled_protocols: false,
             ollama_lock: true, // Enable by default for concurrent testing
-            llm_max_concurrent: None,
+            llm_max_concurrent: Some(1000), // High concurrency for E2E tests (effectively unlimited)
             mock_config: None,
         }
     }
@@ -143,7 +143,7 @@ impl NetGetConfig {
             no_scripts: true,
             include_disabled_protocols: false,
             ollama_lock: true,
-            llm_max_concurrent: None,
+            llm_max_concurrent: Some(1000), // High concurrency for E2E tests (effectively unlimited)
             mock_config: None,
         }
     }
