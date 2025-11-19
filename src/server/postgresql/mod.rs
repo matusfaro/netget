@@ -759,86 +759,12 @@ impl ExtendedQueryHandler for PostgresqlHandler {
 
         debug!("PostgreSQL DESCRIBE (extended): {}", sql);
 
-        // Call LLM to get column schema
-        let event = Event::new(
-            &POSTGRESQL_QUERY_EVENT,
-            serde_json::json!({
-                "query": sql,
-            }),
-        );
+        // Parse SQL to infer column schema WITHOUT calling LLM
+        // This prevents duplicate LLM calls (Describe + Execute)
+        let field_infos = infer_schema_from_sql(sql);
 
-        let server_id = self
-            .server_id
-            .unwrap_or_else(|| crate::state::ServerId::new(0));
-
-        // Call LLM to get the response with column metadata
-        let llm_result = call_llm(
-            &self.llm_client,
-            &self.app_state,
-            server_id,
-            Some(self.connection_id),
-            &event,
-            self.protocol.as_ref(),
-        )
-        .await
-        .map_err(|e| PgWireError::UserError(Box::new(ErrorInfo::new(
-            "ERROR".to_string(),
-            "XX000".to_string(),
-            format!("LLM call failed: {}", e),
-        ))))?;
-
-        // Extract field info from LLM response
-        if let Some(protocol_result) = llm_result.protocol_results.first() {
-            if let crate::llm::actions::protocol_trait::ActionResult::Custom { name, data } = protocol_result {
-                if name == "postgresql_query_response" {
-                    // Extract columns from the response
-                    let columns = data
-                        .get("columns")
-                        .and_then(|v| v.as_array())
-                        .cloned()
-                        .unwrap_or_default();
-
-                    // Convert columns to FieldInfo
-                    let field_infos: Vec<FieldInfo> = columns
-                        .iter()
-                        .filter_map(|col| {
-                            let name = col.get("name")?.as_str()?;
-                            let type_name = col
-                                .get("type")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("text");
-
-                            let pg_type = match type_name.to_lowercase().as_str() {
-                                "int2" | "smallint" => Type::INT2,
-                                "int4" | "int" | "integer" => Type::INT4,
-                                "int8" | "bigint" => Type::INT8,
-                                "float4" | "real" => Type::FLOAT4,
-                                "float8" | "double" | "double precision" => Type::FLOAT8,
-                                "bool" | "boolean" => Type::BOOL,
-                                "date" => Type::DATE,
-                                "time" => Type::TIME,
-                                "timestamp" => Type::TIMESTAMP,
-                                "varchar" | "text" | _ => Type::VARCHAR,
-                            };
-
-                            Some(FieldInfo::new(
-                                name.to_string(),
-                                None,
-                                None,
-                                pg_type,
-                                FieldFormat::Text,
-                            ))
-                        })
-                        .collect();
-
-                    debug!("Describe portal returning {} field infos", field_infos.len());
-                    return Ok(DescribePortalResponse::new(field_infos));
-                }
-            }
-        }
-
-        // Fallback: return empty if LLM didn't return column info
-        Ok(DescribePortalResponse::new(vec![]))
+        debug!("Describe portal returning {} field infos (inferred from SQL)", field_infos.len());
+        Ok(DescribePortalResponse::new(field_infos))
     }
 }
 
@@ -860,6 +786,46 @@ impl pgwire::api::stmt::QueryParser for PostgresqlQueryParser {
     {
         Ok(sql.to_string())
     }
+}
+
+/// Infer column schema from SQL query WITHOUT executing it
+/// This is a simple heuristic-based approach for common queries
+fn infer_schema_from_sql(sql: &str) -> Vec<FieldInfo> {
+    let sql_lower = sql.trim().to_lowercase();
+
+    // SELECT 1 -> single integer column
+    if sql_lower.contains("select 1") || sql_lower == "select 1;" {
+        return vec![FieldInfo::new(
+            "?column?".to_string(),
+            None,
+            None,
+            Type::INT4,
+            FieldFormat::Text,
+        )];
+    }
+
+    // SELECT version() -> single text column
+    if sql_lower.contains("version(") {
+        return vec![FieldInfo::new(
+            "version".to_string(),
+            None,
+            None,
+            Type::VARCHAR,
+            FieldFormat::Text,
+        )];
+    }
+
+    // CREATE TABLE, INSERT, UPDATE, DELETE -> no columns
+    if sql_lower.starts_with("create ")
+        || sql_lower.starts_with("insert ")
+        || sql_lower.starts_with("update ")
+        || sql_lower.starts_with("delete ")
+    {
+        return vec![];
+    }
+
+    // Default: return empty (will send NoData)
+    vec![]
 }
 
 /// Convert JSON value to string representation
