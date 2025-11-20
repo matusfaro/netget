@@ -1,4 +1,5 @@
 use netget::client::icmp::IcmpClientProtocol;
+use netget::llm::actions::protocol_trait::Protocol;
 use netget::llm::OllamaClient;
 use netget::state::AppState;
 use std::sync::Arc;
@@ -20,6 +21,7 @@ async fn test_icmp_echo_request() -> anyhow::Result<()> {
     Ok(())
 }
 
+/* TODO: Timestamp support requires pnet to add timestamp packet types
 #[tokio::test]
 #[ignore] // Requires CAP_NET_RAW or root
 async fn test_icmp_timestamp_request() -> anyhow::Result<()> {
@@ -31,6 +33,7 @@ async fn test_icmp_timestamp_request() -> anyhow::Result<()> {
 
     Ok(())
 }
+*/
 
 #[tokio::test]
 #[ignore] // Requires CAP_NET_RAW or root
@@ -58,7 +61,7 @@ async fn test_icmp_client_actions() -> anyhow::Result<()> {
         .collect();
 
     assert!(action_types.contains(&"send_echo_request"));
-    assert!(action_types.contains(&"send_timestamp_request"));
+    // Note: send_timestamp_request removed - pnet doesn't support timestamp packets
     assert!(action_types.contains(&"wait_for_more"));
     assert!(action_types.contains(&"disconnect"));
 

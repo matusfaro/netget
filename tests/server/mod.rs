@@ -72,6 +72,8 @@ pub mod http;
 pub mod http2;
 #[cfg(feature = "http3")]
 pub mod http3;
+#[cfg(feature = "icmp")]
+pub mod icmp;
 #[cfg(feature = "imap")]
 pub mod imap;
 #[cfg(feature = "ipp")]
