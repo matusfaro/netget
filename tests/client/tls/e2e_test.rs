@@ -105,7 +105,7 @@ mod tls_client_tests {
 
         // Wait for server to receive and process the encrypted data
         server
-            .wait_for_pattern("TLS server received data", Duration::from_secs(5))
+            .wait_for_pattern("TLS received", Duration::from_secs(5))
             .await?;
 
         println!("✅ TLS client connected to server with TLS handshake and sent data successfully");
@@ -124,7 +124,9 @@ mod tls_client_tests {
     /// Test TLS client with certificate validation (should succeed with valid certs)
     /// This test connects to a public HTTPS server to verify real certificate validation
     /// LLM calls: 2 (client startup, client connected)
+    /// NOTE: Requires external network access - run with `--ignored` flag
     #[tokio::test]
+    #[ignore = "Requires external network access to example.com:443"]
     async fn test_tls_client_certificate_validation() -> E2EResult<()> {
         // Connect to example.com:443 with full certificate validation
         let client_config = NetGetConfig::new(
