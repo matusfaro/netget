@@ -41,11 +41,11 @@ impl Default for SshServerConfig {
 
 /// SSH server implementation
 pub struct SshServer {
-    config: SshServerConfig,
-    llm_client: OllamaClient,
-    app_state: Arc<AppState>,
-    status_tx: mpsc::UnboundedSender<String>,
-    server_id: Option<crate::state::ServerId>,
+    _config: SshServerConfig,
+    _llm_client: OllamaClient,
+    _app_state: Arc<AppState>,
+    _status_tx: mpsc::UnboundedSender<String>,
+    _server_id: Option<crate::state::ServerId>,
 }
 
 impl SshServer {
@@ -58,11 +58,11 @@ impl SshServer {
         server_id: Option<crate::state::ServerId>,
     ) -> Self {
         Self {
-            config,
-            llm_client,
-            app_state,
-            status_tx,
-            server_id,
+            _config: config,
+            _llm_client: llm_client,
+            _app_state: app_state,
+            _status_tx: status_tx,
+            _server_id: server_id,
         }
     }
 

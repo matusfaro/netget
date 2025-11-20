@@ -170,21 +170,44 @@ server.verify_mocks().await?;  // ← CRITICAL: Always verify!
 - Secondary: `CLAUDE_CODE_REMOTE_ENVIRONMENT_TYPE=cloud_default`
 - Tertiary: `CLAUDE_CODE_ENTRYPOINT=remote` or `IS_SANDBOX=yes`
 
-**Bluetooth-BLE Restriction**: The `bluetooth-ble` feature MUST be skipped in Claude Code for Web:
-- Depends on system library `libbluetooth-dev` which is not available in the web environment
-- Attempting to build with `bluetooth-ble` feature will fail with missing library errors
-- Always use `--no-default-features` with explicit feature selection in Claude Code for Web
-- Avoid `--all-features` in Claude Code for Web as it includes `bluetooth-ble`
+**System Dependency Restrictions**: The following features require system libraries NOT available in Claude Code for Web:
+
+**Bluetooth Features (18 features)** - Require `libdbus-1-dev`:
+- ALL `bluetooth-ble*` features are unavailable: `bluetooth-ble`, `bluetooth-ble-client`, `bluetooth-ble-keyboard`, `bluetooth-ble-mouse`, `bluetooth-ble-beacon`, `bluetooth-ble-remote`, `bluetooth-ble-battery`, `bluetooth-ble-heart-rate`, `bluetooth-ble-thermometer`, `bluetooth-ble-environmental`, `bluetooth-ble-proximity`, `bluetooth-ble-gamepad`, `bluetooth-ble-presenter`, `bluetooth-ble-file-transfer`, `bluetooth-ble-data-stream`, `bluetooth-ble-cycling`, `bluetooth-ble-running`, `bluetooth-ble-weight-scale`
+- Error: `libdbus-sys` fails with "system library 'dbus-1' required"
+
+**USB Features (7 features)** - Require `libusb-1.0-dev`:
+- `usb`, `usb-keyboard`, `usb-mouse`, `usb-serial`, `usb-msc`, `usb-fido2`, `usb-smartcard`
+- Error: `libusb1-sys` fails with "failed to create vendored source directory"
+
+**NFC Features (2 features)** - Require `pcsclite`:
+- `nfc`, `nfc-client`
+- Error: `pcsc` crate requires PC/SC system library
+
+**Protocol Buffer Features (4 features)** - Require `protoc` compiler:
+- `etcd`, `grpc`, `kubernetes`, `zookeeper`
+- Error: build scripts fail with "Could not find `protoc`"
+
+**Kafka Feature** - May require system dependencies (untested)
+
+**Total Unavailable**: ~32 features out of ~100 features
+
+**Available Features in Claude Code for Web** (~75 features):
+```bash
+# SAFE: Maximum features for web environment
+./cargo-isolated.sh build --no-default-features --features \
+tcp,socket_file,http,http2,http3,pypi,maven,udp,datalink,arp,dc,dns,dot,doh,dhcp,bootp,ntp,whois,snmp,igmp,syslog,ssh,ssh-agent,svn,irc,xmpp,telnet,smtp,mdns,mysql,ipp,postgresql,redis,rss,proxy,webdav,nfs,cassandra,smb,stun,turn,webrtc,sip,ldap,imap,pop3,nntp,mqtt,amqp,socks5,elasticsearch,dynamo,s3,sqs,npm,openai,ollama,oauth2,jsonrpc,wireguard,openvpn,ipsec,bgp,ospf,isis,rip,bitcoin,mcp,xmlrpc,tor,vnc,openapi,openid,git,mercurial,torrent-tracker,torrent-dht,torrent-peer,tls,saml-idp,saml-sp,embedded-llm
+```
 
 **Example safe builds for Claude Code for Web**:
 ```bash
-# SAFE: Explicit features without bluetooth-ble
-./cargo-isolated.sh build --no-default-features --features tcp,http,dns
-
 # SAFE: Single protocol
 ./cargo-isolated.sh build --no-default-features --features tcp
 
-# UNSAFE: Will try to build bluetooth-ble
+# SAFE: Multiple protocols
+./cargo-isolated.sh build --no-default-features --features tcp,http,dns
+
+# UNSAFE: Will try to build bluetooth, USB, NFC, etcd, etc.
 ./cargo-isolated.sh build --all-features  # DON'T USE IN WEB
 ```
 
@@ -196,12 +219,14 @@ server.verify_mocks().await?;  // ← CRITICAL: Always verify!
 This script checks all detection methods and provides build guidance. You can also check manually in code:
 ```bash
 if [ "$CLAUDE_CODE_REMOTE" = "true" ]; then
-    echo "Running in Claude Code for Web - skipping bluetooth-ble"
+    echo "Running in Claude Code for Web - excluding system-dependent features"
     ./cargo-isolated.sh build --no-default-features --features tcp,http,dns
 else
     ./cargo-isolated.sh build --all-features
 fi
 ```
+
+**For detailed analysis of system dependencies**, see `COMPILATION_ERROR_REPORT.md`.
 
 ### Efficient Build & Test Iteration (CRITICAL)
 

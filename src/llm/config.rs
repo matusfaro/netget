@@ -5,7 +5,7 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use tracing::{debug, info, warn};
+use tracing::debug;
 
 /// LLM backend type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -218,14 +218,18 @@ fn default_models_dir() -> PathBuf {
         .join("models")
 }
 
+// Default values for serde deserialization
+#[allow(dead_code)]
 fn default_context_size() -> u32 {
     4096
 }
 
+#[allow(dead_code)]
 fn default_max_tokens() -> usize {
     2048
 }
 
+#[allow(dead_code)]
 fn default_gpu_layers() -> u32 {
     u32::MAX // Auto-detect
 }
