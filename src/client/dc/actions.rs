@@ -296,6 +296,7 @@ impl Protocol for DcClientProtocol {
             send_dc_search_action(),
             send_dc_myinfo_action(),
             send_dc_get_nicklist_action(),
+            send_dc_filelist_action(),
             send_dc_raw_command_action(),
             disconnect_action(),
         ]
@@ -305,6 +306,7 @@ impl Protocol for DcClientProtocol {
         vec![
             send_dc_chat_action(),
             send_dc_private_message_action(),
+            send_dc_filelist_action(),
             send_dc_raw_command_action(),
             wait_for_more_action(),
         ]
@@ -468,6 +470,20 @@ impl Client for DcClientProtocol {
                 name: "dc_get_nicklist".to_string(),
                 data: json!({}),
             }),
+            "send_dc_filelist" => {
+                let files = action
+                    .get("files")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+
+                Ok(ClientActionResult::Custom {
+                    name: "dc_filelist".to_string(),
+                    data: json!({
+                        "files": files,
+                    }),
+                })
+            }
             "send_dc_raw_command" => {
                 let command = action
                     .get("command")
@@ -604,6 +620,31 @@ fn send_dc_get_nicklist_action() -> ActionDefinition {
         parameters: vec![],
         example: json!({
             "type": "send_dc_get_nicklist"
+        }),
+    }
+}
+
+fn send_dc_filelist_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "send_dc_filelist".to_string(),
+        description: "Configure and send file list in response to hub request. File list is XML format with fake/empty entries.".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "files".to_string(),
+                type_hint: "array".to_string(),
+                description: "Array of file objects with name, size, and optional TTH hash".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "send_dc_filelist",
+            "files": [
+                {
+                    "name": "example.txt",
+                    "size": 1024,
+                    "tth": "ABCD1234567890"
+                }
+            ]
         }),
     }
 }

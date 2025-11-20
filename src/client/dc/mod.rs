@@ -58,6 +58,14 @@ enum DcConnectionState {
     Authenticated,  // Fully authenticated, can chat/search
 }
 
+/// File entry for file list
+#[derive(Debug, Clone)]
+struct DcFileEntry {
+    name: String,
+    size: u64,
+    tth: Option<String>, // Tiger Tree Hash (optional)
+}
+
 /// Per-client state for DC
 struct DcClientState {
     auth_state: DcConnectionState,
@@ -66,6 +74,7 @@ struct DcClientState {
     email: String,
     share_size: u64,
     memory: String,
+    file_list: Vec<DcFileEntry>, // Files to advertise
 }
 
 /// DC client that connects to a DC hub
@@ -376,6 +385,7 @@ where
         email,
         share_size,
         memory: String::new(),
+        file_list: Vec::new(), // Start with empty file list
     }));
 
     // Spawn read loop for DC messages
@@ -677,6 +687,33 @@ async fn process_dc_message(
             &memory,
         )
         .await?;
+    } else if message.starts_with("$GetListLen") || message.starts_with("$UGetBlock") {
+        // Hub is requesting file list
+        // Respond with XML file list
+        let state = client_state.lock().await;
+        let files = state.file_list.clone();
+        let nick = state.nickname.clone();
+        drop(state);
+
+        let xml = generate_xml_filelist(&files, &nick);
+        let xml_bytes = xml.as_bytes();
+
+        debug!(
+            "DC client {} responding to file list request with {} files ({} bytes)",
+            client_id,
+            files.len(),
+            xml_bytes.len()
+        );
+
+        // Note: In a real implementation, we would need to handle ZLIB compression
+        // and send the file list via $Send or similar. For now, this is a simplified
+        // implementation that just logs the request.
+        // The LLM can use send_dc_raw_command to send the actual response if needed.
+
+        info!(
+            "DC client {} received file list request (not fully implemented - use send_dc_raw_command to respond)",
+            client_id
+        );
     } else {
         // Unknown message type - log but don't error
         debug!("DC client {} received unknown message: {}", client_id, message);
@@ -1417,6 +1454,37 @@ async fn execute_dc_actions(
                     send_dc_command(write_half, &cmd).await?;
                     info!("DC client {} requested user list", client_id);
                 }
+                "dc_filelist" => {
+                    if let Some(files_array) = data.get("files").and_then(|v| v.as_array()) {
+                        // Parse files array into DcFileEntry structs
+                        let mut file_list = Vec::new();
+                        for file in files_array {
+                            if let (Some(name), Some(size)) = (
+                                file.get("name").and_then(|v| v.as_str()),
+                                file.get("size").and_then(|v| v.as_u64()),
+                            ) {
+                                let tth = file
+                                    .get("tth")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string());
+
+                                file_list.push(DcFileEntry {
+                                    name: name.to_string(),
+                                    size,
+                                    tth,
+                                });
+                            }
+                        }
+
+                        // Store in client state
+                        client_state.lock().await.file_list = file_list.clone();
+                        info!(
+                            "DC client {} configured file list with {} files",
+                            client_id,
+                            file_list.len()
+                        );
+                    }
+                }
                 "dc_raw_command" => {
                     if let Some(command) = data.get("command").and_then(|v| v.as_str()) {
                         let mut cmd = command.to_string();
@@ -1454,6 +1522,39 @@ async fn send_dc_command(
     write_guard.write_all(command.as_bytes()).await?;
     write_guard.flush().await?;
     Ok(())
+}
+
+/// Generate XML file list from file entries (NMDC format)
+fn generate_xml_filelist(files: &[DcFileEntry], nickname: &str) -> String {
+    let mut xml = format!("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n");
+    xml.push_str(&format!("<FileListing Version=\"1\" CID=\"{}\" Base=\"/\" Generator=\"NetGet DC Client\">\n", nickname));
+
+    for file in files {
+        let tth_attr = file
+            .tth
+            .as_ref()
+            .map(|t| format!(" TTH=\"{}\"", t))
+            .unwrap_or_default();
+
+        xml.push_str(&format!(
+            "  <File Name=\"{}\" Size=\"{}\"{}/>\n",
+            escape_xml(&file.name),
+            file.size,
+            tth_attr
+        ));
+    }
+
+    xml.push_str("</FileListing>\n");
+    xml
+}
+
+/// Escape XML special characters
+fn escape_xml(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 /// Calculate DC key from lock using NMDC algorithm

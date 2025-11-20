@@ -120,6 +120,7 @@ The LLM receives events for each message type and can respond with actions:
 - `send_dc_search` - Search for files
 - `send_dc_myinfo` - Send/update client information
 - `send_dc_get_nicklist` - Request user list
+- `send_dc_filelist` - Configure file list for hub requests
 - `send_dc_raw_command` - Send raw NMDC command
 - `disconnect` - Disconnect from hub
 
@@ -277,13 +278,37 @@ See `actions.rs` for complete action list with examples.
 
 **Future Enhancement**: Add ADC support as separate client implementation
 
-### 3. No File Listing
+### 3. File List Generation
 
-**Limitation**: Client doesn't generate or serve file lists
+**Feature**: ✅ **IMPLEMENTED** - Basic XML file list generation capability
 
-**Reason**: No actual file sharing functionality, client is for hub interaction only
+**Usage**: LLM can configure file list via `send_dc_filelist` action
 
-**Workaround**: LLM can generate fake file list if requested by hub
+**Implementation**:
+- LLM configures file list with array of file objects (name, size, optional TTH hash)
+- Client stores file list and generates NMDC-compliant XML format
+- Detects file list requests from hub (`$GetListLen`, `$UGetBlock`)
+- Generates proper XML with escaping and TTH support
+
+**Example**:
+```json
+{
+  "type": "send_dc_filelist",
+  "files": [
+    {
+      "name": "document.txt",
+      "size": 2048,
+      "tth": "ABCD1234567890"
+    }
+  ]
+}
+```
+
+**Limitations**:
+- No actual file sharing or P2P transfer (hub interaction only)
+- No ZLIB compression (file list is uncompressed XML)
+- LLM must use `send_dc_raw_command` to manually send file list if hub requests it
+- File list is fake/for testing - no real files are served
 
 ### 4. Message Parsing
 
