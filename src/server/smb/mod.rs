@@ -103,25 +103,67 @@ impl SmbServer {
 
         let actual_addr = listener.local_addr()?;
         eprintln!("===== LISTENER LOCAL ADDR: {} =====", actual_addr);
+
+        // Generate unique server instance ID
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let instance_id = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() % 100000;
+        eprintln!("===== SERVER INSTANCE ID: {} =====", instance_id);
         info!("SMB server listening on {}", actual_addr);
         let _ = status_tx.send(format!("→ SMB server listening on {}", actual_addr));
 
         // Spawn connection acceptor
         let acceptor_id = format!("{:p}", &listener);
-        eprintln!("===== CREATING ACCEPTOR TASK {} for {} =====", acceptor_id, actual_addr);
+        eprintln!("===== CREATING ACCEPTOR TASK {} for {} (instance {}) =====", acceptor_id, actual_addr, instance_id);
+
+        // Spawn a heartbeat task to prove tasks can run
+        let heartbeat_tx = status_tx.clone();
         tokio::spawn(async move {
-            eprintln!("===== SMB ACCEPTOR TASK {} STARTED =====", acceptor_id);
+            let mut count = 0;
+            loop {
+                count += 1;
+                eprintln!("===== HEARTBEAT {} for instance {} =====", count, instance_id);
+                let _ = heartbeat_tx.send(format!("[HEARTBEAT] {} (instance {})", count, instance_id));
+                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            }
+        });
+
+        tokio::spawn(async move {
+            eprintln!("===== SMB ACCEPTOR TASK {} STARTED (instance {}) =====", acceptor_id, instance_id);
             info!("SMB server connection acceptor started");
             let _ = status_tx.send("[INFO] SMB connection acceptor loop starting".to_string());
 
             let mut accept_call_count = 0;
             loop {
                 accept_call_count += 1;
-                eprintln!("===== SMB ACCEPTOR {}: CALLING accept() (call #{}) =====", acceptor_id, accept_call_count);
+                eprintln!("===== SMB ACCEPTOR (instance {}): CALLING accept() (call #{}) =====", instance_id, accept_call_count);
                 trace!("SMB acceptor: waiting for connection");
-                match listener.accept().await {
-                    Ok((stream, peer_addr)) => {
-                        eprintln!("===== SMB ACCEPT RETURNED OK: {} =====", peer_addr);
+
+                // Try a simple yield to let other tasks run
+                eprintln!("===== BEFORE tokio::task::yield_now() (instance {}) =====", instance_id);
+                tokio::task::yield_now().await;
+                eprintln!("===== AFTER tokio::task::yield_now() (instance {}) =====", instance_id);
+
+                // Add timeout to detect if accept() is truly blocking
+                eprintln!("===== BEFORE select! with accept() (instance {}) =====", instance_id);
+                let accept_result = tokio::select! {
+                    result = listener.accept() => {
+                        eprintln!("===== SELECT: accept() branch completed (instance {}) =====", instance_id);
+                        Some(result)
+                    }
+                    _ = tokio::time::sleep(tokio::time::Duration::from_secs(3)) => {
+                        eprintln!("===== SELECT: timeout branch (3s elapsed, instance {}) =====", instance_id);
+                        None
+                    }
+                };
+                eprintln!("===== AFTER select! - got result: {} (instance {}) =====",
+                    accept_result.is_some(), instance_id);
+
+                match accept_result {
+                    Some(Ok((stream, peer_addr))) => {
+                        eprintln!("===== SMB ACCEPT RETURNED OK: {} (instance {}) =====", peer_addr, instance_id);
                         info!("SMB connection accepted from {}", peer_addr);
                         let _ =
                             status_tx.send(format!("→ SMB connection from {}", peer_addr));
@@ -156,10 +198,16 @@ impl SmbServer {
                         eprintln!("===== SPAWNED HANDLER TASK (returned immediately) =====");
                         eprintln!("===== LOOPING BACK TO ACCEPT NEXT CONNECTION =====");
                     }
-                    Err(e) => {
+                    Some(Err(e)) => {
                         eprintln!("===== SMB ACCEPT ERROR: {} =====", e);
                         error!("SMB accept error: {}", e);
                         let _ = status_tx.send(format!("✗ SMB accept error: {}", e));
+                    }
+                    None => {
+                        eprintln!("===== SELECT TIMEOUT! (3 seconds) - accept() didn't complete =====");
+                        error!("SMB accept() didn't complete within 3 seconds");
+                        let _ = status_tx.send("[ERROR] SMB select timeout - accept() hung!".to_string());
+                        // Continue looping to try again
                     }
                 }
                 eprintln!("===== END OF ACCEPT MATCH, LOOPING =====");
