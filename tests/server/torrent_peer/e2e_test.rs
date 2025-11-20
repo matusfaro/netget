@@ -211,6 +211,15 @@ async fn test_peer_piece_request() -> E2EResult<()> {
             ]))
             .expect_calls(1)
             .and()
+            // Mock: Interested/Choke message (client sends interested)
+            .on_event("peer_choke_message")
+            .respond_with_actions(json!([
+                {
+                    "type": "send_unchoke"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
             // Mock: Piece request
             .on_event("peer_request_message")
             .and_event_data_contains("index", "0")
