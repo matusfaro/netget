@@ -2,6 +2,8 @@
 
 #[cfg(feature = "amqp")]
 pub mod amqp;
+#[cfg(feature = "couchdb")]
+pub mod couchdb;
 #[cfg(feature = "datalink")]
 pub mod datalink;
 #[cfg(feature = "http")]
