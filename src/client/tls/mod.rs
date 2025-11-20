@@ -65,6 +65,10 @@ impl TlsClient {
             .as_ref()
             .and_then(|p| p.get_optional_string("server_name"));
 
+        let custom_ca_cert_pem = startup_params
+            .as_ref()
+            .and_then(|p| p.get_optional_string("custom_ca_cert_pem"));
+
         debug!(
             "TLS client {} connecting to {} (accept_invalid_certs: {})",
             client_id, remote_addr, accept_invalid_certs
@@ -89,6 +93,28 @@ impl TlsClient {
             ClientConfig::builder()
                 .dangerous()
                 .with_custom_certificate_verifier(Arc::new(NoVerification))
+                .with_no_client_auth()
+        } else if let Some(ref ca_pem) = custom_ca_cert_pem {
+            // Use custom CA certificate for validation
+            debug!("TLS client {} using custom CA certificate", client_id);
+
+            // Parse CA certificate from PEM
+            let ca_certs = rustls_pemfile::certs(&mut ca_pem.as_bytes())
+                .collect::<Result<Vec<_>, _>>()
+                .context("Failed to parse custom CA certificate PEM")?;
+
+            if ca_certs.is_empty() {
+                return Err(anyhow::anyhow!("No certificates found in custom_ca_cert_pem"));
+            }
+
+            // Create root store with custom CA
+            let mut root_store = RootCertStore::empty();
+            for cert in ca_certs {
+                root_store.add(cert).context("Failed to add custom CA certificate to root store")?;
+            }
+
+            ClientConfig::builder()
+                .with_root_certificates(root_store)
                 .with_no_client_auth()
         } else {
             // Use webpki roots for validation

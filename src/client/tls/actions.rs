@@ -91,6 +91,14 @@ impl Protocol for TlsClientProtocol {
                 required: false,
                 example: json!("example.com"),
             },
+            ParameterDefinition {
+                name: "custom_ca_cert_pem".to_string(),
+                type_hint: "string".to_string(),
+                description: "Custom CA certificate in PEM format to use for validation (instead of system roots)"
+                    .to_string(),
+                required: false,
+                example: json!("-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"),
+            },
         ]
     }
 
