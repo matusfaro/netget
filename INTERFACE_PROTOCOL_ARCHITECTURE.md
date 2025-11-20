@@ -33,7 +33,7 @@ Support **all binding parameters as optional** while maintaining full backwards 
 
 - **MAC address**: For layer 2 protocols (e.g., spoofing source MAC in ARP)
 - **Interface**: For raw socket protocols (ICMP, ARP, DataLink)
-- **IP/Hostname**: For specific IP binding (IPv4, IPv6, or hostname like "localhost", "example.com")
+- **Host (hostname or IP)**: For specific IP binding (IPv4, IPv6, or hostname like "localhost", "example.com")
 - **Port**: For transport layer protocols (TCP, UDP, etc.)
 
 **Key Principles**:
@@ -46,18 +46,18 @@ Support **all binding parameters as optional** while maintaining full backwards 
 
 **TCP server on specific interface**:
 ```json
-{"interface": "eth0", "ip": "192.168.1.100", "port": 8080, "base_stack": "TCP"}
+{"interface": "eth0", "host": "192.168.1.100", "port": 8080, "base_stack": "TCP"}
 ```
 
 **HTTP server with defaults**:
 ```json
 {"port": 8080, "base_stack": "HTTP"}
-// Defaults: ip = "127.0.0.1"
+// Defaults: host = "127.0.0.1"
 ```
 
 **HTTP server with hostname**:
 ```json
-{"ip": "localhost", "port": 8080, "base_stack": "HTTP"}
+{"host": "localhost", "port": 8080, "base_stack": "HTTP"}
 ```
 
 **ICMP server on loopback**:
@@ -75,10 +75,10 @@ Support **all binding parameters as optional** while maintaining full backwards 
 
 | Protocol | MAC | Interface | IP | Port | Notes |
 |----------|-----|-----------|----|----|-------|
-| **TCP** | - | Optional | Optional | **Required** | Default IP: "127.0.0.1", Default port: 0 |
-| **HTTP** | - | Optional | Optional | **Required** | Default IP: "127.0.0.1", Default port: 0 |
-| **UDP** | - | Optional | Optional | **Required** | Default IP: "127.0.0.1", Default port: 0 |
-| **DNS** | - | Optional | Optional | **Required** | Default IP: "127.0.0.1", Default port: 0 |
+| **TCP** | - | Optional | Optional | **Required** | Default host: "127.0.0.1", Default port: 0 |
+| **HTTP** | - | Optional | Optional | **Required** | Default host: "127.0.0.1", Default port: 0 |
+| **UDP** | - | Optional | Optional | **Required** | Default host: "127.0.0.1", Default port: 0 |
+| **DNS** | - | Optional | Optional | **Required** | Default host: "127.0.0.1", Default port: 0 |
 | **ICMP** | - | **Required** | Optional | - | Default interface: "lo" |
 | **ARP** | Optional | **Required** | Optional | - | Default interface: "lo" |
 | **DataLink** | Optional | **Required** | - | - | Default interface: "lo" |
@@ -94,8 +94,8 @@ Support **all binding parameters as optional** while maintaining full backwards 
 - `SpawnContext.listen_addr: SocketAddr`
 
 **New fields added** alongside:
-- `OpenServer.{mac_address, interface, ip, port}` (all optional)
-- `SpawnContext.{mac_address, interface, ip, port}` (all optional)
+- `OpenServer.{mac_address, interface, host, port}` (all optional)
+- `SpawnContext.{mac_address, interface, host, port}` (all optional)
 
 **Migration detection**:
 ```rust
@@ -113,6 +113,289 @@ if protocol.has_custom_default_binding() {
 1. **Phase 1**: Add new fields (no changes to existing protocols)
 2. **Phase 2-N**: Migrate protocols one by one
 3. **Phase N+1**: Remove deprecated fields (breaking change, requires major version bump)
+
+## LLM Migration Flow (CRITICAL)
+
+This section explains what the LLM sees and uses at each phase of migration. This is crucial for ensuring the LLM generates correct actions.
+
+### Before Migration (Current State)
+
+**Action Schema** (what LLM sees in prompt):
+```json
+{
+  "type": "open_server",
+  "port": 8080,              // REQUIRED (u16)
+  "base_stack": "TCP",
+  "instruction": "..."
+}
+```
+
+**Protocol Prompt** (TCP example):
+```
+To start a TCP server, use the open_server action with:
+- port: Port number to listen on (required)
+- base_stack: "TCP"
+- instruction: What the server should do
+
+Example: {"type": "open_server", "port": 8080, "base_stack": "TCP", "instruction": "Echo server"}
+```
+
+**LLM Response**:
+```json
+[{
+  "type": "open_server",
+  "port": 8080,
+  "base_stack": "TCP",
+  "instruction": "Echo server that repeats back everything"
+}]
+```
+
+**Backend Behavior**:
+- Extracts `port: 8080`
+- Builds `listen_addr: 127.0.0.1:8080`
+- Passes to protocol's `spawn()`
+- Protocol uses `ctx.listen_addr`
+
+### Phase 1: Infrastructure Added (Action Schema Changes)
+
+**Action Schema** (what LLM sees in prompt):
+```json
+{
+  "type": "open_server",
+  "mac_address": "...",      // OPTIONAL (for layer 2 protocols)
+  "interface": "...",        // OPTIONAL (for raw socket protocols)
+  "host": "...",             // OPTIONAL (IPv4, IPv6, or hostname)
+  "port": 8080,              // OPTIONAL (for socket protocols)
+  "base_stack": "TCP",
+  "instruction": "..."
+}
+```
+
+**Unmigrated Protocol Prompt** (TCP before migration):
+```
+To start a TCP server, use the open_server action with:
+- port: Port number to listen on (defaults to 0 for dynamic assignment)
+- host: Host address to bind (defaults to "127.0.0.1")
+- base_stack: "TCP"
+- instruction: What the server should do
+
+Example: {"type": "open_server", "port": 8080, "base_stack": "TCP", "instruction": "Echo server"}
+```
+
+**LLM Response** (unmigrated TCP):
+```json
+[{
+  "type": "open_server",
+  "port": 8080,
+  "base_stack": "TCP",
+  "instruction": "Echo server that repeats back everything"
+}]
+```
+
+**Backend Behavior** (unmigrated protocol):
+1. Check `protocol.default_binding()` → returns `None` (not migrated)
+2. **OLD PATH**: Use backwards-compatible behavior
+3. Extract `port: Some(8080)` (or default to 0 if None)
+4. Force `host: "127.0.0.1"` (ignore user's host value)
+5. Build `listen_addr: 127.0.0.1:8080`
+6. Pass to protocol's `spawn()` with deprecated `ctx.listen_addr` set
+7. Protocol uses `ctx.listen_addr` (old way)
+
+**Migrated Protocol Prompt** (ICMP after migration):
+```
+To start an ICMP server, use the open_server action with:
+- interface: Network interface to bind (defaults to "lo" for loopback)
+- base_stack: "ICMP"
+- instruction: What the server should do
+
+Example: {"type": "open_server", "interface": "eth0", "base_stack": "ICMP", "instruction": "Respond to ping"}
+```
+
+**LLM Response** (migrated ICMP):
+```json
+[{
+  "type": "open_server",
+  "interface": "eth0",
+  "base_stack": "ICMP",
+  "instruction": "Respond to ICMP echo requests with echo replies"
+}]
+```
+
+**Backend Behavior** (migrated protocol):
+1. Check `protocol.default_binding()` → returns `Some(BindingDefaults { interface: Some("lo"), ... })`
+2. **NEW PATH**: Use flexible binding system
+3. Apply defaults: `interface: Some("eth0")` (user provided), `host: None`, `port: None`, `mac_address: None`
+4. Build `SpawnContext` with new optional fields set
+5. Pass to protocol's `spawn()` with `ctx.interface = Some("eth0")`
+6. Protocol uses `ctx.interface()` → Ok("eth0") (new way)
+
+### Phase 2-N: Protocol Migration
+
+As each protocol migrates, its prompt changes to guide the LLM appropriately.
+
+#### Example: TCP Migration
+
+**Before Migration**:
+```
+Protocol prompt tells LLM: "Use port field (required)"
+LLM generates: {"port": 8080}
+Backend: Uses old path (listen_addr)
+Protocol code: Uses ctx.listen_addr
+```
+
+**After Migration**:
+```
+Protocol prompt tells LLM: "Use port field (defaults to 0), optionally host field (defaults to 127.0.0.1)"
+LLM generates: {"port": 8080} or {"host": "0.0.0.0", "port": 8080}
+Backend: Uses new path (applies defaults)
+Protocol code: Uses ctx.socket_addr()
+```
+
+#### Example: ICMP (New Protocol)
+
+**After Migration** (uses new system from start):
+```
+Protocol prompt tells LLM: "Use interface field (defaults to 'lo')"
+LLM generates: {"interface": "eth0"} or {} (uses default)
+Backend: Uses new path (applies defaults)
+Protocol code: Uses ctx.interface()
+```
+
+### Phase N+1: After Full Migration
+
+**Action Schema** (same as Phase 1):
+```json
+{
+  "type": "open_server",
+  "mac_address": "...",      // OPTIONAL
+  "interface": "...",        // OPTIONAL
+  "host": "...",             // OPTIONAL
+  "port": 8080,              // OPTIONAL
+  "base_stack": "TCP",
+  "instruction": "..."
+}
+```
+
+**All Protocol Prompts**: Use new optional fields
+
+**Backend Behavior**:
+- All protocols return `Some(...)` from `default_binding()`
+- Old path removed entirely
+- `SpawnContext.listen_addr` removed (deprecated field gone)
+
+### Key Insights for LLM Instructions
+
+1. **Protocol-specific prompts**: Each protocol's prompt tells the LLM which fields to use
+2. **Action schema is global**: Same schema shown to all protocols (after Phase 1)
+3. **Defaults are automatic**: LLM doesn't need to specify fields that have good defaults
+4. **Migration is transparent**: LLM behavior changes only when protocol prompt changes
+
+### Example LLM Interactions
+
+#### TCP Server (Unmigrated)
+
+**LLM Prompt**:
+```
+Available actions:
+  - open_server: Start a new server
+    Fields:
+      - mac_address (optional): MAC address for layer 2 protocols
+      - interface (optional): Network interface for raw protocols
+      - host (optional): Host address to bind (IPv4, IPv6, or hostname)
+      - port (optional): Port number to bind
+      - base_stack (required): Protocol name
+      - instruction (required): Server instruction
+
+For TCP protocol:
+  Use open_server with port field. Port defaults to 0 (dynamic assignment), host defaults to "127.0.0.1".
+```
+
+**LLM Generates**:
+```json
+[{"type": "open_server", "port": 8080, "base_stack": "TCP", "instruction": "Echo server"}]
+```
+
+**Backend Processes**: Old path → uses port, ignores new fields
+
+#### ICMP Server (Migrated)
+
+**LLM Prompt**:
+```
+Available actions:
+  - open_server: Start a new server
+    Fields:
+      - mac_address (optional): MAC address for layer 2 protocols
+      - interface (optional): Network interface for raw protocols
+      - host (optional): Host address to bind (IPv4, IPv6, or hostname)
+      - port (optional): Port number to bind
+      - base_stack (required): Protocol name
+      - instruction (required): Server instruction
+
+For ICMP protocol:
+  Use open_server with interface field. Interface defaults to "lo" (loopback).
+  Do not specify host or port fields for ICMP.
+```
+
+**LLM Generates**:
+```json
+[{"type": "open_server", "interface": "eth0", "base_stack": "ICMP", "instruction": "Respond to pings"}]
+```
+
+**Backend Processes**: New path → applies defaults, uses interface
+
+#### HTTP Server (After Migration)
+
+**LLM Prompt**:
+```
+For HTTP protocol:
+  Use open_server with port field (required).
+  Optionally specify:
+    - host: Bind address (defaults to "127.0.0.1")
+    - interface: Specific network interface
+```
+
+**LLM Generates** (simple):
+```json
+[{"type": "open_server", "port": 80, "base_stack": "HTTP", "instruction": "Web server"}]
+```
+
+**LLM Generates** (advanced):
+```json
+[{"type": "open_server", "host": "0.0.0.0", "port": 80, "base_stack": "HTTP", "instruction": "Public web server"}]
+```
+
+**LLM Generates** (combined):
+```json
+[{"type": "open_server", "interface": "eth0", "host": "192.168.1.100", "port": 80, "base_stack": "HTTP", "instruction": "Web server on eth0"}]
+```
+
+**Backend Processes**: New path → applies defaults, builds socket address
+
+### Protocol Prompt Update Strategy
+
+When migrating a protocol, update its prompt context:
+
+**Before** (TCP unmigrated):
+```rust
+// In TCP protocol's get_server_context() or similar
+"Use open_server with port=<number>"
+```
+
+**After** (TCP migrated):
+```rust
+// In TCP protocol's get_server_context() or similar
+"Use open_server with port=<number> (defaults to 0).
+Optionally specify host=<address> (defaults to 127.0.0.1) or interface=<name> for specific binding."
+```
+
+### Summary
+
+- **Action schema changes once** in Phase 1 (all fields become optional)
+- **Protocol prompts guide LLM** on which fields to use for that specific protocol
+- **Backend detects migration status** (`default_binding()` returns `Some` or `None`)
+- **Unmigrated protocols** continue working with old path (forced defaults)
+- **Migrated protocols** use new path (applies protocol defaults)
+- **LLM sees consistent schema** but gets protocol-specific usage guidance
 
 ## Proposed Solution
 
@@ -142,10 +425,10 @@ OpenServer {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     interface: Option<String>,
 
-    /// IP address or hostname to bind
+    /// Host address (hostname or IP) to bind
     /// Examples: "127.0.0.1", "0.0.0.0", "::1", "::", "localhost", "example.com"
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    ip: Option<String>,
+    host: Option<String>,
 
     /// Port to bind (for socket-based protocols like TCP, HTTP, DNS)
     /// Use 0 for dynamic port assignment
@@ -184,11 +467,11 @@ OpenServer {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     interface: Option<String>,
 
-    /// IP address or hostname to bind (IPv4, IPv6, or hostname)
+    /// Host address (hostname or IP) to bind (IPv4, IPv6, or hostname)
     /// Examples: "127.0.0.1", "0.0.0.0", "::1", "localhost", "example.com"
     /// Default: Protocol-specific (usually "127.0.0.1" for port-based protocols)
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    ip: Option<String>,
+    host: Option<String>,
 
     /// Port to bind (for socket-based protocols like TCP, HTTP, DNS)
     /// Use 0 for dynamic port assignment
@@ -225,9 +508,9 @@ pub struct SpawnContext {
     /// Network interface (optional, for raw socket protocols)
     pub interface: Option<String>,
 
-    /// IP address or hostname to bind (optional, for socket protocols)
+    /// Host address (hostname or IP) to bind (optional, for socket protocols)
     /// Can be IPv4 ("127.0.0.1"), IPv6 ("::1"), or hostname ("localhost")
-    pub ip: Option<String>,
+    pub host: Option<String>,
 
     /// Port to bind (optional, for transport protocols)
     pub port: Option<u16>,
@@ -274,7 +557,7 @@ impl SpawnContext {
                     }
                 }
             };
-            Ok(SocketAddr::new(ip, port))
+            Ok(SocketAddr::new(host, port))
         } else {
             // Fall back to deprecated field
             #[allow(deprecated)]
@@ -306,7 +589,7 @@ impl SpawnContext {
 pub struct BindingDefaults {
     pub mac_address: Option<String>,
     pub interface: Option<String>,
-    pub ip: Option<String>,
+    pub host: Option<String>,
     pub port: Option<u16>,
 }
 
@@ -317,7 +600,7 @@ impl BindingDefaults {
         &self,
         mac: Option<String>,
         interface: Option<String>,
-        ip: Option<String>,
+        host: Option<String>,
         port: Option<u16>,
     ) -> (Option<String>, Option<String>, Option<String>, Option<u16>) {
         (
@@ -333,7 +616,7 @@ impl BindingDefaults {
         Self {
             mac_address: None,
             interface: None,
-            ip: Some("127.0.0.1".to_string()),  // Localhost by default
+            host: Some("127.0.0.1".to_string()),  // Localhost by default
             port: Some(0),                       // Dynamic port by default
         }
     }
@@ -343,7 +626,7 @@ impl BindingDefaults {
         Self {
             mac_address: None,
             interface: Some("lo".to_string()),  // Loopback by default
-            ip: None,
+            host: None,
             port: None,
         }
     }
@@ -393,7 +676,7 @@ pub async fn start_server_from_action(
     state: &AppState,
     mac_address: Option<String>,     // ← NEW
     interface: Option<String>,       // ← NEW
-    ip: Option<String>,              // ← NEW
+    host: Option<String>,              // ← NEW
     port: Option<u16>,               // ← NOW OPTIONAL (breaking, but has defaults)
     base_stack: &str,
     _send_first: bool,
@@ -415,11 +698,11 @@ let protocol = crate::protocol::server_registry::registry()
     .ok_or_else(|| anyhow::anyhow!("Unknown protocol: {}", base_stack))?;
 
 // Check if protocol has been migrated to new binding system
-let (final_mac, final_interface, final_ip, final_port, use_new_path) =
+let (final_mac, final_interface, final_host, final_port, use_new_path) =
     if let Some(defaults) = protocol.default_binding() {
         // NEW PATH: Protocol has been migrated, use flexible binding
-        let (mac, iface, ip, port) = defaults.apply(mac_address, interface, ip, port);
-        (mac, iface, ip, port, true)
+        let (mac, iface, host, port) = defaults.apply(mac_address, interface, host, port);
+        (mac, iface, host, port, true)
     } else {
         // OLD PATH: Protocol hasn't been migrated, use backwards-compatible behavior
         // For old protocols, port is required (use default 0 if not provided)
@@ -450,7 +733,7 @@ let server = ServerInstance {
     binding: ServerBinding {
         mac_address: final_mac.clone(),
         interface: final_interface.clone(),
-        ip: final_ip.clone(),
+        host: final_host.clone(),
         port: actual_port,
         local_addr: None,  // Will be filled after spawn
     },
@@ -470,7 +753,7 @@ let spawn_ctx = if use_new_path {
         listen_addr: "0.0.0.0:0".parse().unwrap(),  // Dummy value (deprecated)
         mac_address: final_mac,
         interface: final_interface,
-        ip: final_ip.clone(),
+        host: final_host.clone(),
         port: actual_port,
         llm_client,
         state: Arc::new(state.clone()),
@@ -488,7 +771,7 @@ let spawn_ctx = if use_new_path {
         listen_addr,  // OLD protocols use this
         mac_address: None,
         interface: None,
-        ip: None,
+        host: None,
         port: None,
         llm_client,
         state: Arc::new(state.clone()),
@@ -538,7 +821,7 @@ pub struct ServerBinding {
     pub interface: Option<String>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ip: Option<String>,
+    pub host: Option<String>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
@@ -637,15 +920,15 @@ impl ServerInstance {
                 (Some(iface), None, None) => iface.clone(),
                 (_, Some(addr), _) => addr.to_string(),
                 (_, None, Some(port)) => {
-                    if let Some(ref ip) = binding.ip {
-                        format!("{}:{}", ip, port)
+                    if let Some(ref host) = binding.ip {
+                        format!("{}:{}", host, port)
                     } else {
                         format!("0.0.0.0:{}", port)
                     }
                 }
                 (Some(iface), None, Some(port)) => {
-                    if let Some(ref ip) = binding.ip {
-                        format!("{} ({}:{})", iface, ip, port)
+                    if let Some(ref host) = binding.ip {
+                        format!("{} ({}:{})", iface, host, port)
                     } else {
                         format!("{} (port {})", iface, port)
                     }
@@ -705,7 +988,7 @@ impl Server for TcpProtocol {
         Some(BindingDefaults {
             mac_address: None,
             interface: None,
-            ip: Some("127.0.0.1".to_string()),  // Default to localhost
+            host: Some("127.0.0.1".to_string()),  // Default to localhost
             port: Some(0),                       // Default to dynamic port
         })
     }
@@ -742,7 +1025,7 @@ impl Server for IcmpProtocol {
         Some(BindingDefaults {
             mac_address: None,
             interface: Some("lo".to_string()),  // Default to loopback
-            ip: None,
+            host: None,
             port: None,
         })
     }
@@ -779,7 +1062,7 @@ impl Server for ArpProtocol {
         Some(BindingDefaults {
             mac_address: None,                  // Optional (uses interface's MAC)
             interface: Some("lo".to_string()),  // Default to loopback
-            ip: None,
+            host: None,
             port: None,
         })
     }
@@ -824,7 +1107,7 @@ fn default_binding(&self) -> Option<BindingDefaults> {
     Some(BindingDefaults {
         mac_address: None,  // or Some("...")
         interface: None,    // or Some("lo")
-        ip: Some("127.0.0.1".to_string()),  // or None
+        host: Some("127.0.0.1".to_string()),  // or None
         port: Some(0),      // or None
     })
 }
@@ -883,14 +1166,14 @@ fn default_binding(&self) -> Option<BindingDefaults> {
    - ✅ No breaking changes (default impl)
 
 3. **Update SpawnContext** (`src/protocol/spawn_context.rs`)
-   - Add new optional fields (mac_address, interface, ip, port)
+   - Add new optional fields (mac_address, interface, host, port)
    - **Keep** deprecated `listen_addr`
    - Add helper methods (socket_addr(), interface(), etc.)
    - ✅ No breaking changes (additive only)
 
 4. **Update OpenServer action** (`src/llm/actions/common.rs`)
    - Make `port` optional (was required)
-   - Add `mac_address`, `interface`, `ip` (all optional)
+   - Add `mac_address`, `interface`, `host` (all optional)
    - ⚠️  **BREAKING**: `port` now optional, but handled with defaults
    - ✅ Mitigation: Old code passing port still works (Some(port))
 
@@ -993,7 +1276,7 @@ fn default_binding(&self) -> Option<BindingDefaults> {
 ```json
 {
   "type": "open_server",
-  "ip": "localhost",
+  "host": "localhost",
   "port": 8080,
   "base_stack": "HTTP",
   "instruction": "Serve HTTP requests"
@@ -1005,7 +1288,7 @@ fn default_binding(&self) -> Option<BindingDefaults> {
 ```json
 {
   "type": "open_server",
-  "ip": "192.168.1.100",
+  "host": "192.168.1.100",
   "port": 8080,
   "base_stack": "HTTP",
   "instruction": "Serve HTTP requests"
@@ -1018,7 +1301,7 @@ fn default_binding(&self) -> Option<BindingDefaults> {
 {
   "type": "open_server",
   "interface": "eth0",
-  "ip": "192.168.1.100",
+  "host": "192.168.1.100",
   "port": 8080,
   "base_stack": "HTTP",
   "instruction": "Serve HTTP on eth0"
@@ -1111,7 +1394,7 @@ fn default_binding(&self) -> Option<BindingDefaults> {
 {
   "type": "open_server",
   "interface": "wg0",
-  "ip": "10.0.0.1",
+  "host": "10.0.0.1",
   "port": 51820,
   "base_stack": "WireGuard",
   "instruction": "Run WireGuard VPN"
@@ -1177,7 +1460,7 @@ fn default_binding(&self) -> Option<BindingDefaults> {
 
 ## Future Enhancements
 
-1. **Hostname resolution**: Full DNS resolution for `ip` field
+1. **Hostname resolution**: Full DNS resolution for `host` field
 2. **Interface validation**: Check if interface exists before binding
 3. **IP-interface validation**: Verify IP belongs to specified interface
 4. **IPv6 support**: Ensure parsing handles IPv6 correctly
