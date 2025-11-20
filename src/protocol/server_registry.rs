@@ -95,6 +95,9 @@ impl ServerRegistry {
         #[cfg(feature = "ntp")]
         self.register(Arc::new(crate::server::NtpProtocol::new()));
 
+        #[cfg(feature = "tftp")]
+        self.register(Arc::new(crate::server::TftpProtocol::new()));
+
         #[cfg(feature = "whois")]
         self.register(Arc::new(crate::server::WhoisProtocol::new()));
 
