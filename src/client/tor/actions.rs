@@ -3,7 +3,7 @@
 use crate::llm::actions::{
     client_trait::{Client, ClientActionResult},
     protocol_trait::Protocol,
-    ActionDefinition, Parameter,
+    ActionDefinition, Parameter, ParameterDefinition,
 };
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
@@ -81,6 +81,16 @@ impl TorClientProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for TorClientProtocol {
+    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
+        vec![ParameterDefinition {
+            name: "directory_server".to_string(),
+            type_hint: "string".to_string(),
+            description: "Optional: Custom Tor directory server address (e.g., '127.0.0.1:9030') for testing. When provided, the Tor client will bootstrap from this local directory instead of the public Tor network. Useful for local testing with tor_directory server.".to_string(),
+            required: false,
+            example: json!("127.0.0.1:9030"),
+        }]
+    }
+
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![
             ActionDefinition {
