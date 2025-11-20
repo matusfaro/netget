@@ -310,7 +310,7 @@ impl TftpServer {
                 // Process protocol results (DATA or ERROR packets)
                 for protocol_result in execution_result.protocol_results {
                     match protocol_result {
-                        crate::llm::actions::protocol_trait::ActionResult::SendData(packet) => {
+                        crate::llm::actions::protocol_trait::ActionResult::Output(packet) => {
                             // Send packet from transfer socket to client
                             if let Err(e) =
                                 transfer_socket.send_to(&packet, peer_addr).await
@@ -320,16 +320,7 @@ impl TftpServer {
                             }
 
                             // Update bytes sent
-                            app_state
-                                .update_connection_bytes_sent(
-                                    server_id,
-                                    connection_id,
-                                    packet.len() as u64,
-                                )
-                                .await;
-                            app_state
-                                .update_connection_packets_sent(server_id, connection_id, 1)
-                                .await;
+                            app_state.update_connection_stats(server_id, connection_id, None, Some(packet.len() as u64), None, Some(1)).await;
 
                             console_trace!(
                                 status_tx,
@@ -428,7 +419,7 @@ impl TftpServer {
                                     console_debug!(status_tx, "TFTP sent ERROR, transfer terminated");
                                     transfers.lock().await.remove(&transfer_id);
                                     app_state
-                                        .mark_connection_closed(server_id, connection_id)
+                                        .close_connection_on_server(server_id, connection_id)
                                         .await;
                                 }
                             }
@@ -447,7 +438,7 @@ impl TftpServer {
 
                 transfers.lock().await.remove(&transfer_id);
                 app_state
-                    .mark_connection_closed(server_id, connection_id)
+                    .close_connection_on_server(server_id, connection_id)
                     .await;
             }
         }
@@ -456,7 +447,7 @@ impl TftpServer {
     }
 
     /// Continue read transfer by waiting for ACK and calling LLM for next block
-    async fn continue_read_transfer(
+    fn continue_read_transfer(
         socket: Arc<UdpSocket>,
         peer_addr: SocketAddr,
         transfer_id: TransferId,
@@ -468,7 +459,8 @@ impl TftpServer {
         connection_id: ConnectionId,
         protocol: Arc<TftpProtocol>,
         transfers: Arc<Mutex<HashMap<TransferId, TftpTransfer>>>,
-    ) {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+        Box::pin(async move {
         let mut buffer = vec![0u8; 516];
 
         // Wait for ACK with timeout
@@ -491,16 +483,8 @@ impl TftpServer {
 
                         if ack_block == expected_block {
                             // Update connection
-                            app_state
-                                .update_connection_bytes_received(
-                                    server_id,
-                                    connection_id,
-                                    n as u64,
-                                )
-                                .await;
-                            app_state
-                                .update_connection_packets_received(server_id, connection_id, 1)
-                                .await;
+                            app_state.update_connection_stats(server_id, connection_id, Some(n as u64,
+                                ), None, Some(1), None).await;
 
                             // Call LLM for next block
                             let event = Event::new(
@@ -523,19 +507,10 @@ impl TftpServer {
                                 Ok(execution_result) => {
                                     // Process DATA packets from LLM
                                     for protocol_result in execution_result.protocol_results {
-                                        if let crate::llm::actions::protocol_trait::ActionResult::SendData(packet) = protocol_result {
+                                        if let crate::llm::actions::protocol_trait::ActionResult::Output(packet) = protocol_result {
                                             let _ = socket.send_to(&packet, peer_addr).await;
 
-                                            app_state
-                                                .update_connection_bytes_sent(
-                                                    server_id,
-                                                    connection_id,
-                                                    packet.len() as u64,
-                                                )
-                                                .await;
-                                            app_state
-                                                .update_connection_packets_sent(server_id, connection_id, 1)
-                                                .await;
+                                            app_state.update_connection_stats(server_id, connection_id, None, Some(packet.len() as u64), None, Some(1)).await;
 
                                             // Check if final block
                                             if packet.len() >= 4 && packet.len() - 4 < 512 {
@@ -595,7 +570,7 @@ impl TftpServer {
                                 Err(e) => {
                                     error!("TFTP LLM error during transfer: {}", e);
                                     transfers.lock().await.remove(&transfer_id);
-                                    app_state.mark_connection_closed(server_id, connection_id).await;
+                                    app_state.close_connection_on_server(server_id, connection_id).await;
                                 }
                             }
                         }
@@ -605,14 +580,15 @@ impl TftpServer {
             Ok(Err(e)) => {
                 error!("TFTP socket error waiting for ACK: {}", e);
                 transfers.lock().await.remove(&transfer_id);
-                app_state.mark_connection_closed(server_id, connection_id).await;
+                app_state.close_connection_on_server(server_id, connection_id).await;
             }
             Err(_) => {
                 console_debug!(status_tx, "TFTP timeout waiting for ACK block {}", expected_block);
                 transfers.lock().await.remove(&transfer_id);
-                app_state.mark_connection_closed(server_id, connection_id).await;
+                app_state.close_connection_on_server(server_id, connection_id).await;
             }
         }
+        })
     }
 
     /// Wait for final ACK and close transfer
@@ -650,16 +626,11 @@ impl TftpServer {
                                 ack_block
                             );
 
-                            app_state
-                                .update_connection_bytes_received(server_id, connection_id, n as u64)
-                                .await;
-                            app_state
-                                .update_connection_packets_received(server_id, connection_id, 1)
-                                .await;
+                            app_state.update_connection_stats(server_id, connection_id, Some(n as u64), None, Some(1), None).await;
 
                             transfers.lock().await.remove(&transfer_id);
                             app_state
-                                .mark_connection_closed(server_id, connection_id)
+                                .close_connection_on_server(server_id, connection_id)
                                 .await;
                         }
                     }
@@ -672,7 +643,7 @@ impl TftpServer {
                 );
                 transfers.lock().await.remove(&transfer_id);
                 app_state
-                    .mark_connection_closed(server_id, connection_id)
+                    .close_connection_on_server(server_id, connection_id)
                     .await;
             }
         }
@@ -782,23 +753,14 @@ impl TftpServer {
                 // Process protocol results (should be ACK block 0 or ERROR)
                 for protocol_result in execution_result.protocol_results {
                     match protocol_result {
-                        crate::llm::actions::protocol_trait::ActionResult::SendData(packet) => {
+                        crate::llm::actions::protocol_trait::ActionResult::Output(packet) => {
                             // Send ACK block 0 or ERROR
                             if let Err(e) = transfer_socket.send_to(&packet, peer_addr).await {
                                 error!("TFTP failed to send ACK: {}", e);
                                 continue;
                             }
 
-                            app_state
-                                .update_connection_bytes_sent(
-                                    server_id,
-                                    connection_id,
-                                    packet.len() as u64,
-                                )
-                                .await;
-                            app_state
-                                .update_connection_packets_sent(server_id, connection_id, 1)
-                                .await;
+                            app_state.update_connection_stats(server_id, connection_id, None, Some(packet.len() as u64), None, Some(1)).await;
 
                             console_trace!(
                                 status_tx,
@@ -839,7 +801,7 @@ impl TftpServer {
                                     console_debug!(status_tx, "TFTP sent ERROR, transfer denied");
                                     transfers.lock().await.remove(&transfer_id);
                                     app_state
-                                        .mark_connection_closed(server_id, connection_id)
+                                        .close_connection_on_server(server_id, connection_id)
                                         .await;
                                 }
                             }
@@ -857,7 +819,7 @@ impl TftpServer {
 
                 transfers.lock().await.remove(&transfer_id);
                 app_state
-                    .mark_connection_closed(server_id, connection_id)
+                    .close_connection_on_server(server_id, connection_id)
                     .await;
             }
         }
@@ -915,12 +877,7 @@ impl TftpServer {
                         block_data.len()
                     );
 
-                    app_state
-                        .update_connection_bytes_received(server_id, connection_id, n as u64)
-                        .await;
-                    app_state
-                        .update_connection_packets_received(server_id, connection_id, 1)
-                        .await;
+                    app_state.update_connection_stats(server_id, connection_id, Some(n as u64), None, Some(1), None).await;
 
                     // Update transfer state
                     if let Some(transfer) = transfers.lock().await.get_mut(&transfer_id) {
@@ -961,22 +918,13 @@ impl TftpServer {
                         Ok(execution_result) => {
                             // Process ACK packets
                             for protocol_result in execution_result.protocol_results {
-                                if let crate::llm::actions::protocol_trait::ActionResult::SendData(
+                                if let crate::llm::actions::protocol_trait::ActionResult::Output(
                                     packet,
                                 ) = protocol_result
                                 {
                                     let _ = socket.send_to(&packet, peer_addr).await;
 
-                                    app_state
-                                        .update_connection_bytes_sent(
-                                            server_id,
-                                            connection_id,
-                                            packet.len() as u64,
-                                        )
-                                        .await;
-                                    app_state
-                                        .update_connection_packets_sent(server_id, connection_id, 1)
-                                        .await;
+                                    app_state.update_connection_stats(server_id, connection_id, None, Some(packet.len() as u64), None, Some(1)).await;
 
                                     console_debug!(
                                         status_tx,
@@ -995,7 +943,7 @@ impl TftpServer {
                                 );
                                 transfers.lock().await.remove(&transfer_id);
                                 app_state
-                                    .mark_connection_closed(server_id, connection_id)
+                                    .close_connection_on_server(server_id, connection_id)
                                     .await;
                                 break;
                             }
@@ -1004,7 +952,7 @@ impl TftpServer {
                             error!("TFTP LLM error during write: {}", e);
                             transfers.lock().await.remove(&transfer_id);
                             app_state
-                                .mark_connection_closed(server_id, connection_id)
+                                .close_connection_on_server(server_id, connection_id)
                                 .await;
                             break;
                         }
@@ -1014,7 +962,7 @@ impl TftpServer {
                     error!("TFTP socket error: {}", e);
                     transfers.lock().await.remove(&transfer_id);
                     app_state
-                        .mark_connection_closed(server_id, connection_id)
+                        .close_connection_on_server(server_id, connection_id)
                         .await;
                     break;
                 }
@@ -1022,7 +970,7 @@ impl TftpServer {
                     console_debug!(status_tx, "TFTP timeout waiting for DATA");
                     transfers.lock().await.remove(&transfer_id);
                     app_state
-                        .mark_connection_closed(server_id, connection_id)
+                        .close_connection_on_server(server_id, connection_id)
                         .await;
                     break;
                 }

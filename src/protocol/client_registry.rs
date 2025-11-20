@@ -218,8 +218,9 @@ impl ClientRegistry {
         #[cfg(feature = "redis")]
         self.register(Arc::new(crate::client::redis::RedisClientProtocol::new()));
 
-        #[cfg(feature = "tftp")]
-        self.register(Arc::new(crate::client::tftp::TftpClientProtocol::new()));
+        // TFTP client temporarily disabled - API fixes needed
+        // #[cfg(feature = "tftp")]
+        // self.register(Arc::new(crate::client::tftp::TftpClientProtocol::new()));
 
         // RSS client temporarily disabled - needs API updates
         // #[cfg(feature = "rss")]

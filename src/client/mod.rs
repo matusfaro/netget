@@ -298,11 +298,11 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
-// tftp client
-#[cfg(feature = "tftp")]
-pub mod tftp;
-#[cfg(feature = "tftp")]
-pub use tftp::actions::TftpClientProtocol;
+// tftp client - temporarily disabled (API fixes needed)
+// #[cfg(feature = "tftp")]
+// pub mod tftp;
+// #[cfg(feature = "tftp")]
+// pub use tftp::actions::TftpClientProtocol;
 
 // rss client - temporarily disabled (needs API updates)
 // #[cfg(feature = "rss")]

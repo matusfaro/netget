@@ -22,35 +22,90 @@ impl TftpProtocol {
 pub static TFTP_READ_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new("tftp_read_request", "Client requests to read a file")
         .with_parameters(vec![
-            Parameter::new("filename", "string", "Name of file being requested"),
-            Parameter::new("mode", "string", "Transfer mode (netascii, octet, mail)"),
-            Parameter::new("client_addr", "string", "Client socket address"),
+            Parameter {
+                name: "filename".to_string(),
+                type_hint: "string".to_string(),
+                description: "Name of file being requested".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "mode".to_string(),
+                type_hint: "string".to_string(),
+                description: "Transfer mode (netascii, octet, mail)".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "client_addr".to_string(),
+                type_hint: "string".to_string(),
+                description: "Client socket address".to_string(),
+                required: true,
+            },
         ])
 });
 
 pub static TFTP_WRITE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new("tftp_write_request", "Client requests to write a file")
         .with_parameters(vec![
-            Parameter::new("filename", "string", "Name of file to write"),
-            Parameter::new("mode", "string", "Transfer mode (netascii, octet, mail)"),
-            Parameter::new("client_addr", "string", "Client socket address"),
+            Parameter {
+                name: "filename".to_string(),
+                type_hint: "string".to_string(),
+                description: "Name of file to write".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "mode".to_string(),
+                type_hint: "string".to_string(),
+                description: "Transfer mode (netascii, octet, mail)".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "client_addr".to_string(),
+                type_hint: "string".to_string(),
+                description: "Client socket address".to_string(),
+                required: true,
+            },
         ])
 });
 
 pub static TFTP_DATA_BLOCK_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new("tftp_data_block", "Received data block from client (write operation)")
         .with_parameters(vec![
-            Parameter::new("block_number", "number", "Block number (1-65535)"),
-            Parameter::new("data_hex", "string", "Block data as hex string"),
-            Parameter::new("data_length", "number", "Number of bytes in this block"),
-            Parameter::new("is_final", "boolean", "True if this is the final block (< 512 bytes)"),
+            Parameter {
+                name: "block_number".to_string(),
+                type_hint: "number".to_string(),
+                description: "Block number (1-65535)".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "data_hex".to_string(),
+                type_hint: "string".to_string(),
+                description: "Block data as hex string".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "data_length".to_string(),
+                type_hint: "number".to_string(),
+                description: "Number of bytes in this block".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "is_final".to_string(),
+                type_hint: "boolean".to_string(),
+                description: "True if this is the final block (< 512 bytes)".to_string(),
+                required: true,
+            },
         ])
 });
 
 pub static TFTP_ACK_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new("tftp_ack_received", "Client acknowledged data block (read operation)")
         .with_parameters(vec![
-            Parameter::new("block_number", "number", "Block number acknowledged"),
+            Parameter {
+                name: "block_number".to_string(),
+                type_hint: "number".to_string(),
+                description: "Block number acknowledged".to_string(),
+                required: true,
+            },
         ])
 });
 
@@ -188,7 +243,7 @@ impl TftpProtocol {
         packet.extend_from_slice(&block_number.to_be_bytes());
         packet.extend_from_slice(&data);
 
-        Ok(ActionResult::SendData(packet))
+        Ok(ActionResult::Output(packet))
     }
 
     fn execute_send_tftp_ack(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -204,7 +259,7 @@ impl TftpProtocol {
         packet.extend_from_slice(&4u16.to_be_bytes()); // Opcode ACK
         packet.extend_from_slice(&block_number.to_be_bytes());
 
-        Ok(ActionResult::SendData(packet))
+        Ok(ActionResult::Output(packet))
     }
 
     fn execute_send_tftp_error(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -229,7 +284,7 @@ impl TftpProtocol {
         packet.extend_from_slice(error_message.as_bytes());
         packet.push(0); // Null terminator
 
-        Ok(ActionResult::SendData(packet))
+        Ok(ActionResult::Output(packet))
     }
 }
 
@@ -240,9 +295,24 @@ fn send_tftp_data_action() -> ActionDefinition {
         name: "send_tftp_data".to_string(),
         description: "Send a data block to the client".to_string(),
         parameters: vec![
-            Parameter::new("block_number", "number", "Block number (1-65535)"),
-            Parameter::new("data_hex", "string", "Data as hex string (max 512 bytes)"),
-            Parameter::new("is_final", "boolean", "True if this is the final block (< 512 bytes, optional)"),
+            Parameter {
+                name: "block_number".to_string(),
+                type_hint: "number".to_string(),
+                description: "Block number (1-65535)".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "data_hex".to_string(),
+                type_hint: "string".to_string(),
+                description: "Data as hex string (max 512 bytes)".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "is_final".to_string(),
+                type_hint: "boolean".to_string(),
+                description: "True if this is the final block (< 512 bytes, optional)".to_string(),
+                required: true,
+            },
         ],
         example: json!({
             "type": "send_tftp_data",
@@ -258,7 +328,12 @@ fn send_tftp_ack_action() -> ActionDefinition {
         name: "send_tftp_ack".to_string(),
         description: "Acknowledge received data block".to_string(),
         parameters: vec![
-            Parameter::new("block_number", "number", "Block number to acknowledge"),
+            Parameter {
+                name: "block_number".to_string(),
+                type_hint: "number".to_string(),
+                description: "Block number to acknowledge".to_string(),
+                required: true,
+            },
         ],
         example: json!({
             "type": "send_tftp_ack",
@@ -272,8 +347,18 @@ fn send_tftp_error_action() -> ActionDefinition {
         name: "send_tftp_error".to_string(),
         description: "Send error and terminate transfer".to_string(),
         parameters: vec![
-            Parameter::new("error_code", "number", "Error code (0=not defined, 1=file not found, 2=access violation, 3=disk full, 4=illegal operation, 5=unknown TID, 6=file exists, 7=no such user)"),
-            Parameter::new("error_message", "string", "Human-readable error message"),
+            Parameter {
+                name: "error_code".to_string(),
+                type_hint: "number".to_string(),
+                description: "Error code (0=not defined, 1=file not found, 2=access violation, 3=disk full, 4=illegal operation, 5=unknown TID, 6=file exists, 7=no such user)".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "error_message".to_string(),
+                type_hint: "string".to_string(),
+                description: "Human-readable error message".to_string(),
+                required: true,
+            },
         ],
         example: json!({
             "type": "send_tftp_error",
