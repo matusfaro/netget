@@ -175,6 +175,9 @@ impl ClientRegistry {
         #[cfg(feature = "mysql")]
         self.register(Arc::new(crate::client::mysql::MysqlClientProtocol::new()));
 
+        #[cfg(feature = "mongodb")]
+        self.register(Arc::new(crate::client::mongodb::MongodbClientProtocol::new()));
+
         #[cfg(feature = "nfs")]
         self.register(Arc::new(crate::client::nfs::NfsClientProtocol::new()));
 
