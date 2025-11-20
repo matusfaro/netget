@@ -406,6 +406,12 @@ pub mod telnet;
 #[cfg(feature = "telnet")]
 pub use telnet::actions::TelnetClientProtocol;
 
+// tls client
+#[cfg(feature = "tls")]
+pub mod tls;
+#[cfg(feature = "tls")]
+pub use tls::actions::TlsClientProtocol;
+
 // tor client
 #[cfg(feature = "tor")]
 pub mod tor;

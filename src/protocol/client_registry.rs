@@ -277,6 +277,9 @@ impl ClientRegistry {
         #[cfg(feature = "telnet")]
         self.register(Arc::new(crate::client::telnet::TelnetClientProtocol::new()));
 
+        #[cfg(feature = "tls")]
+        self.register(Arc::new(crate::client::tls::TlsClientProtocol::new()));
+
         #[cfg(feature = "tor")]
         self.register(Arc::new(crate::client::tor::TorClientProtocol::new()));
 
