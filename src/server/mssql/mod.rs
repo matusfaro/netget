@@ -199,8 +199,9 @@ impl MssqlHandler {
             match header.packet_type {
                 0x12 => {
                     // Pre-Login
-                    debug!("Received Pre-Login packet");
+                    debug!("Received Pre-Login packet (length: {})", header.length);
                     self.send_prelogin_response(&mut stream).await?;
+                    debug!("Pre-Login response sent");
                 }
                 0x10 => {
                     // TDS7/TDS8 Login
@@ -584,6 +585,7 @@ impl MssqlHandler {
         columns: Vec<serde_json::Value>,
         rows: Vec<serde_json::Value>,
     ) -> Result<()> {
+        debug!("send_result_set called: {} columns, {} rows", columns.len(), rows.len());
         let mut response = Vec::new();
 
         // COLMETADATA token
@@ -593,13 +595,33 @@ impl MssqlHandler {
         for col in &columns {
             let col_name = col.get("name").and_then(|v| v.as_str()).unwrap_or("column");
             let col_type = col.get("type").and_then(|v| v.as_str()).unwrap_or("NVARCHAR");
+            let tds_type = get_tds_type(col_type);
 
-            // Column definition (simplified - NVARCHAR for all types)
+            // Column definition
             response.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // UserType
             response.extend_from_slice(&[0x00, 0x00]); // Flags
-            response.push(get_tds_type(col_type)); // Type
-            response.extend_from_slice(&[0xFF, 0xFF]); // Max length
-            response.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00]); // Collation
+            response.push(tds_type); // Type
+
+            // Type-specific metadata
+            match col_type.to_uppercase().as_str() {
+                "INT" | "INTEGER" => {
+                    response.push(0x04); // Length: 4 bytes for INT32
+                }
+                "BIGINT" => {
+                    response.push(0x08); // Length: 8 bytes for INT64
+                }
+                "SMALLINT" => {
+                    response.push(0x02); // Length: 2 bytes for INT16
+                }
+                "TINYINT" => {
+                    response.push(0x01); // Length: 1 byte for INT8
+                }
+                _ => {
+                    // NVARCHAR or other string types
+                    response.extend_from_slice(&[0xFF, 0xFF]); // Max length
+                    response.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00]); // Collation
+                }
+            }
 
             // Column name
             response.push(col_name.len() as u8);
@@ -611,14 +633,65 @@ impl MssqlHandler {
             response.push(0xD1); // ROW token
 
             if let Some(row_values) = row.as_array() {
-                for value in row_values {
-                    let value_str = json_to_string(value);
-                    let value_u16: Vec<u16> = value_str.encode_utf16().collect();
-                    let value_bytes: Vec<u8> = value_u16.iter().flat_map(|c| c.to_le_bytes()).collect();
+                for (idx, value) in row_values.iter().enumerate() {
+                    // Get column type for proper encoding
+                    let col_type = columns
+                        .get(idx)
+                        .and_then(|c| c.get("type"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("NVARCHAR");
 
-                    // Length prefix (2 bytes for NVARCHAR)
-                    response.extend_from_slice(&(value_bytes.len() as u16).to_le_bytes());
-                    response.extend_from_slice(&value_bytes);
+                    match col_type.to_uppercase().as_str() {
+                        "INT" | "INTEGER" => {
+                            // INT: length byte + 4-byte little-endian value
+                            if value.is_null() {
+                                response.push(0x00); // NULL
+                            } else {
+                                response.push(0x04); // Length: 4 bytes
+                                let int_val = value.as_i64().unwrap_or(0) as i32;
+                                response.extend_from_slice(&int_val.to_le_bytes());
+                            }
+                        }
+                        "BIGINT" => {
+                            // BIGINT: length byte + 8-byte little-endian value
+                            if value.is_null() {
+                                response.push(0x00); // NULL
+                            } else {
+                                response.push(0x08); // Length: 8 bytes
+                                let int_val = value.as_i64().unwrap_or(0);
+                                response.extend_from_slice(&int_val.to_le_bytes());
+                            }
+                        }
+                        "SMALLINT" => {
+                            // SMALLINT: length byte + 2-byte little-endian value
+                            if value.is_null() {
+                                response.push(0x00); // NULL
+                            } else {
+                                response.push(0x02); // Length: 2 bytes
+                                let int_val = value.as_i64().unwrap_or(0) as i16;
+                                response.extend_from_slice(&int_val.to_le_bytes());
+                            }
+                        }
+                        "TINYINT" => {
+                            // TINYINT: length byte + 1-byte value
+                            if value.is_null() {
+                                response.push(0x00); // NULL
+                            } else {
+                                response.push(0x01); // Length: 1 byte
+                                let int_val = value.as_i64().unwrap_or(0) as u8;
+                                response.push(int_val);
+                            }
+                        }
+                        _ => {
+                            // NVARCHAR: 2-byte length + UTF-16LE string
+                            let value_str = json_to_string(value);
+                            let value_u16: Vec<u16> = value_str.encode_utf16().collect();
+                            let value_bytes: Vec<u8> = value_u16.iter().flat_map(|c| c.to_le_bytes()).collect();
+
+                            response.extend_from_slice(&(value_bytes.len() as u16).to_le_bytes());
+                            response.extend_from_slice(&value_bytes);
+                        }
+                    }
                 }
             }
         }
@@ -629,7 +702,18 @@ impl MssqlHandler {
         response.extend_from_slice(&[0xC1, 0x00]); // CurCmd
         response.extend_from_slice(&(rows.len() as u64).to_le_bytes());
 
-        self.send_tds_packet(stream, 0x04, &response).await
+        debug!("Sending result set packet: {} bytes", response.len());
+        // Log hex dump of first 100 bytes for debugging
+        let preview_len = std::cmp::min(response.len(), 100);
+        let hex_dump: String = response[..preview_len]
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<Vec<_>>()
+            .join(" ");
+        debug!("Result set hex (first {} bytes): {}", preview_len, hex_dump);
+        let result = self.send_tds_packet(stream, 0x04, &response).await;
+        debug!("Result set packet sent: {:?}", result);
+        result
     }
 
     /// Send empty result set (just DONE token)
