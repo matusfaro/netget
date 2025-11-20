@@ -2,247 +2,266 @@
 
 ## Test Approach
 
-Black-box testing using real Tor network and public test destinations. The LLM controls the client based on prompts,
-tests validate behavior with actual Tor connections.
+**Mock-driven testing** using the NetGet test infrastructure. The LLM is mocked to return specific actions, while the Tor client uses real Arti library for bootstrapping.
+
+**Note**: While LLM calls are mocked (no Ollama needed), Tor bootstrap still requires internet connection to download consensus from Tor directory authorities. This is unavoidable without mocking the entire Arti client library.
 
 ## LLM Call Budget
 
-**Target: < 15 LLM calls per test suite**
+**Target: < 10 LLM calls per test suite** (all mocked)
 
 ### Breakdown
 
-1. **Directory Query Tests** (3 calls): Test consensus info, list relays, search relays
-2. **Bootstrap Test** (1 call): Verify Tor client bootstraps successfully
-3. **Basic HTTP Connection** (2 calls): Connect to public site and fetch page
-4. **Onion Service Connection** (2 calls): Connect to `.onion` address
-5. **Data Send/Receive** (2 calls): Test bidirectional communication
-6. **Error Handling** (1 call): Test connection to invalid destination
+1. **Bootstrap Test** (2 mocked calls): Client startup, bootstrap complete event
+2. **Consensus Query** (2 mocked calls): Client startup, query action
+3. **List Relays** (2 mocked calls): Client startup, list action
+4. **Search Relays** (2 mocked calls): Client startup, search action
 
-**Total: ~11 LLM calls**
+**Total: 8 mocked LLM calls** (0 real Ollama calls)
 
 ## Test Runtime
 
-- **Bootstrap**: 10-30 seconds (first run, cached afterward)
-- **Connection**: 2-10 seconds per connection
-- **Data transfer**: 1-5 seconds
-- **Total suite**: ~60-120 seconds
+- **First run**: 10-30 seconds (Arti bootstraps and downloads consensus)
+- **Subsequent runs**: < 1 second (consensus cached in ~/.local/share/arti/)
+- **Total suite**: ~30 seconds first run, < 5 seconds cached
 
 ## Test Strategy
 
 ### Unit Tests
 
-Not applicable - testing requires real Tor network interaction.
+Not applicable - testing requires Arti client integration.
 
 ### E2E Tests
 
-All tests are E2E, requiring:
+All tests use mocked LLM responses but real Tor bootstrap:
 
-- Tor network access (internet connection)
-- Ollama with LLM model
-- Arti bootstrap (downloads consensus on first run)
+**Requirements:**
+- Internet connection (for Arti bootstrap only)
+- NO Ollama required (LLM is mocked)
+- Tor network access (not blocked by firewall/country)
+- ~3MB disk space for consensus cache
+
+**Mock Pattern:**
+```rust
+NetGetConfig::new("instruction")
+    .with_mock(|mock| {
+        mock
+            .on_instruction_containing("...")
+            .respond_with_actions(serde_json::json!([...]))
+            .expect_calls(1)
+            .and()
+            .on_event("tor_bootstrap_complete")
+            .respond_with_actions(serde_json::json!([...]))
+            .expect_calls(1)
+            .and()
+    })
+```
 
 ### Test Isolation
 
-- Each test uses `--ollama-lock` to serialize LLM calls
-- Arti caches consensus between tests (faster subsequent runs)
-- Tests use different instructions to verify independent behavior
+- Mocked LLM (no concurrent Ollama calls)
+- Shared Arti consensus cache (faster subsequent runs)
+- Each test uses independent client instance
 
 ## Test Scenarios
 
-### Directory Query Tests (NEW)
+### 1. Bootstrap with Mocked LLM
 
-Testing directory query capabilities with mocks (no LLM required for most tests):
+**File**: `test_tor_client_bootstrap_mocked()`
 
-```rust
-#[tokio::test]
-async fn test_get_consensus_info() {
-    // Bootstrap Tor client
-    // Call get_consensus_info action
-    // Verify relay_count, valid_after fields
+Tests that Tor client can bootstrap and emit the `tor_bootstrap_complete` event.
+
+**LLM Calls**: 2 (mocked: open_client instruction, bootstrap event)
+**Expected**: Client starts, Arti bootstraps, event emitted
+**Validation**: Mock expectations met, output contains "Tor" or "CLIENT"
+
+### 2. Directory Query: Consensus Info
+
+**File**: `test_tor_directory_query_consensus()`
+
+Tests `get_consensus_info` action after bootstrap.
+
+**LLM Calls**: 2 (mocked: open_client, get_consensus_info)
+**Expected**: Bootstrap completes, consensus info queried
+**Validation**: Mock expectations met
+
+**Action Format**:
+```json
+{
+    "type": "get_consensus_info"
 }
 ```
 
-**LLM Calls**: 1 (bootstrap event only)
-**Expected**: Consensus metadata returned
-**Validation**: JSON contains relay_count > 0, valid timestamps
+**Expected Response**: JSON with `relay_count`, `valid_after`, `fresh_until`, `valid_until`
 
-```rust
-#[tokio::test]
-async fn test_list_relays() {
-    // Bootstrap Tor client
-    // Call list_relays with limit=10
-    // Verify relay list returned
+### 3. Directory Query: List Relays
+
+**File**: `test_tor_directory_list_relays()`
+
+Tests `list_relays` action with limit parameter.
+
+**LLM Calls**: 2 (mocked: open_client, list_relays)
+**Expected**: Bootstrap completes, relays listed
+**Validation**: Mock expectations met
+
+**Action Format**:
+```json
+{
+    "type": "list_relays",
+    "limit": 10
 }
 ```
 
-**LLM Calls**: 1 (bootstrap event only)
-**Expected**: Array of 10 RelayInfo structs
-**Validation**: Each relay has nickname, fingerprint, flags
+**Expected Response**: Array of RelayInfo (fingerprint, nickname, flags)
 
-```rust
-#[tokio::test]
-async fn test_search_relays_by_flags() {
-    // Bootstrap Tor client
-    // Call search_relays with flags=["Exit", "Fast"]
-    // Verify all relays have required flags
+### 4. Directory Query: Search by Flags
+
+**File**: `test_tor_directory_search_relays()`
+
+Tests `search_relays` action with flag filter.
+
+**LLM Calls**: 2 (mocked: open_client, search_relays)
+**Expected**: Bootstrap completes, filtered relays returned
+**Validation**: Mock expectations met
+
+**Action Format**:
+```json
+{
+    "type": "search_relays",
+    "flags": ["Exit"],
+    "limit": 5
 }
 ```
 
-**LLM Calls**: 1 (bootstrap event only)
-**Expected**: Filtered relay list
-**Validation**: All relays have Exit AND Fast flags
+**Expected Response**: Array of RelayInfo matching flags
 
-**Directory Tests Total**: 3 LLM calls (bootstrap only, queries are direct action invocations)
-
-### 1. Bootstrap and Basic Connection
-
-```rust
-#[tokio::test]
-async fn test_tor_basic_connection() {
-    // Connect to check.torproject.org via Tor
-    // Verify response contains "Congratulations. This browser is configured to use Tor."
-}
-```
-
-**LLM Calls**: 2 (connect event, response event)
-**Expected**: Successful connection through Tor
-**Validation**: Response body contains Tor confirmation
-
-### 2. Onion Service Connection
-
-```rust
-#[tokio::test]
-async fn test_tor_onion_service() {
-    // Connect to DuckDuckGo onion address
-    // Verify connection and HTTP response
-}
-```
-
-**LLM Calls**: 2 (connect event, response event)
-**Expected**: Successful connection to `.onion` address
-**Validation**: HTTP 200 response from onion service
-
-### 3. HTTP GET Request
-
-```rust
-#[tokio::test]
-async fn test_tor_http_request() {
-    // Connect to httpbin.org via Tor
-    // Send GET request for /anything
-    // Parse and validate JSON response
-}
-```
-
-**LLM Calls**: 3 (connect, send, receive)
-**Expected**: LLM sends proper HTTP GET, receives JSON
-**Validation**: Response JSON contains request data
-
-### 4. Connection Error Handling
-
-```rust
-#[tokio::test]
-async fn test_tor_connection_error() {
-    // Try to connect to non-existent onion address
-    // Verify graceful error handling
-}
-```
-
-**LLM Calls**: 1 (connection failure)
-**Expected**: Connection fails with timeout/error
-**Validation**: Client status shows error
+**Note**: Flag filtering not yet implemented (tor-netdir API limitation), so all relays returned regardless of flags.
 
 ## Known Issues
 
-### Flakiness Concerns
+### 1. Internet Dependency
 
-1. **Network Dependency**: Tests require internet and Tor network
-    - Can fail if Tor network unavailable
-    - Can fail behind restrictive firewalls
-    - Mitigation: Retry logic, reasonable timeouts
+**Issue**: Tests require internet for Arti bootstrap (downloads consensus from Tor directory authorities)
 
-2. **Bootstrap Time**: First run downloads consensus
-    - Adds 10-30 seconds to first test
-    - Mitigation: Cache consensus, run bootstrap test first
+**Mitigation**:
+- Bootstrap is cached (~3MB in ~/.local/share/arti/)
+- Subsequent test runs use cached consensus (< 1s)
+- Tests fail fast if Tor network unavailable
 
-3. **Onion Service Availability**: Onion services can be down
-    - Test onion addresses may become unavailable
-    - Mitigation: Use multiple fallback addresses
+**Future**: Mock Arti client for fully offline testing
 
-4. **Exit Node Variability**: Different exit nodes have different policies
-    - Some sites may be blocked by certain exits
-    - Mitigation: Use widely accessible test sites
+### 2. Tor Network Blocking
 
-5. **LLM Behavior**: LLM may format HTTP requests differently
-    - May affect test reliability
-    - Mitigation: Use permissive validation (check key fields only)
+**Issue**: Some countries/networks block Tor directory connections
 
-### Test Environment
+**Symptoms**:
+- Bootstrap timeout (> 30s)
+- Connection refused errors
 
-**Minimum Requirements:**
+**Mitigation**:
+- Skip tests in restricted environments
+- Use `#[ignore]` attribute if needed for CI
+- Document known blocked regions
 
-- Internet connection
-- No Tor network blocking (some countries/networks block Tor)
-- Ollama with model loaded
-- ~3MB disk space for consensus cache
+### 3. Consensus Staleness
 
-**CI Considerations:**
+**Issue**: Cached consensus expires after ~3 hours
 
-- May not work in restricted CI environments (GitHub Actions may block Tor)
-- Consider marking tests as `#[ignore]` for CI, run manually
-- Alternative: Mock arti-client for CI, only run real tests locally
+**Symptoms**:
+- Tests suddenly slow down (re-downloading consensus)
+
+**Mitigation**:
+- Arti automatically refreshes stale consensus
+- Tests remain functional, just slower
+
+### 4. API Limitations
+
+**Issue**: tor-netdir doesn't expose relay flags/nicknames in public API
+
+**Impact**:
+- RelayInfo returns placeholder values (fingerprint only)
+- Flag filtering not implemented (all relays returned)
+
+**Mitigation**:
+- Tests verify API surface, not relay details
+- Update when Arti exposes more metadata
 
 ## Running Tests
 
 ```bash
-# First time (slow due to bootstrap)
-./cargo-isolated.sh test --no-default-features --features tor-client --test client::tor::e2e_test
+# Run all Tor client tests (requires internet for first run)
+./test-e2e.sh tor
 
-# Subsequent runs (fast, consensus cached)
-./cargo-isolated.sh test --no-default-features --features tor-client --test client::tor::e2e_test
+# Or with cargo directly
+cargo test --no-default-features --features tor --test client -- tor_client_tests
 
-# With debug logging
-RUST_LOG=debug ./cargo-isolated.sh test --no-default-features --features tor-client --test client::tor::e2e_test
+# With parallel execution (recommended)
+cargo test --no-default-features --features tor --test client -- tor_client_tests --test-threads=100
+
+# Clear consensus cache (force re-bootstrap)
+rm -rf ~/.local/share/arti/
+```
+
+**First Run** (slow):
+```
+test tor_client_tests::test_tor_client_bootstrap_mocked ... ok (28.3s)
+test tor_client_tests::test_tor_directory_query_consensus ... ok (0.5s)
+test tor_client_tests::test_tor_directory_list_relays ... ok (0.5s)
+test tor_client_tests::test_tor_directory_search_relays ... ok (0.5s)
+```
+
+**Subsequent Runs** (fast, cached):
+```
+test tor_client_tests::test_tor_client_bootstrap_mocked ... ok (0.3s)
+test tor_client_tests::test_tor_directory_query_consensus ... ok (0.2s)
+test tor_client_tests::test_tor_directory_list_relays ... ok (0.2s)
+test tor_client_tests::test_tor_directory_search_relays ... ok (0.2s)
 ```
 
 ## Privacy Notes
 
 Tests connect to:
+- Tor directory authorities (public, expected) - downloads consensus
+- No destination connections (directory queries only)
+- No personal data sent
 
-- Tor directory authorities (public, expected)
-- Public test sites (httpbin.org, check.torproject.org)
-- Public onion services (DuckDuckGo, etc.)
-
-No personal data is sent. All connections are anonymous via Tor.
-
-## Future Test Enhancements
-
-1. **Mock Arti Client**: Allow CI testing without real Tor
-2. **Bootstrap Progress**: Test bootstrap status events
-3. **Circuit Isolation**: Verify isolated circuits
-4. **Bridge Testing**: Test pluggable transports (if implemented)
-5. **Performance Tests**: Measure latency, bandwidth
-6. **Stress Tests**: Multiple concurrent connections
+All connections are for Tor consensus download only (same as running any Tor client).
 
 ## Debug Tips
 
 ### Bootstrap Failures
 
 ```bash
-# Check Tor network status
-curl https://check.torproject.org/api/ip
+# Check if Tor network is accessible
+curl -I https://check.torproject.org
 
-# Check arti logs
-RUST_LOG=arti_client=debug cargo test
+# Check Arti logs
+RUST_LOG=arti_client=debug cargo test --features tor --test client -- tor_client_tests::test_tor_client_bootstrap_mocked
+
+# Verify consensus cache
+ls -lh ~/.local/share/arti/
 ```
 
-### Connection Timeouts
+### Test Hangs
 
-- Increase timeout in test (Tor connections can take 10-30s)
-- Check if exit node blocked destination
-- Try different test destination
+- Increase timeout (bootstrap can take 30s on slow networks)
+- Check firewall allows outbound connections to Tor ports (9001, 9030, 443)
+- Verify system time is correct (TLS sensitive to clock skew)
 
-### Consensus Download Issues
+### Mock Verification Failures
 
-- Delete cache: `rm -rf ~/.local/share/arti/`
-- Check firewall allows Tor directory connections
-- Verify system time is correct (TLS certs sensitive to clock skew)
+- Check that actions match expected format exactly
+- Verify event names match constants in `actions.rs`
+- Use `--nocapture` to see mock mismatch details:
+  ```bash
+  cargo test --features tor --test client -- tor_client_tests --nocapture
+  ```
+
+## Future Enhancements
+
+1. **Mock Arti Client**: Fully offline tests without real Tor bootstrap
+2. **Connection Tests**: Test actual connections through Tor (onion services, exit nodes)
+3. **Circuit Management**: Test circuit building and isolation
+4. **Performance**: Measure bootstrap time, query latency
+5. **Stress Testing**: Multiple concurrent clients, many queries
+6. **Flag Filtering**: Implement when tor-netdir exposes flag checking API
