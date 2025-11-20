@@ -8,7 +8,7 @@ use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
-use std::sync::{Arc, LazyLock};
+use std::sync::LazyLock;
 
 /// WebRTC signaling peer connected event
 pub static WEBRTC_SIGNALING_PEER_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {

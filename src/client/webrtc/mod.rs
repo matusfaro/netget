@@ -30,7 +30,7 @@ use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection;
 
 use crate::client::webrtc::actions::{
-    WEBRTC_CLIENT_CONNECTED_EVENT, WEBRTC_CLIENT_MESSAGE_RECEIVED_EVENT,
+    WEBRTC_CLIENT_MESSAGE_RECEIVED_EVENT,
     WEBRTC_CLIENT_CHANNEL_OPENED_EVENT, WEBRTC_CLIENT_SIGNALING_CONNECTED_EVENT,
 };
 use crate::llm::action_helper::call_llm_for_client;
@@ -61,6 +61,7 @@ enum ConnectionState {
 struct ChannelData {
     state: ConnectionState,
     queued_messages: Vec<(String, bool)>, // (message, is_binary)
+    #[allow(dead_code)]
     channel: Arc<RTCDataChannel>,
 }
 
@@ -767,8 +768,8 @@ impl WebRtcClient {
         client_id: ClientId,
         channel_label: String,
         app_state: Arc<AppState>,
-        status_tx: mpsc::UnboundedSender<String>,
-        llm_client: OllamaClient,
+        _status_tx: mpsc::UnboundedSender<String>,
+        _llm_client: OllamaClient,
     ) -> Result<()> {
         info!("WebRTC client {} creating channel '{}'", client_id, channel_label);
 
@@ -791,7 +792,7 @@ impl WebRtcClient {
         let _ = Arc::into_raw(peer_connection);
 
         // Create new data channel
-        let data_channel = pc_clone.create_data_channel(&channel_label, None).await?;
+        let _data_channel = pc_clone.create_data_channel(&channel_label, None).await?;
         info!("WebRTC client {} created channel '{}'", client_id, channel_label);
 
         // Get client data (stored somewhere - need to track this)
@@ -807,7 +808,7 @@ impl WebRtcClient {
         channel_label: String,
         message: String,
         is_hex: bool,
-        app_state: Arc<AppState>,
+        _app_state: Arc<AppState>,
     ) -> Result<()> {
         trace!(
             "WebRTC client {} sending on '{}': {} (hex: {})",

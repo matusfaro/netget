@@ -20,7 +20,6 @@ use crate::state::app_state::AppState;
 use crate::state::ServerId;
 use actions::{
     WEBRTC_SIGNALING_PEER_CONNECTED_EVENT, WEBRTC_SIGNALING_PEER_DISCONNECTED_EVENT,
-    WEBRTC_SIGNALING_MESSAGE_RECEIVED_EVENT,
 };
 
 /// Unique identifier for a signaling peer
@@ -77,12 +76,15 @@ pub enum SignalingMessage {
 
 /// Peer connection data
 struct PeerConnection {
+    #[allow(dead_code)]
     peer_id: PeerId,
     ws_tx: futures::stream::SplitSink<
         tokio_tungstenite::WebSocketStream<TcpStream>,
         Message,
     >,
+    #[allow(dead_code)]
     remote_addr: SocketAddr,
+    #[allow(dead_code)]
     connection_id: ConnectionId,
 }
 
@@ -249,7 +251,7 @@ impl WebRtcSignalingServer {
         remote_addr: SocketAddr,
         server_data: Arc<WebRtcSignalingServerData>,
         app_state: Arc<AppState>,
-        status_tx: mpsc::UnboundedSender<String>,
+        _status_tx: mpsc::UnboundedSender<String>,
         llm_client: OllamaClient,
         server_id: ServerId,
         protocol: Arc<WebRtcSignalingProtocol>,

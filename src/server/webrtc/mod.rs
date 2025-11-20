@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error, info, trace};
+use tracing::{error, info, trace};
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::APIBuilder;
@@ -24,12 +24,10 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
-use crate::server::WebRtcProtocol;
 use crate::state::app_state::AppState;
 use crate::state::ServerId;
 use actions::{
-    WEBRTC_MESSAGE_RECEIVED_EVENT, WEBRTC_OFFER_RECEIVED_EVENT, WEBRTC_PEER_CONNECTED_EVENT,
-    WEBRTC_PEER_DISCONNECTED_EVENT,
+    WEBRTC_MESSAGE_RECEIVED_EVENT, WEBRTC_PEER_CONNECTED_EVENT,
 };
 
 /// Unique identifier for a WebRTC peer
@@ -47,6 +45,7 @@ enum ConnectionState {
 struct PeerData {
     state: ConnectionState,
     queued_messages: Vec<String>,
+    #[allow(dead_code)]
     memory: String,
     peer_connection: Arc<RTCPeerConnection>,
     data_channel: Option<Arc<RTCDataChannel>>,
@@ -138,7 +137,7 @@ impl WebRtcServerData {
             let llm_client = llm_client_cb.clone();
             let peers = Arc::clone(&peers_cb);
             let peer_id = peer_id_cb.clone();
-            let pc = Arc::clone(&peer_connection_cb);
+            let _pc = Arc::clone(&peer_connection_cb);
 
             Box::pin(async move {
                 let label = data_channel.label().to_string();
@@ -166,7 +165,7 @@ impl WebRtcServerData {
                 data_channel.on_open(Box::new(move || {
                     let app_state = Arc::clone(&app_state_on_open);
                     let status_tx = status_tx_on_open.clone();
-                    let peers = Arc::clone(&peers_on_open);
+                    let _peers = Arc::clone(&peers_on_open);
                     let peer_id = peer_id_on_open.clone();
                     let llm_client = llm_on_open.clone();
 
@@ -219,7 +218,7 @@ impl WebRtcServerData {
 
                 data_channel.on_message(Box::new(move |msg: DataChannelMessage| {
                     let app_state = Arc::clone(&app_state_on_msg);
-                    let status_tx = status_tx_on_msg.clone();
+                    let _status_tx = status_tx_on_msg.clone();
                     let peers = Arc::clone(&peers_on_msg);
                     let peer_id = peer_id_on_msg.clone();
                     let llm_client = llm_on_msg.clone();
