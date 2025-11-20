@@ -240,6 +240,13 @@ pub use mysql::actions::MysqlProtocol;
 #[cfg(feature = "mysql")]
 pub use mysql::MysqlServer;
 
+#[cfg(feature = "mssql")]
+pub mod mssql;
+#[cfg(feature = "mssql")]
+pub use mssql::actions::MssqlProtocol;
+#[cfg(feature = "mssql")]
+pub use mssql::MssqlServer;
+
 #[cfg(feature = "ipp")]
 pub mod ipp;
 #[cfg(feature = "ipp")]

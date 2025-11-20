@@ -292,6 +292,12 @@ pub mod pypi;
 #[cfg(feature = "pypi")]
 pub use pypi::actions::PypiClientProtocol;
 
+// mssql client
+#[cfg(feature = "mssql")]
+pub mod mssql;
+#[cfg(feature = "mssql")]
+pub use mssql::actions::MssqlClientProtocol;
+
 // redis client
 #[cfg(feature = "redis")]
 pub mod redis;
