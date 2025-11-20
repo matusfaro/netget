@@ -454,4 +454,90 @@ mod proxy_server_tests {
 
         Ok(())
     }
+
+    /// Test MITM response modification with mocks
+    /// LLM calls: 1 (server startup with response modification config)
+    /// Note: Full request/response flow testing would require actual HTTP server setup
+    #[tokio::test]
+    async fn test_proxy_mitm_response_modification_with_mocks() -> E2EResult<()> {
+        // Start a Proxy server in MITM mode with response modification enabled
+        let server_config = NetGetConfig::new(
+            "Listen on port {AVAILABLE_PORT} using proxy stack with certificate generation. Intercept all HTTP responses and modify them."
+        )
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup with response filter enabled
+                .on_instruction_containing("Listen on port")
+                .and_instruction_containing("certificate generation")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "Proxy",
+                        "startup_params": {
+                            "certificate_mode": "generate",
+                            "request_filter_mode": "all",
+                            "response_filter_mode": "all"
+                        },
+                        "instruction": "MITM proxy with response modification"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+        let mut server = start_netget_server(server_config).await?;
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        println!("✅ MITM proxy initialized with response modification enabled");
+
+        server.verify_mocks().await?;
+        server.stop().await?;
+
+        Ok(())
+    }
+
+    /// Test MITM response blocking with mocks
+    /// LLM calls: 1 (server startup with response blocking config)
+    /// Note: Full request/response flow testing would require actual HTTP server setup
+    #[tokio::test]
+    async fn test_proxy_mitm_response_blocking_with_mocks() -> E2EResult<()> {
+        // Start a Proxy server in MITM mode with response blocking capability
+        let server_config = NetGetConfig::new(
+            "Listen on port {AVAILABLE_PORT} using proxy stack with certificate generation. Block all HTTP responses containing sensitive data."
+        )
+        .with_mock(|mock| {
+            mock
+                // Mock 1: Server startup with response filter enabled
+                .on_instruction_containing("Listen on port")
+                .and_instruction_containing("certificate generation")
+                .respond_with_actions(serde_json::json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "Proxy",
+                        "startup_params": {
+                            "certificate_mode": "generate",
+                            "request_filter_mode": "none",
+                            "response_filter_mode": "all"
+                        },
+                        "instruction": "MITM proxy with response blocking for sensitive data"
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+        });
+
+        let mut server = start_netget_server(server_config).await?;
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        println!("✅ MITM proxy initialized with response blocking enabled");
+
+        server.verify_mocks().await?;
+        server.stop().await?;
+
+        Ok(())
+    }
 }

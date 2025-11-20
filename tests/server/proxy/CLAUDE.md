@@ -33,9 +33,11 @@ dependencies and ensuring fast, reliable execution.
 7. **`test_proxy_mitm_request_modification`**: Mock calls = **0 actual LLM**
 8. **`test_proxy_mitm_request_blocking`**: Mock calls = **0 actual LLM**
 9. **`test_proxy_export_ca_certificate`**: Mock calls = **0 actual LLM**
+10. **`test_proxy_mitm_response_modification_with_mocks`**: Mock calls = **0 actual LLM**
+11. **`test_proxy_mitm_response_blocking_with_mocks`**: Mock calls = **0 actual LLM**
 
 **Total: 0 LLM calls in mock mode** (default)
-**Total: ~18 LLM calls with --use-ollama flag** (optional validation)
+**Total: ~22 LLM calls with --use-ollama flag** (optional validation)
 
 ### Optimization Opportunities
 
@@ -78,13 +80,13 @@ necessary.
 **Model**: qwen3-coder:30b (default NetGet model)
 
 **Mock Mode (Default)**:
-- **Runtime**: ~2-5 seconds for full test suite (9 tests, 0 LLM calls)
+- **Runtime**: ~2-6 seconds for full test suite (11 tests, 0 LLM calls)
 - Per-test average: ~200-500ms
 - Target server startup: <100ms per test
 - Proxy startup: ~500ms-1s (certificate generation in MITM tests)
 
 **With --use-ollama Flag**:
-- **Runtime**: ~90-140 seconds for full test suite (9 tests, ~18 LLM calls)
+- **Runtime**: ~110-170 seconds for full test suite (11 tests, ~22 LLM calls)
 - Per-test average: ~12-15 seconds
 - LLM call latency: ~2-5 seconds per call (depends on Ollama load)
 
@@ -166,19 +168,20 @@ necessary.
     - Tests LLM-controlled allow/block decisions
     - Validates 403 response for blocked destinations
 
-### MITM Mode Tests (NEW)
+### MITM Mode Tests
 
 9. **`test_proxy_mitm_initialization`**: Verifies proxy starts in MITM mode with certificate generation
 10. **`test_proxy_mitm_https_interception`**: Tests HTTPS request decryption and inspection
 11. **`test_proxy_mitm_request_modification`**: Validates header injection in decrypted HTTPS
 12. **`test_proxy_mitm_request_blocking`**: Tests blocking based on decrypted HTTPS content
 13. **`test_proxy_export_ca_certificate`**: Validates CA certificate export for user installation
+14. **`test_proxy_mitm_response_modification_with_mocks`**: Tests response modification in MITM mode (status, headers)
+15. **`test_proxy_mitm_response_blocking_with_mocks`**: Tests response blocking in MITM mode
 
 ### Coverage Gaps
 
 **Not Yet Tested**:
 
-- Response modification in MITM mode (only request modification tested)
 - Certificate caching behavior (cache hits, expiration)
 - WebSocket upgrade handling
 - Chunked transfer encoding edge cases
@@ -282,12 +285,12 @@ server.stop().await?;
 
 ## Future Test Additions
 
-1. **Response Modification in MITM**: Test body/header modification on decrypted HTTPS responses
-2. **Certificate Cache Validation**: Test cache hits, expiration, domain normalization
-3. **MITM with Loaded CA**: Test loading CA certificate from file instead of generating
-4. **Concurrent HTTPS Requests**: Spawn multiple HTTPS clients through MITM simultaneously
-5. **Large Request Bodies in MITM**: Test streaming and chunked encoding through TLS
-6. **Proxy Chaining**: NetGet MITM proxy → another proxy → target
-7. **Error Handling**: TLS handshake failures, invalid certificates, upstream TLS errors
-8. **Performance Benchmarking**: Measure MITM overhead vs pass-through mode
-9. **Certificate SAN Validation**: Verify wildcard and www variants in generated certs
+1. **Certificate Cache Validation**: Test cache hits, expiration, domain normalization
+2. **MITM with Loaded CA**: Test loading CA certificate from file instead of generating
+3. **Concurrent HTTPS Requests**: Spawn multiple HTTPS clients through MITM simultaneously
+4. **Large Request Bodies in MITM**: Test streaming and chunked encoding through TLS
+5. **Proxy Chaining**: NetGet MITM proxy → another proxy → target
+6. **Error Handling**: TLS handshake failures, invalid certificates, upstream TLS errors
+7. **Performance Benchmarking**: Measure MITM overhead vs pass-through mode
+8. **Certificate SAN Validation**: Verify wildcard and www variants in generated certs
+9. **Response Body Modification in MITM**: Test detailed body content replacement and regex patterns

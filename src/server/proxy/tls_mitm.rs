@@ -7,7 +7,7 @@
 //! 4. Re-encrypt and forward to both sides
 
 use super::cert_cache::CertificateCache;
-use super::filter::{FullRequestInfo, ProxyFilterConfig, RequestAction};
+use super::filter::{FullRequestInfo, ProxyFilterConfig, RequestAction, ResponseAction};
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
@@ -27,7 +27,7 @@ use tokio::sync::mpsc;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 use tracing::{debug, error, info, trace, warn};
 
-use super::actions::PROXY_HTTP_REQUEST_EVENT;
+use super::actions::{PROXY_HTTP_REQUEST_EVENT, PROXY_HTTP_RESPONSE_EVENT};
 
 /// Perform full TLS MITM interception
 ///
@@ -44,7 +44,7 @@ pub async fn perform_mitm(
     _connection_id: ConnectionId,
     server_id: ServerId,
     cert_cache: Arc<CertificateCache>,
-    _config: ProxyFilterConfig,
+    config: ProxyFilterConfig,
     llm_client: OllamaClient,
     app_state: Arc<AppState>,
     status_tx: mpsc::UnboundedSender<String>,
@@ -278,7 +278,7 @@ pub async fn perform_mitm(
         }
 
         // Read response from upstream
-        let mut response_buffer = vec![0u8; 8192];
+        let mut response_buffer = vec![0u8; 16384]; // Larger buffer for responses
         let response_len = upstream_tls_stream
             .read(&mut response_buffer)
             .await
@@ -290,17 +290,137 @@ pub async fn perform_mitm(
         }
 
         let response_data = &response_buffer[..response_len];
+        let response_str = String::from_utf8_lossy(response_data);
         trace!("Received response from upstream ({} bytes)", response_len);
 
-        // TODO: Parse response and consult LLM for response filtering
-        // For now, just forward the response
+        // Parse HTTP response
+        let response_modified = if config.should_inspect_response(&request_info) {
+            // Extract status code and headers
+            let first_line = response_str.lines().next().unwrap_or("");
+            let status_code = extract_status_code(first_line).unwrap_or(200);
+
+            let mut response_headers = HashMap::new();
+            let mut response_body_start = 0;
+
+            for (i, line) in response_str.lines().enumerate() {
+                if i == 0 {
+                    continue; // Skip status line
+                }
+                if line.is_empty() {
+                    response_body_start = response_str[..response_str.find("\r\n\r\n").unwrap_or(response_str.len())].len() + 4;
+                    break;
+                }
+                if let Some(colon_pos) = line.find(':') {
+                    let name = line[..colon_pos].trim().to_string();
+                    let value = line[colon_pos + 1..].trim().to_string();
+                    response_headers.insert(name, value);
+                }
+            }
+
+            let response_body = if response_body_start < response_data.len() {
+                &response_data[response_body_start..]
+            } else {
+                &[]
+            };
+
+            trace!(
+                "Parsed response: status={}, headers={}, body_len={}",
+                status_code,
+                response_headers.len(),
+                response_body.len()
+            );
+
+            // Consult LLM about response
+            match consult_llm_for_response(
+                &request_info,
+                status_code,
+                &response_headers,
+                response_body,
+                server_id,
+                &llm_client,
+                &app_state,
+                &protocol,
+                &status_tx,
+            )
+            .await
+            {
+                Ok(ResponseAction::Pass) => {
+                    trace!("LLM decision: Pass response through");
+                    None // No modification
+                }
+                Ok(ResponseAction::Block { status, body }) => {
+                    info!("LLM decision: Block response with status {}", status);
+                    Some(format!(
+                        "HTTP/1.1 {} Blocked\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}",
+                        status,
+                        body.len(),
+                        body
+                    ).into_bytes())
+                }
+                Ok(ResponseAction::Modify {
+                    status: new_status,
+                    headers: add_headers,
+                    remove_headers,
+                    new_body,
+                    body_replacements: _,
+                }) => {
+                    info!("LLM decision: Modify response");
+                    // Apply modifications
+                    let mut modified_response = String::new();
+
+                    // Status line
+                    let final_status = new_status.unwrap_or(status_code);
+                    modified_response.push_str(&format!("HTTP/1.1 {} OK\r\n", final_status));
+
+                    // Headers
+                    let remove_set: std::collections::HashSet<String> = remove_headers
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|h| h.to_lowercase())
+                        .collect();
+
+                    for (name, value) in &response_headers {
+                        if !remove_set.contains(&name.to_lowercase()) {
+                            modified_response.push_str(&format!("{}: {}\r\n", name, value));
+                        }
+                    }
+
+                    // Add new headers
+                    if let Some(headers) = add_headers {
+                        for (name, value) in headers {
+                            modified_response.push_str(&format!("{}: {}\r\n", name, value));
+                        }
+                    }
+
+                    // Body
+                    let final_body = new_body.unwrap_or_else(|| {
+                        String::from_utf8_lossy(response_body).to_string()
+                    });
+
+                    // Update Content-Length
+                    modified_response.push_str(&format!("Content-Length: {}\r\n\r\n", final_body.len()));
+                    modified_response.push_str(&final_body);
+
+                    Some(modified_response.into_bytes())
+                }
+                Err(e) => {
+                    error!("LLM consultation for response failed: {}", e);
+                    None // Pass through on error
+                }
+            }
+        } else {
+            None // No inspection needed
+        };
+
+        // Send response to client (modified or original)
+        let final_response = response_modified.as_ref().map(|v| v.as_slice()).unwrap_or(response_data);
 
         client_tls_stream
-            .write_all(response_data)
+            .write_all(final_response)
             .await
             .context("Failed to send response to client")?;
 
-        trace!("Sent response to client");
+        trace!("Sent response to client ({} bytes)", final_response.len());
 
         // After first request/response, switch to bidirectional copy
         // This handles keep-alive connections and additional requests
@@ -384,4 +504,75 @@ async fn consult_llm_for_request(
 
     // Default to pass if no explicit action found
     Ok(RequestAction::Pass)
+}
+
+/// Consult LLM about an HTTP response in MITM mode
+async fn consult_llm_for_response(
+    request_info: &FullRequestInfo,
+    status_code: u16,
+    response_headers: &HashMap<String, String>,
+    response_body: &[u8],
+    server_id: ServerId,
+    llm_client: &OllamaClient,
+    app_state: &Arc<AppState>,
+    protocol: &Arc<ProxyProtocol>,
+    status_tx: &mpsc::UnboundedSender<String>,
+) -> Result<ResponseAction> {
+    use crate::llm::actions::protocol_trait::{ActionResult, Server};
+    use serde_json::json;
+
+    let _ = status_tx.send("[DEBUG] Consulting LLM about MITM response...".to_string());
+
+    // Create HTTP response event
+    let body_preview = if response_body.len() > 200 {
+        format!("{}... ({} bytes total)", String::from_utf8_lossy(&response_body[..200]), response_body.len())
+    } else {
+        String::from_utf8_lossy(response_body).to_string()
+    };
+
+    let event = Event::new(
+        &PROXY_HTTP_RESPONSE_EVENT,
+        json!({
+            "request_method": request_info.method,
+            "request_url": request_info.url,
+            "status_code": status_code,
+            "headers": response_headers,
+            "body_preview": body_preview,
+        }),
+    );
+
+    let execution_result = call_llm(
+        llm_client,
+        app_state,
+        server_id,
+        None, // TODO: Add connection_id
+        &event,
+        protocol.as_ref() as &dyn Server,
+    )
+    .await
+    .context("LLM request failed")?;
+
+    // Extract response action from protocol results
+    for result in execution_result.protocol_results {
+        if let ActionResult::Output(bytes) = result {
+            // Deserialize the ResponseAction
+            let action: ResponseAction = serde_json::from_slice(&bytes)
+                .context("Failed to deserialize ResponseAction")?;
+            return Ok(action);
+        }
+    }
+
+    // Default to pass if no explicit action found
+    Ok(ResponseAction::Pass)
+}
+
+/// Extract HTTP status code from response line
+fn extract_status_code(line: &str) -> Option<u16> {
+    // Expected format: "HTTP/1.1 200 OK"
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    if parts.len() >= 2 {
+        parts[1].parse().ok()
+    } else {
+        None
+    }
 }

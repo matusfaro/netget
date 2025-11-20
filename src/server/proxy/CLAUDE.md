@@ -233,11 +233,12 @@ let cert = params.self_signed(&key_pair)?;
 3. **TLS accept from client**: `TlsAcceptor::accept()` using generated cert
 4. **TLS connect to upstream**: `TlsConnector::connect()` with certificate validation
 5. **Read HTTP request**: Parse from decrypted client TLS stream
-6. **Consult LLM**: Create `PROXY_HTTP_REQUEST_EVENT`, get `RequestAction`
-7. **Forward to upstream**: Apply modifications, send via upstream TLS stream
-8. **Read HTTP response**: Receive from upstream TLS stream
-9. **Return to client**: Optionally modify, send via client TLS stream
-10. **Bidirectional copy**: Switch to `tokio::io::copy` for keep-alive
+6. **Consult LLM for request**: Create `PROXY_HTTP_REQUEST_EVENT`, get `RequestAction`
+7. **Forward to upstream**: Apply request modifications, send via upstream TLS stream
+8. **Read HTTP response**: Receive from upstream TLS stream, parse status/headers/body
+9. **Consult LLM for response**: Create `PROXY_HTTP_RESPONSE_EVENT`, get `ResponseAction`
+10. **Return to client**: Apply response modifications (status, headers, body), send via client TLS stream
+11. **Bidirectional copy**: Switch to `tokio::io::copy` for keep-alive connections
 
 ### Certificate Cache Design
 
@@ -260,8 +261,13 @@ let cert = params.self_signed(&key_pair)?;
       - Client-side TLS accept with dynamically generated certificates
       - Upstream-side TLS connect with certificate validation
       - HTTP request/response proxying through LLM filtering
+      - **Response modification**: Full HTTP response parsing and modification
+        - Parse status code, headers, and body from upstream responses
+        - LLM consultation via `PROXY_HTTP_RESPONSE_EVENT`
+        - Support for status changes, header modifications, body replacement
+        - Configurable via `response_filter_mode` (All/Selective/None)
     - Certificate export action for user installation
-    - Comprehensive E2E tests for MITM mode (5 test cases)
+    - Comprehensive E2E tests for MITM mode (7 test cases)
 
 ## Limitations
 

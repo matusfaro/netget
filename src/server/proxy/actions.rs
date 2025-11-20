@@ -957,6 +957,95 @@ pub static PROXY_HTTP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         ])
 });
 
+/// HTTP response event - triggered when proxy receives HTTP response from upstream server
+pub static PROXY_HTTP_RESPONSE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new("proxy_http_response", "HTTP response received from upstream server")
+        .with_parameters(vec![
+            Parameter {
+                name: "status_code".to_string(),
+                type_hint: "number".to_string(),
+                description: "HTTP status code (200, 404, etc.)".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "url".to_string(),
+                type_hint: "string".to_string(),
+                description: "Original request URL".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "headers".to_string(),
+                type_hint: "object".to_string(),
+                description: "Response headers as key-value pairs".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "body".to_string(),
+                type_hint: "string".to_string(),
+                description: "Response body (may be truncated for large responses)".to_string(),
+                required: false,
+            },
+        ])
+        .with_actions(vec![
+            ActionDefinition {
+                name: "handle_response_pass".to_string(),
+                description: "Pass HTTP response through to client unchanged".to_string(),
+                parameters: vec![],
+                example: json!({"type": "handle_response_pass"}),
+            },
+            ActionDefinition {
+                name: "handle_response_block".to_string(),
+                description: "Block HTTP response and return error to client".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "status".to_string(),
+                        type_hint: "number".to_string(),
+                        description: "HTTP status code for blocked response".to_string(),
+                        required: false,
+                    },
+                    Parameter {
+                        name: "body".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Body text for blocked response".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({"type": "handle_response_block", "status": 403, "body": "Blocked"}),
+            },
+            ActionDefinition {
+                name: "handle_response_modify".to_string(),
+                description: "Modify HTTP response before sending to client".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "status".to_string(),
+                        type_hint: "number".to_string(),
+                        description: "New HTTP status code (optional)".to_string(),
+                        required: false,
+                    },
+                    Parameter {
+                        name: "headers".to_string(),
+                        type_hint: "object".to_string(),
+                        description: "Headers to add or modify".to_string(),
+                        required: false,
+                    },
+                    Parameter {
+                        name: "remove_headers".to_string(),
+                        type_hint: "array".to_string(),
+                        description: "Header names to remove".to_string(),
+                        required: false,
+                    },
+                    Parameter {
+                        name: "new_body".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Replacement body content".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({"type": "handle_response_modify", "status": 200, "headers": {"X-Modified": "true"}}),
+            },
+        ])
+});
+
 /// HTTPS connection event - triggered when proxy receives CONNECT request
 pub static PROXY_HTTPS_CONNECT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
@@ -1003,6 +1092,7 @@ pub static PROXY_HTTPS_CONNECT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 pub fn get_proxy_event_types() -> Vec<EventType> {
     vec![
         PROXY_HTTP_REQUEST_EVENT.clone(),
+        PROXY_HTTP_RESPONSE_EVENT.clone(),
         PROXY_HTTPS_CONNECT_EVENT.clone(),
     ]
 }
