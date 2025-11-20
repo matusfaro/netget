@@ -104,13 +104,16 @@ impl SmbServer {
 
         // Spawn connection acceptor
         tokio::spawn(async move {
+            eprintln!("===== SMB ACCEPTOR TASK STARTED =====");
             info!("SMB server connection acceptor started");
             let _ = status_tx.send("[INFO] SMB connection acceptor loop starting".to_string());
 
             loop {
+                eprintln!("===== SMB ACCEPTOR: CALLING accept() =====");
                 trace!("SMB acceptor: waiting for connection");
                 match listener.accept().await {
                     Ok((stream, peer_addr)) => {
+                        eprintln!("===== SMB ACCEPT RETURNED OK: {} =====", peer_addr);
                         info!("SMB connection accepted from {}", peer_addr);
                         let _ =
                             status_tx.send(format!("→ SMB connection from {}", peer_addr));
@@ -142,11 +145,13 @@ impl SmbServer {
                         });
                     }
                     Err(e) => {
+                        eprintln!("===== SMB ACCEPT ERROR: {} =====", e);
                         error!("SMB accept error: {}", e);
                         let _ = status_tx.send(format!("✗ SMB accept error: {}", e));
                     }
                 }
             }
+            eprintln!("===== SMB ACCEPTOR LOOP EXITED =====");
         });
 
         Ok(actual_addr)
@@ -214,13 +219,20 @@ impl SmbServer {
         let state = Arc::new(Mutex::new(SmbConnectionState::new()));
 
         // SMB2 protocol handling loop
+        let mut iteration = 0;
         loop {
+            iteration += 1;
+            debug!("SMB connection loop iteration {} for {}", iteration, peer_addr);
+            let _ = status_tx.send(format!("[DEBUG] SMB loop iteration {} for {}", iteration, peer_addr));
+
             // Read SMB2 message
             // SMB2 header is 64 bytes minimum
             let mut header_buf = vec![0u8; 64];
 
             match stream.read_exact(&mut header_buf).await {
                 Ok(_) => {
+                    debug!("Successfully read 64-byte header in iteration {}", iteration);
+                    let _ = status_tx.send(format!("[DEBUG] Read header OK (iteration {})", iteration));
                     // Update connection stats for received data
                     app_state
                         .update_connection_stats(
@@ -247,7 +259,8 @@ impl SmbServer {
                     let _ = status_tx.send(format!("[DEBUG] SMB2 command 0x{:04x} received from {}", command, peer_addr));
 
                     // Handle SMB2 command
-                    let response = Self::handle_smb2_command(
+                    debug!("Calling handle_smb2_command for 0x{:04x}", command);
+                    let response = match Self::handle_smb2_command(
                         command,
                         &header_buf,
                         &mut stream,
@@ -259,41 +272,69 @@ impl SmbServer {
                         &state,
                         &status_tx,
                     )
-                    .await?;
+                    .await {
+                        Ok(r) => {
+                            debug!("handle_smb2_command succeeded for 0x{:04x}", command);
+                            r
+                        },
+                        Err(e) => {
+                            error!("handle_smb2_command error for 0x{:04x}: {}", command, e);
+                            let _ = status_tx.send(format!("[ERROR] Command handler failed: {}", e));
+                            break;
+                        }
+                    };
 
                     // Send response
                     if let Some(response_data) = response {
-                        stream.write_all(&response_data).await?;
-                        trace!(
-                            "SMB2 response sent to {}, {} bytes",
-                            peer_addr,
-                            response_data.len()
-                        );
+                        debug!("Sending {}-byte response for command 0x{:04x}", response_data.len(), command);
+                        match stream.write_all(&response_data).await {
+                            Ok(_) => {
+                                debug!("Response sent successfully, continuing to next command");
+                                let _ = status_tx.send(format!("[DEBUG] Response sent ({} bytes), looping", response_data.len()));
+                                trace!(
+                                    "SMB2 response sent to {}, {} bytes",
+                                    peer_addr,
+                                    response_data.len()
+                                );
 
-                        // Update connection stats for sent data
-                        app_state
-                            .update_connection_stats(
-                                server_id,
-                                connection_id,
-                                None,
-                                Some(response_data.len() as u64),
-                                None,
-                                Some(1),
-                            )
-                            .await;
+                                // Update connection stats for sent data
+                                app_state
+                                    .update_connection_stats(
+                                        server_id,
+                                        connection_id,
+                                        None,
+                                        Some(response_data.len() as u64),
+                                        None,
+                                        Some(1),
+                                    )
+                                    .await;
+
+                                debug!("End of iteration {}, looping back", iteration);
+                                let _ = status_tx.send(format!("[DEBUG] Iteration {} complete, continuing", iteration));
+                            }
+                            Err(e) => {
+                                error!("Failed to send response for 0x{:04x}: {}", command, e);
+                                let _ = status_tx.send(format!("[ERROR] Write failed: {}", e));
+                                break;
+                            }
+                        }
                     }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                     console_info!(status_tx, "SMB client {} disconnected", peer_addr);
+                    let _ = status_tx.send(format!("[DEBUG] Loop exit: EOF after {} iterations", iteration));
                     break;
                 }
                 Err(e) => {
                     error!("SMB read error from {}: {}", peer_addr, e);
-                    let _ = status_tx.send(format!("✗ SMB read error from {}: {}", peer_addr, e));
+                    let _ = status_tx.send(format!("✗ SMB read error from {}: {} (iteration {})", peer_addr, e, iteration));
                     break;
                 }
             }
         }
+
+        debug!("Connection loop exited after {} iterations", iteration);
+        let _ = status_tx.send(format!("[DEBUG] ===== Connection loop exited: {} iterations =====", iteration));
 
         // Mark connection as closed
         app_state
