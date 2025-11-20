@@ -213,11 +213,7 @@ impl Server for WebRtcSignalingProtocol {
         })
     }
 
-    fn execute_action(
-        &self,
-        action: serde_json::Value,
-        ctx: &crate::protocol::ExecutionContext,
-    ) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action
             .get("type")
             .and_then(|v| v.as_str())
@@ -225,45 +221,25 @@ impl Server for WebRtcSignalingProtocol {
 
         match action_type {
             "list_signaling_peers" => {
-                // Get server data from context
-                let server_data_ptr = ctx
-                    .state
-                    .with_server(ctx.server_id, |server| {
-                        server
-                            .get_protocol_field("server_data_ptr")
-                            .and_then(|v| v.as_u64())
-                            .map(|p| p as usize)
-                    })
-                    .context("Server not found")?
-                    .context("server_data_ptr not found")?;
-
-                // Reconstruct Arc (temporarily)
-                let server_data = unsafe {
-                    Arc::from_raw(
-                        server_data_ptr
-                            as *const crate::server::webrtc_signaling::WebRtcSignalingServerData,
-                    )
-                };
-                let server_data_clone = Arc::clone(&server_data);
-                // Prevent drop
-                let _ = Arc::into_raw(server_data);
-
-                // List peers (spawn async task and print to console)
-                tokio::spawn(async move {
-                    let peers = server_data_clone.list_peers().await;
-                    tracing::info!("Connected signaling peers: {:?}", peers);
-                });
-
-                Ok(ActionResult::NoOp)
+                // Return custom action for manual processing
+                Ok(ActionResult::Custom {
+                    name: "list_signaling_peers".to_string(),
+                    data: json!({}),
+                })
             }
             "broadcast_message" => {
-                let _message = action
+                let message = action
                     .get("message")
-                    .context("Missing 'message' field")?;
+                    .context("Missing 'message' field")?
+                    .clone();
 
-                // TODO: Implement broadcast functionality
-                tracing::warn!("Broadcast message action not yet implemented");
-                Ok(ActionResult::NoOp)
+                // Return custom action for manual processing
+                Ok(ActionResult::Custom {
+                    name: "broadcast_message".to_string(),
+                    data: json!({
+                        "message": message,
+                    }),
+                })
             }
             _ => Err(anyhow::anyhow!(
                 "Unknown WebRTC Signaling action: {}",

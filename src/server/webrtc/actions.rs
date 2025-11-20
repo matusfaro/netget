@@ -340,7 +340,7 @@ impl Server for WebRtcProtocol {
         })
     }
 
-    fn execute_action(&self, action: serde_json::Value, ctx: &crate::protocol::ExecutionContext) -> Result<ActionResult> {
+    fn execute_action(&self, action: serde_json::Value) -> Result<ActionResult> {
         let action_type = action
             .get("type")
             .and_then(|v| v.as_str())
@@ -373,105 +373,45 @@ impl Server for WebRtcProtocol {
                 let peer_id = action
                     .get("peer_id")
                     .and_then(|v| v.as_str())
-                    .context("Missing 'peer_id' field")?;
+                    .context("Missing 'peer_id' field")?
+                    .to_string();
 
                 let message = action
                     .get("message")
                     .and_then(|v| v.as_str())
-                    .context("Missing 'message' field")?;
+                    .context("Missing 'message' field")?
+                    .to_string();
 
-                // Get server data from context
-                let server_data_ptr = ctx.state
-                    .with_server(ctx.server_id, |server| {
-                        server
-                            .get_protocol_field("server_data_ptr")
-                            .and_then(|v| v.as_u64())
-                            .map(|p| p as usize)
-                    })
-                    .context("Server not found")?
-                    .context("server_data_ptr not found")?;
-
-                // Reconstruct Arc (temporarily)
-                let server_data = unsafe {
-                    Arc::from_raw(server_data_ptr as *const crate::server::webrtc::WebRtcServerData)
-                };
-                let server_data_clone = Arc::clone(&server_data);
-                // Prevent drop
-                let _ = Arc::into_raw(server_data);
-
-                // Send message (spawn async task)
-                let peer_id = peer_id.to_string();
-                let message = message.to_string();
-                tokio::spawn(async move {
-                    if let Err(e) = server_data_clone.send_to_peer(&peer_id, message).await {
-                        tracing::error!("Failed to send to peer {}: {}", peer_id, e);
-                    }
-                });
-
-                Ok(ActionResult::NoOp)
+                // Return custom action for manual processing
+                Ok(ActionResult::Custom {
+                    name: "send_to_peer".to_string(),
+                    data: json!({
+                        "peer_id": peer_id,
+                        "message": message,
+                    }),
+                })
             }
             "close_peer" => {
                 let peer_id = action
                     .get("peer_id")
                     .and_then(|v| v.as_str())
-                    .context("Missing 'peer_id' field")?;
+                    .context("Missing 'peer_id' field")?
+                    .to_string();
 
-                // Get server data from context
-                let server_data_ptr = ctx.state
-                    .with_server(ctx.server_id, |server| {
-                        server
-                            .get_protocol_field("server_data_ptr")
-                            .and_then(|v| v.as_u64())
-                            .map(|p| p as usize)
-                    })
-                    .context("Server not found")?
-                    .context("server_data_ptr not found")?;
-
-                // Reconstruct Arc (temporarily)
-                let server_data = unsafe {
-                    Arc::from_raw(server_data_ptr as *const crate::server::webrtc::WebRtcServerData)
-                };
-                let server_data_clone = Arc::clone(&server_data);
-                // Prevent drop
-                let _ = Arc::into_raw(server_data);
-
-                // Close peer (spawn async task)
-                let peer_id = peer_id.to_string();
-                tokio::spawn(async move {
-                    if let Err(e) = server_data_clone.close_peer(&peer_id).await {
-                        tracing::error!("Failed to close peer {}: {}", peer_id, e);
-                    }
-                });
-
-                Ok(ActionResult::NoOp)
+                // Return custom action for manual processing
+                Ok(ActionResult::Custom {
+                    name: "close_peer".to_string(),
+                    data: json!({
+                        "peer_id": peer_id,
+                    }),
+                })
             }
             "list_peers" => {
-                // Get server data from context
-                let server_data_ptr = ctx.state
-                    .with_server(ctx.server_id, |server| {
-                        server
-                            .get_protocol_field("server_data_ptr")
-                            .and_then(|v| v.as_u64())
-                            .map(|p| p as usize)
-                    })
-                    .context("Server not found")?
-                    .context("server_data_ptr not found")?;
-
-                // Reconstruct Arc (temporarily)
-                let server_data = unsafe {
-                    Arc::from_raw(server_data_ptr as *const crate::server::webrtc::WebRtcServerData)
-                };
-                let server_data_clone = Arc::clone(&server_data);
-                // Prevent drop
-                let _ = Arc::into_raw(server_data);
-
-                // List peers (spawn async task and print to console)
-                tokio::spawn(async move {
-                    let peers = server_data_clone.list_peers().await;
-                    tracing::info!("Active WebRTC peers: {:?}", peers);
-                });
-
-                Ok(ActionResult::NoOp)
+                // Return custom action for manual processing
+                Ok(ActionResult::Custom {
+                    name: "list_peers".to_string(),
+                    data: json!({}),
+                })
             }
             "send_message" => {
                 // This is a sync action for connection context
@@ -481,9 +421,9 @@ impl Server for WebRtcProtocol {
                     .context("Missing 'message' field")?
                     .to_string();
 
-                Ok(ActionResult::SendData(message.into_bytes()))
+                Ok(ActionResult::Output(message.into_bytes()))
             }
-            "disconnect" => Ok(ActionResult::Disconnect),
+            "disconnect" => Ok(ActionResult::CloseConnection),
             "wait_for_more" => Ok(ActionResult::WaitForMore),
             _ => Err(anyhow::anyhow!(
                 "Unknown WebRTC server action: {}",

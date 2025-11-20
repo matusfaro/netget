@@ -2,7 +2,7 @@
 pub mod actions;
 
 use anyhow::{Context, Result};
-use futures_util::{SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -78,7 +78,7 @@ pub enum SignalingMessage {
 /// Peer connection data
 struct PeerConnection {
     peer_id: PeerId,
-    ws_tx: futures_util::stream::SplitSink<
+    ws_tx: futures::stream::SplitSink<
         tokio_tungstenite::WebSocketStream<TcpStream>,
         Message,
     >,
@@ -103,7 +103,7 @@ impl WebRtcSignalingServerData {
     pub async fn register_peer(
         &self,
         peer_id: PeerId,
-        ws_tx: futures_util::stream::SplitSink<
+        ws_tx: futures::stream::SplitSink<
             tokio_tungstenite::WebSocketStream<TcpStream>,
             Message,
         >,
@@ -321,29 +321,23 @@ impl WebRtcSignalingServer {
                                         .await;
 
                                     // Fire connected event
-                                    if let Some(instruction) =
-                                        app_state.get_instruction_for_server(server_id).await
-                                    {
-                                        let event = Event::new(
-                                            &WEBRTC_SIGNALING_PEER_CONNECTED_EVENT,
-                                            serde_json::json!({
-                                                "peer_id": new_peer_id,
-                                                "remote_addr": remote_addr.to_string(),
-                                            }),
-                                        );
+                                    let event = Event::new(
+                                        &WEBRTC_SIGNALING_PEER_CONNECTED_EVENT,
+                                        serde_json::json!({
+                                            "peer_id": new_peer_id,
+                                            "remote_addr": remote_addr.to_string(),
+                                        }),
+                                    );
 
-                                        let _ = call_llm(
-                                            &llm_client,
-                                            &app_state,
-                                            server_id.to_string(),
-                                            &instruction,
-                                            "",
-                                            Some(&event),
-                                            protocol.as_ref(),
-                                            &status_tx,
-                                        )
-                                        .await;
-                                    }
+                                    let _ = call_llm(
+                                        &llm_client,
+                                        &app_state,
+                                        server_id,
+                                        None, // connection_id
+                                        &event,
+                                        protocol.as_ref(),
+                                    )
+                                    .await;
 
                                     // Send registration confirmation
                                     // (ws_tx was moved into register_peer, can't use here)
@@ -434,26 +428,22 @@ impl WebRtcSignalingServer {
             server_data.unregister_peer(&pid).await;
 
             // Fire disconnected event
-            if let Some(instruction) = app_state.get_instruction_for_server(server_id).await {
-                let event = Event::new(
-                    &WEBRTC_SIGNALING_PEER_DISCONNECTED_EVENT,
-                    serde_json::json!({
-                        "peer_id": pid,
-                    }),
-                );
+            let event = Event::new(
+                &WEBRTC_SIGNALING_PEER_DISCONNECTED_EVENT,
+                serde_json::json!({
+                    "peer_id": pid,
+                }),
+            );
 
-                let _ = call_llm(
-                    &llm_client,
-                    &app_state,
-                    server_id.to_string(),
-                    &instruction,
-                    "",
-                    Some(&event),
-                    protocol.as_ref(),
-                    &status_tx,
-                )
-                .await;
-            }
+            let _ = call_llm(
+                &llm_client,
+                &app_state,
+                server_id,
+                None, // connection_id
+                &event,
+                protocol.as_ref(),
+            )
+            .await;
 
             // Remove connection from server
             if let Some(conn_id) = connection_id {

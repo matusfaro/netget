@@ -179,50 +179,31 @@ impl WebRtcServerData {
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                         // Call LLM with connected event
-                        if let Some(instruction) = app_state.get_instruction_for_server(server_id).await {
-                            let protocol = Arc::new(crate::server::WebRtcProtocol::new());
-                            let event = Event::new(
-                                &WEBRTC_PEER_CONNECTED_EVENT,
-                                serde_json::json!({
-                                    "peer_id": peer_id,
-                                    "channel_label": label,
-                                }),
-                            );
+                        let protocol = Arc::new(crate::server::WebRtcProtocol::new());
+                        let event = Event::new(
+                            &WEBRTC_PEER_CONNECTED_EVENT,
+                            serde_json::json!({
+                                "peer_id": peer_id,
+                                "channel_label": label,
+                            }),
+                        );
 
-                            let memory = {
-                                let peers_lock = peers.lock().await;
-                                peers_lock
-                                    .get(&peer_id)
-                                    .map(|p| p.memory.clone())
-                                    .unwrap_or_default()
-                            };
-
-                            match call_llm(
-                                &llm_client,
-                                &app_state,
-                                server_id.to_string(),
-                                &instruction,
-                                &memory,
-                                Some(&event),
-                                protocol.as_ref(),
-                                &status_tx,
-                            )
-                            .await
-                            {
-                                Ok(crate::llm::LlmResult {
-                                    actions: _,
-                                    memory_updates,
-                                }) => {
-                                    if let Some(mem) = memory_updates {
-                                        let mut peers_lock = peers.lock().await;
-                                        if let Some(peer_data) = peers_lock.get_mut(&peer_id) {
-                                            peer_data.memory = mem;
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    error!("LLM error for WebRTC peer {} on open: {}", peer_id, e);
-                                }
+                        match call_llm(
+                            &llm_client,
+                            &app_state,
+                            server_id,
+                            None, // connection_id
+                            &event,
+                            protocol.as_ref(),
+                        )
+                        .await
+                        {
+                            Ok(_result) => {
+                                // ExecutionResult doesn't have memory_updates
+                                // Memory is handled via actions
+                            }
+                            Err(e) => {
+                                error!("LLM error for WebRTC peer {} on open: {}", peer_id, e);
                             }
                         }
                     })
@@ -266,72 +247,56 @@ impl WebRtcServerData {
                             ConnectionState::Idle => {
                                 // Process immediately
                                 peer_data.state = ConnectionState::Processing;
-                                let memory = peer_data.memory.clone();
                                 drop(peers_lock);
 
                                 // Call LLM
-                                if let Some(instruction) = app_state.get_instruction_for_server(server_id).await {
-                                    let protocol = Arc::new(crate::server::WebRtcProtocol::new());
-                                    let event = Event::new(
-                                        &WEBRTC_MESSAGE_RECEIVED_EVENT,
-                                        serde_json::json!({
-                                            "peer_id": peer_id,
-                                            "message": message_text,
-                                            "is_binary": !message_text.is_ascii(),
-                                        }),
-                                    );
+                                let protocol = Arc::new(crate::server::WebRtcProtocol::new());
+                                let event = Event::new(
+                                    &WEBRTC_MESSAGE_RECEIVED_EVENT,
+                                    serde_json::json!({
+                                        "peer_id": peer_id,
+                                        "message": message_text,
+                                        "is_binary": !message_text.is_ascii(),
+                                    }),
+                                );
 
-                                    match call_llm(
-                                        &llm_client,
-                                        &app_state,
-                                        server_id.to_string(),
-                                        &instruction,
-                                        &memory,
-                                        Some(&event),
-                                        protocol.as_ref(),
-                                        &status_tx,
-                                    )
-                                    .await
-                                    {
-                                        Ok(crate::llm::LlmResult {
-                                            actions,
-                                            memory_updates,
-                                        }) => {
-                                            // Update memory
-                                            if let Some(mem) = memory_updates {
-                                                let mut peers_lock = peers.lock().await;
-                                                if let Some(peer_data) = peers_lock.get_mut(&peer_id) {
-                                                    peer_data.memory = mem;
-                                                }
-                                            }
-
-                                            // Execute actions
-                                            for action in actions {
-                                                match action {
-                                                    ActionResult::SendData(bytes) => {
-                                                        match dc.send_text(String::from_utf8_lossy(&bytes).to_string()).await {
-                                                            Ok(_) => {
-                                                                trace!("WebRTC server sent message to peer {}", peer_id);
-                                                            }
-                                                            Err(e) => {
-                                                                error!("WebRTC server failed to send to peer {}: {}", peer_id, e);
-                                                            }
+                                match call_llm(
+                                    &llm_client,
+                                    &app_state,
+                                    server_id,
+                                    None, // connection_id
+                                    &event,
+                                    protocol.as_ref(),
+                                )
+                                .await
+                                {
+                                    Ok(result) => {
+                                        // Execute protocol results
+                                        for action_result in result.protocol_results {
+                                            match action_result {
+                                                ActionResult::Output(bytes) => {
+                                                    match dc.send_text(String::from_utf8_lossy(&bytes).to_string()).await {
+                                                        Ok(_) => {
+                                                            trace!("WebRTC server sent message to peer {}", peer_id);
+                                                        }
+                                                        Err(e) => {
+                                                            error!("WebRTC server failed to send to peer {}: {}", peer_id, e);
                                                         }
                                                     }
-                                                    ActionResult::Disconnect => {
-                                                        info!("WebRTC server closing connection to peer {}", peer_id);
-                                                        let _ = dc.close().await;
-                                                    }
-                                                    ActionResult::WaitForMore => {
-                                                        trace!("WebRTC server waiting for more data from peer {}", peer_id);
-                                                    }
-                                                    _ => {}
                                                 }
+                                                ActionResult::CloseConnection => {
+                                                    info!("WebRTC server closing connection to peer {}", peer_id);
+                                                    let _ = dc.close().await;
+                                                }
+                                                ActionResult::WaitForMore => {
+                                                    trace!("WebRTC server waiting for more data from peer {}", peer_id);
+                                                }
+                                                _ => {}
                                             }
                                         }
-                                        Err(e) => {
-                                            error!("LLM error for WebRTC peer {}: {}", peer_id, e);
-                                        }
+                                    }
+                                    Err(e) => {
+                                        error!("LLM error for WebRTC peer {}: {}", peer_id, e);
                                     }
                                 }
 

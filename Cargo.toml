@@ -167,7 +167,7 @@ smb = ["smb-msg"]
 stun = ["dep:webrtc-stun", "dep:stunclient"]
 smb-client = ["smb", "pavao"]  # SMB client requires native libsmbclient library
 turn = ["dep:webrtc-turn"]
-webrtc = ["dep:webrtc"]  # WebRTC client for peer-to-peer data channels (no media)
+webrtc = ["dep:webrtc", "dep:tokio-tungstenite"]  # WebRTC client + server for peer-to-peer data channels
 sip = []  # SIP uses only UDP, no extra deps (manual protocol implementation)
 ldap = ["dep:ldap3_proto", "rasn", "dep:ldap3"]
 imap = ["imap-codec", "dep:async-imap", "dep:async-native-tls"]  # IMAP uses imap-codec for protocol parsing
@@ -510,6 +510,9 @@ webrtc-turn = { version = "0.1", optional = true }
 
 # WebRTC client (peer-to-peer data channels, no media)
 webrtc = { version = "0.11", optional = true }
+
+# WebRTC Signaling Server (WebSocket-based SDP relay)
+tokio-tungstenite = { version = "0.21", optional = true }
 
 # LDAP server (ASN.1 BER encoding for LDAP protocol)
 ldap3_proto = { version = "0.3", optional = true }
