@@ -1,11 +1,11 @@
 //! MongoDB client E2E tests with mock LLM
 
-#[cfg(all(test, feature = "mongodb"))]
-mod mongodb_client_tests {
-    use crate::helpers::*;
-    use tokio::time::{sleep, Duration};
+#![cfg(feature = "mongodb")]
 
-    #[tokio::test]
+use crate::helpers::*;
+use tokio::time::{sleep, Duration};
+
+#[tokio::test]
     async fn test_mongodb_client_with_server_mocks() -> E2EResult<()> {
         // Start MongoDB server (mocked)
         let server_config = NetGetConfig::new("Listen on port {AVAILABLE_PORT} via MongoDB")
@@ -237,4 +237,3 @@ mod mongodb_client_tests {
 
         Ok(())
     }
-}

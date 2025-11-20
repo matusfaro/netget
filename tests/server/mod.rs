@@ -96,6 +96,8 @@ pub mod mcp;
 pub mod mdns;
 #[cfg(feature = "mercurial")]
 pub mod mercurial;
+#[cfg(feature = "mongodb-server")]
+pub mod mongodb;
 #[cfg(feature = "mqtt")]
 pub mod mqtt;
 #[cfg(feature = "mysql")]
