@@ -215,9 +215,17 @@ impl MssqlHandler {
                     self.handle_query(&mut stream, &query).await?;
                 }
                 0x03 => {
-                    // RPC Request
-                    debug!("Received RPC Request (not implemented)");
-                    self.send_error(&mut stream, 40002, "RPC not supported", 16).await?;
+                    // RPC Request (sp_executesql, sp_prepare, etc.)
+                    debug!("Received RPC Request");
+                    let query = self.parse_rpc_request(&data)?;
+                    if !query.is_empty() {
+                        debug!("RPC Query: {}", query);
+                        self.handle_query(&mut stream, &query).await?;
+                    } else {
+                        debug!("RPC call without extractable query (ignoring)");
+                        // Send empty result set for RPCs we can't parse
+                        self.send_empty_result(&mut stream).await?;
+                    }
                 }
                 0x0E => {
                     // Bulk Load
@@ -304,56 +312,85 @@ impl MssqlHandler {
     async fn send_login_response(&self, stream: &mut TcpStream) -> Result<()> {
         let _ = self.status_tx.send("[DEBUG] MSSQL → Login accepted".to_string());
 
-        // Send ENVCHANGE (database context)
+        let mut response = Vec::new();
+
+        // ENVCHANGE: Database context
         let db_name = "master";
         let db_name_utf16: Vec<u8> = db_name.encode_utf16()
             .flat_map(|c| c.to_le_bytes())
             .collect();
 
-        let mut envchange = Vec::new();
-        envchange.push(0xE3); // ENVCHANGE token
-        // Length = type(1) + new_len(1) + new_value + old_len(1) + old_value
-        let envchange_len = 1 + 1 + db_name_utf16.len() + 1 + db_name_utf16.len();
-        envchange.extend_from_slice(&(envchange_len as u16).to_le_bytes());
+        let mut envchange_db = Vec::new();
+        envchange_db.push(0xE3); // ENVCHANGE token
+        let envchange_db_len = 1 + 1 + db_name_utf16.len() + 1 + db_name_utf16.len();
+        envchange_db.extend_from_slice(&(envchange_db_len as u16).to_le_bytes());
+        envchange_db.push(0x01); // Type: Database
+        envchange_db.push(db_name.len() as u8); // New value length (in characters)
+        envchange_db.extend_from_slice(&db_name_utf16);
+        envchange_db.push(db_name.len() as u8); // Old value length (in characters)
+        envchange_db.extend_from_slice(&db_name_utf16);
+        response.extend_from_slice(&envchange_db);
 
-        envchange.push(0x01); // Type: Database
-        envchange.push(db_name_utf16.len() as u8); // New value length
-        envchange.extend_from_slice(&db_name_utf16);
-        envchange.push(db_name_utf16.len() as u8); // Old value length
-        envchange.extend_from_slice(&db_name_utf16);
+        // ENVCHANGE: Language (us_english)
+        let lang = "us_english";
+        let lang_utf16: Vec<u8> = lang.encode_utf16()
+            .flat_map(|c| c.to_le_bytes())
+            .collect();
 
-        // Send INFO message
+        let mut envchange_lang = Vec::new();
+        envchange_lang.push(0xE3); // ENVCHANGE token
+        let envchange_lang_len = 1 + 1 + lang_utf16.len() + 1 + 0; // old value is empty
+        envchange_lang.extend_from_slice(&(envchange_lang_len as u16).to_le_bytes());
+        envchange_lang.push(0x02); // Type: Language
+        envchange_lang.push(lang.len() as u8); // New value length (in characters)
+        envchange_lang.extend_from_slice(&lang_utf16);
+        envchange_lang.push(0x00); // Old value length (empty)
+        response.extend_from_slice(&envchange_lang);
+
+        // ENVCHANGE: Packet size ("4096" as string)
+        let pkt_size_new = "4096";
+        let pkt_size_old = "512"; // Default packet size
+        let pkt_size_new_utf16: Vec<u8> = pkt_size_new.encode_utf16()
+            .flat_map(|c| c.to_le_bytes())
+            .collect();
+        let pkt_size_old_utf16: Vec<u8> = pkt_size_old.encode_utf16()
+            .flat_map(|c| c.to_le_bytes())
+            .collect();
+
+        let mut envchange_pkt = Vec::new();
+        envchange_pkt.push(0xE3); // ENVCHANGE token
+        let envchange_pkt_len = 1 + 1 + pkt_size_new_utf16.len() + 1 + pkt_size_old_utf16.len();
+        envchange_pkt.extend_from_slice(&(envchange_pkt_len as u16).to_le_bytes());
+        envchange_pkt.push(0x04); // Type: Packet size
+        envchange_pkt.push(pkt_size_new.len() as u8); // New value length (in characters)
+        envchange_pkt.extend_from_slice(&pkt_size_new_utf16);
+        envchange_pkt.push(pkt_size_old.len() as u8); // Old value length (in characters)
+        envchange_pkt.extend_from_slice(&pkt_size_old_utf16);
+        response.extend_from_slice(&envchange_pkt);
+
+        // INFO message
         let msg = "Login succeeded";
         let msg_utf16: Vec<u8> = msg.encode_utf16()
             .flat_map(|c| c.to_le_bytes())
             .collect();
 
-        let mut info = Vec::new();
-        info.push(0xAB); // INFO token
-        // Length = error(4) + state(1) + class(1) + msg_len(2) + msg + srv_len(1) + proc_len(1) + line(4)
+        response.push(0xAB); // INFO token
         let info_len = 4 + 1 + 1 + 2 + msg_utf16.len() + 1 + 1 + 4;
-        info.extend_from_slice(&(info_len as u16).to_le_bytes());
+        response.extend_from_slice(&(info_len as u16).to_le_bytes());
+        response.extend_from_slice(&[0x01, 0x00, 0x00, 0x00]); // Error number
+        response.push(0x01); // State
+        response.push(0x00); // Class (severity)
+        response.extend_from_slice(&(msg.len() as u16).to_le_bytes()); // Message length (character count)
+        response.extend_from_slice(&msg_utf16);
+        response.push(0x00); // Server name length
+        response.push(0x00); // Procedure name length
+        response.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // Line number
 
-        info.extend_from_slice(&[0x01, 0x00, 0x00, 0x00]); // Error number
-        info.push(0x01); // State
-        info.push(0x00); // Class (severity)
-        info.extend_from_slice(&(msg.len() as u16).to_le_bytes()); // Message length (character count, not bytes)
-        info.extend_from_slice(&msg_utf16);
-        info.push(0x00); // Server name length
-        info.push(0x00); // Procedure name length
-        info.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // Line number
-
-        // Send DONE token
-        let mut done = Vec::new();
-        done.push(0xFD); // DONE token
-        done.extend_from_slice(&[0x00, 0x00]); // Status
-        done.extend_from_slice(&[0x00, 0x00]); // CurCmd
-        done.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // DoneRowCount
-
-        let mut response = Vec::new();
-        response.extend_from_slice(&envchange);
-        response.extend_from_slice(&info);
-        response.extend_from_slice(&done);
+        // DONE token
+        response.push(0xFD); // DONE token
+        response.extend_from_slice(&[0x00, 0x00]); // Status
+        response.extend_from_slice(&[0x00, 0x00]); // CurCmd
+        response.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // DoneRowCount
 
         self.send_tds_packet(stream, 0x04, &response).await
     }
@@ -378,6 +415,78 @@ impl MssqlHandler {
             .collect();
 
         Ok(String::from_utf16_lossy(&sql_u16).trim().to_string())
+    }
+
+    /// Parse RPC Request packet to extract SQL query
+    fn parse_rpc_request(&self, data: &[u8]) -> Result<String> {
+        // RPC format is complex - we'll try to extract any UTF-16 strings that look like SQL
+        // Most RPC calls are sp_executesql with the SQL as first parameter
+
+        if data.len() < 10 {
+            return Ok(String::new());
+        }
+
+        // Debug: log first 200 bytes as hex
+        let preview_len = std::cmp::min(data.len(), 200);
+        let hex_preview: String = data[..preview_len]
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<Vec<_>>()
+            .join(" ");
+        debug!("RPC data preview (first {} bytes): {}", preview_len, hex_preview);
+
+        // Try to find UTF-16 encoded SQL in the RPC data
+        // Look for common SQL keywords as markers
+        for start in (0..data.len().saturating_sub(10)).step_by(2) {
+            // Try to decode as UTF-16LE
+            let chunk_len = std::cmp::min(data.len() - start, 2000);
+            if chunk_len < 10 {
+                break; // Not enough data left
+            }
+            let chunk = &data[start..start + chunk_len];
+
+            if chunk.len() % 2 != 0 {
+                continue;
+            }
+
+            let text_u16: Vec<u16> = chunk
+                .chunks_exact(2)
+                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .collect();
+
+            let text = String::from_utf16_lossy(&text_u16);
+
+            // Check if this looks like SQL (contains SELECT, INSERT, UPDATE, DELETE, CREATE, etc.)
+            let text_upper = text.to_uppercase();
+            if text_upper.contains("SELECT ") ||
+               text_upper.contains("SELECT") || // Also check without space
+               text_upper.contains("INSERT ") ||
+               text_upper.contains("UPDATE ") ||
+               text_upper.contains("DELETE ") ||
+               text_upper.contains("CREATE ") ||
+               text_upper.contains("DROP ") ||
+               text_upper.contains("ALTER ") {
+                // Found SQL - extract it by finding the SQL keyword and taking everything until null or non-printable chars
+                let sql_start_keywords = ["SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER"];
+                for keyword in &sql_start_keywords {
+                    if let Some(pos) = text_upper.find(keyword) {
+                        let sql_part = &text[pos..];
+                        // Take only printable ASCII characters (SQL queries should be ASCII)
+                        let sql: String = sql_part
+                            .chars()
+                            .take_while(|c| c.is_ascii() && (*c == '\n' || *c == '\r' || *c == '\t' || !c.is_ascii_control()))
+                            .collect();
+                        let sql = sql.trim().to_string();
+                        if !sql.is_empty() && sql.len() >= keyword.len() {
+                            debug!("Extracted SQL from RPC at offset {}: {}", start, sql);
+                            return Ok(sql);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(String::new())
     }
 
     /// Handle SQL query with LLM
@@ -519,6 +628,19 @@ impl MssqlHandler {
         response.extend_from_slice(&[0x00, 0x00]); // Status: final
         response.extend_from_slice(&[0xC1, 0x00]); // CurCmd
         response.extend_from_slice(&(rows.len() as u64).to_le_bytes());
+
+        self.send_tds_packet(stream, 0x04, &response).await
+    }
+
+    /// Send empty result set (just DONE token)
+    async fn send_empty_result(&self, stream: &mut TcpStream) -> Result<()> {
+        let mut response = Vec::new();
+
+        // DONE token
+        response.push(0xFD);
+        response.extend_from_slice(&[0x00, 0x00]); // Status
+        response.extend_from_slice(&[0x00, 0x00]); // CurCmd
+        response.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]); // DoneRowCount
 
         self.send_tds_packet(stream, 0x04, &response).await
     }
