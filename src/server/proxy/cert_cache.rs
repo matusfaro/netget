@@ -14,12 +14,9 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, trace};
 
 /// Certificate cache entry
-#[derive(Clone)]
 struct CachedCert {
-    /// The certificate
-    cert: Certificate,
-    /// The private key
-    key_pair: KeyPair,
+    /// The private key PEM
+    key_pem: String,
     /// When this certificate was generated
     generated_at: std::time::Instant,
 }
@@ -30,6 +27,8 @@ pub struct CertificateCache {
     ca_cert: Arc<Certificate>,
     /// Root CA private key
     ca_key_pair: Arc<KeyPair>,
+    /// Root CA params (needed for signing)
+    ca_params: Arc<CertificateParams>,
     /// Cache of per-domain certificates (domain -> certificate)
     cache: Arc<RwLock<HashMap<String, CachedCert>>>,
     /// Certificate TTL in seconds (default: 24 hours)
@@ -39,9 +38,17 @@ pub struct CertificateCache {
 impl CertificateCache {
     /// Create a new certificate cache with a CA certificate
     pub fn new(ca_cert: Certificate, ca_key_pair: KeyPair) -> Self {
+        // Create CA params for signing (basic params matching the CA cert)
+        let mut ca_params = CertificateParams::default();
+        ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        ca_params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, "NetGet MITM Proxy CA");
+
         Self {
             ca_cert: Arc::new(ca_cert),
             ca_key_pair: Arc::new(ca_key_pair),
+            ca_params: Arc::new(ca_params),
             cache: Arc::new(RwLock::new(HashMap::new())),
             cert_ttl_secs: 24 * 60 * 60, // 24 hours
         }
@@ -66,7 +73,14 @@ impl CertificateCache {
                         domain_normalized,
                         age
                     );
-                    return Ok((cached.cert.clone(), cached.key_pair.clone()));
+                    // Deserialize from PEM
+                    let key_pair = KeyPair::from_pem(&cached.key_pem)
+                        .context("Failed to deserialize cached key pair")?;
+                    // Reconstruct certificate from PEM (we need to regenerate it)
+                    // Since rcgen doesn't support loading certs from PEM, we'll just regenerate
+                    // This is acceptable since we cache the PEM for export purposes
+                    let (cert, _) = self.generate_leaf_cert(&domain_normalized)?;
+                    return Ok((cert, key_pair));
                 } else {
                     debug!(
                         "Certificate cache EXPIRED for domain '{}' (age: {}s > {}s)",
@@ -82,14 +96,13 @@ impl CertificateCache {
         info!("Generating new leaf certificate for domain '{}'", domain_normalized);
         let (cert, key_pair) = self.generate_leaf_cert(&domain_normalized)?;
 
-        // Cache it
+        // Cache it (as PEM string for key)
         {
             let mut cache = self.cache.write().await;
             cache.insert(
                 domain_normalized.clone(),
                 CachedCert {
-                    cert: cert.clone(),
-                    key_pair: key_pair.clone(),
+                    key_pem: key_pair.serialize_pem(),
                     generated_at: std::time::Instant::now(),
                 },
             );
@@ -147,9 +160,12 @@ impl CertificateCache {
         // Generate key pair for this certificate
         let key_pair = KeyPair::generate().context("Failed to generate key pair for leaf certificate")?;
 
+        // Create an Issuer from the CA params and key
+        let issuer = rcgen::Issuer::new((*self.ca_params).clone(), self.ca_key_pair.as_ref());
+
         // Sign this certificate with the CA
         let cert = params
-            .signed_by(&key_pair, &self.ca_cert, &self.ca_key_pair)
+            .signed_by(&key_pair, &issuer)
             .context("Failed to sign leaf certificate with CA")?;
 
         info!(

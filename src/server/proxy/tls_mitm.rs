@@ -7,7 +7,7 @@
 //! 4. Re-encrypt and forward to both sides
 
 use super::cert_cache::CertificateCache;
-use super::filter::{FullRequestInfo, ProxyFilterConfig, RequestAction, ResponseAction};
+use super::filter::{FullRequestInfo, ProxyFilterConfig, RequestAction};
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;

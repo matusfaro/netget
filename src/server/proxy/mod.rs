@@ -413,7 +413,7 @@ impl ProxyServer {
 
     /// Handle HTTPS CONNECT request (tunneling)
     async fn handle_https_connect(
-        client_stream: tokio::net::TcpStream,
+        mut client_stream: tokio::net::TcpStream,
         uri: &str,
         peer_addr: SocketAddr,
         connection_id: ConnectionId,
