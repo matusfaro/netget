@@ -458,12 +458,12 @@ impl EventHandler {
     ) -> Result<(), crate::events::ActionExecutionError> {
         match action {
             CommonAction::OpenServer {
-                mac_address: _,
-                interface: _,
-                host: _,
+                mac_address,
+                interface,
+                host,
                 port,
                 base_stack,
-                send_first: _,
+                send_first,
                 initial_memory,
                 instruction,
                 startup_params,
@@ -471,152 +471,55 @@ impl EventHandler {
                 scheduled_tasks,
                 feedback_instructions,
             } => {
-                use crate::state::server::{ServerInstance, ServerStatus};
-
-                // Parse protocol name using registry
-                let protocol_name = match crate::protocol::server_registry::registry()
-                    .parse_from_str(&base_stack)
-                {
-                    Some(name) => name,
-                    None => {
-                        let error_msg = format!(
-                            "Unknown protocol '{}'. The protocol may not be enabled as a feature.",
-                            base_stack
-                        );
-                        return Err(ActionExecutionError::Fatal(anyhow::anyhow!(error_msg)));
-                    }
-                };
-
-                // NOTE: This code path (execute_common_action_direct) is for legacy handling
-                // and uses port-based server creation. Migrated protocols should use start_server_from_action instead.
-                // Create a new server instance
-                let mut server = ServerInstance::new(
-                    crate::state::ServerId::new(0), // Temporary ID, will be replaced by add_server
-                    port.unwrap_or(0),
-                    protocol_name.clone(),
-                    instruction,
-                );
-
-                // Set initial memory if provided
-                if let Some(mem) = initial_memory {
-                    server.memory = mem;
-                }
-
-                // Set startup params if provided
-                server.startup_params = startup_params;
-
-                // Set feedback instructions if provided
-                server.feedback_instructions = feedback_instructions;
-
-                server.status = ServerStatus::Starting;
-
-                // Add server to state (this assigns the real ID)
-                let server_id = self.state.add_server(server).await;
-
-                // Parse event handlers if provided
-                if let Some(handlers_json) = event_handlers {
-                    match Self::parse_event_handlers(handlers_json) {
-                        Ok(config) => {
-                            self.state
-                                .set_event_handler_config(server_id, Some(config))
-                                .await;
-                            let _ = status_tx.send(
-                                "[INFO] Event handler configuration applied to server".to_string(),
-                            );
-                        }
-                        Err(e) => {
-                            let _ = status_tx
-                                .send(format!("[WARN] Failed to parse event handlers: {}", e));
-                        }
-                    }
-                }
-
-                // Spawn the server directly (no more message passing!)
-                // Note: "Starting server" message is sent by start_server_by_id
-                // Propagate port conflict errors for retry, but continue for other errors
-                match server_startup::start_server_by_id(
+                // Use start_server_from_action which properly handles flexible binding
+                // (including interface, mac_address, host for migrated protocols)
+                match server_startup::start_server_from_action(
                     &self.state,
-                    server_id,
-                    &self.llm,
-                    status_tx,
+                    mac_address,
+                    interface,
+                    host,
+                    port,
+                    &base_stack,
+                    send_first,
+                    initial_memory,
+                    instruction,
+                    startup_params,
+                    event_handlers,
+                    scheduled_tasks,
+                    feedback_instructions,
                 )
                 .await
                 {
-                    Ok(_) => {
+                    Ok(server_id) => {
                         // Server started successfully
-                    }
-                    Err(e) if e.is_retryable() => {
-                        // Port conflict or other retryable error - propagate for retry
-                        return Err(e);
-                    }
-                    Err(e) => {
-                        // Fatal error - log, update status to Error, and remove server immediately
-                        let error_msg = e.to_string();
-                        self.state
-                            .update_server_status(server_id, ServerStatus::Error(error_msg.clone()))
-                            .await;
                         let _ = status_tx.send(format!(
-                            "[ERROR] Failed to start server #{}: {}",
-                            server_id.as_u32(),
-                            error_msg
-                        ));
-                        // Remove the failed server immediately
-                        self.state.remove_server(server_id).await;
-                    }
-                }
-
-                // Create tasks attached to this server if provided
-                if let Some(task_defs) = scheduled_tasks {
-                    use crate::state::task::{ScheduledTask, TaskScope};
-
-                    for task_def in task_defs {
-                        // Determine delay: for one-shot use delay_secs, for recurring use delay_secs or interval_secs
-                        let delay = if task_def.recurring {
-                            task_def.delay_secs.or(task_def.interval_secs).unwrap_or(0)
-                        } else {
-                            task_def.delay_secs.unwrap_or(0)
-                        };
-
-                        let task = if task_def.recurring {
-                            let interval_secs = task_def.interval_secs.unwrap_or(delay);
-                            ScheduledTask::new_recurring(
-                                crate::state::TaskId::new(0), // Temporary, will be assigned by add_task
-                                task_def.task_id.clone(),
-                                TaskScope::Server(server_id),
-                                interval_secs,
-                                task_def.max_executions,
-                                task_def.instruction,
-                                task_def.context,
-                            )
-                        } else {
-                            ScheduledTask::new_one_shot(
-                                crate::state::TaskId::new(0), // Temporary, will be assigned by add_task
-                                task_def.task_id.clone(),
-                                TaskScope::Server(server_id),
-                                delay,
-                                task_def.instruction,
-                                task_def.context,
-                            )
-                        };
-
-                        let task_id = self.state.add_task(task).await;
-
-                        // TODO: Add script configuration support for scheduled tasks
-                        // For now, tasks use LLM by default. Script support will be added in a future iteration.
-
-                        let _ = status_tx.send(format!(
-                            "[TASK] Created {} task '{}' (ID: {}) for server #{}",
-                            if task_def.recurring {
-                                "recurring"
-                            } else {
-                                "one-shot"
-                            },
-                            task_def.task_id,
-                            task_id,
+                            "[INFO] Server #{} started successfully",
                             server_id.as_u32()
                         ));
                     }
+                    Err(e) => {
+                        // Check if it's a port binding error (retryable)
+                        let error_msg = e.to_string();
+                        let is_port_conflict = error_msg.contains("Address already in use")
+                            || error_msg.contains("port conflict")
+                            || error_msg.contains("bind");
+
+                        if is_port_conflict && port.is_some() {
+                            // Port conflict - create retryable error
+                            return Err(ActionExecutionError::PortConflict {
+                                port: port.unwrap(),
+                                protocol: base_stack.to_string(),
+                                underlying_error: error_msg,
+                            });
+                        } else {
+                            // Fatal error - propagate as fatal
+                            let _ = status_tx.send(format!("[ERROR] Failed to start server: {}", error_msg));
+                            return Err(ActionExecutionError::Fatal(e));
+                        }
+                    }
                 }
+
+                // NOTE: scheduled_tasks and event_handlers are now handled by start_server_from_action
             }
             CommonAction::CloseServer { server_id } => {
                 use crate::state::server::ServerStatus;
