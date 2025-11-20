@@ -1250,6 +1250,35 @@ impl AppState {
         }
     }
 
+    /// Update TFTP connection block number and total bytes
+    pub async fn update_tftp_connection_block(
+        &self,
+        server_id: ServerId,
+        connection_id: ConnectionId,
+        block_number: u16,
+        block_bytes: usize,
+    ) {
+        if let Some(server) = self.inner.write().await.servers.get_mut(&server_id) {
+            if let Some(conn) = server.connections.get_mut(&connection_id) {
+                if let Some(obj) = conn.protocol_info.data.as_object_mut() {
+                    obj.insert(
+                        "current_block".to_string(),
+                        serde_json::Value::Number(block_number.into()),
+                    );
+                    // Update total bytes
+                    let current_total = obj
+                        .get("total_bytes")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    obj.insert(
+                        "total_bytes".to_string(),
+                        serde_json::Value::Number((current_total + block_bytes as u64).into()),
+                    );
+                }
+            }
+        }
+    }
+
     /// Get VNC write half for sending framebuffer updates
     ///
     /// Note: This method is deprecated. Write halves are now managed locally

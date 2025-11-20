@@ -121,6 +121,7 @@ doh = ["dns", "hickory-server/dns-over-https-rustls", "hickory-proto/dns-over-ht
 dhcp = ["dhcproto"]
 bootp = ["dhcproto"]  # BOOTP (Bootstrap Protocol) - DHCP predecessor, uses same packet format
 ntp = ["dep:rsntp"]  # NTP client support
+tftp = []  # TFTP (Trivial File Transfer Protocol) server and client - custom implementation, no dependencies
 bluetooth-ble-client = ["btleplug"]  # Bluetooth Low Energy (BLE) client for connecting to BLE devices
 bluetooth-ble = ["ble-peripheral-rust"]  # Bluetooth Low Energy (BLE) GATT server (peripheral mode)
 nfc = ["dep:pcsc", "dep:ndef-rs"]  # NFC card emulation server via PC/SC (ISO14443, MIFARE, NFC tags)
@@ -244,6 +245,7 @@ all-protocols = [
     "dhcp",
     "bootp",
     "ntp",
+    "tftp",
     "bluetooth-ble-client",
     "whois",
     "snmp",

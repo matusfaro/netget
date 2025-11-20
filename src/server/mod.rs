@@ -147,6 +147,13 @@ pub use ntp::actions::NtpProtocol;
 #[cfg(feature = "ntp")]
 pub use ntp::NtpServer;
 
+#[cfg(feature = "tftp")]
+pub mod tftp;
+#[cfg(feature = "tftp")]
+pub use tftp::actions::TftpProtocol;
+#[cfg(feature = "tftp")]
+pub use tftp::TftpServer;
+
 #[cfg(feature = "whois")]
 pub mod whois;
 #[cfg(feature = "whois")]

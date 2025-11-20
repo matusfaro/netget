@@ -160,6 +160,8 @@ pub mod syslog;
 pub mod tcp;
 #[cfg(feature = "telnet")]
 pub mod telnet;
+#[cfg(feature = "tftp")]
+pub mod tftp;
 #[cfg(feature = "tor")]
 pub mod tor_directory;
 #[cfg(feature = "tor")]
