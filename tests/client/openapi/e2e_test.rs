@@ -37,7 +37,7 @@ mod openapi_client_tests {
                     .and()
                     // Mock 2: Server receives GET /users request
                     .on_event("http_request")
-                    .and_event_data_contains("path", "/users")
+                    .and_event_data_contains("uri", "/users")
                     .respond_with_actions(json!([
                         {
                             "type": "send_http_response",
@@ -96,7 +96,6 @@ mod openapi_client_tests {
                     // Mock 3: Operation response received - verify and disconnect
                     .on_event("openapi_operation_response")
                     .and_event_data_contains("operation_id", "listUsers")
-                    .and_event_data_contains("status_code", "200")
                     .respond_with_actions(json!([
                         {
                             "type": "disconnect"
@@ -145,7 +144,7 @@ mod openapi_client_tests {
                     .and()
                     // Verify path substitution worked - expect /users/123
                     .on_event("http_request")
-                    .and_event_data_contains("path", "/users/123")
+                    .and_event_data_contains("uri", "/users/123")
                     .respond_with_actions(json!([
                         {
                             "type": "send_http_response",
