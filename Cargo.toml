@@ -45,6 +45,7 @@ android-termux = [
     "smtp",
     "mdns",
     "mysql",
+    "mssql",
     "ipp",
     "postgresql",
     "redis",
@@ -155,6 +156,7 @@ telnet = ["nectar"]
 smtp = ["rust-smtp-server", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen", "dep:lettre"]
 mdns = ["mdns-sd"]
 mysql = ["dep:opensrv-mysql", "dep:mysql_async"]
+mssql = ["dep:tiberius"]
 ipp = ["dep:ipp"]
 postgresql = ["dep:pgwire", "dep:tokio-postgres"]
 redis = ["dep:redis-protocol", "dep:redis"]
@@ -260,6 +262,7 @@ all-protocols = [
     "smtp",
     "mdns",
     "mysql",
+    "mssql",
     "ipp",
     "postgresql",
     "redis",
@@ -642,6 +645,8 @@ irc = { version = "1.1", optional = true }
 lettre = { version = "0.11", optional = true }
 # MySQL client
 mysql_async = { version = "0.34", optional = true }
+# MSSQL (SQL Server) client
+tiberius = { version = "0.12", optional = true }
 # PostgreSQL client
 tokio-postgres = { version = "0.7", optional = true }
 # Redis client

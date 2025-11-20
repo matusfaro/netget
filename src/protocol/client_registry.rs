@@ -215,6 +215,9 @@ impl ClientRegistry {
         #[cfg(feature = "pypi")]
         self.register(Arc::new(crate::client::pypi::PypiClientProtocol::new()));
 
+        #[cfg(feature = "mssql")]
+        self.register(Arc::new(crate::client::mssql::MssqlClientProtocol::new()));
+
         #[cfg(feature = "redis")]
         self.register(Arc::new(crate::client::redis::RedisClientProtocol::new()));
 
