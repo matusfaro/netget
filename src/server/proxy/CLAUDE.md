@@ -12,6 +12,8 @@ LLM-controlled filtering.
 
 - **`http-mitm-proxy`** (conceptual) - Protocol framework for MITM operations
 - **`rcgen`** v0.13 - On-the-fly certificate generation for MITM TLS interception
+- **`rustls`** v0.23 + **`tokio-rustls`** v0.26 - TLS stack for MITM (both server and client)
+- **`webpki-roots`** v0.26 - Root certificates for validating upstream TLS connections
 - **`regex`** - Pattern matching for selective request/response filtering
 - **Manual implementation** - Request/response parsing and modification for maximum LLM control
 - **`axum`** / **`reqwest`** - Not used; raw TCP/TLS handling for full flexibility
@@ -197,26 +199,69 @@ let cert = params.self_signed(&key_pair)?;
 
 **Per-Host Certificate Generation** (for MITM):
 
-- Extract SNI from TLS ClientHello
-- Generate leaf certificate signed by CA for specific domain
-- Cache certificates per domain to avoid regeneration overhead
+- Implemented in `cert_cache.rs` using `CertificateCache`
+- Generates leaf certificates signed by CA for specific domains
+- Caches certificates per domain (24-hour TTL) to avoid regeneration overhead
+- Supports domain normalization (case-insensitive, trimmed)
+- Automatic addition of wildcard and www variants in SAN
 
 **Certificate Installation**:
 
 - Users must install CA certificate in system trust store for MITM mode
 - Without installation: browsers show security warnings
 - Enterprise deployments: Distribute CA via group policy
+- Use `export_ca_certificate` action to save CA cert to file
+- Installation locations:
+  - **macOS**: System Keychain (`/Library/Keychains/System.keychain`)
+  - **Windows**: Trusted Root Certification Authorities
+  - **Linux**: `/usr/local/share/ca-certificates/` then `update-ca-certificates`
+
+## Implementation Details
+
+### Module Structure
+
+- **`mod.rs`**: Main proxy server, connection handling, pass-through mode
+- **`actions.rs`**: LLM action definitions and execution
+- **`filter.rs`**: Request/response/HTTPS filtering logic
+- **`cert_cache.rs`**: Per-domain certificate caching for MITM
+- **`tls_mitm.rs`**: Full TLS MITM orchestration (client accept + upstream connect)
+
+### MITM Flow (tls_mitm.rs)
+
+1. **Send 200 to client**: `HTTP/1.1 200 Connection Established\r\n\r\n`
+2. **Generate leaf cert**: `CertificateCache::get_or_generate(domain)` → signed by CA
+3. **TLS accept from client**: `TlsAcceptor::accept()` using generated cert
+4. **TLS connect to upstream**: `TlsConnector::connect()` with certificate validation
+5. **Read HTTP request**: Parse from decrypted client TLS stream
+6. **Consult LLM**: Create `PROXY_HTTP_REQUEST_EVENT`, get `RequestAction`
+7. **Forward to upstream**: Apply modifications, send via upstream TLS stream
+8. **Read HTTP response**: Receive from upstream TLS stream
+9. **Return to client**: Optionally modify, send via client TLS stream
+10. **Bidirectional copy**: Switch to `tokio::io::copy` for keep-alive
+
+### Certificate Cache Design
+
+- **Thread-safe**: `Arc<RwLock<HashMap<String, CachedCert>>>`
+- **TTL**: 24 hours (configurable via `cert_ttl_secs`)
+- **Normalization**: Domains lowercased and trimmed
+- **SAN generation**: Automatically adds wildcard (`*.example.com`) and www (`www.example.com`)
+- **Cleanup**: `cleanup_expired()` method for periodic cache maintenance
+- **Stats**: `get_stats()` returns `CacheStats` (total, expired, valid)
+
+## Current Status
+
+1. **HTTPS MITM Fully Implemented** ✅
+    - Certificate generation works (self-signed CA)
+    - Per-domain leaf certificate caching implemented (`cert_cache.rs`)
+    - TLS interception implemented (`tls_mitm.rs`):
+      - Client-side TLS accept with dynamically generated certificates
+      - Upstream-side TLS connect with certificate validation
+      - HTTP request/response proxying through LLM filtering
+    - Certificate export action for user installation
 
 ## Limitations
 
-### Current Limitations
-
-1. **HTTPS MITM Not Fully Implemented**
-    - Certificate generation works
-    - TLS interception (accept on client side, connect on upstream side) pending
-    - Falls back to pass-through mode for now
-
-2. **HTTP/2 and HTTP/3 Not Supported**
+1. **HTTP/2 and HTTP/3 Not Supported**
     - Only HTTP/1.1 implemented
     - HTTPS CONNECT tunnels may carry HTTP/2 (transparent to proxy in pass-through)
 

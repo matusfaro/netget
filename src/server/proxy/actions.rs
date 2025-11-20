@@ -86,6 +86,7 @@ impl Protocol for ProxyProtocol {
             configure_response_filters_action(),
             configure_https_connection_filters_action(),
             set_filter_mode_action(),
+            export_ca_certificate_action(),
         ]
     }
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
@@ -173,6 +174,7 @@ impl Server for ProxyProtocol {
                 self.execute_configure_https_connection_filters(action)
             }
             "set_filter_mode" => self.execute_set_filter_mode(action),
+            "export_ca_certificate" => self.execute_export_ca_certificate(action),
 
             // Request handling
             "handle_request_pass" => self.execute_handle_request_pass(action),
@@ -315,6 +317,31 @@ impl ProxyProtocol {
 
         Ok(ActionResult::Output(
             serde_json::to_vec(&config).context("Failed to serialize filter modes")?,
+        ))
+    }
+
+    /// Export CA certificate to file
+    fn execute_export_ca_certificate(&self, action: serde_json::Value) -> Result<ActionResult> {
+        let output_path = action
+            .get("output_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("netget-ca.crt");
+
+        let format = action
+            .get("format")
+            .and_then(|v| v.as_str())
+            .unwrap_or("pem");
+
+        // Note: The actual export functionality will be handled in the server mod
+        // This action just returns the parameters for the server to process
+        let config = json!({
+            "export_ca": true,
+            "output_path": output_path,
+            "format": format
+        });
+
+        Ok(ActionResult::Output(
+            serde_json::to_vec(&config).context("Failed to serialize export config")?,
         ))
     }
 
@@ -625,6 +652,32 @@ fn set_filter_mode_action() -> ActionDefinition {
             "request_filter_mode": "match_only",
             "response_filter_mode": "all",
             "https_connection_filter_mode": "match_only"
+        }),
+    }
+}
+
+fn export_ca_certificate_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "export_ca_certificate".to_string(),
+        description: "Export the CA certificate to a file for user installation (MITM mode only). Users must install this certificate in their system/browser trust store to avoid security warnings.".to_string(),
+        parameters: vec![
+            Parameter {
+                name: "output_path".to_string(),
+                type_hint: "string".to_string(),
+                description: "Path where the CA certificate should be saved (default: netget-ca.crt)".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "format".to_string(),
+                type_hint: "string".to_string(),
+                description: "Certificate format: 'pem' or 'der' (default: pem)".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "export_ca_certificate",
+            "output_path": "./netget-ca.crt",
+            "format": "pem"
         }),
     }
 }

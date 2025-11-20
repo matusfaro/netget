@@ -7,10 +7,13 @@
 //! - Regex-based filtering for selective interception
 
 pub mod actions;
+pub mod cert_cache;
 pub mod filter;
+pub mod tls_mitm;
 
 use crate::server::connection::ConnectionId;
 use anyhow::{Context, Result};
+use cert_cache::CertificateCache;
 use filter::{
     CertificateMode, FullRequestInfo, HttpsConnectionAction, HttpsConnectionInfo,
     ProxyFilterConfig, RequestAction,
@@ -118,11 +121,12 @@ impl ProxyServer {
         }
 
         // Generate or load certificate based on configuration
-        let ca_cert: Option<Arc<Certificate>> = match &config.certificate_mode {
+        let cert_cache: Option<Arc<CertificateCache>> = match &config.certificate_mode {
             CertificateMode::Generate => {
                 info!("Generating self-signed CA certificate for MITM");
                 let _ = status_tx.send("[INFO] Generating MITM CA certificate...".to_string());
-                Some(Arc::new(Self::generate_ca_certificate()?))
+                let (ca_cert, ca_key) = Self::generate_ca_certificate()?;
+                Some(Arc::new(CertificateCache::new(ca_cert, ca_key)))
             }
             CertificateMode::LoadFromFile {
                 cert_path,
@@ -156,7 +160,7 @@ impl ProxyServer {
                     .self_signed(&key_pair)
                     .context("Failed to create certificate")?;
 
-                Some(Arc::new(cert))
+                Some(Arc::new(CertificateCache::new(cert, key_pair)))
             }
             CertificateMode::None => {
                 info!("Proxy running in pass-through mode (no MITM, origin certificates)");
@@ -184,9 +188,9 @@ impl ProxyServer {
         info!("Proxy server listening on {}", actual_addr);
         let _ = status_tx.send(format!("→ Proxy server listening on {}", actual_addr));
 
-        if ca_cert.is_some() {
+        if cert_cache.is_some() {
             let _ = status_tx
-                .send("[INFO] MITM mode enabled - full request/response inspection".to_string());
+                .send("[INFO] MITM mode enabled - full HTTPS decryption and inspection".to_string());
         } else {
             let _ = status_tx.send("[INFO] Pass-through mode - HTTPS allow/block only".to_string());
         }
@@ -241,7 +245,7 @@ impl ProxyServer {
                         let status_clone = status_tx.clone();
                         let protocol_clone = protocol.clone();
                         let config_clone = config.clone();
-                        let ca_cert_clone = ca_cert.clone();
+                        let cert_cache_clone = cert_cache.clone();
 
                         // Handle each proxy connection in a separate task
                         tokio::spawn(async move {
@@ -250,7 +254,7 @@ impl ProxyServer {
                                 peer_addr,
                                 connection_id,
                                 server_id,
-                                ca_cert_clone,
+                                cert_cache_clone,
                                 config_clone,
                                 llm_clone,
                                 app_clone.clone(),
@@ -289,7 +293,7 @@ impl ProxyServer {
         peer_addr: SocketAddr,
         connection_id: ConnectionId,
         server_id: ServerId,
-        ca_cert: Option<Arc<Certificate>>,
+        cert_cache: Option<Arc<CertificateCache>>,
         config: ProxyFilterConfig,
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
@@ -379,7 +383,7 @@ impl ProxyServer {
                 peer_addr,
                 connection_id,
                 server_id,
-                ca_cert,
+                cert_cache,
                 config,
                 llm_client,
                 app_state,
@@ -409,12 +413,12 @@ impl ProxyServer {
 
     /// Handle HTTPS CONNECT request (tunneling)
     async fn handle_https_connect(
-        mut client_stream: tokio::net::TcpStream,
+        client_stream: tokio::net::TcpStream,
         uri: &str,
         peer_addr: SocketAddr,
-        _connection_id: ConnectionId,
+        connection_id: ConnectionId,
         server_id: ServerId,
-        ca_cert: Option<Arc<Certificate>>,
+        cert_cache: Option<Arc<CertificateCache>>,
         config: ProxyFilterConfig,
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
@@ -446,7 +450,7 @@ impl ProxyServer {
         trace!("  SNI: {} (from CONNECT)", dest_host);
         trace!(
             "  Certificate mode: {:?}",
-            if ca_cert.is_some() {
+            if cert_cache.is_some() {
                 "MITM"
             } else {
                 "Pass-through"
@@ -457,34 +461,33 @@ impl ProxyServer {
             peer_addr,
             dest_host,
             dest_port,
-            if ca_cert.is_some() {
+            if cert_cache.is_some() {
                 "MITM"
             } else {
                 "pass-through"
             }
         ));
 
-        if ca_cert.is_some() {
+        if let Some(cache) = cert_cache {
             // MITM mode - full decryption and inspection
-            info!("MITM mode: will decrypt and inspect HTTPS traffic");
+            info!("MITM mode: will decrypt and inspect HTTPS traffic for {}:{}", dest_host, dest_port);
 
-            // Send 200 Connection Established to client
-            client_stream
-                .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
-                .await?;
-
-            // TODO: Implement full TLS MITM here using the CA certificate
-            // This requires:
-            // 1. TLS accept on client side using CA cert to generate on-the-fly cert for dest_host
-            // 2. TLS connect to actual destination
-            // 3. Proxy decrypted data through LLM filtering
-
-            let _ =
-                status_tx.send("[WARN] Full MITM TLS interception not yet implemented".to_string());
-            let _ = status_tx
-                .send("[INFO] Falling back to pass-through for this connection".to_string());
-
-            // For now, fall through to pass-through mode
+            // Call MITM implementation
+            return tls_mitm::perform_mitm(
+                client_stream,
+                dest_host,
+                dest_port,
+                peer_addr,
+                connection_id,
+                server_id,
+                cache,
+                config,
+                llm_client,
+                app_state,
+                status_tx,
+                protocol,
+            )
+            .await;
         }
 
         // Pass-through mode or fallback - no decryption
@@ -1264,7 +1267,7 @@ impl ProxyServer {
     }
 
     /// Generate a self-signed CA certificate for MITM proxy
-    fn generate_ca_certificate() -> Result<Certificate> {
+    fn generate_ca_certificate() -> Result<(Certificate, KeyPair)> {
         let mut params = CertificateParams::default();
         params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
         params
@@ -1274,6 +1277,6 @@ impl ProxyServer {
         let key_pair = KeyPair::generate()?;
         let cert = params.self_signed(&key_pair)?;
 
-        Ok(cert)
+        Ok((cert, key_pair))
     }
 }
