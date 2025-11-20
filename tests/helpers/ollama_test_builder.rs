@@ -248,7 +248,7 @@ impl OllamaTestBuilder {
         // Get model from env var or use default
         let model = self.model
             .or_else(|| std::env::var("OLLAMA_MODEL").ok())
-            .unwrap_or_else(|| "qwen2.5-coder:7b".to_string());
+            .unwrap_or_else(|| "qwen3-coder:30b".to_string());
 
         println!("Testing with model: {}", model);
 
