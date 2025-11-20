@@ -261,20 +261,29 @@ impl MssqlHandler {
         // Encryption: NOT_SUP (0x02)
         let mut response = Vec::new();
 
+        // Calculate offsets (all token headers = 3 tokens * 5 bytes + 1 terminator = 16 bytes)
+        let header_size = 16u16;
+        let version_offset = header_size; // 16 (0x10)
+        let version_length = 6u16;
+        let encryption_offset = version_offset + version_length; // 22 (0x16)
+        let encryption_length = 1u16;
+        let threadid_offset = encryption_offset + encryption_length; // 23 (0x17)
+        let threadid_length = 4u16;
+
         // Version token (0x00)
         response.push(0x00);
-        response.extend_from_slice(&[0x00, 0x06]); // Offset
-        response.extend_from_slice(&[0x00, 0x06]); // Length
+        response.extend_from_slice(&version_offset.to_be_bytes()); // Offset: 0x00, 0x10
+        response.extend_from_slice(&version_length.to_be_bytes()); // Length: 0x00, 0x06
 
         // Encryption token (0x01)
         response.push(0x01);
-        response.extend_from_slice(&[0x00, 0x0C]); // Offset
-        response.extend_from_slice(&[0x00, 0x01]); // Length
+        response.extend_from_slice(&encryption_offset.to_be_bytes()); // Offset: 0x00, 0x16
+        response.extend_from_slice(&encryption_length.to_be_bytes()); // Length: 0x00, 0x01
 
         // ThreadID token (0x03)
         response.push(0x03);
-        response.extend_from_slice(&[0x00, 0x0D]); // Offset
-        response.extend_from_slice(&[0x00, 0x04]); // Length
+        response.extend_from_slice(&threadid_offset.to_be_bytes()); // Offset: 0x00, 0x17
+        response.extend_from_slice(&threadid_length.to_be_bytes()); // Length: 0x00, 0x04
 
         // Terminator
         response.push(0xFF);
@@ -282,7 +291,7 @@ impl MssqlHandler {
         // Version data (16.0.0.0)
         response.extend_from_slice(&[0x10, 0x00, 0x00, 0x00, 0x00, 0x00]);
 
-        // Encryption: NOT_SUP
+        // Encryption: ENCRYPT_NOT_SUP (0x02) - encryption not supported
         response.push(0x02);
 
         // ThreadID: 0
@@ -296,29 +305,40 @@ impl MssqlHandler {
         let _ = self.status_tx.send("[DEBUG] MSSQL → Login accepted".to_string());
 
         // Send ENVCHANGE (database context)
+        let db_name = "master";
+        let db_name_utf16: Vec<u8> = db_name.encode_utf16()
+            .flat_map(|c| c.to_le_bytes())
+            .collect();
+
         let mut envchange = Vec::new();
         envchange.push(0xE3); // ENVCHANGE token
-        envchange.extend_from_slice(&[0x00, 0x0E]); // Length
+        // Length = type(1) + new_len(1) + new_value + old_len(1) + old_value
+        let envchange_len = 1 + 1 + db_name_utf16.len() + 1 + db_name_utf16.len();
+        envchange.extend_from_slice(&(envchange_len as u16).to_le_bytes());
 
         envchange.push(0x01); // Type: Database
-        envchange.push(0x06); // New value length
-        envchange.extend_from_slice("master".encode_utf16().flat_map(|c| c.to_le_bytes()).collect::<Vec<u8>>().as_slice());
-        envchange.push(0x06); // Old value length
-        envchange.extend_from_slice("master".encode_utf16().flat_map(|c| c.to_le_bytes()).collect::<Vec<u8>>().as_slice());
+        envchange.push(db_name_utf16.len() as u8); // New value length
+        envchange.extend_from_slice(&db_name_utf16);
+        envchange.push(db_name_utf16.len() as u8); // Old value length
+        envchange.extend_from_slice(&db_name_utf16);
 
         // Send INFO message
+        let msg = "Login succeeded";
+        let msg_utf16: Vec<u8> = msg.encode_utf16()
+            .flat_map(|c| c.to_le_bytes())
+            .collect();
+
         let mut info = Vec::new();
         info.push(0xAB); // INFO token
-        info.extend_from_slice(&[0x00, 0x30]); // Length
+        // Length = error(4) + state(1) + class(1) + msg_len(2) + msg + srv_len(1) + proc_len(1) + line(4)
+        let info_len = 4 + 1 + 1 + 2 + msg_utf16.len() + 1 + 1 + 4;
+        info.extend_from_slice(&(info_len as u16).to_le_bytes());
 
         info.extend_from_slice(&[0x01, 0x00, 0x00, 0x00]); // Error number
         info.push(0x01); // State
         info.push(0x00); // Class (severity)
-
-        let msg = "Login succeeded";
-        info.push(msg.len() as u8); // Message length
-        info.extend_from_slice(msg.encode_utf16().flat_map(|c| c.to_le_bytes()).collect::<Vec<u8>>().as_slice());
-
+        info.extend_from_slice(&(msg.len() as u16).to_le_bytes()); // Message length (character count, not bytes)
+        info.extend_from_slice(&msg_utf16);
         info.push(0x00); // Server name length
         info.push(0x00); // Procedure name length
         info.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // Line number
@@ -570,12 +590,17 @@ impl MssqlHandler {
 }
 
 /// TDS packet header
+#[allow(dead_code)]
 struct TdsHeader {
     packet_type: u8,
+    #[allow(dead_code)]
     status: u8,
     length: u16,
+    #[allow(dead_code)]
     spid: u16,
+    #[allow(dead_code)]
     packet_id: u8,
+    #[allow(dead_code)]
     window: u8,
 }
 

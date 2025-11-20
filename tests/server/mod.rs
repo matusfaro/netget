@@ -100,6 +100,8 @@ pub mod mercurial;
 pub mod mqtt;
 #[cfg(feature = "mysql")]
 pub mod mysql;
+#[cfg(feature = "mssql")]
+pub mod mssql;
 #[cfg(feature = "nfs")]
 pub mod nfs;
 #[cfg(feature = "nntp")]

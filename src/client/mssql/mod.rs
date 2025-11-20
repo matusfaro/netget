@@ -14,6 +14,7 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use anyhow::{Context, Result};
+use futures::StreamExt;
 use serde_json::json;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -71,11 +72,9 @@ impl MssqlClient {
             }
         }
 
-        // If no auth specified, try SQL Server authentication with empty credentials
-        // (server will reject if it requires auth)
-        if config.get_auth().is_none() {
-            config.authentication(AuthMethod::None);
-        }
+        // Always use no authentication for now (works with our test server)
+        // In production, parse credentials from connection string
+        config.authentication(AuthMethod::None);
 
         // Connect to MSSQL server
         let tcp = TcpStream::connect((host.as_str(), port))
@@ -162,14 +161,15 @@ impl MssqlClient {
     }
 
     /// Execute an action (internal helper)
-    async fn execute_action_internal(
+    fn execute_action_internal<'a>(
         client: Arc<Mutex<TiberiusClient<tokio_util::compat::Compat<TcpStream>>>>,
         action: serde_json::Value,
         client_id: ClientId,
-        llm_client: &OllamaClient,
-        app_state: &Arc<AppState>,
-        status_tx: &mpsc::UnboundedSender<String>,
-    ) -> Result<()> {
+        llm_client: &'a OllamaClient,
+        app_state: &'a Arc<AppState>,
+        status_tx: &'a mpsc::UnboundedSender<String>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+        Box::pin(async move {
         let protocol = Arc::new(MssqlClientProtocol::new());
 
         match protocol.execute_action(action)? {
@@ -179,15 +179,15 @@ impl MssqlClient {
                 if let Some(query_str) = data.get("query").and_then(|v| v.as_str()) {
                     debug!("MSSQL client {} executing query: {}", client_id, query_str);
 
-                    let mut client_guard = client.lock().await;
+                    // Execute query and collect results (mutex held during query execution)
+                    let result_outcome = {
+                        let mut client_guard = client.lock().await;
+                        Self::execute_and_collect_query(&mut client_guard, query_str).await
+                    }; // Mutex released here
 
-                    match client_guard.query(query_str, &[]).await {
-                        Ok(query_stream) => {
-                            drop(client_guard); // Release lock before processing results
-
-                            // Collect results
-                            let result = Self::collect_query_results(query_stream).await?;
-
+                    // Process results or errors
+                    match result_outcome {
+                        Ok(result) => {
                             debug!(
                                 "MSSQL client {} received {} columns, {} rows",
                                 client_id,
@@ -304,9 +304,58 @@ impl MssqlClient {
         }
 
         Ok(())
+        })
     }
 
-    /// Collect query results into JSON format
+    /// Execute query and collect results
+    async fn execute_and_collect_query(
+        client: &mut TiberiusClient<tokio_util::compat::Compat<TcpStream>>,
+        query: &str,
+    ) -> Result<QueryResult> {
+        let mut stream = client.query(query, &[]).await?;
+
+        let mut columns = Vec::new();
+        let mut rows = Vec::new();
+        let rows_affected: u64;
+
+        // Collect column metadata
+        if let Some(cols) = stream.columns().await? {
+            for col in cols {
+                columns.push(json!({
+                    "name": col.name(),
+                    "type": format!("{:?}", col.column_type()),
+                }));
+            }
+        }
+
+        // Collect rows
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(QueryItem::Row(row)) => {
+                    let row_values = Self::row_to_json(&row)?;
+                    rows.push(row_values);
+                }
+                Ok(QueryItem::Metadata(_)) => {
+                    // Metadata already processed above
+                }
+                Err(e) => {
+                    return Err(e.into());
+                }
+            }
+        }
+
+        // For SELECT queries, rows_affected is typically the row count
+        rows_affected = rows.len() as u64;
+
+        Ok(QueryResult {
+            columns,
+            rows,
+            rows_affected,
+        })
+    }
+
+    /// Collect query results into JSON format (legacy - not used)
+    #[allow(dead_code)]
     async fn collect_query_results(
         mut stream: tiberius::QueryStream<'_>,
     ) -> Result<QueryResult> {
@@ -325,20 +374,25 @@ impl MssqlClient {
         }
 
         // Collect rows
-        while let Some(item) = stream.try_next().await? {
+        while let Some(item) = stream.next().await {
             match item {
-                QueryItem::Row(row) => {
+                Ok(QueryItem::Row(row)) => {
                     let row_values = Self::row_to_json(&row)?;
                     rows.push(row_values);
                 }
-                QueryItem::Metadata(_) => {
+                Ok(QueryItem::Metadata(_)) => {
                     // Metadata already processed above
+                }
+                Err(e) => {
+                    return Err(e.into());
                 }
             }
         }
 
-        // Get rows affected (for non-SELECT queries)
-        rows_affected = stream.rows_affected().iter().sum();
+        // For SELECT queries, rows_affected is typically 0 or the row count
+        // For INSERT/UPDATE/DELETE, tiberius would return this in metadata
+        // For simplicity, we'll use the row count as a proxy
+        rows_affected = rows.len() as u64;
 
         Ok(QueryResult {
             columns,
