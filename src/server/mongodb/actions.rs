@@ -223,7 +223,8 @@ impl MongodbProtocol {
             documents.len()
         ));
 
-        Ok(ActionResult::SendData {
+        Ok(ActionResult::Custom {
+            name: "mongodb_response".to_string(),
             data: json!({
                 "type": "find_response",
                 "documents": documents
@@ -243,7 +244,8 @@ impl MongodbProtocol {
             inserted_count
         ));
 
-        Ok(ActionResult::SendData {
+        Ok(ActionResult::Custom {
+            name: "mongodb_response".to_string(),
             data: json!({
                 "type": "insert_response",
                 "inserted_count": inserted_count
@@ -270,7 +272,8 @@ impl MongodbProtocol {
             matched_count, modified_count
         ));
 
-        Ok(ActionResult::SendData {
+        Ok(ActionResult::Custom {
+            name: "mongodb_response".to_string(),
             data: json!({
                 "type": "update_response",
                 "matched_count": matched_count,
@@ -291,7 +294,8 @@ impl MongodbProtocol {
             deleted_count
         ));
 
-        Ok(ActionResult::SendData {
+        Ok(ActionResult::Custom {
+            name: "mongodb_response".to_string(),
             data: json!({
                 "type": "delete_response",
                 "deleted_count": deleted_count
@@ -315,7 +319,8 @@ impl MongodbProtocol {
             .status_tx
             .send(format!("[MongoDB] Error: {} - {}", code, message));
 
-        Ok(ActionResult::SendData {
+        Ok(ActionResult::Custom {
+            name: "mongodb_response".to_string(),
             data: json!({
                 "type": "error_response",
                 "code": code,

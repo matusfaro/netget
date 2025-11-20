@@ -12,9 +12,10 @@ use tracing::{error, info, trace};
 #[cfg(feature = "mongodb")]
 use mongodb::{
     bson::{doc, Document},
-    options::{ClientOptions, FindOptions, UpdateOptions},
+    options::{ClientOptions, FindOptions},
     Client as MongoClient, Database,
 };
+
 
 use crate::client::mongodb::actions::{
     MONGODB_CLIENT_CONNECTED_EVENT, MONGODB_CLIENT_RESULT_RECEIVED_EVENT,
@@ -233,13 +234,13 @@ impl MongodbClient {
                 let collection = db.collection::<Document>(collection_name);
 
                 // Convert JSON filter to BSON document
-                let filter = bson::to_document(&filter_json)
+                let filter = serde_json::from_value::<Document>(filter_json.clone())
                     .context("Failed to convert filter to BSON")?;
 
                 // Build find options
                 let mut find_options = FindOptions::default();
                 if let Some(proj_json) = projection_json {
-                    let projection = bson::to_document(&proj_json).ok();
+                    let projection = serde_json::from_value::<Document>(proj_json).ok();
                     find_options.projection = projection;
                 }
                 if let Some(lim) = limit {
@@ -297,7 +298,7 @@ impl MongodbClient {
                 let collection = db.collection::<Document>(collection_name);
 
                 // Convert JSON to BSON document
-                let document = bson::to_document(doc_json)
+                let document = serde_json::from_value::<Document>(doc_json.clone())
                     .context("Failed to convert document to BSON")?;
 
                 // Execute insert
@@ -341,9 +342,9 @@ impl MongodbClient {
                 let collection = db.collection::<Document>(collection_name);
 
                 // Convert JSON to BSON documents
-                let filter = bson::to_document(filter_json)
+                let filter = serde_json::from_value::<Document>(filter_json.clone())
                     .context("Failed to convert filter to BSON")?;
-                let update = bson::to_document(update_json)
+                let update = serde_json::from_value::<Document>(update_json.clone())
                     .context("Failed to convert update to BSON")?;
 
                 // Execute update
@@ -386,7 +387,7 @@ impl MongodbClient {
                 let collection = db.collection::<Document>(collection_name);
 
                 // Convert JSON filter to BSON document
-                let filter = bson::to_document(filter_json)
+                let filter = serde_json::from_value::<Document>(filter_json.clone())
                     .context("Failed to convert filter to BSON")?;
 
                 // Execute delete
@@ -465,9 +466,7 @@ impl MongodbClient {
             // Convert BSON documents to JSON
             let json_docs: Vec<serde_json::Value> = docs
                 .iter()
-                .filter_map(|doc| bson::to_bson(doc).ok())
-                .filter_map(|bson| bson.into_canonical_extjson().as_document().cloned())
-                .filter_map(|doc| bson::from_document(doc).ok())
+                .filter_map(|doc| serde_json::to_value(doc).ok())
                 .collect();
             event_data["documents"] = serde_json::json!(json_docs);
         }

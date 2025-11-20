@@ -247,23 +247,26 @@ impl MongodbHandler {
 
             let event = Event::new(&MONGODB_COMMAND_EVENT, event_data);
 
-            let llm_result = call_llm(
+            let server_id = self.server_id.unwrap_or_else(|| crate::state::ServerId::new(0));
+            let execution_result = call_llm(
                 &self.llm_client,
                 &self.app_state,
-                self.connection_id.to_string(),
-                Some(&event),
+                server_id,
+                Some(self.connection_id),
+                &event,
                 self.protocol.as_ref(),
-                &self.status_tx,
             )
             .await?;
 
             // Execute actions from LLM
-            for action in llm_result.actions {
-                match self.protocol.execute_action(action.clone())? {
-                    ActionResult::SendData { data } => {
-                        let response_doc = self.json_to_bson_doc(&data)?;
-                        let response_bytes = self.encode_op_msg_response(request_id, response_doc)?;
-                        writer.write_all(&response_bytes).await?;
+            for protocol_result in execution_result.protocol_results {
+                match protocol_result {
+                    ActionResult::Custom { name, data } => {
+                        if name == "mongodb_response" {
+                            let response_doc = self.json_to_bson_doc(&data)?;
+                            let response_bytes = self.encode_op_msg_response(request_id, response_doc)?;
+                            writer.write_all(&response_bytes).await?;
+                        }
                     }
                     ActionResult::CloseConnection => {
                         debug!("Closing MongoDB connection");
@@ -271,7 +274,7 @@ impl MongodbHandler {
                     }
                     ActionResult::NoAction => {}
                     _ => {
-                        debug!("Unhandled action result: {:?}", action);
+                        debug!("Unhandled action result");
                     }
                 }
             }
@@ -282,13 +285,14 @@ impl MongodbHandler {
             &MONGODB_DISCONNECTED_EVENT,
             serde_json::json!({"reason": "client_disconnect"}),
         );
+        let server_id = self.server_id.unwrap_or_else(|| crate::state::ServerId::new(0));
         let _ = call_llm(
             &self.llm_client,
             &self.app_state,
-            self.connection_id.to_string(),
-            Some(&event),
+            server_id,
+            Some(self.connection_id),
+            &event,
             self.protocol.as_ref(),
-            &self.status_tx,
         )
         .await;
 
@@ -328,7 +332,8 @@ impl MongodbHandler {
         body[4] = 0; // Section kind 0 (body)
 
         // Serialize BSON document
-        let doc_bytes = bson::to_vec(&doc)?;
+        let mut doc_bytes = Vec::new();
+        doc.to_writer(&mut doc_bytes)?;
         body.extend_from_slice(&doc_bytes);
 
         // Create header
@@ -382,7 +387,7 @@ impl MongodbHandler {
 
                 let cursor_docs: Vec<Bson> = documents
                     .iter()
-                    .filter_map(|d| Bson::try_from(d.clone()).ok())
+                    .filter_map(|d| d.clone().try_into().ok())
                     .collect();
 
                 Ok(doc! {
