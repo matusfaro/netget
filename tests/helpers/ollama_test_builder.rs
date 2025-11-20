@@ -245,10 +245,10 @@ impl OllamaTestBuilder {
 
     /// Run the test
     pub async fn run(self) -> Result<TestResult> {
-        // Get model from env var or use default
+        // Get model from env var or use default (7B balances speed and capability for tests)
         let model = self.model
             .or_else(|| std::env::var("OLLAMA_MODEL").ok())
-            .unwrap_or_else(|| "qwen3-coder:30b".to_string());
+            .unwrap_or_else(|| "qwen2.5-coder:7b".to_string());
 
         println!("Testing with model: {}", model);
 
