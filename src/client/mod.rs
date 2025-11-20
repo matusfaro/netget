@@ -274,6 +274,12 @@ pub mod ollama;
 #[cfg(feature = "ollama")]
 pub use ollama::actions::OllamaClientProtocol;
 
+// openapi client
+#[cfg(feature = "openapi")]
+pub mod openapi;
+#[cfg(feature = "openapi")]
+pub use openapi::actions::OpenApiClientProtocol;
+
 // openidconnect client
 #[cfg(feature = "openidconnect")]
 pub mod openidconnect;

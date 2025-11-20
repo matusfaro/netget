@@ -14,6 +14,8 @@ pub mod ipp;
 pub mod ollama;
 #[cfg(feature = "openai")]
 pub mod openai;
+#[cfg(feature = "openapi")]
+pub mod openapi;
 #[cfg(feature = "mssql")]
 pub mod mssql;
 #[cfg(feature = "redis")]

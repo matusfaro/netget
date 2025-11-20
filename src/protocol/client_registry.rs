@@ -202,6 +202,11 @@ impl ClientRegistry {
         #[cfg(feature = "ollama")]
         self.register(Arc::new(crate::client::ollama::OllamaClientProtocol::new()));
 
+        #[cfg(feature = "openapi")]
+        self.register(Arc::new(
+            crate::client::openapi::OpenApiClientProtocol::new(),
+        ));
+
         #[cfg(feature = "openidconnect")]
         self.register(Arc::new(
             crate::client::openidconnect::OpenIdConnectClientProtocol::new(),
