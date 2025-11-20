@@ -6,11 +6,11 @@
 //! - Ollama with LLM model loaded
 //! - ~10-30 seconds for initial bootstrap (cached afterward)
 
-#![cfg(all(test, feature = "tor-client"))]
+#![cfg(all(test, feature = "tor"))]
 
 use netget::llm::OllamaClient;
 use netget::state::app_state::AppState;
-use netget::state::ClientStatus;
+use netget::state::{ClientId, ClientInstance, ClientStatus};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -23,28 +23,26 @@ async fn create_test_client(
     Arc<AppState>,
     u32,
     OllamaClient,
+    mpsc::UnboundedSender<String>,
     mpsc::UnboundedReceiver<String>,
 ) {
     let (status_tx, status_rx) = mpsc::unbounded_channel();
-    let app_state = Arc::new(AppState::new(status_tx.clone()));
+    let app_state = Arc::new(AppState::new());
 
     // Create LLM client
-    let llm_client = OllamaClient::new(
-        "http://localhost:11434".to_string(),
-        "qwen2.5-coder:3b".to_string(), // Use smaller model for faster tests
+    let llm_client = OllamaClient::new("http://localhost:11434");
+
+    // Create and add Tor client instance
+    let client_instance = ClientInstance::new(
+        ClientId::new(1),
+        remote_addr.to_string(),
+        "Tor".to_string(),
+        instruction.to_string(),
     );
 
-    // Create Tor client
-    let client_id = app_state
-        .open_client(
-            "Tor".to_string(),
-            remote_addr.to_string(),
-            instruction.to_string(),
-            None,
-        )
-        .await;
+    let client_id = app_state.add_client(client_instance).await;
 
-    (app_state, client_id, llm_client, status_rx)
+    (app_state, client_id.as_u32(), llm_client, status_tx, status_rx)
 }
 
 /// Test 1: Bootstrap Tor client and verify it initializes
@@ -54,15 +52,13 @@ async fn create_test_client(
 #[tokio::test]
 #[ignore] // Ignore by default due to Tor network requirement
 async fn test_tor_bootstrap() {
-    let (app_state, client_id, llm_client, mut status_rx) =
+    let (app_state, client_id, llm_client, status_tx, mut status_rx) =
         create_test_client("Wait for connection", "check.torproject.org:80").await;
-
-    let status_tx = app_state.get_status_tx();
 
     // Start the client (triggers bootstrap)
     let result = netget::cli::client_startup::start_client_by_id(
         &app_state,
-        netget::state::ClientId::from_u32(client_id),
+        netget::state::ClientId::new(client_id),
         &llm_client,
         &status_tx,
     )
@@ -75,7 +71,7 @@ async fn test_tor_bootstrap() {
 
     // Verify client is in Connected status (or at least not Error)
     let client = app_state
-        .get_client(netget::state::ClientId::from_u32(client_id))
+        .get_client(netget::state::ClientId::new(client_id))
         .await
         .expect("Client not found");
 
@@ -121,18 +117,17 @@ async fn test_tor_bootstrap() {
 #[tokio::test]
 #[ignore] // Ignore by default due to Tor network requirement
 async fn test_tor_check_connection() {
-    let (app_state, client_id, llm_client, mut status_rx) = create_test_client(
+    let (app_state, client_id, llm_client, status_tx, mut status_rx) = create_test_client(
         "Send HTTP GET request for / and report if response mentions 'Tor'",
         "check.torproject.org:80",
     )
     .await;
 
-    let status_tx = app_state.get_status_tx();
 
     // Start the client
     let result = netget::cli::client_startup::start_client_by_id(
         &app_state,
-        netget::state::ClientId::from_u32(client_id),
+        netget::state::ClientId::new(client_id),
         &llm_client,
         &status_tx,
     )
@@ -169,18 +164,17 @@ async fn test_tor_check_connection() {
 #[tokio::test]
 #[ignore] // Ignore by default due to Tor network requirement
 async fn test_tor_onion_service() {
-    let (app_state, client_id, llm_client, mut status_rx) = create_test_client(
+    let (app_state, client_id, llm_client, status_tx, mut status_rx) = create_test_client(
         "Send HTTP GET request for / and report status",
         "duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion:80",
     )
     .await;
 
-    let status_tx = app_state.get_status_tx();
 
     // Start the client
     let result = netget::cli::client_startup::start_client_by_id(
         &app_state,
-        netget::state::ClientId::from_u32(client_id),
+        netget::state::ClientId::new(client_id),
         &llm_client,
         &status_tx,
     )
@@ -220,18 +214,17 @@ async fn test_tor_onion_service() {
 #[tokio::test]
 #[ignore] // Ignore by default due to Tor network requirement
 async fn test_tor_connection_error() {
-    let (app_state, client_id, llm_client, _status_rx) = create_test_client(
+    let (app_state, client_id, llm_client, status_tx, _status_rx) = create_test_client(
         "Connect and report",
         "invalidonionaddressthatshouldnotexist123456789012345678.onion:80",
     )
     .await;
 
-    let status_tx = app_state.get_status_tx();
 
     // Start the client (should fail)
     let result = netget::cli::client_startup::start_client_by_id(
         &app_state,
-        netget::state::ClientId::from_u32(client_id),
+        netget::state::ClientId::new(client_id),
         &llm_client,
         &status_tx,
     )
@@ -242,7 +235,7 @@ async fn test_tor_connection_error() {
 
     // Verify client is in error state
     let client = app_state
-        .get_client(netget::state::ClientId::from_u32(client_id))
+        .get_client(netget::state::ClientId::new(client_id))
         .await
         .expect("Client not found");
 
@@ -257,4 +250,168 @@ async fn test_tor_connection_error() {
             );
         }
     }
+}
+
+/// Test 5: Directory query - Get consensus info
+///
+/// This test verifies that we can query consensus metadata after bootstrap.
+/// Uses direct action invocation without LLM.
+#[tokio::test]
+#[ignore] // Ignore by default due to Tor network requirement
+async fn test_get_consensus_info() {
+    use netget::client::tor::TorClient;
+    use netget::state::ClientId;
+
+    let (app_state, client_id, llm_client, status_tx, mut status_rx) = create_test_client(
+        "Just bootstrap, don't connect anywhere",
+        "unused:80",
+    )
+    .await;
+
+
+    // Start the client (triggers bootstrap)
+    let result = netget::cli::client_startup::start_client_by_id(
+        &app_state,
+        ClientId::new(client_id),
+        &llm_client,
+        &status_tx,
+    )
+    .await;
+
+    assert!(result.is_ok(), "Client startup failed: {:?}", result.err());
+
+    // Wait for bootstrap
+    tokio::time::sleep(Duration::from_secs(40)).await;
+
+    // Query consensus info directly
+    let info = TorClient::get_consensus_info(&app_state, ClientId::new(client_id))
+        .await
+        .expect("Failed to get consensus info");
+
+    println!("Consensus info: {}", serde_json::to_string_pretty(&info).unwrap());
+
+    // Verify response structure
+    assert!(info.get("relay_count").is_some(), "Missing relay_count");
+    assert!(info.get("valid_after").is_some(), "Missing valid_after");
+    assert!(info.get("fresh_until").is_some(), "Missing fresh_until");
+    assert!(info.get("valid_until").is_some(), "Missing valid_until");
+
+    // Verify relay count is reasonable (> 1000 relays in real Tor network)
+    let relay_count = info["relay_count"].as_u64().unwrap();
+    assert!(relay_count > 1000, "Relay count too low: {}", relay_count);
+
+    println!("✓ Successfully queried consensus: {} relays", relay_count);
+}
+
+/// Test 6: Directory query - List relays
+///
+/// This test verifies that we can list relays from the consensus.
+/// Uses direct action invocation without LLM.
+#[tokio::test]
+#[ignore] // Ignore by default due to Tor network requirement
+async fn test_list_relays() {
+    use netget::client::tor::{TorClient, RelayFilter};
+    use netget::state::ClientId;
+
+    let (app_state, client_id, llm_client, status_tx, _status_rx) = create_test_client(
+        "Just bootstrap, don't connect anywhere",
+        "unused:80",
+    )
+    .await;
+
+
+    // Start the client (triggers bootstrap)
+    let result = netget::cli::client_startup::start_client_by_id(
+        &app_state,
+        ClientId::new(client_id),
+        &llm_client,
+        &status_tx,
+    )
+    .await;
+
+    assert!(result.is_ok(), "Client startup failed: {:?}", result.err());
+
+    // Wait for bootstrap
+    tokio::time::sleep(Duration::from_secs(40)).await;
+
+    // Query relays with limit
+    let filter = RelayFilter {
+        limit: Some(10),
+        ..Default::default()
+    };
+
+    let relays = TorClient::query_relays(&app_state, ClientId::new(client_id), filter)
+        .await
+        .expect("Failed to query relays");
+
+    println!("Retrieved {} relays", relays.len());
+
+    // Verify we got relays
+    assert!(!relays.is_empty(), "No relays returned");
+    assert!(relays.len() <= 10, "Too many relays returned");
+
+    // Verify relay structure
+    for relay in &relays {
+        assert!(!relay.fingerprint.is_empty(), "Relay missing fingerprint");
+        assert!(!relay.nickname.is_empty(), "Relay missing nickname");
+        println!("  Relay: {} ({})", relay.nickname, relay.fingerprint);
+    }
+
+    println!("✓ Successfully listed {} relays", relays.len());
+}
+
+/// Test 7: Directory query - Search relays by flags
+///
+/// This test verifies that we can search for relays with specific flags.
+/// Note: Flag filtering not yet implemented, so this just verifies the query works.
+#[tokio::test]
+#[ignore] // Ignore by default due to Tor network requirement
+async fn test_search_relays_by_flags() {
+    use netget::client::tor::{TorClient, RelayFilter};
+    use netget::state::ClientId;
+
+    let (app_state, client_id, llm_client, status_tx, _status_rx) = create_test_client(
+        "Just bootstrap, don't connect anywhere",
+        "unused:80",
+    )
+    .await;
+
+
+    // Start the client (triggers bootstrap)
+    let result = netget::cli::client_startup::start_client_by_id(
+        &app_state,
+        ClientId::new(client_id),
+        &llm_client,
+        &status_tx,
+    )
+    .await;
+
+    assert!(result.is_ok(), "Client startup failed: {:?}", result.err());
+
+    // Wait for bootstrap
+    tokio::time::sleep(Duration::from_secs(40)).await;
+
+    // Search for relays with flags (not yet filtering, but API should work)
+    let filter = RelayFilter {
+        flags: Some(vec!["Exit".to_string(), "Fast".to_string()]),
+        limit: Some(20),
+        ..Default::default()
+    };
+
+    let relays = TorClient::query_relays(&app_state, ClientId::new(client_id), filter)
+        .await
+        .expect("Failed to search relays");
+
+    println!("Search returned {} relays", relays.len());
+
+    // Verify we got relays (flag filtering not implemented yet, so we'll get all relays)
+    assert!(!relays.is_empty(), "No relays returned");
+    assert!(relays.len() <= 20, "Too many relays returned");
+
+    println!("✓ Search query completed successfully");
+
+    // Note: Once flag filtering is implemented, we should verify:
+    // for relay in &relays {
+    //     assert!(relay.is_exit && relay.is_fast, "Relay doesn't match filter");
+    // }
 }

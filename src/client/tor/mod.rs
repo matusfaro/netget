@@ -51,10 +51,17 @@ pub struct RelayFilter {
 
 #[cfg(feature = "tor")]
 impl RelayFilter {
-    /// Check if a relay matches this filter (simplified - just limit for now)
+    /// Check if a relay matches this filter
     fn matches(&self, _relay: &Relay<'_>) -> bool {
-        // TODO: Implement flag and nickname filtering when we understand tor-netdir API better
-        // For now, just return true to match all relays
+        // NOTE: tor-netdir's Relay type doesn't expose flag-checking methods in the public API
+        // Even with experimental-api, the internal RouterStatus fields are not accessible
+        // For now, we match all relays - filtering would require deeper Arti API integration
+
+        // TODO: When Arti exposes flag/nickname access in experimental-api, implement:
+        // - Flag filtering (Guard, Exit, Fast, Stable, Running, Valid)
+        // - Nickname pattern matching
+        // - Bandwidth filtering
+
         true
     }
 }
@@ -81,12 +88,19 @@ impl RelayInfo {
         // Get relay identity - rsa_id() is available via public trait
         let fingerprint = format!("{:?}", relay.rsa_id());
 
-        // For now, use placeholder values until we can access the RouterStatus fields
-        // TODO: Use relay.rs() to access nickname and flags when experimental-api is properly configured
+        // Use first 8 chars of fingerprint as a proxy for nickname
+        // NOTE: tor-netdir's Relay type doesn't expose nickname or flags in public API
+        let nickname = fingerprint
+            .chars()
+            .take(8)
+            .collect::<String>();
+
+        // Return minimal info - flag details not accessible via current Arti API
+        // TODO: Update when Arti's experimental-api exposes RouterStatus fields
         Self {
-            nickname: "unknown".to_string(), // TODO: access via rs().nickname()
+            nickname,
             fingerprint,
-            flags: vec![], // TODO: access via rs().flags()
+            flags: vec![], // Not accessible via public API
             is_guard: false,
             is_exit: false,
             is_fast: false,
