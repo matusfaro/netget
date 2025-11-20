@@ -74,6 +74,9 @@ impl ClientRegistry {
             crate::client::datalink::DataLinkClientProtocol::new(),
         ));
 
+        #[cfg(feature = "dc")]
+        self.register(Arc::new(crate::client::dc::DcClientProtocol::new()));
+
         #[cfg(feature = "dhcp")]
         self.register(Arc::new(crate::client::dhcp::DhcpClientProtocol::new()));
 
