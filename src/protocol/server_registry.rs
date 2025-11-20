@@ -251,6 +251,12 @@ impl ServerRegistry {
         #[cfg(feature = "turn")]
         self.register(Arc::new(crate::server::TurnProtocol::new()));
 
+        #[cfg(feature = "webrtc")]
+        self.register(Arc::new(crate::server::WebRtcProtocol::new()));
+
+        #[cfg(feature = "webrtc")]
+        self.register(Arc::new(crate::server::WebRtcSignalingProtocol::new()));
+
         #[cfg(feature = "sip")]
         self.register(Arc::new(crate::server::SipProtocol::new()));
 
