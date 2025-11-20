@@ -14,7 +14,17 @@ use serde_json::json;
 async fn test_couchdb_server_info() -> E2EResult<()> {
     let config = NetGetConfig::new("Listen for CouchDB connections on port {AVAILABLE_PORT}")
         .with_mock(|mock| {
-            mock.on_event("couchdb_request")
+            mock.on_instruction_containing("Listen for CouchDB")
+                .respond_with_actions(json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "CouchDB",
+                        "instruction": "Handle CouchDB protocol events"
+                    }
+                ]))
+                .and()
+                .on_event("couchdb_request")
                 .and_event_data_contains("operation", "server_info")
                 .respond_with_actions(json!([{
                     "type": "send_server_info",
@@ -51,7 +61,16 @@ async fn test_couchdb_server_info() -> E2EResult<()> {
 async fn test_couchdb_database_operations() -> E2EResult<()> {
     let config = NetGetConfig::new("Listen for CouchDB connections on port {AVAILABLE_PORT}")
         .with_mock(|mock| {
-            mock
+            mock.on_instruction_containing("Listen for CouchDB")
+                .respond_with_actions(json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "CouchDB",
+                        "instruction": "Handle CouchDB protocol events"
+                    }
+                ]))
+                .and()
                 // Server info
                 .on_event("couchdb_request")
                 .and_event_data_contains("operation", "server_info")
@@ -132,7 +151,16 @@ async fn test_couchdb_database_operations() -> E2EResult<()> {
 async fn test_couchdb_document_crud() -> E2EResult<()> {
     let config = NetGetConfig::new("Listen for CouchDB connections on port {AVAILABLE_PORT}")
         .with_mock(|mock| {
-            mock
+            mock.on_instruction_containing("Listen for CouchDB")
+                .respond_with_actions(json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "CouchDB",
+                        "instruction": "Handle CouchDB protocol events"
+                    }
+                ]))
+                .and()
                 // Create document
                 .on_event("couchdb_request")
                 .and_event_data_contains("operation", "doc_put")
@@ -238,7 +266,17 @@ async fn test_couchdb_document_crud() -> E2EResult<()> {
 async fn test_couchdb_conflict_detection() -> E2EResult<()> {
     let config = NetGetConfig::new("Listen for CouchDB connections on port {AVAILABLE_PORT}")
         .with_mock(|mock| {
-            mock.on_event("couchdb_request")
+            mock.on_instruction_containing("Listen for CouchDB")
+                .respond_with_actions(json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "CouchDB",
+                        "instruction": "Handle CouchDB protocol events"
+                    }
+                ]))
+                .and()
+                .on_event("couchdb_request")
                 .and_event_data_contains("operation", "doc_put")
                 .respond_with_actions(json!([{
                     "type": "send_doc_response",
@@ -278,7 +316,16 @@ async fn test_couchdb_conflict_detection() -> E2EResult<()> {
 async fn test_couchdb_bulk_operations() -> E2EResult<()> {
     let config = NetGetConfig::new("Listen for CouchDB connections on port {AVAILABLE_PORT}")
         .with_mock(|mock| {
-            mock
+            mock.on_instruction_containing("Listen for CouchDB")
+                .respond_with_actions(json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "CouchDB",
+                        "instruction": "Handle CouchDB protocol events"
+                    }
+                ]))
+                .and()
                 // Bulk docs
                 .on_event("couchdb_request")
                 .and_event_data_contains("operation", "bulk_docs")
@@ -346,7 +393,17 @@ async fn test_couchdb_bulk_operations() -> E2EResult<()> {
 async fn test_couchdb_view_query() -> E2EResult<()> {
     let config = NetGetConfig::new("Listen for CouchDB connections on port {AVAILABLE_PORT}")
         .with_mock(|mock| {
-            mock.on_event("couchdb_request")
+            mock.on_instruction_containing("Listen for CouchDB")
+                .respond_with_actions(json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "CouchDB",
+                        "instruction": "Handle CouchDB protocol events"
+                    }
+                ]))
+                .and()
+                .on_event("couchdb_request")
                 .and_event_data_contains("operation", "view_query")
                 .respond_with_actions(json!([{
                     "type": "send_view_response",
@@ -386,7 +443,16 @@ async fn test_couchdb_basic_auth() -> E2EResult<()> {
     let config =
         NetGetConfig::new("Listen for CouchDB connections on port {AVAILABLE_PORT} with basic auth enabled (username: admin, password: secret)")
             .with_mock(|mock| {
-                mock
+                mock.on_instruction_containing("Listen for CouchDB")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "open_server",
+                            "port": 0,
+                            "base_stack": "CouchDB",
+                            "instruction": "Handle CouchDB protocol events with authentication"
+                        }
+                    ]))
+                    .and()
                     // Unauthorized request
                     .on_event("couchdb_request")
                     .and_event_data_contains("operation", "server_info")
@@ -434,7 +500,17 @@ async fn test_couchdb_basic_auth() -> E2EResult<()> {
 async fn test_couchdb_changes_feed() -> E2EResult<()> {
     let config = NetGetConfig::new("Listen for CouchDB connections on port {AVAILABLE_PORT}")
         .with_mock(|mock| {
-            mock.on_event("couchdb_request")
+            mock.on_instruction_containing("Listen for CouchDB")
+                .respond_with_actions(json!([
+                    {
+                        "type": "open_server",
+                        "port": 0,
+                        "base_stack": "CouchDB",
+                        "instruction": "Handle CouchDB protocol events"
+                    }
+                ]))
+                .and()
+                .on_event("couchdb_request")
                 .and_event_data_contains("operation", "changes")
                 .respond_with_actions(json!([{
                     "type": "send_changes_response",
