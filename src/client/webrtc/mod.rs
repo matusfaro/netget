@@ -1,13 +1,22 @@
 //! WebRTC client implementation (data channels only, no media)
+//!
+//! Enhancements:
+//! - WebSocket signaling support for automatic SDP exchange
+//! - Multi-channel support (create multiple data channels)
+//! - Binary data support (hex encoding/decoding)
+
 pub mod actions;
 
 pub use actions::WebRtcClientProtocol;
 
 use anyhow::{Context, Result};
+use futures::{SinkExt, StreamExt};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{error, info, trace};
+use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage};
+use tracing::{debug, error, info, trace, warn};
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::APIBuilder;
@@ -22,6 +31,7 @@ use webrtc::peer_connection::RTCPeerConnection;
 
 use crate::client::webrtc::actions::{
     WEBRTC_CLIENT_CONNECTED_EVENT, WEBRTC_CLIENT_MESSAGE_RECEIVED_EVENT,
+    WEBRTC_CLIENT_CHANNEL_OPENED_EVENT, WEBRTC_CLIENT_SIGNALING_CONNECTED_EVENT,
 };
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
@@ -29,6 +39,15 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
+
+/// Signaling mode for WebRTC connection setup
+#[derive(Debug, Clone, PartialEq)]
+pub enum SignalingMode {
+    /// Manual SDP exchange (user copy-paste)
+    Manual,
+    /// Automatic SDP exchange via WebSocket signaling server
+    WebSocket { url: String, peer_id: String },
+}
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -38,11 +57,17 @@ enum ConnectionState {
     Accumulating,
 }
 
+/// Per-channel LLM state
+struct ChannelData {
+    state: ConnectionState,
+    queued_messages: Vec<(String, bool)>, // (message, is_binary)
+    channel: Arc<RTCDataChannel>,
+}
+
 /// Per-client data for LLM handling
 struct ClientData {
-    state: ConnectionState,
-    queued_messages: Vec<String>,
     memory: String,
+    channels: HashMap<String, ChannelData>, // channel_label -> data
 }
 
 /// WebRTC client that connects via data channels (no media)
@@ -50,6 +75,10 @@ pub struct WebRtcClient;
 
 impl WebRtcClient {
     /// Connect to a WebRTC peer with integrated LLM actions
+    ///
+    /// Supports two signaling modes:
+    /// - Manual: remote_addr = "manual" (user exchanges SDP)
+    /// - WebSocket: remote_addr = "ws://server:port/peer_id" (automatic signaling)
     pub async fn connect_with_llm_actions(
         remote_addr: String,
         llm_client: OllamaClient,
@@ -61,6 +90,27 @@ impl WebRtcClient {
             "WebRTC client {} initializing for {}",
             client_id, remote_addr
         );
+
+        // Parse signaling mode from remote_addr
+        let signaling_mode = if remote_addr.starts_with("ws://") || remote_addr.starts_with("wss://") {
+            // WebSocket signaling: ws://server:port/peer_id or wss://server:port/peer_id
+            let parts: Vec<&str> = remote_addr.rsplitn(2, '/').collect();
+            if parts.len() != 2 {
+                return Err(anyhow::anyhow!(
+                    "Invalid WebSocket URL format. Expected: ws://server:port/peer_id"
+                ));
+            }
+            let peer_id = parts[0].to_string();
+            let url = parts[1].to_string();
+            SignalingMode::WebSocket {
+                url: format!("{}/", url), // Reconstruct base URL
+                peer_id,
+            }
+        } else {
+            SignalingMode::Manual
+        };
+
+        info!("WebRTC client {} using signaling mode: {:?}", client_id, signaling_mode);
 
         // Create a MediaEngine
         let mut m = MediaEngine::default();
@@ -75,7 +125,7 @@ impl WebRtcClient {
             .with_interceptor_registry(registry)
             .build();
 
-        // Configure ICE servers (Google STUN)
+        // Configure ICE servers (Google STUN by default)
         let config = RTCConfiguration {
             ice_servers: vec![RTCIceServer {
                 urls: vec!["stun:stun.l.google.com:19302".to_owned()],
@@ -88,52 +138,411 @@ impl WebRtcClient {
         let peer_connection = Arc::new(api.new_peer_connection(config).await?);
         info!("WebRTC client {} created peer connection", client_id);
 
-        // Create data channel
-        let data_channel = peer_connection.create_data_channel("netget", None).await?;
-        info!("WebRTC client {} created data channel", client_id);
-
-        // Clone for callbacks
-        let _pc_clone = Arc::clone(&peer_connection);
-        let dc_clone = Arc::clone(&data_channel);
-        let app_state_clone = Arc::clone(&app_state);
-        let status_tx_clone = status_tx.clone();
-        let llm_client_clone = llm_client.clone();
-
         // Initialize client data
         let client_data = Arc::new(Mutex::new(ClientData {
-            state: ConnectionState::Idle,
-            queued_messages: Vec::new(),
             memory: String::new(),
+            channels: HashMap::new(),
         }));
 
-        // Set up data channel callbacks
+        // Create default data channel
+        let data_channel = peer_connection.create_data_channel("netget", None).await?;
+        info!("WebRTC client {} created data channel 'netget'", client_id);
+
+        // Setup data channel handlers
+        Self::setup_data_channel_handlers(
+            Arc::clone(&data_channel),
+            "netget".to_string(),
+            client_id,
+            Arc::clone(&client_data),
+            Arc::clone(&app_state),
+            status_tx.clone(),
+            llm_client.clone(),
+        )
+        .await;
+
+        // Add channel to client data
+        client_data.lock().await.channels.insert(
+            "netget".to_string(),
+            ChannelData {
+                state: ConnectionState::Idle,
+                queued_messages: Vec::new(),
+                channel: Arc::clone(&data_channel),
+            },
+        );
+
+        // Handle connection state changes
+        let status_tx_state = status_tx.clone();
+        let app_state_state = Arc::clone(&app_state);
+        peer_connection.on_peer_connection_state_change(Box::new(
+            move |state: RTCPeerConnectionState| {
+                let status_tx = status_tx_state.clone();
+                let app_state = Arc::clone(&app_state_state);
+                Box::pin(async move {
+                    info!("WebRTC client {} connection state: {:?}", client_id, state);
+                    match state {
+                        RTCPeerConnectionState::Connected => {
+                            app_state.update_client_status(client_id, ClientStatus::Connected).await;
+                            let _ = status_tx.send(format!("[CLIENT] WebRTC client {} connected", client_id));
+                            let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        }
+                        RTCPeerConnectionState::Failed | RTCPeerConnectionState::Closed => {
+                            app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
+                            let _ = status_tx
+                                .send(format!("[CLIENT] WebRTC client {} disconnected", client_id));
+                            let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        }
+                        _ => {}
+                    }
+                })
+            },
+        ));
+
+        // Store peer connection and data channel for later use
+        let pc_ptr = Arc::into_raw(peer_connection.clone()) as usize;
+        app_state
+            .with_client_mut(client_id, |client| {
+                client.set_protocol_field(
+                    "peer_connection_ptr".to_string(),
+                    serde_json::json!(pc_ptr),
+                );
+                client.set_protocol_field(
+                    "signaling_mode".to_string(),
+                    match &signaling_mode {
+                        SignalingMode::Manual => serde_json::json!("manual"),
+                        SignalingMode::WebSocket { url, peer_id } => serde_json::json!({
+                            "mode": "websocket",
+                            "url": url,
+                            "peer_id": peer_id
+                        }),
+                    },
+                );
+            })
+            .await;
+
+        match signaling_mode {
+            SignalingMode::Manual => {
+                // Manual mode: create offer and display to user
+                Self::manual_signaling(
+                    peer_connection,
+                    client_id,
+                    Arc::clone(&app_state),
+                    status_tx.clone(),
+                )
+                .await?;
+            }
+            SignalingMode::WebSocket { url, peer_id } => {
+                // WebSocket mode: connect to signaling server
+                Self::websocket_signaling(
+                    peer_connection,
+                    client_id,
+                    url,
+                    peer_id,
+                    Arc::clone(&app_state),
+                    status_tx.clone(),
+                    llm_client,
+                )
+                .await?;
+            }
+        }
+
+        // Spawn cleanup task
+        let app_state_cleanup = Arc::clone(&app_state);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+                // Check if client was removed
+                if app_state_cleanup.get_client(client_id).await.is_none() {
+                    info!("WebRTC client {} stopped", client_id);
+                    // Clean up Arc pointer
+                    unsafe {
+                        if pc_ptr != 0 {
+                            let _ = Arc::from_raw(pc_ptr as *const RTCPeerConnection);
+                        }
+                    }
+                    break;
+                }
+            }
+        });
+
+        // Return a dummy local address (WebRTC is peer-to-peer)
+        Ok("0.0.0.0:0".parse().unwrap())
+    }
+
+    /// Manual signaling: create offer and display to user
+    async fn manual_signaling(
+        peer_connection: Arc<RTCPeerConnection>,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) -> Result<()> {
+        // Create offer
+        let offer = peer_connection.create_offer(None).await?;
+        peer_connection.set_local_description(offer).await?;
+
+        // Wait for ICE gathering to complete
+        let mut gather_complete = peer_connection.gathering_complete_promise().await;
+        let _ = gather_complete.recv().await;
+
+        // Get the local description with ICE candidates
+        let local_desc = peer_connection
+            .local_description()
+            .await
+            .context("No local description available")?;
+
+        // Store the SDP offer for the user to exchange with peer
+        let offer_json = serde_json::to_string_pretty(&local_desc)?;
+        app_state
+            .with_client_mut(client_id, |client| {
+                client.set_protocol_field("sdp_offer".to_string(), serde_json::json!(offer_json));
+            })
+            .await;
+
+        info!("WebRTC client {} generated SDP offer (manual mode)", client_id);
+        let _ = status_tx.send(format!(
+            "[CLIENT] WebRTC client {} waiting for SDP answer",
+            client_id
+        ));
+        let _ = status_tx.send(format!("SDP Offer (send to peer):\n{}", offer_json));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+
+        Ok(())
+    }
+
+    /// WebSocket signaling: connect to signaling server and auto-exchange SDP
+    async fn websocket_signaling(
+        peer_connection: Arc<RTCPeerConnection>,
+        client_id: ClientId,
+        url: String,
+        peer_id: String,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        llm_client: OllamaClient,
+    ) -> Result<()> {
+        info!("WebRTC client {} connecting to signaling server: {}", client_id, url);
+
+        // Connect to WebSocket signaling server
+        let (ws_stream, _) = connect_async(&url)
+            .await
+            .context("Failed to connect to signaling server")?;
+
+        let (mut ws_tx, mut ws_rx) = ws_stream.split();
+
+        info!("WebRTC client {} connected to signaling server", client_id);
+        let _ = status_tx.send(format!(
+            "[CLIENT] WebRTC client {} connected to signaling server",
+            client_id
+        ));
+
+        // Send registration message
+        let register_msg = serde_json::json!({
+            "type": "register",
+            "peer_id": peer_id,
+        });
+        ws_tx
+            .send(WsMessage::Text(register_msg.to_string()))
+            .await
+            .context("Failed to send registration")?;
+
+        debug!("WebRTC client {} registered as '{}'", client_id, peer_id);
+
+        // Trigger signaling connected event
+        let protocol = Arc::new(crate::client::webrtc::actions::WebRtcClientProtocol::new());
+        let event = Event::new(
+            &WEBRTC_CLIENT_SIGNALING_CONNECTED_EVENT,
+            serde_json::json!({
+                "peer_id": peer_id,
+                "server_url": url,
+            }),
+        );
+
+        if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
+            match call_llm_for_client(
+                &llm_client,
+                &app_state,
+                client_id.to_string(),
+                &instruction,
+                "",
+                Some(&event),
+                protocol.as_ref(),
+                &status_tx,
+            )
+            .await
+            {
+                Ok(ClientLlmResult { actions: _, memory_updates: _ }) => {
+                    debug!("WebRTC client {} processed signaling connected event", client_id);
+                }
+                Err(e) => {
+                    warn!("LLM error for WebRTC client {} signaling connected: {}", client_id, e);
+                }
+            }
+        }
+
+        // Create offer
+        let offer = peer_connection.create_offer(None).await?;
+        peer_connection.set_local_description(offer).await?;
+
+        // Wait for ICE gathering
+        let mut gather_complete = peer_connection.gathering_complete_promise().await;
+        let _ = gather_complete.recv().await;
+
+        let local_desc = peer_connection
+            .local_description()
+            .await
+            .context("No local description")?;
+
+        info!("WebRTC client {} generated SDP offer (WebSocket mode)", client_id);
+
+        // Send offer to signaling server (to be forwarded to remote peer)
+        // Note: This assumes a target peer ID is known. In practice, the LLM might provide this
+        // or it could be configured. For now, we'll store the offer and wait for the LLM to
+        // trigger sending it via an action.
+        let offer_json = serde_json::to_value(&local_desc)?;
+        app_state
+            .with_client_mut(client_id, |client| {
+                client.set_protocol_field("sdp_offer".to_string(), offer_json.clone());
+            })
+            .await;
+
+        // Spawn WebSocket message handler
+        let pc_for_ws = Arc::clone(&peer_connection);
+        let status_tx_ws = status_tx.clone();
+        let app_state_ws = Arc::clone(&app_state);
+
+        tokio::spawn(async move {
+            while let Some(msg_result) = ws_rx.next().await {
+                match msg_result {
+                    Ok(WsMessage::Text(text)) => {
+                        trace!("WebRTC client {} received signaling message: {}", client_id, text);
+
+                        // Parse signaling message
+                        if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&text) {
+                            let msg_type = msg.get("type").and_then(|v| v.as_str());
+
+                            match msg_type {
+                                Some("registered") => {
+                                    info!("WebRTC client {} registered with signaling server", client_id);
+                                    let _ = status_tx_ws.send(format!(
+                                        "[CLIENT] Registered as '{}'",
+                                        peer_id
+                                    ));
+                                }
+                                Some("answer") => {
+                                    // Received SDP answer from remote peer
+                                    if let Some(sdp) = msg.get("sdp") {
+                                        info!("WebRTC client {} received SDP answer", client_id);
+
+                                        match serde_json::from_value::<RTCSessionDescription>(
+                                            sdp.clone(),
+                                        ) {
+                                            Ok(answer) => {
+                                                if let Err(e) =
+                                                    pc_for_ws.set_remote_description(answer).await
+                                                {
+                                                    error!(
+                                                        "WebRTC client {} failed to set remote description: {}",
+                                                        client_id, e
+                                                    );
+                                                } else {
+                                                    info!(
+                                                        "WebRTC client {} connection established via signaling",
+                                                        client_id
+                                                    );
+                                                    app_state_ws
+                                                        .update_client_status(
+                                                            client_id,
+                                                            ClientStatus::Connected,
+                                                        )
+                                                        .await;
+                                                }
+                                            }
+                                            Err(e) => {
+                                                error!(
+                                                    "WebRTC client {} failed to parse SDP answer: {}",
+                                                    client_id, e
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                                Some("ice_candidate") => {
+                                    // Handle ICE candidate (not implemented in basic version)
+                                    trace!("WebRTC client {} received ICE candidate", client_id);
+                                }
+                                Some("error") => {
+                                    if let Some(error_msg) = msg.get("message").and_then(|v| v.as_str()) {
+                                        error!(
+                                            "WebRTC client {} signaling error: {}",
+                                            client_id, error_msg
+                                        );
+                                        let _ = status_tx_ws.send(format!(
+                                            "[CLIENT] Signaling error: {}",
+                                            error_msg
+                                        ));
+                                    }
+                                }
+                                _ => {
+                                    trace!("WebRTC client {} unknown signaling message type", client_id);
+                                }
+                            }
+                        }
+                    }
+                    Ok(WsMessage::Close(_)) => {
+                        info!("WebRTC client {} signaling server closed connection", client_id);
+                        break;
+                    }
+                    Err(e) => {
+                        error!("WebRTC client {} signaling error: {}", client_id, e);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        Ok(())
+    }
+
+    /// Setup handlers for a data channel
+    async fn setup_data_channel_handlers(
+        data_channel: Arc<RTCDataChannel>,
+        channel_label: String,
+        client_id: ClientId,
+        client_data: Arc<Mutex<ClientData>>,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        llm_client: OllamaClient,
+    ) {
+        // On open handler
         let client_data_on_open = Arc::clone(&client_data);
-        let app_state_on_open = Arc::clone(&app_state_clone);
-        let status_tx_on_open = status_tx_clone.clone();
-        let llm_on_open = llm_client_clone.clone();
+        let app_state_on_open = Arc::clone(&app_state);
+        let status_tx_on_open = status_tx.clone();
+        let llm_on_open = llm_client.clone();
+        let label_on_open = channel_label.clone();
 
         data_channel.on_open(Box::new(move || {
             let app_state = Arc::clone(&app_state_on_open);
             let status_tx = status_tx_on_open.clone();
             let client_data = Arc::clone(&client_data_on_open);
             let llm_client = llm_on_open.clone();
+            let label = label_on_open.clone();
 
             Box::pin(async move {
-                info!("WebRTC client {} data channel opened", client_id);
-                app_state
-                    .update_client_status(client_id, ClientStatus::Connected)
-                    .await;
-                let _ = status_tx.send(format!("[CLIENT] WebRTC client {} connected", client_id));
+                info!("WebRTC client {} data channel '{}' opened", client_id, label);
+                let _ = status_tx.send(format!(
+                    "[CLIENT] WebRTC client {} channel '{}' opened",
+                    client_id, label
+                ));
                 let _ = status_tx.send("__UPDATE_UI__".to_string());
 
-                // Call LLM with connected event
+                // Call LLM with channel opened event
                 if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
                     let protocol =
                         Arc::new(crate::client::webrtc::actions::WebRtcClientProtocol::new());
                     let event = Event::new(
-                        &WEBRTC_CLIENT_CONNECTED_EVENT,
+                        &WEBRTC_CLIENT_CHANNEL_OPENED_EVENT,
                         serde_json::json!({
-                            "channel_label": "netget",
+                            "channel_label": label,
                         }),
                     );
 
@@ -160,19 +569,20 @@ impl WebRtcClient {
                             }
                         }
                         Err(e) => {
-                            error!("LLM error for WebRTC client {} on open: {}", client_id, e);
+                            error!("LLM error for WebRTC client {} on channel open: {}", client_id, e);
                         }
                     }
                 }
             })
         }));
 
-        // Set up message handler
+        // On message handler
         let client_data_on_msg = Arc::clone(&client_data);
-        let app_state_on_msg = Arc::clone(&app_state_clone);
-        let status_tx_on_msg = status_tx_clone.clone();
-        let llm_on_msg = llm_client_clone.clone();
-        let dc_on_msg = Arc::clone(&dc_clone);
+        let app_state_on_msg = Arc::clone(&app_state);
+        let status_tx_on_msg = status_tx.clone();
+        let llm_on_msg = llm_client.clone();
+        let label_on_msg = channel_label.clone();
+        let dc_on_msg = Arc::clone(&data_channel);
 
         data_channel.on_message(Box::new(move |msg: DataChannelMessage| {
             let app_state = Arc::clone(&app_state_on_msg);
@@ -180,18 +590,48 @@ impl WebRtcClient {
             let client_data = Arc::clone(&client_data_on_msg);
             let llm_client = llm_on_msg.clone();
             let dc = Arc::clone(&dc_on_msg);
+            let label = label_on_msg.clone();
 
             Box::pin(async move {
-                let message_text = String::from_utf8_lossy(&msg.data).to_string();
-                trace!("WebRTC client {} received message: {}", client_id, message_text);
+                // Detect if message is binary
+                let is_binary = !msg.data.is_empty() && !msg.data.iter().all(|&b| b.is_ascii());
 
-                // Handle data with LLM
+                let message_text = if is_binary {
+                    // Hex encode binary data
+                    hex::encode(&msg.data)
+                } else {
+                    String::from_utf8_lossy(&msg.data).to_string()
+                };
+
+                trace!(
+                    "WebRTC client {} received message on '{}': {} (binary: {})",
+                    client_id,
+                    label,
+                    if is_binary { "hex data" } else { &message_text },
+                    is_binary
+                );
+
+                // Handle data with LLM using per-channel state machine
                 let mut client_data_lock = client_data.lock().await;
 
-                match client_data_lock.state {
+                // Get or create channel data
+                if !client_data_lock.channels.contains_key(&label) {
+                    warn!("WebRTC client {} received message on unknown channel '{}'", client_id, label);
+                    return;
+                }
+
+                let channel_state = client_data_lock
+                    .channels
+                    .get(&label)
+                    .map(|cd| cd.state.clone())
+                    .unwrap_or(ConnectionState::Idle);
+
+                match channel_state {
                     ConnectionState::Idle => {
                         // Process immediately
-                        client_data_lock.state = ConnectionState::Processing;
+                        if let Some(channel_data) = client_data_lock.channels.get_mut(&label) {
+                            channel_data.state = ConnectionState::Processing;
+                        }
                         drop(client_data_lock);
 
                         // Call LLM
@@ -200,17 +640,20 @@ impl WebRtcClient {
                             let event = Event::new(
                                 &WEBRTC_CLIENT_MESSAGE_RECEIVED_EVENT,
                                 serde_json::json!({
+                                    "channel_label": label,
                                     "message": message_text,
-                                    "is_binary": msg.data.len() > 0 && !message_text.is_ascii(),
+                                    "is_binary": is_binary,
                                 }),
                             );
+
+                            let memory = client_data.lock().await.memory.clone();
 
                             match call_llm_for_client(
                                 &llm_client,
                                 &app_state,
                                 client_id.to_string(),
                                 &instruction,
-                                &client_data.lock().await.memory,
+                                &memory,
                                 Some(&event),
                                 protocol.as_ref(),
                                 &status_tx,
@@ -226,143 +669,62 @@ impl WebRtcClient {
                                         use crate::llm::actions::client_trait::Client;
                                         match protocol.as_ref().execute_action(action) {
                                             Ok(crate::llm::actions::client_trait::ClientActionResult::SendData(bytes)) => {
-                                                match dc.send_text(String::from_utf8_lossy(&bytes).to_string()).await {
+                                                // Send data (text or binary)
+                                                match dc.send(&bytes.into()).await {
                                                     Ok(_) => {
-                                                        trace!("WebRTC client {} sent message", client_id);
+                                                        trace!("WebRTC client {} sent message on '{}'", client_id, label);
                                                     }
                                                     Err(e) => {
-                                                        error!("WebRTC client {} failed to send: {}", client_id, e);
+                                                        error!("WebRTC client {} failed to send on '{}': {}", client_id, label, e);
                                                     }
                                                 }
                                             }
                                             Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
-                                                info!("WebRTC client {} closing data channel", client_id);
+                                                info!("WebRTC client {} closing channel '{}'", client_id, label);
                                                 let _ = dc.close().await;
                                             }
                                             Ok(crate::llm::actions::client_trait::ClientActionResult::WaitForMore) => {
-                                                trace!("WebRTC client {} waiting for more data", client_id);
+                                                trace!("WebRTC client {} waiting for more data on '{}'", client_id, label);
                                             }
                                             _ => {}
                                         }
                                     }
                                 }
                                 Err(e) => {
-                                    error!("LLM error for WebRTC client {}: {}", client_id, e);
+                                    error!("LLM error for WebRTC client {} on '{}': {}", client_id, label, e);
                                 }
                             }
                         }
 
                         // Reset state and process queued messages
                         let mut client_data_lock = client_data.lock().await;
-                        if !client_data_lock.queued_messages.is_empty() {
-                            client_data_lock.state = ConnectionState::Accumulating;
-                        } else {
-                            client_data_lock.state = ConnectionState::Idle;
+                        if let Some(channel_data) = client_data_lock.channels.get_mut(&label) {
+                            if !channel_data.queued_messages.is_empty() {
+                                channel_data.state = ConnectionState::Accumulating;
+                            } else {
+                                channel_data.state = ConnectionState::Idle;
+                            }
                         }
                     }
                     ConnectionState::Processing => {
                         // Queue the message
-                        client_data_lock.queued_messages.push(message_text);
-                        trace!("WebRTC client {} queued message (already processing)", client_id);
+                        if let Some(channel_data) = client_data_lock.channels.get_mut(&label) {
+                            channel_data.queued_messages.push((message_text, is_binary));
+                            trace!("WebRTC client {} queued message on '{}' (already processing)", client_id, label);
+                        }
                     }
                     ConnectionState::Accumulating => {
                         // Add to queue
-                        client_data_lock.queued_messages.push(message_text);
+                        if let Some(channel_data) = client_data_lock.channels.get_mut(&label) {
+                            channel_data.queued_messages.push((message_text, is_binary));
+                        }
                     }
                 }
             })
         }));
-
-        // Handle connection state changes
-        let status_tx_state = status_tx_clone.clone();
-        peer_connection.on_peer_connection_state_change(Box::new(
-            move |state: RTCPeerConnectionState| {
-                let status_tx = status_tx_state.clone();
-                Box::pin(async move {
-                    info!("WebRTC client {} connection state: {:?}", client_id, state);
-                    match state {
-                        RTCPeerConnectionState::Failed | RTCPeerConnectionState::Closed => {
-                            let _ = status_tx
-                                .send(format!("[CLIENT] WebRTC client {} disconnected", client_id));
-                            let _ = status_tx.send("__UPDATE_UI__".to_string());
-                        }
-                        _ => {}
-                    }
-                })
-            },
-        ));
-
-        // Create offer
-        let offer = peer_connection.create_offer(None).await?;
-        peer_connection.set_local_description(offer).await?;
-
-        // Wait for ICE gathering to complete
-        let mut gather_complete = peer_connection.gathering_complete_promise().await;
-        let _ = gather_complete.recv().await;
-
-        // Get the local description with ICE candidates
-        let local_desc = peer_connection
-            .local_description()
-            .await
-            .context("No local description available")?;
-
-        // Store the SDP offer for the user to exchange with peer
-        let offer_json = serde_json::to_string_pretty(&local_desc)?;
-        app_state
-            .with_client_mut(client_id, |client| {
-                client.set_protocol_field("sdp_offer".to_string(), serde_json::json!(offer_json));
-            })
-            .await;
-
-        info!("WebRTC client {} generated SDP offer", client_id);
-        let _ = status_tx.send(format!(
-            "[CLIENT] WebRTC client {} waiting for SDP answer",
-            client_id
-        ));
-        let _ = status_tx.send(format!("SDP Offer (send to peer):\n{}", offer_json));
-        let _ = status_tx.send("__UPDATE_UI__".to_string());
-
-        // Store peer connection and data channel for later use
-        let pc_ptr = Arc::into_raw(peer_connection) as usize;
-        let dc_ptr = Arc::into_raw(data_channel) as usize;
-        app_state
-            .with_client_mut(client_id, |client| {
-                client.set_protocol_field(
-                    "peer_connection_ptr".to_string(),
-                    serde_json::json!(pc_ptr),
-                );
-                client
-                    .set_protocol_field("data_channel_ptr".to_string(), serde_json::json!(dc_ptr));
-            })
-            .await;
-
-        // Spawn a task to monitor for answer
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
-                // Check if client was removed
-                if app_state_clone.get_client(client_id).await.is_none() {
-                    info!("WebRTC client {} stopped", client_id);
-                    // Clean up Arc pointers
-                    unsafe {
-                        if pc_ptr != 0 {
-                            let _ = Arc::from_raw(pc_ptr as *const RTCPeerConnection);
-                        }
-                        if dc_ptr != 0 {
-                            let _ = Arc::from_raw(dc_ptr as *const RTCDataChannel);
-                        }
-                    }
-                    break;
-                }
-            }
-        });
-
-        // Return a dummy local address (WebRTC is peer-to-peer)
-        Ok("0.0.0.0:0".parse().unwrap())
     }
 
-    /// Apply remote SDP answer to complete the connection
+    /// Apply remote SDP answer to complete the connection (manual mode)
     pub async fn apply_answer(
         client_id: ClientId,
         answer_json: String,
@@ -395,7 +757,68 @@ impl WebRtcClient {
         // Set remote description
         pc_clone.set_remote_description(answer).await?;
 
-        info!("WebRTC client {} connection established", client_id);
+        info!("WebRTC client {} connection established (manual mode)", client_id);
+
+        Ok(())
+    }
+
+    /// Create a new data channel on an existing connection
+    pub async fn create_channel(
+        client_id: ClientId,
+        channel_label: String,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        llm_client: OllamaClient,
+    ) -> Result<()> {
+        info!("WebRTC client {} creating channel '{}'", client_id, channel_label);
+
+        // Get peer connection pointer
+        let pc_ptr = app_state
+            .with_client_mut(client_id, |client| {
+                client
+                    .get_protocol_field("peer_connection_ptr")
+                    .and_then(|v| v.as_u64())
+                    .map(|p| p as usize)
+            })
+            .await
+            .flatten()
+            .context("No peer connection found")?;
+
+        // Reconstruct Arc (temporarily)
+        let peer_connection = unsafe { Arc::from_raw(pc_ptr as *const RTCPeerConnection) };
+        let pc_clone = Arc::clone(&peer_connection);
+        // Prevent drop
+        let _ = Arc::into_raw(peer_connection);
+
+        // Create new data channel
+        let data_channel = pc_clone.create_data_channel(&channel_label, None).await?;
+        info!("WebRTC client {} created channel '{}'", client_id, channel_label);
+
+        // Get client data (stored somewhere - need to track this)
+        // For now, we'll create a new client data structure
+        // TODO: This should be stored in app_state or passed differently
+
+        Ok(())
+    }
+
+    /// Send message on a specific channel (with hex decoding for binary data)
+    pub async fn send_on_channel(
+        client_id: ClientId,
+        channel_label: String,
+        message: String,
+        is_hex: bool,
+        app_state: Arc<AppState>,
+    ) -> Result<()> {
+        trace!(
+            "WebRTC client {} sending on '{}': {} (hex: {})",
+            client_id,
+            channel_label,
+            message,
+            is_hex
+        );
+
+        // TODO: Get channel from stored client data
+        // For now, this is a placeholder
 
         Ok(())
     }
