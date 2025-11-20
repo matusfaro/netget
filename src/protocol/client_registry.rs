@@ -218,6 +218,9 @@ impl ClientRegistry {
         #[cfg(feature = "redis")]
         self.register(Arc::new(crate::client::redis::RedisClientProtocol::new()));
 
+        #[cfg(feature = "couchdb")]
+        self.register(Arc::new(crate::client::couchdb::CouchDbClientProtocol::new()));
+
         // RSS client temporarily disabled - needs API updates
         // #[cfg(feature = "rss")]
         // self.register(Arc::new(crate::client::rss::RssClientProtocol::new()));

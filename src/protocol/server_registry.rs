@@ -212,6 +212,9 @@ impl ServerRegistry {
         #[cfg(feature = "elasticsearch")]
         self.register(Arc::new(crate::server::ElasticsearchProtocol::new()));
 
+        #[cfg(feature = "couchdb")]
+        self.register(Arc::new(crate::server::CouchDbProtocol::new()));
+
         #[cfg(feature = "npm")]
         self.register(Arc::new(crate::server::NpmProtocol::new()));
 

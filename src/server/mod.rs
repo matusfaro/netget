@@ -395,6 +395,13 @@ pub use elasticsearch::actions::ElasticsearchProtocol;
 #[cfg(feature = "elasticsearch")]
 pub use elasticsearch::ElasticsearchServer;
 
+#[cfg(feature = "couchdb")]
+pub mod couchdb;
+#[cfg(feature = "couchdb")]
+pub use couchdb::actions::CouchDbProtocol;
+#[cfg(feature = "couchdb")]
+pub use couchdb::CouchDbServer;
+
 #[cfg(feature = "dynamo")]
 pub mod dynamo;
 #[cfg(feature = "dynamo")]

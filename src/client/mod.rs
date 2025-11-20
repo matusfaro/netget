@@ -298,6 +298,12 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
+// couchdb client
+#[cfg(feature = "couchdb")]
+pub mod couchdb;
+#[cfg(feature = "couchdb")]
+pub use couchdb::actions::CouchDbClientProtocol;
+
 // rss client - temporarily disabled (needs API updates)
 // #[cfg(feature = "rss")]
 // pub mod rss;
