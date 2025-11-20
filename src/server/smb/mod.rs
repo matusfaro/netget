@@ -85,6 +85,7 @@ impl SmbServer {
         status_tx: mpsc::UnboundedSender<String>,
         server_id: ServerId,
     ) -> Result<SocketAddr> {
+        eprintln!("===== spawn_with_llm_actions CALLED for {} =====", listen_addr);
         info!(
             "SMB server (LLM-controlled, guest-only) starting on {}",
             listen_addr
@@ -94,22 +95,29 @@ impl SmbServer {
         let protocol = Arc::new(SmbProtocol::new());
 
         // Bind TCP listener
+        eprintln!("===== BINDING SMB LISTENER to {} =====", listen_addr);
         let listener = TcpListener::bind(listen_addr)
             .await
             .context("Failed to bind SMB TCP listener")?;
+        eprintln!("===== BIND SUCCESSFUL =====");
 
         let actual_addr = listener.local_addr()?;
+        eprintln!("===== LISTENER LOCAL ADDR: {} =====", actual_addr);
         info!("SMB server listening on {}", actual_addr);
         let _ = status_tx.send(format!("→ SMB server listening on {}", actual_addr));
 
         // Spawn connection acceptor
+        let acceptor_id = format!("{:p}", &listener);
+        eprintln!("===== CREATING ACCEPTOR TASK {} for {} =====", acceptor_id, actual_addr);
         tokio::spawn(async move {
-            eprintln!("===== SMB ACCEPTOR TASK STARTED =====");
+            eprintln!("===== SMB ACCEPTOR TASK {} STARTED =====", acceptor_id);
             info!("SMB server connection acceptor started");
             let _ = status_tx.send("[INFO] SMB connection acceptor loop starting".to_string());
 
+            let mut accept_call_count = 0;
             loop {
-                eprintln!("===== SMB ACCEPTOR: CALLING accept() =====");
+                accept_call_count += 1;
+                eprintln!("===== SMB ACCEPTOR {}: CALLING accept() (call #{}) =====", acceptor_id, accept_call_count);
                 trace!("SMB acceptor: waiting for connection");
                 match listener.accept().await {
                     Ok((stream, peer_addr)) => {
@@ -124,7 +132,9 @@ impl SmbServer {
                         let protocol = protocol.clone();
                         let status_tx = status_tx.clone();
 
-                        tokio::spawn(async move {
+                        eprintln!("===== SPAWNING HANDLER TASK for {} =====", peer_addr);
+                        let task_handle = tokio::spawn(async move {
+                            eprintln!("===== HANDLER TASK STARTED for {} =====", peer_addr);
                             if let Err(e) = Self::handle_connection(
                                 stream,
                                 peer_addr,
@@ -143,6 +153,8 @@ impl SmbServer {
                                 ));
                             }
                         });
+                        eprintln!("===== SPAWNED HANDLER TASK (returned immediately) =====");
+                        eprintln!("===== LOOPING BACK TO ACCEPT NEXT CONNECTION =====");
                     }
                     Err(e) => {
                         eprintln!("===== SMB ACCEPT ERROR: {} =====", e);
@@ -150,6 +162,7 @@ impl SmbServer {
                         let _ = status_tx.send(format!("✗ SMB accept error: {}", e));
                     }
                 }
+                eprintln!("===== END OF ACCEPT MATCH, LOOPING =====");
             }
             eprintln!("===== SMB ACCEPTOR LOOP EXITED =====");
         });
@@ -180,8 +193,10 @@ impl SmbServer {
         protocol: Arc<SmbProtocol>,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
+        eprintln!("===== HANDLE_CONNECTION CALLED for {} =====", peer_addr);
         // Generate connection ID
         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
+        eprintln!("===== CONNECTION ID: {} =====", connection_id);
 
         console_info!(
             status_tx,
