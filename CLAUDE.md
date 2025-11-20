@@ -41,6 +41,20 @@ Each protocol has TWO CLAUDE.md files:
 
 Black-box, prompt-driven. LLM interprets prompts, tests validate with real clients. **Status**: Unit 12/12 passing, E2E infrastructure fixed. See `TEST_INFRASTRUCTURE_FIXES.md`, `TEST_STATUS_REPORT.md`.
 
+### Test Purpose (CRITICAL - NO EXCEPTIONS)
+
+**⚠️  Tests define expected behavior. When tests fail, FIX THE IMPLEMENTATION, not the test.**
+
+The purpose of tests is to validate that implementations work correctly:
+- ❌ **WRONG**: "The test passes, but the implementation doesn't work" - This means you are NOT done
+- ✅ **CORRECT**: "The implementation passes all tests" - This is the completion criteria
+- When a test fails, investigate whether the implementation is correct
+- Do NOT claim completion just because the test code is correct
+- The implementation must be fixed to make the test pass
+- Only modify tests if they have incorrect expectations or are testing the wrong behavior
+
+**Completion criteria**: Implementation passes all tests, not just tests being written correctly.
+
 ### Test Location Policy (CRITICAL - NO EXCEPTIONS)
 
 **⚠️  NEVER add tests to `src/` files. ALL tests MUST be in the `tests/` directory.**
