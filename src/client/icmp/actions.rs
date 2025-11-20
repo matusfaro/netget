@@ -1,13 +1,12 @@
 //! ICMP client protocol actions implementation
 
-use crate::llm::actions::client_trait::{Client, ClientActionResult, ConnectContext};
-use crate::llm::actions::{ActionDefinition, Parameter, ParameterDefinition};
+use crate::llm::actions::client_trait::{Client, ClientActionResult};
+use crate::llm::actions::protocol_trait::Protocol;
+use crate::llm::actions::{ActionDefinition, Parameter};
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
 use serde_json::json;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::LazyLock;
 
 /// ICMP client protocol handler
@@ -19,23 +18,8 @@ impl IcmpClientProtocol {
     }
 }
 
-impl Client for IcmpClientProtocol {
-    fn connect(
-        &self,
-        ctx: ConnectContext,
-    ) -> Pin<Box<dyn Future<Output = Result<std::net::SocketAddr>> + Send>> {
-        Box::pin(async move {
-            crate::client::icmp::IcmpClient::connect_with_llm_actions(
-                ctx.remote_addr,
-                ctx.llm_client,
-                ctx.app_state,
-                ctx.status_tx,
-                ctx.client_id,
-            )
-            .await
-        })
-    }
-
+// Implement Protocol trait (common functionality)
+impl Protocol for IcmpClientProtocol {
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![]
     }
@@ -43,10 +27,70 @@ impl Client for IcmpClientProtocol {
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
         vec![
             send_echo_request_action(),
-            send_timestamp_request_action(),
+            // send_timestamp_request_action(), // TODO: Removed - timestamp support requires pnet timestamp packet types
             wait_for_more_action(),
             disconnect_action(),
         ]
+    }
+
+    fn protocol_name(&self) -> &'static str {
+        "ICMP"
+    }
+
+    fn get_event_types(&self) -> Vec<EventType> {
+        get_icmp_client_event_types()
+    }
+
+    fn stack_name(&self) -> &'static str {
+        "IP>ICMP"
+    }
+
+    fn keywords(&self) -> Vec<&'static str> {
+        vec!["icmp", "icmp client", "ping", "traceroute"]
+    }
+
+    fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
+        use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
+
+        ProtocolMetadataV2::builder()
+            .state(DevelopmentState::Experimental)
+            .implementation("Raw IP sockets with pnet_packet for ICMP")
+            .llm_control("Full control over ICMP message types, TTL, and payloads")
+            .e2e_testing("Real ICMP pings to public IPs (requires CAP_NET_RAW)")
+            .build()
+    }
+
+    fn description(&self) -> &'static str {
+        "ICMP client for sending echo requests (ping) and traceroute"
+    }
+
+    fn example_prompt(&self) -> &'static str {
+        "Ping 8.8.8.8 every 5 seconds and report RTT"
+    }
+
+    fn group_name(&self) -> &'static str {
+        "Core"
+    }
+}
+
+// Implement Client trait (client-specific functionality)
+impl Client for IcmpClientProtocol {
+    fn connect(
+        &self,
+        ctx: crate::protocol::ConnectContext,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<std::net::SocketAddr>> + Send>,
+    > {
+        Box::pin(async move {
+            crate::client::icmp::IcmpClient::connect_with_llm_actions(
+                ctx.remote_addr,
+                ctx.llm_client,
+                ctx.state,
+                ctx.status_tx,
+                ctx.client_id,
+            )
+            .await
+        })
     }
 
     fn execute_action(&self, action: serde_json::Value) -> Result<ClientActionResult> {
@@ -87,6 +131,7 @@ impl Client for IcmpClientProtocol {
                     }),
                 })
             }
+            /* TODO: Timestamp support requires pnet to add timestamp packet types
             "send_timestamp_request" => {
                 let destination_ip = action
                     .get("destination_ip")
@@ -112,26 +157,11 @@ impl Client for IcmpClientProtocol {
                     }),
                 })
             }
+            */
             "wait_for_more" => Ok(ClientActionResult::WaitForMore),
             "disconnect" => Ok(ClientActionResult::Disconnect),
             _ => Err(anyhow::anyhow!("Unknown ICMP client action: {}", action_type)),
         }
-    }
-
-    fn get_event_types(&self) -> Vec<EventType> {
-        get_icmp_client_event_types()
-    }
-
-    fn protocol_name(&self) -> &'static str {
-        "ICMP"
-    }
-
-    fn stack_name(&self) -> &'static str {
-        "IP>ICMP"
-    }
-
-    fn get_startup_params(&self) -> Vec<ParameterDefinition> {
-        vec![]
     }
 }
 
@@ -183,6 +213,7 @@ fn send_echo_request_action() -> ActionDefinition {
     }
 }
 
+/* TODO: Timestamp support requires pnet to add timestamp packet types
 /// Action definition for send_timestamp_request
 fn send_timestamp_request_action() -> ActionDefinition {
     ActionDefinition {
@@ -216,6 +247,7 @@ fn send_timestamp_request_action() -> ActionDefinition {
         }),
     }
 }
+*/
 
 /// Action definition for wait_for_more
 fn wait_for_more_action() -> ActionDefinition {

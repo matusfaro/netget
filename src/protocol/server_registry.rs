@@ -74,6 +74,9 @@ impl ServerRegistry {
         #[cfg(feature = "arp")]
         self.register(Arc::new(crate::server::ArpProtocol::new()));
 
+        #[cfg(feature = "icmp")]
+        self.register(Arc::new(crate::server::IcmpProtocol::new()));
+
         #[cfg(feature = "dc")]
         self.register(Arc::new(crate::server::DcProtocol::new()));
 

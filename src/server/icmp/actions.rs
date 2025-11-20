@@ -42,7 +42,7 @@ impl Protocol for IcmpProtocol {
             send_echo_reply_action(),
             send_destination_unreachable_action(),
             send_time_exceeded_action(),
-            send_timestamp_reply_action(),
+            // send_timestamp_reply_action(), // TODO: Removed - timestamp support requires pnet timestamp packet types
             ignore_icmp_action(),
         ]
     }
@@ -137,7 +137,7 @@ impl Server for IcmpProtocol {
             "send_echo_reply" => self.execute_send_echo_reply(action),
             "send_destination_unreachable" => self.execute_send_destination_unreachable(action),
             "send_time_exceeded" => self.execute_send_time_exceeded(action),
-            "send_timestamp_reply" => self.execute_send_timestamp_reply(action),
+            // "send_timestamp_reply" => self.execute_send_timestamp_reply(action), // TODO: Removed - timestamp support requires pnet timestamp packet types
             "ignore_icmp" => Ok(ActionResult::NoAction),
             _ => Err(anyhow::anyhow!("Unknown ICMP action: {}", action_type)),
         }
@@ -281,6 +281,7 @@ impl IcmpProtocol {
         Ok(ActionResult::Output(packet))
     }
 
+    /* TODO: Timestamp support requires pnet to add timestamp packet types
     /// Execute send_timestamp_reply action
     fn execute_send_timestamp_reply(&self, action: serde_json::Value) -> Result<ActionResult> {
         let source_ip = action
@@ -326,6 +327,7 @@ impl IcmpProtocol {
 
         Ok(ActionResult::Output(packet))
     }
+    */
 }
 
 /// Action definition for send_echo_reply
@@ -461,6 +463,7 @@ fn send_time_exceeded_action() -> ActionDefinition {
     }
 }
 
+/* TODO: Timestamp support requires pnet to add timestamp packet types
 /// Action definition for send_timestamp_reply
 fn send_timestamp_reply_action() -> ActionDefinition {
     ActionDefinition {
@@ -509,6 +512,7 @@ fn send_timestamp_reply_action() -> ActionDefinition {
         }),
     }
 }
+*/
 
 /// Action definition for ignore_icmp
 fn ignore_icmp_action() -> ActionDefinition {
@@ -572,6 +576,7 @@ pub static ICMP_ECHO_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     .with_actions(vec![send_echo_reply_action(), ignore_icmp_action()])
 });
 
+/* TODO: Timestamp support requires pnet to add timestamp packet types
 pub static ICMP_TIMESTAMP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "icmp_timestamp_request",
@@ -611,6 +616,7 @@ pub static ICMP_TIMESTAMP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| 
     ])
     .with_actions(vec![send_timestamp_reply_action(), ignore_icmp_action()])
 });
+*/
 
 pub static ICMP_OTHER_MESSAGE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
@@ -659,7 +665,7 @@ pub static ICMP_OTHER_MESSAGE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 pub fn get_icmp_event_types() -> Vec<EventType> {
     vec![
         ICMP_ECHO_REQUEST_EVENT.clone(),
-        ICMP_TIMESTAMP_REQUEST_EVENT.clone(),
+        // ICMP_TIMESTAMP_REQUEST_EVENT.clone(), // TODO: Removed - timestamp support requires pnet timestamp packet types
         ICMP_OTHER_MESSAGE_EVENT.clone(),
     ]
 }

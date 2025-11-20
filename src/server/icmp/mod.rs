@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use pnet::packet::icmp::echo_reply::EchoReplyPacket;
 use pnet::packet::icmp::echo_request::EchoRequestPacket;
 use pnet::packet::icmp::time_exceeded::TimeExceededPacket;
-use pnet::packet::icmp::timestamp::TimestampPacket;
+// Note: pnet doesn't provide timestamp packet types
 use pnet::packet::icmp::{
     IcmpCode, IcmpPacket, IcmpTypes, MutableIcmpPacket,
 };
@@ -29,7 +29,7 @@ use crate::state::app_state::AppState;
 use crate::{console_error, console_info, console_trace};
 use actions::{
     IcmpProtocol, ICMP_ECHO_REQUEST_EVENT, ICMP_OTHER_MESSAGE_EVENT,
-    ICMP_TIMESTAMP_REQUEST_EVENT,
+    // ICMP_TIMESTAMP_REQUEST_EVENT, // TODO: Removed - timestamp support requires pnet timestamp packet types
 };
 
 /// ICMP server that captures and responds to ICMP messages
@@ -96,12 +96,14 @@ impl IcmpServer {
             };
 
             // Receive loop
-            let mut buffer = vec![0u8; 65535];
+            let mut buffer = vec![std::mem::MaybeUninit::uninit(); 65535];
             loop {
                 // Use recv_from with timeout
                 match socket.recv_from(&mut buffer) {
                     Ok((n, _src_addr)) => {
-                        let data = buffer[..n].to_vec();
+                        let data = unsafe {
+                            std::slice::from_raw_parts(buffer.as_ptr() as *const u8, n).to_vec()
+                        };
 
                         // Parse IP packet
                         let ip_packet = match Ipv4Packet::new(&data) {
@@ -189,6 +191,7 @@ impl IcmpServer {
                                         return;
                                     }
                                 }
+                                /* TODO: Timestamp support requires pnet to add timestamp packet types
                                 IcmpTypes::Timestamp => {
                                     // Parse timestamp request
                                     if let Some(ts_req) = TimestampPacket::new(&icmp_payload) {
@@ -211,6 +214,7 @@ impl IcmpServer {
                                         return;
                                     }
                                 }
+                                */
                                 _ => {
                                     // Other ICMP types
                                     Event::new(
@@ -360,11 +364,18 @@ impl IcmpServer {
             echo_reply.set_identifier(identifier);
             echo_reply.set_sequence_number(sequence);
             echo_reply.set_payload(payload);
+        }
 
-            // Calculate ICMP checksum
+        // Calculate ICMP checksum
+        let icmp_checksum = {
             let icmp_packet = MutableIcmpPacket::new(&mut icmp_buffer).unwrap();
-            let checksum = pnet::packet::icmp::checksum(&icmp_packet.to_immutable());
-            echo_reply.set_checksum(checksum);
+            pnet::packet::icmp::checksum(&icmp_packet.to_immutable())
+        };
+
+        {
+            let mut echo_reply =
+                MutableEchoReplyPacket::new(&mut icmp_buffer).unwrap();
+            echo_reply.set_checksum(icmp_checksum);
         }
 
         // Wrap in IP packet
@@ -388,8 +399,8 @@ impl IcmpServer {
             ip_packet.set_payload(&icmp_buffer);
 
             // Calculate IP checksum
-            let checksum = checksum(&ip_packet.to_immutable());
-            ip_packet.set_checksum(checksum);
+            let ip_checksum = checksum(&ip_packet.to_immutable());
+            ip_packet.set_checksum(ip_checksum);
         }
 
         ip_buffer
@@ -420,11 +431,18 @@ impl IcmpServer {
             dest_unreach.set_icmp_type(IcmpTypes::DestinationUnreachable);
             dest_unreach.set_icmp_code(IcmpCode::new(code));
             dest_unreach.set_payload(payload);
+        }
 
-            // Calculate ICMP checksum
+        // Calculate ICMP checksum
+        let icmp_checksum = {
             let icmp_packet = MutableIcmpPacket::new(&mut icmp_buffer).unwrap();
-            let checksum = pnet::packet::icmp::checksum(&icmp_packet.to_immutable());
-            dest_unreach.set_checksum(checksum);
+            pnet::packet::icmp::checksum(&icmp_packet.to_immutable())
+        };
+
+        {
+            let mut dest_unreach =
+                MutableDestinationUnreachablePacket::new(&mut icmp_buffer).unwrap();
+            dest_unreach.set_checksum(icmp_checksum);
         }
 
         // Wrap in IP packet
@@ -442,8 +460,8 @@ impl IcmpServer {
             ip_packet.set_destination(dest_ip);
             ip_packet.set_payload(&icmp_buffer);
 
-            let checksum = checksum(&ip_packet.to_immutable());
-            ip_packet.set_checksum(checksum);
+            let ip_checksum = checksum(&ip_packet.to_immutable());
+            ip_packet.set_checksum(ip_checksum);
         }
 
         ip_buffer
@@ -472,10 +490,17 @@ impl IcmpServer {
             time_exceeded.set_icmp_type(IcmpTypes::TimeExceeded);
             time_exceeded.set_icmp_code(IcmpCode::new(code));
             time_exceeded.set_payload(payload);
+        }
 
+        // Calculate ICMP checksum
+        let icmp_checksum = {
             let icmp_packet = MutableIcmpPacket::new(&mut icmp_buffer).unwrap();
-            let checksum = pnet::packet::icmp::checksum(&icmp_packet.to_immutable());
-            time_exceeded.set_checksum(checksum);
+            pnet::packet::icmp::checksum(&icmp_packet.to_immutable())
+        };
+
+        {
+            let mut time_exceeded = MutableTimeExceededPacket::new(&mut icmp_buffer).unwrap();
+            time_exceeded.set_checksum(icmp_checksum);
         }
 
         // Wrap in IP packet
@@ -493,13 +518,14 @@ impl IcmpServer {
             ip_packet.set_destination(dest_ip);
             ip_packet.set_payload(&icmp_buffer);
 
-            let checksum = checksum(&ip_packet.to_immutable());
-            ip_packet.set_checksum(checksum);
+            let ip_checksum = checksum(&ip_packet.to_immutable());
+            ip_packet.set_checksum(ip_checksum);
         }
 
         ip_buffer
     }
 
+    /* TODO: Timestamp support requires pnet to add timestamp_reply packet types
     /// Helper function to build an ICMP timestamp reply packet
     pub fn build_timestamp_reply(
         source_ip: Ipv4Addr,
@@ -559,6 +585,7 @@ impl IcmpServer {
 
         ip_buffer
     }
+    */
 }
 
 /// Convert ICMP type to human-readable string

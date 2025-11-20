@@ -298,6 +298,12 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
+// icmp client
+#[cfg(feature = "icmp")]
+pub mod icmp;
+#[cfg(feature = "icmp")]
+pub use icmp::actions::IcmpClientProtocol;
+
 // rss client - temporarily disabled (needs API updates)
 // #[cfg(feature = "rss")]
 // pub mod rss;
