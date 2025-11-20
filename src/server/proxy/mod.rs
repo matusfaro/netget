@@ -195,6 +195,31 @@ impl ProxyServer {
             let _ = status_tx.send("[INFO] Pass-through mode - HTTPS allow/block only".to_string());
         }
 
+        // Spawn cache cleanup task if MITM mode is enabled
+        if let Some(ref cache) = cert_cache {
+            let cache_clone = cache.clone();
+            let status_tx_clone = status_tx.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600)); // 1 hour
+                loop {
+                    interval.tick().await;
+                    debug!("Running periodic certificate cache cleanup");
+                    cache_clone.cleanup_expired().await;
+                    let stats = cache_clone.get_stats().await;
+                    info!(
+                        "Certificate cache stats: {} total, {} valid, {} expired",
+                        stats.total_certificates, stats.valid_certificates, stats.expired_certificates
+                    );
+                    let _ = status_tx_clone.send(format!(
+                        "[DEBUG] Certificate cache: {} certs ({} valid)",
+                        stats.total_certificates, stats.valid_certificates
+                    ));
+                }
+            });
+            info!("Started certificate cache cleanup task (runs every hour)");
+            let _ = status_tx.send("[INFO] Certificate cache cleanup task started (hourly)".to_string());
+        }
+
         // Spawn proxy handler task
         let _ = status_tx.send("[INFO] >>> Spawning proxy accept loop...".to_string());
         tokio::spawn(async move {

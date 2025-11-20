@@ -245,19 +245,23 @@ let cert = params.self_signed(&key_pair)?;
 - **TTL**: 24 hours (configurable via `cert_ttl_secs`)
 - **Normalization**: Domains lowercased and trimmed
 - **SAN generation**: Automatically adds wildcard (`*.example.com`) and www (`www.example.com`)
-- **Cleanup**: `cleanup_expired()` method for periodic cache maintenance
+- **Automatic cleanup**: Background task runs hourly to remove expired certificates
+- **Manual cleanup**: `cleanup_expired()` method available for on-demand maintenance
 - **Stats**: `get_stats()` returns `CacheStats` (total, expired, valid)
+- **Logging**: Cache stats logged hourly to INFO level
 
 ## Current Status
 
 1. **HTTPS MITM Fully Implemented** ✅
     - Certificate generation works (self-signed CA)
     - Per-domain leaf certificate caching implemented (`cert_cache.rs`)
+    - Automatic cache cleanup task (runs hourly)
     - TLS interception implemented (`tls_mitm.rs`):
       - Client-side TLS accept with dynamically generated certificates
       - Upstream-side TLS connect with certificate validation
       - HTTP request/response proxying through LLM filtering
     - Certificate export action for user installation
+    - Comprehensive E2E tests for MITM mode (5 test cases)
 
 ## Limitations
 

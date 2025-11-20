@@ -20,18 +20,22 @@ dependencies and ensuring fast, reliable execution.
 
 ## LLM Call Budget
 
-### Test Breakdown
+### Test Breakdown (Mock Mode - Default)
 
-1. **`test_proxy_http_passthrough`**: 1 server startup + 1 request = **2 LLM calls**
-2. **`test_proxy_http_block`**: 1 server startup + 1 request = **2 LLM calls**
-3. **`test_proxy_modify_request_headers`**: 1 server startup + 1 request = **2 LLM calls**
-4. **`test_proxy_modify_request_body`**: 1 server startup + 1 request = **2 LLM calls**
-5. **`test_proxy_filter_by_path`**: 1 server startup + 2 requests = **3 LLM calls**
-6. **`test_proxy_https_passthrough`**: 1 server startup + 1 CONNECT = **2 LLM calls**
-7. **`test_proxy_https_block_by_sni`**: 1 server startup + 1 CONNECT = **2 LLM calls**
-8. **`test_proxy_url_rewrite`**: 1 server startup + 1 request = **2 LLM calls**
+**All tests use mocks by default** - actual LLM calls: **0** in normal test runs
 
-**Total: 17 LLM calls** (exceeds target - optimization opportunity)
+1. **`test_proxy_http_passthrough_with_mocks`**: Mock calls = **0 actual LLM**
+2. **`test_proxy_http_block_with_mocks`**: Mock calls = **0 actual LLM**
+3. **`test_proxy_https_connect_with_mocks`**: Mock calls = **0 actual LLM**
+4. **`test_proxy_modify_headers_with_mocks`**: Mock calls = **0 actual LLM**
+5. **`test_proxy_mitm_initialization`**: Mock calls = **0 actual LLM**
+6. **`test_proxy_mitm_https_interception`**: Mock calls = **0 actual LLM**
+7. **`test_proxy_mitm_request_modification`**: Mock calls = **0 actual LLM**
+8. **`test_proxy_mitm_request_blocking`**: Mock calls = **0 actual LLM**
+9. **`test_proxy_export_ca_certificate`**: Mock calls = **0 actual LLM**
+
+**Total: 0 LLM calls in mock mode** (default)
+**Total: ~18 LLM calls with --use-ollama flag** (optional validation)
 
 ### Optimization Opportunities
 
@@ -73,14 +77,18 @@ necessary.
 
 **Model**: qwen3-coder:30b (default NetGet model)
 
-**Runtime**: ~90-120 seconds for full test suite (8 tests, 17 LLM calls)
+**Mock Mode (Default)**:
+- **Runtime**: ~2-5 seconds for full test suite (9 tests, 0 LLM calls)
+- Per-test average: ~200-500ms
+- Target server startup: <100ms per test
+- Proxy startup: ~500ms-1s (certificate generation in MITM tests)
 
+**With --use-ollama Flag**:
+- **Runtime**: ~90-140 seconds for full test suite (9 tests, ~18 LLM calls)
 - Per-test average: ~12-15 seconds
 - LLM call latency: ~2-5 seconds per call (depends on Ollama load)
-- Target server startup: <100ms per test
-- Proxy startup: ~500ms-1s (certificate generation adds overhead)
 
-**With Ollama Lock**: Tests run reliably in parallel. Total suite time remains ~90-120s due to serialized LLM access.
+**With Ollama Lock**: Tests run reliably in parallel. Total suite time with --use-ollama remains ~90-140s due to serialized LLM access.
 
 ## Failure Rate
 
@@ -158,17 +166,26 @@ necessary.
     - Tests LLM-controlled allow/block decisions
     - Validates 403 response for blocked destinations
 
+### MITM Mode Tests (NEW)
+
+9. **`test_proxy_mitm_initialization`**: Verifies proxy starts in MITM mode with certificate generation
+10. **`test_proxy_mitm_https_interception`**: Tests HTTPS request decryption and inspection
+11. **`test_proxy_mitm_request_modification`**: Validates header injection in decrypted HTTPS
+12. **`test_proxy_mitm_request_blocking`**: Tests blocking based on decrypted HTTPS content
+13. **`test_proxy_export_ca_certificate`**: Validates CA certificate export for user installation
+
 ### Coverage Gaps
 
 **Not Yet Tested**:
 
-- MITM mode with full TLS interception (feature not fully implemented)
-- Response modification (only request modification tested)
+- Response modification in MITM mode (only request modification tested)
+- Certificate caching behavior (cache hits, expiration)
 - WebSocket upgrade handling
 - Chunked transfer encoding edge cases
-- Multiple concurrent requests to same proxy (stress testing)
+- Multiple concurrent HTTPS connections to same proxy (stress testing)
 - Proxy authentication (not implemented)
 - IPv6 target addresses
+- MITM with loaded CA certificate (from file)
 
 ## Test Infrastructure
 
@@ -243,25 +260,34 @@ server.stop().await?;
 ## Running Tests
 
 ```bash
-# Run all proxy tests (requires Ollama + model)
-./cargo-isolated.sh test --features proxy --test server::proxy::test
+# Run all proxy tests in mock mode (no Ollama required, fast)
+./test-e2e.sh proxy
+# OR
+./cargo-isolated.sh test --features proxy --test server::proxy::e2e_test
 
-# Run specific test
-./cargo-isolated.sh test --features proxy --test server::proxy::test test_proxy_http_passthrough
+# Run with real Ollama (for validation)
+./test-e2e.sh --use-ollama proxy
+# OR
+./cargo-isolated.sh test --features proxy --test server::proxy::e2e_test -- --use-ollama
+
+# Run specific MITM test
+./cargo-isolated.sh test --features proxy --test server::proxy::e2e_test test_proxy_mitm_initialization
 
 # Run with output
-./cargo-isolated.sh test --features proxy --test server::proxy::test -- --nocapture
+./cargo-isolated.sh test --features proxy --test server::proxy::e2e_test -- --nocapture
 
-# Run with concurrency (uses Ollama lock)
-./cargo-isolated.sh test --features proxy --test server::proxy::test -- --test-threads=4
+# Run with concurrency (mocks are thread-safe)
+./cargo-isolated.sh test --features proxy --test server::proxy::e2e_test -- --test-threads=100
 ```
 
 ## Future Test Additions
 
-1. **Response Modification**: Test body/header modification on upstream responses
-2. **MITM TLS Interception**: Once implemented, test full HTTPS decryption and inspection
-3. **Concurrent Request Handling**: Spawn multiple clients simultaneously
-4. **Large Request Bodies**: Test streaming and chunked encoding
-5. **Proxy Chaining**: NetGet proxy → another proxy → target
-6. **Error Handling**: Malformed requests, upstream server failures, DNS failures
-7. **Performance Benchmarking**: Measure latency overhead with/without LLM consultation
+1. **Response Modification in MITM**: Test body/header modification on decrypted HTTPS responses
+2. **Certificate Cache Validation**: Test cache hits, expiration, domain normalization
+3. **MITM with Loaded CA**: Test loading CA certificate from file instead of generating
+4. **Concurrent HTTPS Requests**: Spawn multiple HTTPS clients through MITM simultaneously
+5. **Large Request Bodies in MITM**: Test streaming and chunked encoding through TLS
+6. **Proxy Chaining**: NetGet MITM proxy → another proxy → target
+7. **Error Handling**: TLS handshake failures, invalid certificates, upstream TLS errors
+8. **Performance Benchmarking**: Measure MITM overhead vs pass-through mode
+9. **Certificate SAN Validation**: Verify wildcard and www variants in generated certs
