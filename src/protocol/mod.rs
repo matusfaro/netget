@@ -3,6 +3,7 @@
 //! The application supports multiple protocol implementations.
 //! Protocol behavior is controlled by the LLM based on the chosen protocol and instructions.
 
+pub mod binding_defaults;
 pub mod client_registry;
 pub mod connect_context;
 pub mod dependencies;
@@ -12,6 +13,7 @@ pub mod metadata;
 pub mod server_registry;
 pub mod spawn_context;
 
+pub use binding_defaults::BindingDefaults;
 pub use client_registry::CLIENT_REGISTRY;
 pub use connect_context::ConnectContext;
 pub use dependencies::ProtocolDependency;

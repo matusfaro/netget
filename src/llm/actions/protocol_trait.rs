@@ -12,6 +12,21 @@ use crate::state::app_state::AppState;
 /// This trait defines the common interface that all protocol implementations
 /// must provide, regardless of whether they're servers or clients.
 pub trait Protocol: Send + Sync {
+    /// Get default binding parameters for this protocol
+    ///
+    /// Protocols can return `Some(BindingDefaults)` to opt into the flexible
+    /// binding system. Protocols that return `None` use the legacy listen_addr system.
+    ///
+    /// Examples:
+    /// - TCP: `Some(BindingDefaults::port_based("127.0.0.1", 0))`
+    /// - ICMP: `Some(BindingDefaults::interface_based("lo"))`
+    /// - Unmigrated protocols: `None`
+    ///
+    /// Default implementation returns `None` (unmigrated, use legacy system).
+    fn default_binding(&self) -> Option<crate::protocol::BindingDefaults> {
+        None
+    }
+
     /// Get startup parameters that can be provided when starting this protocol
     ///
     /// These parameters configure the protocol before it starts. Examples:

@@ -39,7 +39,20 @@ pub enum CommonAction {
 
     /// Open a new server
     OpenServer {
-        port: u16,
+        // === NEW FLEXIBLE BINDING FIELDS ===
+        /// MAC address (for layer 2 protocols like ARP spoofing)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mac_address: Option<String>,
+        /// Network interface to bind (for raw protocols like ICMP, ARP, DataLink)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        interface: Option<String>,
+        /// Host address (hostname or IP) to bind (IPv4, IPv6, or hostname)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        host: Option<String>,
+        /// Port to bind (for socket-based protocols like TCP, HTTP, DNS)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        port: Option<u16>,
+
         base_stack: String,
         #[serde(default)]
         send_first: bool,
@@ -274,10 +287,28 @@ pub fn open_server_action(
 
     let mut parameters = vec![
             Parameter {
+                name: "mac_address".to_string(),
+                type_hint: "string".to_string(),
+                description: "Optional: MAC address for Layer 2 protocols (e.g., ARP spoofing). Format: \"00:11:22:33:44:55\". Most protocols don't need this.".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "interface".to_string(),
+                type_hint: "string".to_string(),
+                description: "Optional: Network interface to bind (for raw protocols like ICMP, ARP, DataLink). Examples: \"lo\" (loopback), \"eth0\", \"en0\". Port-based protocols (TCP, HTTP, DNS) don't use this.".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "host".to_string(),
+                type_hint: "string".to_string(),
+                description: "Optional: Host address to bind (IPv4, IPv6, or hostname). Examples: \"127.0.0.1\" (loopback), \"0.0.0.0\" (all interfaces), \"::\". Protocols will use sensible defaults if omitted.".to_string(),
+                required: false,
+            },
+            Parameter {
                 name: "port".to_string(),
                 type_hint: "number".to_string(),
-                description: "Port number to listen on. Use 0 to automatically find an available port.".to_string(),
-                required: true,
+                description: "Optional: Port number to listen on. Use 0 to automatically find an available port. Required for port-based protocols (TCP, HTTP, DNS). Raw protocols (ICMP, ARP) don't use this.".to_string(),
+                required: false,
             },
             Parameter {
                 name: "base_stack".to_string(),

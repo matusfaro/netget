@@ -135,7 +135,10 @@ async fn execute_startup_action(
             // Call server_startup to create the server
             let server_id = crate::cli::server_startup::start_server_from_action(
                 &state,
-                port,
+                None,        // mac_address
+                None,        // interface
+                None,        // host
+                Some(port),  // port
                 protocol,
                 false, // send_first
                 None,  // initial_memory

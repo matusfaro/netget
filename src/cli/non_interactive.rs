@@ -295,6 +295,9 @@ pub async fn run_with_actions(
 
             match common_action {
                 CommonAction::OpenServer {
+                    mac_address,
+                    interface,
+                    host,
                     port,
                     base_stack,
                     send_first,
@@ -308,6 +311,9 @@ pub async fn run_with_actions(
                     // Execute open_server action
                     match server_startup::start_server_from_action(
                         &state,
+                        mac_address,
+                        interface.clone(),
+                        host,
                         port,
                         &base_stack,
                         send_first,
@@ -321,12 +327,18 @@ pub async fn run_with_actions(
                     .await
                     {
                         Ok(server_id) => {
+                            let binding_desc = if let Some(iface) = &interface {
+                                format!("interface {} ({})", iface, base_stack)
+                            } else if let Some(p) = port {
+                                format!("port {} ({})", p, base_stack)
+                            } else {
+                                format!("({})", base_stack)
+                            };
                             println!(
-                                "[{}] Opened server #{} on port {} ({})",
+                                "[{}] Opened server #{} on {}",
                                 i + 1,
                                 server_id.as_u32(),
-                                port,
-                                base_stack
+                                binding_desc
                             );
                         }
                         Err(e) => {

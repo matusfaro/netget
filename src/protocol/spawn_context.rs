@@ -322,8 +322,35 @@ impl StartupParams {
 /// Contains all the dependencies and configuration needed to start a server.
 #[derive(Clone)]
 pub struct SpawnContext {
-    /// Address to listen on (may be 0.0.0.0:0 for dynamic port assignment)
+    /// Address to listen on (DEPRECATED - use host/port fields instead)
+    ///
+    /// This field is maintained for backwards compatibility with unmigrated protocols.
+    /// New protocols should use the flexible binding system (mac_address, interface, host, port).
+    #[deprecated(since = "1.0.0", note = "Use host/port fields instead")]
     pub listen_addr: SocketAddr,
+
+    // === NEW FLEXIBLE BINDING FIELDS ===
+    /// MAC address for Layer 2 protocols (e.g., ARP spoofing with specific MAC)
+    ///
+    /// Protocol defaults are already applied. Use this value directly.
+    pub mac_address: Option<String>,
+
+    /// Network interface for raw protocols (e.g., "lo", "eth0", "en0")
+    ///
+    /// Protocol defaults are already applied. Use this value directly.
+    pub interface: Option<String>,
+
+    /// Host address (IPv4, IPv6, or hostname) for socket-based protocols
+    ///
+    /// Protocol defaults are already applied. Use this value directly.
+    /// Examples: "127.0.0.1", "0.0.0.0", "::", "localhost"
+    pub host: Option<String>,
+
+    /// Port number for socket-based protocols
+    ///
+    /// Protocol defaults are already applied. Use this value directly.
+    /// Some(0) means automatic port assignment.
+    pub port: Option<u16>,
 
     /// LLM client for generating responses
     pub llm_client: OllamaClient,
@@ -351,7 +378,8 @@ pub struct SpawnContext {
 }
 
 impl SpawnContext {
-    /// Create a new spawn context
+    /// Create a new spawn context (DEPRECATED)
+    #[deprecated(since = "1.0.0", note = "Use new_with_binding instead")]
     pub fn new(
         listen_addr: SocketAddr,
         llm_client: OllamaClient,
@@ -361,6 +389,10 @@ impl SpawnContext {
     ) -> Self {
         Self {
             listen_addr,
+            mac_address: None,
+            interface: None,
+            host: None,
+            port: None,
             llm_client,
             state,
             status_tx,
@@ -369,7 +401,8 @@ impl SpawnContext {
         }
     }
 
-    /// Create spawn context with startup parameters
+    /// Create spawn context with startup parameters (DEPRECATED)
+    #[deprecated(since = "1.0.0", note = "Use new_with_binding instead")]
     pub fn with_params(
         listen_addr: SocketAddr,
         llm_client: OllamaClient,
@@ -380,11 +413,73 @@ impl SpawnContext {
     ) -> Self {
         Self {
             listen_addr,
+            mac_address: None,
+            interface: None,
+            host: None,
+            port: None,
             llm_client,
             state,
             status_tx,
             server_id,
             startup_params: Some(startup_params),
         }
+    }
+
+    /// Helper method to get socket address from host and port
+    ///
+    /// Port-based protocols can use this to construct a SocketAddr from
+    /// the flexible binding fields.
+    ///
+    /// # Returns
+    /// * `Some(SocketAddr)` - If both host and port are available
+    /// * `None` - If host or port is missing
+    ///
+    /// # Example
+    /// ```ignore
+    /// let addr = ctx.socket_addr().context("TCP requires host and port")?;
+    /// ```
+    pub fn socket_addr(&self) -> Option<SocketAddr> {
+        match (&self.host, self.port) {
+            (Some(host), Some(port)) => host.parse::<std::net::IpAddr>().ok().map(|ip| {
+                SocketAddr::new(ip, port)
+            }),
+            _ => None,
+        }
+    }
+
+    /// Helper method to get interface name
+    ///
+    /// Interface-based protocols can use this to get the interface name
+    /// with proper error context.
+    ///
+    /// # Returns
+    /// * `Some(&str)` - If interface is available
+    /// * `None` - If interface is not set
+    ///
+    /// # Example
+    /// ```ignore
+    /// let interface = ctx.interface()
+    ///     .context("ICMP requires network interface")?;
+    /// ```
+    pub fn interface(&self) -> Option<&str> {
+        self.interface.as_deref()
+    }
+
+    /// Helper method to get MAC address
+    ///
+    /// Layer 2 protocols can use this to get the MAC address
+    /// with proper error context.
+    ///
+    /// # Returns
+    /// * `Some(&str)` - If MAC address is available
+    /// * `None` - If MAC address is not set
+    ///
+    /// # Example
+    /// ```ignore
+    /// let mac = ctx.mac_address()
+    ///     .context("ARP spoofing requires MAC address")?;
+    /// ```
+    pub fn mac_address(&self) -> Option<&str> {
+        self.mac_address.as_deref()
     }
 }

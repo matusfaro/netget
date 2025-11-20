@@ -21,16 +21,9 @@ impl IcmpProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for IcmpProtocol {
-    fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-        vec![ParameterDefinition {
-            name: "interface".to_string(),
-            type_hint: "string".to_string(),
-            description:
-                "Network interface name to capture ICMP packets from (e.g., 'eth0', 'en0', 'wlan0')"
-                    .to_string(),
-            required: true,
-            example: json!("eth0"),
-        }]
+    fn default_binding(&self) -> Option<crate::protocol::BindingDefaults> {
+        // ICMP uses interface-based binding (loopback by default)
+        Some(crate::protocol::BindingDefaults::interface_based("lo"))
     }
 
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
@@ -102,14 +95,12 @@ impl Server for IcmpProtocol {
         Box::pin(async move {
             use crate::server::icmp::IcmpServer;
 
-            // ICMP doesn't use SocketAddr, it uses interface name
-            // Extract interface from startup_params
-            let params = ctx
-                .startup_params
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("ICMP requires startup parameters (interface)"))?;
-
-            let interface = params.get_string("interface");
+            // ICMP uses interface-based binding
+            // Extract interface from context (defaults already applied)
+            let interface = ctx
+                .interface()
+                .context("ICMP requires network interface")?
+                .to_string();
 
             // Spawn the ICMP server
             let _interface_name = IcmpServer::spawn_with_llm(

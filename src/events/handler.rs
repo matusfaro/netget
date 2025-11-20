@@ -458,6 +458,9 @@ impl EventHandler {
     ) -> Result<(), crate::events::ActionExecutionError> {
         match action {
             CommonAction::OpenServer {
+                mac_address: _,
+                interface: _,
+                host: _,
                 port,
                 base_stack,
                 send_first: _,
@@ -484,10 +487,12 @@ impl EventHandler {
                     }
                 };
 
+                // NOTE: This code path (execute_common_action_direct) is for legacy handling
+                // and uses port-based server creation. Migrated protocols should use start_server_from_action instead.
                 // Create a new server instance
                 let mut server = ServerInstance::new(
                     crate::state::ServerId::new(0), // Temporary ID, will be replaced by add_server
-                    port,
+                    port.unwrap_or(0),
                     protocol_name.clone(),
                     instruction,
                 );
@@ -1795,6 +1800,9 @@ impl EventHandler {
 
                 match common_action {
                     CommonAction::OpenServer {
+                        mac_address,
+                        interface,
+                        host,
                         port,
                         base_stack,
                         send_first,
@@ -1808,6 +1816,9 @@ impl EventHandler {
                         // Execute open_server action via server startup
                         match server_startup::start_server_from_action(
                             &self.state,
+                            mac_address,
+                            interface.clone(),
+                            host,
                             port,
                             &base_stack,
                             send_first,
@@ -1821,11 +1832,17 @@ impl EventHandler {
                         .await
                         {
                             Ok(server_id) => {
+                                let binding_desc = if let Some(iface) = &interface {
+                                    format!("interface {} ({})", iface, base_stack)
+                                } else if let Some(p) = port {
+                                    format!("port {} ({})", p, base_stack)
+                                } else {
+                                    format!("({})", base_stack)
+                                };
                                 ui.add_llm_message(format!(
-                                    "[LOAD] Opened server #{} on port {} ({})",
+                                    "[LOAD] Opened server #{} on {}",
                                     server_id.as_u32(),
-                                    port,
-                                    base_stack
+                                    binding_desc
                                 ));
                             }
                             Err(e) => {
