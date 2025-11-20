@@ -22,6 +22,8 @@ pub mod ssh_agent;
 pub mod tcp;
 #[cfg(feature = "telnet")]
 pub mod telnet;
+#[cfg(feature = "tls")]
+pub mod tls;
 #[cfg(feature = "webrtc")]
 pub mod webrtc;
 #[cfg(feature = "wireguard")]
