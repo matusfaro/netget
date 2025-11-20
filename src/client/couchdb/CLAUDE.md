@@ -69,11 +69,30 @@ CouchDB client that connects to CouchDB servers and allows the LLM to control da
 ### Action Execution Flow
 
 1. LLM generates action (e.g., `create_document`)
-2. Action converted to couch_rs API call
+2. Action converted to HTTP request via couch_rs `req()` method (for document write operations) or high-level API (for database/read operations)
 3. HTTP request sent to CouchDB server
 4. Response received and parsed
 5. `couchdb_response_received` event sent to LLM
 6. LLM decides next action
+
+### Implementation Details
+
+**Database Operations** (uses high-level couch_rs API):
+- `create_database` → `client.make_db()`
+- `delete_database` → `client.destroy_db()`
+- `list_databases` → `client.list_dbs()`
+
+**Document Read Operations** (uses high-level couch_rs API):
+- `get_document` → `db.get_raw()`
+- `list_documents` → `db.get_all_raw()`
+
+**Document Write Operations** (uses raw HTTP API via `client.req()`):
+- `create_document` → `PUT /{db}/{docid}` or `POST /{db}` (auto-generated ID)
+- `update_document` → `PUT /{db}/{docid}` (requires `_rev` in document)
+- `delete_document` → `DELETE /{db}/{docid}?rev={rev}`
+- `bulk_docs` → `POST /{db}/_bulk_docs` with `{"docs": [...]}`
+
+**Reason for raw HTTP API**: couch_rs requires `TypedCouchDocument` trait for write operations, but we need to accept arbitrary JSON from the LLM. The `req()` method provides direct HTTP access that bypasses this requirement.
 
 ### Error Handling
 

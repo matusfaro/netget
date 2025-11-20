@@ -318,16 +318,31 @@ async fn execute_couchdb_action(
             );
 
             let client_guard = client.lock().await;
-            let _db = match client_guard.db(db_name).await {
-                Ok(db) => db,
+
+            // Use raw HTTP API via req()
+            let (path, method) = if let Some(id) = doc_id {
+                // PUT /{db}/{docid} - create with specific ID
+                (format!("/{}/{}", db_name, id), reqwest::Method::PUT)
+            } else {
+                // POST /{db} - auto-generate ID
+                (format!("/{}", db_name), reqwest::Method::POST)
+            };
+
+            let response = match client_guard
+                .req(method.clone(), &path, None)
+                .json(document)
+                .send()
+                .await
+            {
+                Ok(resp) => resp,
                 Err(e) => {
-                    console_error!(status_tx, "Failed to get database {}: {}", db_name, e);
+                    console_error!(status_tx, "Failed to create document: {}", e);
                     send_response_event(
                         client_id,
                         "create_document",
                         false,
                         serde_json::json!({}),
-                        Some(format!("Database not found: {}", e)),
+                        Some(format!("Request failed: {}", e)),
                         app_state,
                         llm_client,
                         status_tx,
@@ -337,29 +352,66 @@ async fn execute_couchdb_action(
                 }
             };
 
-            // Add _id to document if provided
-            let mut doc = document.clone();
-            if let Some(id) = doc_id {
-                if let Some(obj) = doc.as_object_mut() {
-                    obj.insert("_id".to_string(), serde_json::json!(id));
+            let status = response.status();
+            match response.json::<serde_json::Value>().await {
+                Ok(result) => {
+                    if status.is_success() {
+                        console_info!(
+                            status_tx,
+                            "Document created: {} (rev: {})",
+                            result.get("id").and_then(|v| v.as_str()).unwrap_or("unknown"),
+                            result.get("rev").and_then(|v| v.as_str()).unwrap_or("unknown")
+                        );
+                        send_response_event(
+                            client_id,
+                            "create_document",
+                            true,
+                            result,
+                            None,
+                            app_state,
+                            llm_client,
+                            status_tx,
+                        )
+                        .await;
+                    } else {
+                        console_error!(
+                            status_tx,
+                            "Failed to create document: {} - {}",
+                            status,
+                            result.get("reason").and_then(|v| v.as_str()).unwrap_or("unknown error")
+                        );
+                        send_response_event(
+                            client_id,
+                            "create_document",
+                            false,
+                            serde_json::json!({}),
+                            Some(format!(
+                                "{}: {}",
+                                result.get("error").and_then(|v| v.as_str()).unwrap_or("error"),
+                                result.get("reason").and_then(|v| v.as_str()).unwrap_or("unknown")
+                            )),
+                            app_state,
+                            llm_client,
+                            status_tx,
+                        )
+                        .await;
+                    }
+                }
+                Err(e) => {
+                    console_error!(status_tx, "Failed to parse response: {}", e);
+                    send_response_event(
+                        client_id,
+                        "create_document",
+                        false,
+                        serde_json::json!({}),
+                        Some(format!("Response parsing failed: {}", e)),
+                        app_state,
+                        llm_client,
+                        status_tx,
+                    )
+                    .await;
                 }
             }
-
-            // Use raw API to save JSON document
-            // Note: couch_rs doesn't have a direct save_raw for Value
-            // We'll use a workaround by creating a POST request
-            console_info!(status_tx, "Document creation not fully implemented - couch_rs API limitation");
-            send_response_event(
-                client_id,
-                "create_document",
-                false,
-                serde_json::json!({}),
-                Some("Document creation not yet implemented - couch_rs API limitation".to_string()),
-                app_state,
-                llm_client,
-                status_tx,
-            )
-            .await;
         }
         "get_document" => {
             let db_name = action
@@ -440,25 +492,46 @@ async fn execute_couchdb_action(
                 .get("document")
                 .ok_or_else(|| anyhow::anyhow!("Missing document"))?;
 
-            // Ensure document has _id and _rev
+            // Ensure document has _id
             let mut doc = document.clone();
             if let Some(obj) = doc.as_object_mut() {
                 obj.insert("_id".to_string(), serde_json::json!(doc_id));
             }
 
-            console_info!(status_tx, "Updating document {}/{}", db_name, doc_id);
+            // Verify _rev is present (required for updates)
+            let rev = doc.get("_rev").and_then(|v| v.as_str()).ok_or_else(|| {
+                anyhow::anyhow!("Missing _rev field in document (required for updates)")
+            })?;
+
+            console_info!(
+                status_tx,
+                "Updating document {}/{} (rev: {})",
+                db_name,
+                doc_id,
+                rev
+            );
 
             let client_guard = client.lock().await;
-            let _db = match client_guard.db(db_name).await {
-                Ok(db) => db,
+
+            // Use raw HTTP API via req()
+            // PUT /{db}/{docid} with document including _rev
+            let path = format!("/{}/{}", db_name, doc_id);
+
+            let response = match client_guard
+                .req(reqwest::Method::PUT, &path, None)
+                .json(&doc)
+                .send()
+                .await
+            {
+                Ok(resp) => resp,
                 Err(e) => {
-                    console_error!(status_tx, "Failed to get database {}: {}", db_name, e);
+                    console_error!(status_tx, "Failed to update document: {}", e);
                     send_response_event(
                         client_id,
                         "update_document",
                         false,
                         serde_json::json!({}),
-                        Some(format!("Database not found: {}", e)),
+                        Some(format!("Request failed: {}", e)),
                         app_state,
                         llm_client,
                         status_tx,
@@ -468,61 +541,74 @@ async fn execute_couchdb_action(
                 }
             };
 
-            // Note: couch_rs save() requires TypedCouchDocument, not raw JSON
-            console_info!(status_tx, "Document update not fully implemented - couch_rs API limitation");
-            send_response_event(
-                client_id,
-                "update_document",
-                false,
-                serde_json::json!({}),
-                Some("Document update not yet implemented - couch_rs API limitation".to_string()),
-                app_state,
-                llm_client,
-                status_tx,
-            )
-            .await;
-
-            /* Original code commented out - requires TypedCouchDocument
-            match db.save(&doc).await {
-                Ok(doc_result) => {
-                    console_info!(status_tx, "Document updated: {} -> {}", doc_id, doc_result.rev);
-                    send_response_event(
-                        client_id,
-                        "update_document",
-                        true,
-                        serde_json::json!({
-                            "id": doc_result.id,
-                            "rev": doc_result.rev
-                        }),
-                        None,
-                        app_state,
-                        llm_client,
-                        status_tx,
-                    )
-                    .await;
-                }
-                Err(e) => {
-                    // Check for conflict
-                    if e.to_string().contains("409") || e.to_string().contains("conflict") {
-                        console_error!(status_tx, "Conflict updating document {}: {}", doc_id, e);
-                        send_conflict_event(
+            let status = response.status();
+            match response.json::<serde_json::Value>().await {
+                Ok(result) => {
+                    if status.is_success() {
+                        console_info!(
+                            status_tx,
+                            "Document updated: {} (new rev: {})",
+                            result.get("id").and_then(|v| v.as_str()).unwrap_or("unknown"),
+                            result.get("rev").and_then(|v| v.as_str()).unwrap_or("unknown")
+                        );
+                        send_response_event(
                             client_id,
-                            db_name,
-                            doc_id,
-                            document.get("_rev").and_then(|v| v.as_str()),
+                            "update_document",
+                            true,
+                            result,
+                            None,
+                            app_state,
+                            llm_client,
+                            status_tx,
+                        )
+                        .await;
+                    } else {
+                        // Check for conflict (409)
+                        if status.as_u16() == 409 {
+                            console_error!(status_tx, "Conflict updating document {}: revision mismatch", doc_id);
+                            send_conflict_event(
+                                client_id,
+                                db_name,
+                                doc_id,
+                                Some(rev),
+                                app_state,
+                                llm_client,
+                                status_tx,
+                            )
+                            .await;
+                        }
+
+                        console_error!(
+                            status_tx,
+                            "Failed to update document: {} - {}",
+                            status,
+                            result.get("reason").and_then(|v| v.as_str()).unwrap_or("unknown error")
+                        );
+                        send_response_event(
+                            client_id,
+                            "update_document",
+                            false,
+                            serde_json::json!({}),
+                            Some(format!(
+                                "{}: {}",
+                                result.get("error").and_then(|v| v.as_str()).unwrap_or("error"),
+                                result.get("reason").and_then(|v| v.as_str()).unwrap_or("unknown")
+                            )),
                             app_state,
                             llm_client,
                             status_tx,
                         )
                         .await;
                     }
-
+                }
+                Err(e) => {
+                    console_error!(status_tx, "Failed to parse response: {}", e);
                     send_response_event(
                         client_id,
                         "update_document",
                         false,
                         serde_json::json!({}),
-                        Some(format!("{}", e)),
+                        Some(format!("Response parsing failed: {}", e)),
                         app_state,
                         llm_client,
                         status_tx,
@@ -530,7 +616,6 @@ async fn execute_couchdb_action(
                     .await;
                 }
             }
-            */
         }
         "delete_document" => {
             let db_name = action
@@ -548,19 +633,36 @@ async fn execute_couchdb_action(
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow::anyhow!("Missing rev"))?;
 
-            console_info!(status_tx, "Deleting document {}/{} (rev: {})", db_name, doc_id, rev);
+            console_info!(
+                status_tx,
+                "Deleting document {}/{} (rev: {})",
+                db_name,
+                doc_id,
+                rev
+            );
 
             let client_guard = client.lock().await;
-            let _db = match client_guard.db(db_name).await {
-                Ok(db) => db,
+
+            // Use raw HTTP API via req()
+            // DELETE /{db}/{docid}?rev={rev}
+            let path = format!("/{}/{}", db_name, doc_id);
+            let mut params = std::collections::HashMap::new();
+            params.insert("rev".to_string(), rev.to_string());
+
+            let response = match client_guard
+                .req(reqwest::Method::DELETE, &path, Some(&params))
+                .send()
+                .await
+            {
+                Ok(resp) => resp,
                 Err(e) => {
-                    console_error!(status_tx, "Failed to get database {}: {}", db_name, e);
+                    console_error!(status_tx, "Failed to delete document: {}", e);
                     send_response_event(
                         client_id,
                         "delete_document",
                         false,
                         serde_json::json!({}),
-                        Some(format!("Database not found: {}", e)),
+                        Some(format!("Request failed: {}", e)),
                         app_state,
                         llm_client,
                         status_tx,
@@ -570,49 +672,87 @@ async fn execute_couchdb_action(
                 }
             };
 
-            // Note: couch_rs remove() requires TypedCouchDocument
-            console_info!(status_tx, "Document delete not fully implemented - couch_rs API limitation");
-            send_response_event(
-                client_id,
-                "delete_document",
-                false,
-                serde_json::json!({}),
-                Some("Document delete not yet implemented - couch_rs API limitation".to_string()),
-                app_state,
-                llm_client,
-                status_tx,
-            )
-            .await;
+            let status = response.status();
+            match response.json::<serde_json::Value>().await {
+                Ok(result) => {
+                    if status.is_success() {
+                        console_info!(
+                            status_tx,
+                            "Document deleted: {} (rev: {})",
+                            result.get("id").and_then(|v| v.as_str()).unwrap_or("unknown"),
+                            result.get("rev").and_then(|v| v.as_str()).unwrap_or("unknown")
+                        );
+                        send_response_event(
+                            client_id,
+                            "delete_document",
+                            true,
+                            result,
+                            None,
+                            app_state,
+                            llm_client,
+                            status_tx,
+                        )
+                        .await;
+                    } else {
+                        // Check for conflict (409)
+                        if status.as_u16() == 409 {
+                            console_error!(
+                                status_tx,
+                                "Conflict deleting document {}: revision mismatch",
+                                doc_id
+                            );
+                            send_conflict_event(
+                                client_id,
+                                db_name,
+                                doc_id,
+                                Some(rev),
+                                app_state,
+                                llm_client,
+                                status_tx,
+                            )
+                            .await;
+                        }
 
-            /* Original code commented out - requires TypedCouchDocument
-            let doc = serde_json::json!({
-                "_id": doc_id,
-                "_rev": rev
-            });
-
-            match db.remove(&doc).await {
-                Ok(_) => {
-                    console_info!(status_tx, "Document deleted: {}", doc_id);
-                    send_response_event(
-                        client_id,
-                        "delete_document",
-                        true,
-                        serde_json::json!({"id": doc_id}),
-                        None,
-                        app_state,
-                        llm_client,
-                        status_tx,
-                    )
-                    .await;
+                        console_error!(
+                            status_tx,
+                            "Failed to delete document: {} - {}",
+                            status,
+                            result
+                                .get("reason")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown error")
+                        );
+                        send_response_event(
+                            client_id,
+                            "delete_document",
+                            false,
+                            serde_json::json!({}),
+                            Some(format!(
+                                "{}: {}",
+                                result
+                                    .get("error")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("error"),
+                                result
+                                    .get("reason")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("unknown")
+                            )),
+                            app_state,
+                            llm_client,
+                            status_tx,
+                        )
+                        .await;
+                    }
                 }
                 Err(e) => {
-                    console_error!(status_tx, "Failed to delete document {}: {}", doc_id, e);
+                    console_error!(status_tx, "Failed to parse response: {}", e);
                     send_response_event(
                         client_id,
                         "delete_document",
                         false,
                         serde_json::json!({}),
-                        Some(format!("{}", e)),
+                        Some(format!("Response parsing failed: {}", e)),
                         app_state,
                         llm_client,
                         status_tx,
@@ -620,7 +760,6 @@ async fn execute_couchdb_action(
                     .await;
                 }
             }
-            */
         }
         "bulk_docs" => {
             let db_name = action
@@ -633,19 +772,37 @@ async fn execute_couchdb_action(
                 .and_then(|v| v.as_array())
                 .ok_or_else(|| anyhow::anyhow!("Missing or invalid docs array"))?;
 
-            console_info!(status_tx, "Bulk docs: {} documents in {}", docs.len(), db_name);
+            console_info!(
+                status_tx,
+                "Bulk docs: {} documents in {}",
+                docs.len(),
+                db_name
+            );
 
             let client_guard = client.lock().await;
-            let _db = match client_guard.db(db_name).await {
-                Ok(db) => db,
+
+            // Use raw HTTP API via req()
+            // POST /{db}/_bulk_docs with {"docs": [...]}
+            let path = format!("/{}/_bulk_docs", db_name);
+            let body = serde_json::json!({
+                "docs": docs
+            });
+
+            let response = match client_guard
+                .req(reqwest::Method::POST, &path, None)
+                .json(&body)
+                .send()
+                .await
+            {
+                Ok(resp) => resp,
                 Err(e) => {
-                    console_error!(status_tx, "Failed to get database {}: {}", db_name, e);
+                    console_error!(status_tx, "Failed to perform bulk docs: {}", e);
                     send_response_event(
                         client_id,
                         "bulk_docs",
                         false,
                         serde_json::json!({}),
-                        Some(format!("Database not found: {}", e)),
+                        Some(format!("Request failed: {}", e)),
                         app_state,
                         llm_client,
                         status_tx,
@@ -655,44 +812,69 @@ async fn execute_couchdb_action(
                 }
             };
 
-            // Note: couch_rs bulk_docs() requires TypedCouchDocument
-            console_info!(status_tx, "Bulk docs not fully implemented - couch_rs API limitation");
-            send_response_event(
-                client_id,
-                "bulk_docs",
-                false,
-                serde_json::json!({}),
-                Some("Bulk docs not yet implemented - couch_rs API limitation".to_string()),
-                app_state,
-                llm_client,
-                status_tx,
-            )
-            .await;
-
-            /* Original code commented out - requires TypedCouchDocument
-            match db.bulk_docs(docs).await {
+            let status = response.status();
+            match response.json::<serde_json::Value>().await {
                 Ok(results) => {
-                    console_info!(status_tx, "Bulk docs completed: {} results", results.len());
-                    send_response_event(
-                        client_id,
-                        "bulk_docs",
-                        true,
-                        serde_json::json!({"results": results}),
-                        None,
-                        app_state,
-                        llm_client,
-                        status_tx,
-                    )
-                    .await;
+                    if status.is_success() {
+                        // Results is an array of {ok, id, rev} or {error, reason}
+                        let count = if let Some(arr) = results.as_array() {
+                            arr.len()
+                        } else {
+                            0
+                        };
+                        console_info!(status_tx, "Bulk docs completed: {} results", count);
+                        send_response_event(
+                            client_id,
+                            "bulk_docs",
+                            true,
+                            results,
+                            None,
+                            app_state,
+                            llm_client,
+                            status_tx,
+                        )
+                        .await;
+                    } else {
+                        console_error!(
+                            status_tx,
+                            "Failed to perform bulk docs: {} - {}",
+                            status,
+                            results
+                                .get("reason")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown error")
+                        );
+                        send_response_event(
+                            client_id,
+                            "bulk_docs",
+                            false,
+                            serde_json::json!({}),
+                            Some(format!(
+                                "{}: {}",
+                                results
+                                    .get("error")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("error"),
+                                results
+                                    .get("reason")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("unknown")
+                            )),
+                            app_state,
+                            llm_client,
+                            status_tx,
+                        )
+                        .await;
+                    }
                 }
                 Err(e) => {
-                    console_error!(status_tx, "Bulk docs failed: {}", e);
+                    console_error!(status_tx, "Failed to parse response: {}", e);
                     send_response_event(
                         client_id,
                         "bulk_docs",
                         false,
                         serde_json::json!({}),
-                        Some(format!("{}", e)),
+                        Some(format!("Response parsing failed: {}", e)),
                         app_state,
                         llm_client,
                         status_tx,
@@ -700,7 +882,6 @@ async fn execute_couchdb_action(
                     .await;
                 }
             }
-            */
         }
         "list_documents" => {
             let db_name = action
@@ -869,38 +1050,43 @@ async fn send_response_event(
     }
 }
 
-// Conflict event sending is commented out until document operations are fully implemented
-// async fn send_conflict_event(
-//     client_id: ClientId,
-//     database: &str,
-//     doc_id: &str,
-//     expected_rev: Option<&str>,
-//     app_state: &Arc<AppState>,
-//     llm_client: &OllamaClient,
-//     status_tx: &mpsc::UnboundedSender<String>,
-// ) {
-//     if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-//         let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
-//
-//         let event = Event::new(
-//             &COUCHDB_CLIENT_CONFLICT_EVENT,
-//             serde_json::json!({
-//                 "database": database,
-//                 "doc_id": doc_id,
-//                 "expected_rev": expected_rev,
-//             }),
-//         );
-//
-//         let _ = call_llm_for_client(
-//             llm_client,
-//             app_state,
-//             client_id.to_string(),
-//             &instruction,
-//             &memory,
-//             Some(&event),
-//             &crate::client::couchdb::actions::CouchDbClientProtocol::new(),
-//             status_tx,
-//         )
-//         .await;
-//     }
-// }
+/// Send conflict event to LLM when document revision mismatch occurs
+async fn send_conflict_event(
+    client_id: ClientId,
+    database: &str,
+    doc_id: &str,
+    expected_rev: Option<&str>,
+    app_state: &Arc<AppState>,
+    llm_client: &OllamaClient,
+    status_tx: &mpsc::UnboundedSender<String>,
+) {
+    use crate::client::couchdb::actions::COUCHDB_CLIENT_CONFLICT_EVENT;
+
+    if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
+        let memory = app_state
+            .get_memory_for_client(client_id)
+            .await
+            .unwrap_or_default();
+
+        let event = Event::new(
+            &COUCHDB_CLIENT_CONFLICT_EVENT,
+            serde_json::json!({
+                "database": database,
+                "doc_id": doc_id,
+                "expected_rev": expected_rev,
+            }),
+        );
+
+        let _ = call_llm_for_client(
+            llm_client,
+            app_state,
+            client_id.to_string(),
+            &instruction,
+            &memory,
+            Some(&event),
+            &crate::client::couchdb::actions::CouchDbClientProtocol::new(),
+            status_tx,
+        )
+        .await;
+    }
+}
