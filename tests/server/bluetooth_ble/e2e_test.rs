@@ -74,6 +74,7 @@ async fn find_peripheral_by_name(
 }
 
 #[tokio::test]
+#[ignore = "Crashes on some platforms due to ble-peripheral-rust v0.2 native library issues. Run manually with --ignored if you have a working BLE adapter."]
 async fn test_bluetooth_heart_rate_server() -> E2EResult<()> {
     println!("\n=== E2E Test: Bluetooth Heart Rate Server ===");
     println!("NOTE: This test requires a real Bluetooth adapter");
@@ -252,6 +253,7 @@ async fn test_bluetooth_heart_rate_server() -> E2EResult<()> {
 }
 
 #[tokio::test]
+#[ignore = "Crashes on some platforms due to ble-peripheral-rust v0.2 native library issues. Run manually with --ignored if you have a working BLE adapter."]
 async fn test_bluetooth_battery_service() -> E2EResult<()> {
     println!("\n=== E2E Test: Bluetooth Battery Service ===");
 
