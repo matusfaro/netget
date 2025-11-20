@@ -8,10 +8,16 @@ mod openapi_client_tests {
     use serde_json::json;
     use std::time::Duration;
 
-    /// Test OpenAPI client executing operations from spec
+    /// Test OpenAPI client executing operations from spec file
     /// LLM calls: 4 (server startup, server request, client startup, client connected)
     #[tokio::test]
     async fn test_openapi_client_with_spec() -> E2EResult<()> {
+        // Load test OpenAPI spec from file
+        let spec_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/client/openapi/test-api.yaml");
+        let spec_template = std::fs::read_to_string(&spec_path)
+            .expect("Failed to read test-api.yaml");
+
         // Start an HTTP server to act as the OpenAPI backend
         let server_config = NetGetConfig::new("Listen on port 0 via HTTP. Respond to GET /users with user list.")
             .with_mock(|mock| {
@@ -51,49 +57,11 @@ mod openapi_client_tests {
 
         println!("[TEST] Server started on port {}", server.port);
 
-        // Define a simple OpenAPI spec for testing
-        let openapi_spec = format!(
-            r#"
-openapi: 3.1.0
-info:
-  title: Test API
-  version: 1.0.0
-servers:
-  - url: http://127.0.0.1:{}
-paths:
-  /users:
-    get:
-      operationId: listUsers
-      summary: List all users
-      responses:
-        '200':
-          description: List of users
-          content:
-            application/json:
-              schema:
-                type: array
-  /users/{{id}}:
-    get:
-      operationId: getUser
-      summary: Get user by ID
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: User details
-"#,
-            server.port
-        );
+        // Inject actual port into spec
+        let openapi_spec = spec_template.replace("{port}", &server.port.to_string());
 
         // Start OpenAPI client with spec
         let client_config = NetGetConfig::new("Connect via OpenAPI client and list users")
-            .with_startup_params(json!({
-                "spec": openapi_spec,
-            }))
             .with_mock(|mock| {
                 mock
                     // Mock 1: Client startup
@@ -104,7 +72,7 @@ paths:
                             "remote_addr": format!("127.0.0.1:{}", server.port),
                             "protocol": "OpenAPI",
                             "startup_params": {
-                                "spec": openapi_spec,
+                                "spec": openapi_spec.clone(),
                             },
                             "instruction": "Execute listUsers operation"
                         }
@@ -128,7 +96,7 @@ paths:
                     // Mock 3: Operation response received - verify and disconnect
                     .on_event("openapi_operation_response")
                     .and_event_data_contains("operation_id", "listUsers")
-                    .and_event_data_contains("status_code", 200)
+                    .and_event_data_contains("status_code", "200")
                     .respond_with_actions(json!([
                         {
                             "type": "disconnect"
@@ -138,7 +106,7 @@ paths:
                     .and()
             });
 
-        let mut client = start_netget_client(client_config).await?;
+        let client = start_netget_client(client_config).await?;
 
         // Wait for test to complete
         tokio::time::sleep(Duration::from_secs(5)).await;
@@ -154,6 +122,12 @@ paths:
     /// LLM calls: 4 (server startup, server request, client startup, client connected)
     #[tokio::test]
     async fn test_openapi_client_path_params() -> E2EResult<()> {
+        // Load test OpenAPI spec from file
+        let spec_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/client/openapi/test-api.yaml");
+        let spec_template = std::fs::read_to_string(&spec_path)
+            .expect("Failed to read test-api.yaml");
+
         // Start an HTTP server
         let server_config = NetGetConfig::new("Listen on port 0 via HTTP. Respond to GET /users/123")
             .with_mock(|mock| {
@@ -177,7 +151,7 @@ paths:
                             "type": "send_http_response",
                             "status": 200,
                             "headers": {"Content-Type": "application/json"},
-                            "body": "{\"id\": 123, \"name\": \"Alice\"}"
+                            "body": "{\"id\": 123, \"name\": \"Alice\", \"email\": \"alice@example.com\"}"
                         }
                     ]))
                     .expect_calls(1)
@@ -187,35 +161,10 @@ paths:
         let server = start_netget_server(server_config).await?;
         tokio::time::sleep(Duration::from_secs(2)).await;
 
-        let openapi_spec = format!(
-            r#"
-openapi: 3.1.0
-info:
-  title: Test API
-  version: 1.0.0
-servers:
-  - url: http://127.0.0.1:{}
-paths:
-  /users/{{id}}:
-    get:
-      operationId: getUser
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: User details
-"#,
-            server.port
-        );
+        // Inject actual port into spec
+        let openapi_spec = spec_template.replace("{port}", &server.port.to_string());
 
         let client_config = NetGetConfig::new("Get user 123 via OpenAPI")
-            .with_startup_params(json!({
-                "spec": openapi_spec,
-            }))
             .with_mock(|mock| {
                 mock
                     .on_instruction_containing("Get user 123")
@@ -225,7 +174,7 @@ paths:
                             "remote_addr": format!("127.0.0.1:{}", server.port),
                             "protocol": "OpenAPI",
                             "startup_params": {
-                                "spec": openapi_spec,
+                                "spec": openapi_spec.clone(),
                             },
                             "instruction": "Execute getUser with id=123"
                         }
@@ -252,7 +201,7 @@ paths:
                     .and()
             });
 
-        let mut client = start_netget_client(client_config).await?;
+        let client = start_netget_client(client_config).await?;
         tokio::time::sleep(Duration::from_secs(5)).await;
 
         client.verify_mocks().await?;
