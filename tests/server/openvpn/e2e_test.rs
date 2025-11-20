@@ -85,7 +85,6 @@ async fn test_openvpn_client_availability() {
 }
 
 #[tokio::test]
-#[ignore = "Requires root/sudo privileges for TUN interface creation"]
 async fn test_openvpn_server_startup() -> E2EResult<()> {
     assert!(
         is_openvpn_available().await,
@@ -136,7 +135,6 @@ async fn test_openvpn_server_startup() -> E2EResult<()> {
 }
 
 #[tokio::test]
-#[ignore = "Requires root/sudo privileges for TUN interface creation"]
 async fn test_openvpn_handshake_with_client() -> E2EResult<()> {
     assert!(
         is_openvpn_available().await,
@@ -259,7 +257,6 @@ async fn test_openvpn_handshake_with_client() -> E2EResult<()> {
 }
 
 #[tokio::test]
-#[ignore = "Requires root/sudo privileges for TUN interface creation"]
 async fn test_openvpn_protocol_compatibility() -> E2EResult<()> {
     assert!(
         is_openvpn_available().await,
@@ -313,7 +310,6 @@ async fn test_openvpn_protocol_compatibility() -> E2EResult<()> {
 // ============================================================================
 
 #[tokio::test]
-#[ignore = "Requires root/sudo privileges for TUN interface creation"]
 async fn test_openvpn_manual_handshake_v2() -> E2EResult<()> {
     // Check if running with sufficient privileges
     #[cfg(unix)]
