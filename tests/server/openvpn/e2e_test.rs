@@ -85,6 +85,7 @@ async fn test_openvpn_client_availability() {
 }
 
 #[tokio::test]
+#[ignore = "Requires root/sudo privileges for TUN interface creation"]
 async fn test_openvpn_server_startup() -> E2EResult<()> {
     assert!(
         is_openvpn_available().await,
@@ -117,7 +118,7 @@ async fn test_openvpn_server_startup() -> E2EResult<()> {
                 .and()
         });
 
-    let mut server = start_netget_server(server_config).await?;
+    let server = start_netget_server(server_config).await?;
     println!("OpenVPN server started on port {}", server.port);
 
     // Wait for server to be ready
@@ -135,6 +136,7 @@ async fn test_openvpn_server_startup() -> E2EResult<()> {
 }
 
 #[tokio::test]
+#[ignore = "Requires root/sudo privileges for TUN interface creation"]
 async fn test_openvpn_handshake_with_client() -> E2EResult<()> {
     assert!(
         is_openvpn_available().await,
@@ -167,7 +169,7 @@ async fn test_openvpn_handshake_with_client() -> E2EResult<()> {
                 .and()
         });
 
-    let mut server = start_netget_server(server_config).await?;
+    let server = start_netget_server(server_config).await?;
 
     // Wait for server to initialize
     tokio::time::sleep(Duration::from_secs(3)).await;
@@ -257,6 +259,7 @@ async fn test_openvpn_handshake_with_client() -> E2EResult<()> {
 }
 
 #[tokio::test]
+#[ignore = "Requires root/sudo privileges for TUN interface creation"]
 async fn test_openvpn_protocol_compatibility() -> E2EResult<()> {
     assert!(
         is_openvpn_available().await,
@@ -289,7 +292,7 @@ async fn test_openvpn_protocol_compatibility() -> E2EResult<()> {
                 .and()
         });
 
-    let mut server = start_netget_server(server_config).await?;
+    let server = start_netget_server(server_config).await?;
     println!("OpenVPN server started on port {}", server.port);
 
     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -310,6 +313,7 @@ async fn test_openvpn_protocol_compatibility() -> E2EResult<()> {
 // ============================================================================
 
 #[tokio::test]
+#[ignore = "Requires root/sudo privileges for TUN interface creation"]
 async fn test_openvpn_manual_handshake_v2() -> E2EResult<()> {
     // Check if running with sufficient privileges
     #[cfg(unix)]
@@ -337,7 +341,7 @@ async fn test_openvpn_manual_handshake_v2() -> E2EResult<()> {
                 .and()
         });
 
-    let mut server = start_netget_server(server_config).await?;
+    let server = start_netget_server(server_config).await?;
     println!("OpenVPN server started on port {}", server.port);
 
     // Wait for server to be ready
