@@ -270,6 +270,18 @@ impl SerializedMatcher {
             }
         }
 
+        // CRITICAL FIX: Instruction-based matching should only match user input, not network events
+        // If this rule uses instruction matching but the context has an event_type,
+        // it means this is a network event (not user input), so skip instruction matching
+        let has_instruction_criteria = !self.instruction_contains.is_empty() || self.instruction_regex.is_some();
+        let is_network_event = context.event_type.is_some();
+
+        if has_instruction_criteria && is_network_event && self.event_type.is_none() {
+            // This rule is instruction-based (meant for user input) but context is a network event
+            // Don't match unless the rule explicitly specifies an event_type
+            return false;
+        }
+
         // Instruction contains (all must match)
         for substring in &self.instruction_contains {
             if !context.instruction.contains(substring) {

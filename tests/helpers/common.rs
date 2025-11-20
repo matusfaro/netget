@@ -139,6 +139,19 @@ pub async fn replace_port_placeholders(prompt: &str) -> E2EResult<String> {
 
 /// Get the path to the NetGet binary
 pub fn get_netget_binary_path() -> E2EResult<PathBuf> {
+    // CRITICAL: Use CARGO_BIN_EXE_netget to get the binary built with the SAME features as the test
+    // When running `cargo test --features redis`, cargo builds:
+    // 1. The test binary with redis feature
+    // 2. The netget binary as a dependency with the SAME features
+    // CARGO_BIN_EXE_netget points to the correctly-featured binary, not target/debug/netget
+    if let Ok(bin_path) = std::env::var("CARGO_BIN_EXE_netget") {
+        let path = PathBuf::from(bin_path);
+        if path.exists() {
+            return Ok(path);
+        }
+    }
+
+    // Fallback for manual runs (without cargo test)
     let release_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("target")
         .join("release")
