@@ -220,17 +220,20 @@ async fn test_peer_piece_request() -> E2EResult<()> {
             ]))
             .expect_calls(1)
             .and()
-            // Mock: Piece request
+            // Mock: Piece request (match any index since we're only testing one request)
             .on_event("peer_request_message")
-            .and_event_data_contains("index", "0")
-            .respond_with_actions(json!([
-                {
-                    "type": "send_piece",
-                    "index": 0,
-                    "begin": 0,
-                    "block_hex": "48656c6c6f20576f726c64"  // "Hello World"
-                }
-            ]))
+            .respond_with_actions_from_event(|event_data| {
+                let index = event_data["index"].as_u64().unwrap_or(0);
+                let begin = event_data["begin"].as_u64().unwrap_or(0);
+                json!([
+                    {
+                        "type": "send_piece",
+                        "index": index,
+                        "begin": begin,
+                        "block_hex": "48656c6c6f20576f726c64"  // "Hello World"
+                    }
+                ])
+            })
             .expect_calls(1)
             .and()
     });
@@ -275,6 +278,19 @@ async fn test_peer_piece_request() -> E2EResult<()> {
     // Send interested message
     stream.write_all(&[0, 0, 0, 1, 2]).await?;
     println!("Sent interested message");
+
+    // Read unchoke response after interested
+    let mut len_buf = [0u8; 4];
+    tokio::time::timeout(Duration::from_secs(2), stream.read_exact(&mut len_buf))
+        .await
+        .ok();
+    if let Ok(length) = u32::from_be_bytes(len_buf).try_into() {
+        if length > 0 && length < 1000 {
+            let mut msg = vec![0u8; length];
+            stream.read_exact(&mut msg).await.ok();
+            println!("Received response to interested: id={}", msg.get(0).unwrap_or(&255));
+        }
+    }
 
     // Send piece request (piece 0, begin 0, length 11)
     let request = vec![

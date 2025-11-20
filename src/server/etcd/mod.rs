@@ -383,12 +383,12 @@ impl EtcdServer {
 
     async fn handle_put(
         msg_bytes: &[u8],
-        _llm_client: OllamaClient,
-        _app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
-        _server_id: crate::state::ServerId,
+        server_id: crate::state::ServerId,
         store: Arc<Mutex<EtcdStore>>,
-        _protocol: Arc<EtcdProtocol>,
+        protocol: Arc<EtcdProtocol>,
     ) -> Result<Vec<u8>> {
         let request = PutRequest::decode(msg_bytes)?;
 
@@ -401,8 +401,68 @@ impl EtcdServer {
             value_str
         );
 
+        // Call LLM with put request event
+        use crate::protocol::Event;
+        use crate::server::etcd::actions::ETCD_PUT_REQUEST_EVENT;
+
+        let event = Event::new(
+            &ETCD_PUT_REQUEST_EVENT,
+            serde_json::json!({
+                "key": key_str,
+                "value": value_str,
+                "lease": request.lease,
+            }),
+        );
+
+        console_debug!(status_tx, "etcd calling LLM for Put request");
+
+        let execution_result = crate::llm::action_helper::call_llm(
+            &llm_client,
+            &app_state,
+            server_id,
+            None,
+            &event,
+            protocol.as_ref(),
+        )
+        .await?;
+
+        // Display messages from LLM
+        for message in &execution_result.messages {
+            console_info!(status_tx, "{}", message);
+        }
+
+        console_debug!(
+            status_tx,
+            "etcd got {} protocol results",
+            execution_result.protocol_results.len()
+        );
+
+        // Process LLM action results to build response
         let mut store_lock = store.lock().await;
-        store_lock.increment_revision();
+        let mut revision: i64 = 0;
+
+        for protocol_result in &execution_result.protocol_results {
+            if let crate::llm::actions::protocol_trait::ActionResult::Custom { name, data } = protocol_result {
+                if name == "etcd_put_response" {
+                    // LLM provided put response
+                    revision = data.get("revision").and_then(|v| v.as_i64()).unwrap_or_else(|| {
+                        store_lock.increment_revision();
+                        store_lock.revision
+                    });
+
+                    // Update store revision if LLM provided one
+                    if revision > store_lock.revision {
+                        store_lock.revision = revision;
+                    }
+                }
+            }
+        }
+
+        // If LLM didn't provide revision, increment it ourselves
+        if revision == 0 {
+            store_lock.increment_revision();
+            revision = store_lock.revision;
+        }
 
         let response = PutResponse {
             header: Some(store_lock.get_response_header()),
@@ -416,24 +476,75 @@ impl EtcdServer {
 
     async fn handle_delete_range(
         msg_bytes: &[u8],
-        _llm_client: OllamaClient,
-        _app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
-        _server_id: crate::state::ServerId,
+        server_id: crate::state::ServerId,
         store: Arc<Mutex<EtcdStore>>,
-        _protocol: Arc<EtcdProtocol>,
+        protocol: Arc<EtcdProtocol>,
     ) -> Result<Vec<u8>> {
         let request = DeleteRangeRequest::decode(msg_bytes)?;
 
         let key_str = String::from_utf8_lossy(&request.key);
         console_debug!(status_tx, "etcd DeleteRange request: key={}", key_str);
 
+        // Call LLM with delete request event
+        use crate::protocol::Event;
+        use crate::server::etcd::actions::ETCD_DELETE_REQUEST_EVENT;
+
+        let event = Event::new(
+            &ETCD_DELETE_REQUEST_EVENT,
+            serde_json::json!({
+                "key": key_str,
+                "range_end": if request.range_end.is_empty() {
+                    serde_json::Value::Null
+                } else {
+                    serde_json::json!(String::from_utf8_lossy(&request.range_end))
+                },
+            }),
+        );
+
+        console_debug!(status_tx, "etcd calling LLM for Delete request");
+
+        let execution_result = crate::llm::action_helper::call_llm(
+            &llm_client,
+            &app_state,
+            server_id,
+            None,
+            &event,
+            protocol.as_ref(),
+        )
+        .await?;
+
+        // Display messages from LLM
+        for message in &execution_result.messages {
+            console_info!(status_tx, "{}", message);
+        }
+
+        console_debug!(
+            status_tx,
+            "etcd got {} protocol results",
+            execution_result.protocol_results.len()
+        );
+
+        // Process LLM action results to build response
         let mut store_lock = store.lock().await;
+        let mut deleted: i64 = 0;
+
+        for protocol_result in &execution_result.protocol_results {
+            if let crate::llm::actions::protocol_trait::ActionResult::Custom { name, data } = protocol_result {
+                if name == "etcd_delete_range_response" {
+                    // LLM provided delete response
+                    deleted = data.get("deleted").and_then(|v| v.as_i64()).unwrap_or(0);
+                }
+            }
+        }
+
         store_lock.increment_revision();
 
         let response = DeleteRangeResponse {
             header: Some(store_lock.get_response_header()),
-            deleted: 0,
+            deleted,
             prev_kvs: vec![],
         };
 
