@@ -7695,6 +7695,7 @@ dependencies = [
  "serde_bencode",
  "serde_cbor",
  "serde_json",
+ "serde_yaml",
  "sha1",
  "sha2",
  "smb-msg",
