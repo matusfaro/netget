@@ -112,6 +112,7 @@ The LLM receives events for each message type and can respond with actions:
 - `dc_client_hubinfo_received` - Hub name, topic
 - `dc_client_kicked` - Kicked from hub
 - `dc_client_redirect` - Redirected to another hub
+- `dc_client_disconnected` - Disconnected from hub (with reconnection info)
 
 **Actions** (LLM → Client → Hub):
 - `send_dc_chat` - Send public chat message
@@ -137,6 +138,10 @@ The client requires configuration via startup parameters:
 - `description` (optional) - Client description (default: "NetGet DC Client")
 - `email` (optional) - Email address
 - `share_size` (optional) - Total bytes shared (fake for testing, default: 0)
+- `use_tls` (optional) - Use TLS encryption (default: false)
+- `auto_reconnect` (optional) - Automatically reconnect if disconnected (default: false)
+- `max_reconnect_attempts` (optional) - Maximum reconnection attempts, 0 = unlimited (default: 5)
+- `initial_reconnect_delay_secs` (optional) - Initial delay before reconnecting with exponential backoff (default: 2)
 
 Example:
 ```json
@@ -144,7 +149,11 @@ Example:
   "nickname": "alice",
   "description": "NetGet DC Test Client",
   "email": "alice@example.com",
-  "share_size": 1073741824
+  "share_size": 1073741824,
+  "use_tls": true,
+  "auto_reconnect": true,
+  "max_reconnect_attempts": 10,
+  "initial_reconnect_delay_secs": 2
 }
 ```
 
@@ -218,6 +227,15 @@ Triggered when client is redirected to another hub.
 Event parameters:
 - `address` (string) - New hub address to connect to
 
+#### `dc_client_disconnected`
+
+Triggered when client disconnects from hub.
+
+Event parameters:
+- `reason` (string) - Disconnection reason
+- `will_reconnect` (boolean) - Whether auto-reconnect will attempt to reconnect
+- `reconnect_attempt` (number, optional) - Current reconnection attempt number (0 if first disconnect)
+
 ### Available Actions
 
 See `actions.rs` for complete action list with examples.
@@ -278,19 +296,50 @@ See `actions.rs` for complete action list with examples.
 - Some less common NMDC commands not implemented
 - Unicode/extended characters may have issues
 
-### 5. No TLS Support
+### 5. TLS Support (DCCS Protocol)
 
-**Limitation**: Plain TCP only (port 411), no SSL/TLS encryption (port 412)
+**Feature**: ✅ **IMPLEMENTED** - Optional TLS encryption support
 
-**Workaround**: Use reverse proxy (e.g., stunnel) for TLS termination if needed
+**Usage**: Set `use_tls: true` in startup parameters to enable TLS (port 412)
 
-### 6. No Automatic Reconnection
+**Configuration**:
+```json
+{
+  "nickname": "alice",
+  "use_tls": true
+}
+```
 
-**Limitation**: Client doesn't automatically reconnect if disconnected
+**Details**:
+- Uses tokio-rustls for TLS handshake
+- Supports SNI (Server Name Indication)
+- Root certificates from webpki-roots
+- Works with both hostname and IP addresses
+- Transparent to application layer (same DC protocol)
 
-**Reason**: Reconnection logic left to LLM decision
+### 6. Automatic Reconnection
 
-**Workaround**: LLM can detect disconnect and issue new connection command
+**Feature**: ✅ **IMPLEMENTED** - Optional automatic reconnection with exponential backoff
+
+**Usage**: Set `auto_reconnect: true` in startup parameters to enable
+
+**Configuration**:
+```json
+{
+  "nickname": "alice",
+  "auto_reconnect": true,
+  "max_reconnect_attempts": 10,
+  "initial_reconnect_delay_secs": 2
+}
+```
+
+**Details**:
+- Reconnects automatically if connection drops or initial connection fails
+- Exponential backoff (2s, 4s, 8s, 16s, ..., max 60s)
+- Configurable max attempts (0 = unlimited)
+- Emits `dc_client_disconnected` event before each reconnection
+- LLM can observe reconnection progress through events
+- Maintains all connection state (nickname, description, TLS settings)
 
 ### 7. No Hub State Caching
 

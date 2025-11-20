@@ -9,6 +9,10 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
+use tokio_rustls::client::TlsStream;
+use tokio_rustls::rustls::pki_types::ServerName;
+use tokio_rustls::rustls::{ClientConfig, RootCertStore};
+use tokio_rustls::TlsConnector;
 use tracing::{debug, error, info, trace};
 
 use crate::client::dc::actions::{
@@ -23,6 +27,28 @@ use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
+
+/// Enum to handle both TCP and TLS write halves
+enum DcWriteHalf {
+    Plain(tokio::io::WriteHalf<TcpStream>),
+    Tls(tokio::io::WriteHalf<TlsStream<TcpStream>>),
+}
+
+impl DcWriteHalf {
+    async fn write_all(&mut self, buf: &[u8]) -> Result<()> {
+        match self {
+            DcWriteHalf::Plain(w) => w.write_all(buf).await.map_err(Into::into),
+            DcWriteHalf::Tls(w) => w.write_all(buf).await.map_err(Into::into),
+        }
+    }
+
+    async fn flush(&mut self) -> Result<()> {
+        match self {
+            DcWriteHalf::Plain(w) => w.flush().await.map_err(Into::into),
+            DcWriteHalf::Tls(w) => w.flush().await.map_err(Into::into),
+        }
+    }
+}
 
 /// Connection state for DC authentication
 #[derive(Debug, Clone, PartialEq)]
@@ -72,14 +98,222 @@ impl DcClient {
             .as_ref()
             .and_then(|p| p.get_optional_u64("share_size"))
             .unwrap_or(0);
+        let use_tls = startup_params
+            .as_ref()
+            .and_then(|p| p.get_optional_bool("use_tls"))
+            .unwrap_or(false);
+        let auto_reconnect = startup_params
+            .as_ref()
+            .and_then(|p| p.get_optional_bool("auto_reconnect"))
+            .unwrap_or(false);
+        let max_reconnect_attempts = startup_params
+            .as_ref()
+            .and_then(|p| p.get_optional_u64("max_reconnect_attempts"))
+            .unwrap_or(5) as u32;
+        let initial_reconnect_delay_secs = startup_params
+            .as_ref()
+            .and_then(|p| p.get_optional_u64("initial_reconnect_delay_secs"))
+            .unwrap_or(2);
 
+        // Attempt connection with reconnection loop
+        Self::connect_with_reconnect(
+            remote_addr,
+            llm_client,
+            app_state,
+            status_tx,
+            client_id,
+            nickname,
+            description,
+            email,
+            share_size,
+            use_tls,
+            auto_reconnect,
+            max_reconnect_attempts,
+            initial_reconnect_delay_secs,
+        )
+        .await
+    }
+
+    /// Internal function to handle connection with reconnection logic
+    async fn connect_with_reconnect(
+        remote_addr: String,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        client_id: ClientId,
+        nickname: String,
+        description: String,
+        email: String,
+        share_size: u64,
+        use_tls: bool,
+        auto_reconnect: bool,
+        max_reconnect_attempts: u32,
+        initial_reconnect_delay_secs: u64,
+    ) -> Result<SocketAddr> {
+        let mut reconnect_attempt = 0u32;
+
+        loop {
+            // Attempt to connect
+            let connect_result = Self::connect_once(
+                remote_addr.clone(),
+                llm_client.clone(),
+                app_state.clone(),
+                status_tx.clone(),
+                client_id,
+                nickname.clone(),
+                description.clone(),
+                email.clone(),
+                share_size,
+                use_tls,
+                auto_reconnect,
+                max_reconnect_attempts,
+                initial_reconnect_delay_secs,
+                reconnect_attempt,
+            )
+            .await;
+
+            match connect_result {
+                Ok(local_addr) => return Ok(local_addr),
+                Err(e) if !auto_reconnect => {
+                    // Not configured for auto-reconnect, return error
+                    return Err(e);
+                }
+                Err(e) if max_reconnect_attempts > 0 && reconnect_attempt >= max_reconnect_attempts => {
+                    // Exceeded max attempts
+                    error!(
+                        "DC client {} exhausted reconnection attempts ({}/{}): {}",
+                        client_id, reconnect_attempt, max_reconnect_attempts, e
+                    );
+                    return Err(anyhow::anyhow!(
+                        "Failed to connect after {} attempts: {}",
+                        max_reconnect_attempts,
+                        e
+                    ));
+                }
+                Err(e) => {
+                    // Will reconnect
+                    reconnect_attempt += 1;
+                    let delay_secs = initial_reconnect_delay_secs * (2u64.pow(reconnect_attempt - 1));
+                    let delay_secs = delay_secs.min(60); // Cap at 60 seconds
+
+                    info!(
+                        "DC client {} connection failed (attempt {}/{}), retrying in {}s: {}",
+                        client_id,
+                        reconnect_attempt,
+                        if max_reconnect_attempts == 0 { "∞".to_string() } else { max_reconnect_attempts.to_string() },
+                        delay_secs,
+                        e
+                    );
+
+                    let _ = status_tx.send(format!(
+                        "[CLIENT] DC client {} reconnecting in {}s (attempt {}/{})",
+                        client_id,
+                        delay_secs,
+                        reconnect_attempt,
+                        if max_reconnect_attempts == 0 { "∞".to_string() } else { max_reconnect_attempts.to_string() }
+                    ));
+
+                    // Sleep with exponential backoff
+                    tokio::time::sleep(tokio::time::Duration::from_secs(delay_secs)).await;
+                }
+            }
+        }
+    }
+
+    /// Perform a single connection attempt
+    async fn connect_once(
+        remote_addr: String,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        client_id: ClientId,
+        nickname: String,
+        description: String,
+        email: String,
+        share_size: u64,
+        use_tls: bool,
+        _auto_reconnect: bool,
+        _max_reconnect_attempts: u32,
+        _initial_reconnect_delay_secs: u64,
+        _reconnect_attempt: u32,
+    ) -> Result<SocketAddr> {
         // Connect to DC hub
-        let stream = TcpStream::connect(&remote_addr)
+        let tcp_stream = TcpStream::connect(&remote_addr)
             .await
             .context(format!("Failed to connect to DC hub at {}", remote_addr))?;
 
-        let local_addr = stream.local_addr()?;
-        let remote_sock_addr = stream.peer_addr()?;
+        let local_addr = tcp_stream.local_addr()?;
+        let remote_sock_addr = tcp_stream.peer_addr()?;
+
+        // Wrap with TLS if requested
+        if use_tls {
+            info!(
+                "DC client {} establishing TLS connection to {}",
+                client_id, remote_sock_addr
+            );
+
+            // Extract hostname for SNI
+            let server_name_str = remote_addr.split(':').next().unwrap_or("dc.hub");
+
+            // Create TLS config
+            let root_store = RootCertStore {
+                roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+            };
+
+            let config = ClientConfig::builder()
+                .with_root_certificates(root_store)
+                .with_no_client_auth();
+
+            let connector = TlsConnector::from(Arc::new(config));
+
+            // Parse server name for SNI
+            let server_name = match ServerName::try_from(server_name_str.to_string()) {
+                Ok(name) => name,
+                Err(_) => {
+                    debug!("Failed to parse server name, using IP");
+                    ServerName::try_from(remote_sock_addr.ip().to_string())
+                        .map_err(|e| anyhow::anyhow!("Invalid server name: {}", e))?
+                }
+            };
+
+            // Perform TLS handshake
+            let tls_stream = connector
+                .connect(server_name, tcp_stream)
+                .await
+                .context("TLS handshake failed")?;
+
+            info!(
+                "DC client {} connected via TLS to {} (local: {})",
+                client_id, remote_sock_addr, local_addr
+            );
+
+            // Update client state
+            app_state
+                .update_client_status(client_id, ClientStatus::Connected)
+                .await;
+            let _ = status_tx.send(format!("[CLIENT] DC client {} connected (TLS)", client_id));
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+
+            // Split TLS stream
+            let (read_half, write_half) = tokio::io::split(tls_stream);
+            let write_half_arc = Arc::new(Mutex::new(DcWriteHalf::Tls(write_half)));
+
+            // Continue with common logic
+            return run_dc_client_loop(
+                read_half,
+                write_half_arc,
+                client_id,
+                app_state,
+                llm_client,
+                status_tx,
+                nickname,
+                description,
+                email,
+                share_size,
+                local_addr,
+            )
+            .await;
+        }
 
         info!(
             "DC client {} connected to {} (local: {})",
@@ -94,91 +328,126 @@ impl DcClient {
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Split stream
-        let (read_half, write_half) = tokio::io::split(stream);
-        let write_half_arc = Arc::new(Mutex::new(write_half));
-        let mut reader = BufReader::new(read_half);
+        let (read_half, write_half) = tokio::io::split(tcp_stream);
+        let write_half_arc = Arc::new(Mutex::new(DcWriteHalf::Plain(write_half)));
 
-        // Initialize client state
-        let client_state = Arc::new(Mutex::new(DcClientState {
-            auth_state: DcConnectionState::AwaitingLock,
-            nickname: nickname.clone(),
+        // Continue with common logic
+        run_dc_client_loop(
+            read_half,
+            write_half_arc,
+            client_id,
+            app_state,
+            llm_client,
+            status_tx,
+            nickname,
             description,
             email,
             share_size,
-            memory: String::new(),
-        }));
-
-        // Spawn read loop for DC messages
-        tokio::spawn(async move {
-            info!("DC client {} read loop started", client_id);
-
-            // Read pipe-delimited messages
-            loop {
-                let mut line = String::new();
-                match reader.read_line(&mut line).await {
-                    Ok(0) => {
-                        info!("DC client {} disconnected from hub", client_id);
-                        app_state
-                            .update_client_status(client_id, ClientStatus::Disconnected)
-                            .await;
-                        let _ = status_tx
-                            .send(format!("[CLIENT] DC client {} disconnected", client_id));
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
-                        break;
-                    }
-                    Ok(_) => {
-                        // DC messages can span multiple lines but are pipe-delimited
-                        // For simplicity, we'll process each pipe-delimited segment
-                        let trimmed = line.trim();
-                        if trimmed.is_empty() {
-                            continue;
-                        }
-
-                        // Split by pipe delimiter
-                        for segment in trimmed.split('|') {
-                            if segment.is_empty() {
-                                continue;
-                            }
-
-                            trace!("DC client {} received: {}", client_id, segment);
-
-                            // Process DC message
-                            if let Err(e) = process_dc_message(
-                                segment,
-                                &client_state,
-                                &write_half_arc,
-                                &llm_client,
-                                &app_state,
-                                &status_tx,
-                                client_id,
-                            )
-                            .await
-                            {
-                                error!("Error processing DC message: {}", e);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        error!("DC client {} read error: {}", client_id, e);
-                        app_state
-                            .update_client_status(client_id, ClientStatus::Error(e.to_string()))
-                            .await;
-                        let _ = status_tx.send("__UPDATE_UI__".to_string());
-                        break;
-                    }
-                }
-            }
-        });
-
-        Ok(local_addr)
+            local_addr,
+        )
+        .await
     }
 }
 
-/// Process a single DC message
+/// Run the DC client read loop (common for both TCP and TLS)
+async fn run_dc_client_loop<R>(
+    read_half: R,
+    write_half_arc: Arc<Mutex<DcWriteHalf>>,
+    client_id: ClientId,
+    app_state: Arc<AppState>,
+    llm_client: OllamaClient,
+    status_tx: mpsc::UnboundedSender<String>,
+    nickname: String,
+    description: String,
+    email: String,
+    share_size: u64,
+    local_addr: SocketAddr,
+) -> Result<SocketAddr>
+where
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+{
+    // Wrap in BufReader for line-based reading
+    let mut reader = BufReader::new(read_half);
+    // Initialize client state
+    let client_state = Arc::new(Mutex::new(DcClientState {
+        auth_state: DcConnectionState::AwaitingLock,
+        nickname: nickname.clone(),
+        description,
+        email,
+        share_size,
+        memory: String::new(),
+    }));
+
+    // Spawn read loop for DC messages
+    tokio::spawn(async move {
+        info!("DC client {} read loop started", client_id);
+
+        // Read pipe-delimited messages
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line).await {
+                Ok(0) => {
+                    info!("DC client {} disconnected from hub", client_id);
+                    app_state
+                        .update_client_status(client_id, ClientStatus::Disconnected)
+                        .await;
+                    let _ = status_tx
+                        .send(format!("[CLIENT] DC client {} disconnected", client_id));
+                    let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    break;
+                }
+                Ok(_) => {
+                    // DC messages can span multiple lines but are pipe-delimited
+                    // For simplicity, we'll process each pipe-delimited segment
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+
+                    // Split by pipe delimiter
+                    for segment in trimmed.split('|') {
+                        if segment.is_empty() {
+                            continue;
+                        }
+
+                        trace!("DC client {} received: {}", client_id, segment);
+
+                        // Process DC message
+                        if let Err(e) = process_dc_message(
+                            segment,
+                            &client_state,
+                            &write_half_arc,
+                            &llm_client,
+                            &app_state,
+                            &status_tx,
+                            client_id,
+                        )
+                        .await
+                        {
+                            error!("Error processing DC message: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("DC client {} read error: {}", client_id, e);
+                    app_state
+                        .update_client_status(client_id, ClientStatus::Error(e.to_string()))
+                        .await;
+                    let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    break;
+                }
+            }
+        }
+    });
+
+    Ok(local_addr)
+}
+
+/// Process a single DC message (works with both TCP and TLS)
 async fn process_dc_message(
     message: &str,
     client_state: &Arc<Mutex<DcClientState>>,
-    write_half: &Arc<Mutex<tokio::io::WriteHalf<TcpStream>>>,
+    write_half: &Arc<Mutex<DcWriteHalf>>,
     llm_client: &OllamaClient,
     app_state: &Arc<AppState>,
     status_tx: &mpsc::UnboundedSender<String>,
@@ -343,7 +612,7 @@ async fn process_dc_message(
 async fn handle_lock_message(
     message: &str,
     client_state: &Arc<Mutex<DcClientState>>,
-    write_half: &Arc<Mutex<tokio::io::WriteHalf<TcpStream>>>,
+    write_half: &Arc<Mutex<DcWriteHalf>>,
     llm_client: &OllamaClient,
     app_state: &Arc<AppState>,
     status_tx: &mpsc::UnboundedSender<String>,
@@ -509,7 +778,7 @@ async fn handle_hello_message(
 async fn handle_chat_message(
     message: &str,
     client_state: &Arc<Mutex<DcClientState>>,
-    write_half: &Arc<Mutex<tokio::io::WriteHalf<TcpStream>>>,
+    write_half: &Arc<Mutex<DcWriteHalf>>,
     llm_client: &OllamaClient,
     app_state: &Arc<AppState>,
     status_tx: &mpsc::UnboundedSender<String>,
@@ -580,7 +849,7 @@ async fn handle_chat_message(
 async fn handle_private_message(
     message: &str,
     client_state: &Arc<Mutex<DcClientState>>,
-    write_half: &Arc<Mutex<tokio::io::WriteHalf<TcpStream>>>,
+    write_half: &Arc<Mutex<DcWriteHalf>>,
     llm_client: &OllamaClient,
     app_state: &Arc<AppState>,
     status_tx: &mpsc::UnboundedSender<String>,
@@ -657,7 +926,7 @@ async fn handle_private_message(
 async fn handle_search_result(
     message: &str,
     client_state: &Arc<Mutex<DcClientState>>,
-    write_half: &Arc<Mutex<tokio::io::WriteHalf<TcpStream>>>,
+    write_half: &Arc<Mutex<DcWriteHalf>>,
     llm_client: &OllamaClient,
     app_state: &Arc<AppState>,
     status_tx: &mpsc::UnboundedSender<String>,
@@ -738,7 +1007,7 @@ async fn handle_search_result(
 async fn handle_nicklist(
     message: &str,
     client_state: &Arc<Mutex<DcClientState>>,
-    write_half: &Arc<Mutex<tokio::io::WriteHalf<TcpStream>>>,
+    write_half: &Arc<Mutex<DcWriteHalf>>,
     llm_client: &OllamaClient,
     app_state: &Arc<AppState>,
     status_tx: &mpsc::UnboundedSender<String>,
@@ -805,7 +1074,7 @@ async fn handle_nicklist(
 async fn handle_hub_name(
     message: &str,
     client_state: &Arc<Mutex<DcClientState>>,
-    write_half: &Arc<Mutex<tokio::io::WriteHalf<TcpStream>>>,
+    write_half: &Arc<Mutex<DcWriteHalf>>,
     llm_client: &OllamaClient,
     app_state: &Arc<AppState>,
     status_tx: &mpsc::UnboundedSender<String>,
@@ -862,7 +1131,7 @@ async fn handle_hub_name(
 async fn handle_hub_topic(
     message: &str,
     client_state: &Arc<Mutex<DcClientState>>,
-    write_half: &Arc<Mutex<tokio::io::WriteHalf<TcpStream>>>,
+    write_half: &Arc<Mutex<DcWriteHalf>>,
     llm_client: &OllamaClient,
     app_state: &Arc<AppState>,
     status_tx: &mpsc::UnboundedSender<String>,
@@ -1002,7 +1271,7 @@ async fn handle_redirect(
 async fn execute_dc_actions(
     result: ClientLlmResult,
     client_state: &Arc<Mutex<DcClientState>>,
-    write_half: &Arc<Mutex<tokio::io::WriteHalf<TcpStream>>>,
+    write_half: &Arc<Mutex<DcWriteHalf>>,
     client_id: ClientId,
 ) -> Result<()> {
     use crate::llm::actions::client_trait::ClientActionResult;
@@ -1099,7 +1368,7 @@ async fn execute_dc_actions(
 
 /// Send a DC command (ensures pipe termination)
 async fn send_dc_command(
-    write_half: &Arc<Mutex<tokio::io::WriteHalf<TcpStream>>>,
+    write_half: &Arc<Mutex<DcWriteHalf>>,
     command: &str,
 ) -> Result<()> {
     let mut write_guard = write_half.lock().await;

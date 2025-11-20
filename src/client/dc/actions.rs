@@ -183,6 +183,34 @@ pub static DC_CLIENT_REDIRECT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     }])
 });
 
+/// DC client disconnected event
+pub static DC_CLIENT_DISCONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "dc_client_disconnected",
+        "DC client disconnected from hub",
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "reason".to_string(),
+            type_hint: "string".to_string(),
+            description: "Disconnection reason".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "will_reconnect".to_string(),
+            type_hint: "boolean".to_string(),
+            description: "Whether auto-reconnect will attempt to reconnect".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "reconnect_attempt".to_string(),
+            type_hint: "number".to_string(),
+            description: "Current reconnection attempt number (0 if first disconnect)".to_string(),
+            required: false,
+        },
+    ])
+});
+
 /// DC client protocol action handler
 pub struct DcClientProtocol;
 
@@ -230,6 +258,34 @@ impl Protocol for DcClientProtocol {
                 required: false,
                 example: json!(1073741824u64),
             },
+            crate::llm::actions::ParameterDefinition {
+                name: "use_tls".to_string(),
+                type_hint: "boolean".to_string(),
+                description: "Use TLS encryption (DCCS protocol, port 412)".to_string(),
+                required: false,
+                example: json!(false),
+            },
+            crate::llm::actions::ParameterDefinition {
+                name: "auto_reconnect".to_string(),
+                type_hint: "boolean".to_string(),
+                description: "Automatically reconnect if disconnected".to_string(),
+                required: false,
+                example: json!(false),
+            },
+            crate::llm::actions::ParameterDefinition {
+                name: "max_reconnect_attempts".to_string(),
+                type_hint: "number".to_string(),
+                description: "Maximum reconnection attempts (0 = unlimited)".to_string(),
+                required: false,
+                example: json!(5),
+            },
+            crate::llm::actions::ParameterDefinition {
+                name: "initial_reconnect_delay_secs".to_string(),
+                type_hint: "number".to_string(),
+                description: "Initial delay before reconnecting (exponential backoff)".to_string(),
+                required: false,
+                example: json!(2),
+            },
         ]
     }
 
@@ -268,6 +324,7 @@ impl Protocol for DcClientProtocol {
             DC_CLIENT_HUBINFO_EVENT.clone(),
             DC_CLIENT_KICKED_EVENT.clone(),
             DC_CLIENT_REDIRECT_EVENT.clone(),
+            DC_CLIENT_DISCONNECTED_EVENT.clone(),
         ]
     }
 
