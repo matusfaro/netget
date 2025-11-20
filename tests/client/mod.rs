@@ -4,6 +4,8 @@
 pub mod amqp;
 #[cfg(feature = "datalink")]
 pub mod datalink;
+#[cfg(feature = "dc")]
+pub mod dc;
 #[cfg(feature = "http")]
 pub mod http;
 #[cfg(feature = "ipp")]
