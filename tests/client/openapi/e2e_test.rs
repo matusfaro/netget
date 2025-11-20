@@ -96,6 +96,7 @@ mod openapi_client_tests {
                     // Mock 3: Operation response received - verify and disconnect
                     .on_event("openapi_operation_response")
                     .and_event_data_contains("operation_id", "listUsers")
+                    .and_event_data_contains("status_code", "200")
                     .respond_with_actions(json!([
                         {
                             "type": "disconnect"
@@ -195,6 +196,7 @@ mod openapi_client_tests {
                     .and()
                     .on_event("openapi_operation_response")
                     .and_event_data_contains("operation_id", "getUser")
+                    .and_event_data_contains("status_code", "200")
                     .respond_with_actions(json!([{"type": "disconnect"}]))
                     .expect_calls(1)
                     .and()
