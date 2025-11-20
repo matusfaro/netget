@@ -46,6 +46,12 @@ pub mod datalink;
 #[cfg(feature = "datalink")]
 pub use datalink::actions::DataLinkClientProtocol;
 
+// dc client
+#[cfg(feature = "dc")]
+pub mod dc;
+#[cfg(feature = "dc")]
+pub use dc::actions::DcClientProtocol;
+
 // dhcp client
 #[cfg(feature = "dhcp")]
 pub mod dhcp;
