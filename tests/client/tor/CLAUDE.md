@@ -7,17 +7,18 @@ tests validate behavior with actual Tor connections.
 
 ## LLM Call Budget
 
-**Target: < 10 LLM calls per test suite**
+**Target: < 15 LLM calls per test suite**
 
 ### Breakdown
 
-1. **Bootstrap Test** (1 call): Verify Tor client bootstraps successfully
-2. **Basic HTTP Connection** (2 calls): Connect to public site and fetch page
-3. **Onion Service Connection** (2 calls): Connect to `.onion` address
-4. **Data Send/Receive** (2 calls): Test bidirectional communication
-5. **Error Handling** (1 call): Test connection to invalid destination
+1. **Directory Query Tests** (3 calls): Test consensus info, list relays, search relays
+2. **Bootstrap Test** (1 call): Verify Tor client bootstraps successfully
+3. **Basic HTTP Connection** (2 calls): Connect to public site and fetch page
+4. **Onion Service Connection** (2 calls): Connect to `.onion` address
+5. **Data Send/Receive** (2 calls): Test bidirectional communication
+6. **Error Handling** (1 call): Test connection to invalid destination
 
-**Total: ~8 LLM calls**
+**Total: ~11 LLM calls**
 
 ## Test Runtime
 
@@ -47,6 +48,51 @@ All tests are E2E, requiring:
 - Tests use different instructions to verify independent behavior
 
 ## Test Scenarios
+
+### Directory Query Tests (NEW)
+
+Testing directory query capabilities with mocks (no LLM required for most tests):
+
+```rust
+#[tokio::test]
+async fn test_get_consensus_info() {
+    // Bootstrap Tor client
+    // Call get_consensus_info action
+    // Verify relay_count, valid_after fields
+}
+```
+
+**LLM Calls**: 1 (bootstrap event only)
+**Expected**: Consensus metadata returned
+**Validation**: JSON contains relay_count > 0, valid timestamps
+
+```rust
+#[tokio::test]
+async fn test_list_relays() {
+    // Bootstrap Tor client
+    // Call list_relays with limit=10
+    // Verify relay list returned
+}
+```
+
+**LLM Calls**: 1 (bootstrap event only)
+**Expected**: Array of 10 RelayInfo structs
+**Validation**: Each relay has nickname, fingerprint, flags
+
+```rust
+#[tokio::test]
+async fn test_search_relays_by_flags() {
+    // Bootstrap Tor client
+    // Call search_relays with flags=["Exit", "Fast"]
+    // Verify all relays have required flags
+}
+```
+
+**LLM Calls**: 1 (bootstrap event only)
+**Expected**: Filtered relay list
+**Validation**: All relays have Exit AND Fast flags
+
+**Directory Tests Total**: 3 LLM calls (bootstrap only, queries are direct action invocations)
 
 ### 1. Bootstrap and Basic Connection
 

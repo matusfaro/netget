@@ -242,7 +242,7 @@ struct AppStateInner {
     clients: HashMap<ClientId, ClientInstance>,
     /// Tor client instances (for directory queries)
     #[cfg(feature = "tor")]
-    tor_clients: HashMap<ClientId, Arc<arti_client::TorClient>>,
+    tor_clients: HashMap<ClientId, Arc<arti_client::TorClient<tor_rtcompat::PreferredRuntime>>>,
     /// All easy protocol instances
     easy_instances: HashMap<EasyId, EasyInstance>,
     /// Mapping from underlying server ID to easy ID (for event routing)
@@ -2144,7 +2144,7 @@ impl AppState {
     pub async fn set_tor_client(
         &self,
         client_id: ClientId,
-        tor_client: Arc<arti_client::TorClient>,
+        tor_client: Arc<arti_client::TorClient<tor_rtcompat::PreferredRuntime>>,
     ) {
         let mut inner = self.inner.write().await;
         inner.tor_clients.insert(client_id, tor_client);
@@ -2152,7 +2152,7 @@ impl AppState {
 
     /// Get Tor client instance by client ID
     #[cfg(feature = "tor")]
-    pub async fn get_tor_client(&self, client_id: ClientId) -> Option<Arc<arti_client::TorClient>> {
+    pub async fn get_tor_client(&self, client_id: ClientId) -> Option<Arc<arti_client::TorClient<tor_rtcompat::PreferredRuntime>>> {
         let inner = self.inner.read().await;
         inner.tor_clients.get(&client_id).cloned()
     }
