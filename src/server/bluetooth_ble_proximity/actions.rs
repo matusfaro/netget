@@ -6,6 +6,7 @@ use crate::llm::actions::{
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{Context, Result};
+use serde_json::json;
 
 pub struct BluetoothBleProximityProtocol;
 impl BluetoothBleProximityProtocol {

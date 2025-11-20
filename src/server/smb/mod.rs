@@ -105,13 +105,15 @@ impl SmbServer {
         // Spawn connection acceptor
         tokio::spawn(async move {
             info!("SMB server connection acceptor started");
+            let _ = status_tx.send("[INFO] SMB connection acceptor loop starting".to_string());
 
             loop {
+                trace!("SMB acceptor: waiting for connection");
                 match listener.accept().await {
                     Ok((stream, peer_addr)) => {
-                        debug!("SMB connection accepted from {}", peer_addr);
+                        info!("SMB connection accepted from {}", peer_addr);
                         let _ =
-                            status_tx.send(format!("[DEBUG] SMB connection from {}", peer_addr));
+                            status_tx.send(format!("→ SMB connection from {}", peer_addr));
 
                         // Spawn per-connection handler
                         let llm_client = llm_client.clone();

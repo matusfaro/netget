@@ -194,7 +194,44 @@ pub enum CommonAction {
 impl CommonAction {
     /// Parse from JSON value
     pub fn from_json(value: &serde_json::Value) -> Result<Self> {
-        serde_json::from_value(value.clone()).context("Failed to parse common action")
+        // BACKWARD COMPATIBILITY: Convert old script_inline/script_handles format to new event_handlers format
+        let mut value_mut = value.clone();
+        if let Some(obj) = value_mut.as_object_mut() {
+            // Check if this is an open_server or open_client action with old script fields
+            if matches!(obj.get("type").and_then(|v| v.as_str()), Some("open_server") | Some("open_client")) {
+                if let (Some(script_inline), Some(script_handles)) =
+                    (obj.get("script_inline").and_then(|v| v.as_str()),
+                     obj.get("script_handles").and_then(|v| v.as_array())) {
+                    // Convert to new event_handlers format
+                    let mut event_handlers = Vec::new();
+
+                    // Create a handler for each event type in script_handles
+                    for event_type in script_handles {
+                        if let Some(event_type_str) = event_type.as_str() {
+                            event_handlers.push(serde_json::json!({
+                                "event_pattern": event_type_str,
+                                "handler": {
+                                    "type": "script",
+                                    "language": "python",
+                                    "code": script_inline
+                                }
+                            }));
+                        }
+                    }
+
+                    // Add event_handlers field if we created any
+                    if !event_handlers.is_empty() {
+                        obj.insert("event_handlers".to_string(), serde_json::json!(event_handlers));
+                    }
+
+                    // Remove old fields
+                    obj.remove("script_inline");
+                    obj.remove("script_handles");
+                }
+            }
+        }
+
+        serde_json::from_value(value_mut).context("Failed to parse common action")
     }
 }
 

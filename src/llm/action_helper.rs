@@ -339,10 +339,26 @@ pub async fn call_llm(
         }
     }
 
-    // TRY SCRIPT FIRST if configured
-    // Note: Script handling is done via event handlers, not through this path anymore
-    // This section needs refactoring to use the new event handler system
-    // For now, we always fall through to LLM
+    // TRY EVENT HANDLER FIRST if configured (includes scripts and static responses)
+    match crate::llm::event_handler_executor::try_execute_event_handler(
+        state,
+        server_id,
+        connection_id,
+        &event.event_type.id,
+        &event.event_type.description,
+        Some(event.data.clone()),
+        Some(protocol),
+    )
+    .await?
+    {
+        crate::llm::event_handler_executor::EventHandlerResult::Handled(result) => {
+            // Handler executed successfully (script or static)
+            return Ok(result);
+        }
+        crate::llm::event_handler_executor::EventHandlerResult::FallbackToLlm => {
+            // No handler or handler requested LLM fallback - proceed with LLM call
+        }
+    }
 
     // FALLBACK TO LLM (normal path if no script or script failed/requested fallback)
 
