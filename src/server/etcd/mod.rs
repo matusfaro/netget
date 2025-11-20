@@ -322,7 +322,7 @@ impl EtcdServer {
         );
 
         // Call LLM for decision
-        let _execution_result = call_llm(
+        let execution_result = call_llm(
             &llm_client,
             &app_state,
             server_id,
@@ -332,13 +332,48 @@ impl EtcdServer {
         )
         .await?;
 
-        // For now, return empty response (LLM will control via actions in full implementation)
+        // Process LLM action results to build response
         let store_lock = store.lock().await;
+        let mut kvs = vec![];
+        let mut more = false;
+        let mut count = 0;
+
+        for protocol_result in &execution_result.protocol_results {
+            if let crate::llm::actions::protocol_trait::ActionResult::Custom { name, data } = protocol_result {
+                if name == "etcd_range_response" {
+                    // Parse LLM response
+                    if let Some(kvs_array) = data.get("kvs").and_then(|v| v.as_array()) {
+                        for kv_json in kvs_array {
+                            let key = kv_json.get("key").and_then(|v| v.as_str()).unwrap_or("");
+                            let value = kv_json.get("value").and_then(|v| v.as_str()).unwrap_or("");
+                            let create_revision =
+                                kv_json.get("create_revision").and_then(|v| v.as_i64()).unwrap_or(0);
+                            let mod_revision =
+                                kv_json.get("mod_revision").and_then(|v| v.as_i64()).unwrap_or(0);
+                            let version = kv_json.get("version").and_then(|v| v.as_i64()).unwrap_or(0);
+                            let lease = kv_json.get("lease").and_then(|v| v.as_i64()).unwrap_or(0);
+
+                            kvs.push(KeyValue {
+                                key: key.as_bytes().to_vec(),
+                                create_revision,
+                                mod_revision,
+                                version,
+                                lease,
+                                value: value.as_bytes().to_vec(),
+                            });
+                        }
+                    }
+                    more = data.get("more").and_then(|v| v.as_bool()).unwrap_or(false);
+                    count = data.get("count").and_then(|v| v.as_i64()).unwrap_or(kvs.len() as i64);
+                }
+            }
+        }
+
         let response = RangeResponse {
             header: Some(store_lock.get_response_header()),
-            kvs: vec![],
-            more: false,
-            count: 0,
+            kvs,
+            more,
+            count,
         };
 
         let mut buf = Vec::new();
