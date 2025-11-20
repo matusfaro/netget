@@ -443,6 +443,84 @@ where
     Ok(local_addr)
 }
 
+/// Helper struct for parsing private messages
+struct PrivateMessageParts {
+    target: String,
+    source: String,
+    message: String,
+}
+
+/// Parse NMDC private message format: $To: <target> From: <source> $<<source>> <message>
+fn parse_private_message(message: &str) -> Result<PrivateMessageParts> {
+    // Expected format: "$To: <target> From: <source> $<<source>> <message>"
+    if !message.starts_with("$To:") {
+        return Err(anyhow::anyhow!("Not a private message"));
+    }
+
+    // Find "From:" to split target and source
+    let from_pos = message.find(" From:").ok_or_else(|| anyhow::anyhow!("Missing 'From:' in private message"))?;
+
+    // Extract target (between "$To: " and " From:")
+    let target_part = &message[5..from_pos]; // Skip "$To: "
+    let target = target_part.trim().to_string();
+
+    // Find the second $ which marks the start of the actual message
+    let msg_start = message[from_pos..]
+        .find('$')
+        .ok_or_else(|| anyhow::anyhow!("Missing message delimiter '$' in private message"))?
+        + from_pos;
+
+    // Extract source (between "From: " and " $")
+    let source_part = &message[from_pos + 6..msg_start]; // Skip " From:"
+    let source = source_part.trim().to_string();
+
+    // Extract message content
+    // Format is: $<<source>> <message>
+    let msg_part = &message[msg_start + 1..]; // Skip '$'
+
+    // Find the end of <<source>> pattern
+    let msg_text_start = msg_part
+        .find(">> ")
+        .map(|p| p + 3) // Skip ">> "
+        .unwrap_or(0);
+
+    let msg_text = msg_part[msg_text_start..].to_string();
+
+    Ok(PrivateMessageParts {
+        target,
+        source,
+        message: msg_text,
+    })
+}
+
+/// Parse NMDC chat message format: <nickname> message
+fn parse_chat_message(message: &str) -> Result<(String, String)> {
+    if !message.starts_with('<') {
+        return Err(anyhow::anyhow!("Not a chat message"));
+    }
+
+    // Find closing bracket using char indices to support Unicode
+    let close_bracket_pos = message
+        .char_indices()
+        .find(|(_, c)| *c == '>')
+        .map(|(i, _)| i)
+        .ok_or_else(|| anyhow::anyhow!("Malformed chat message: missing '>'"))?;
+
+    let source = message[1..close_bracket_pos].to_string();
+
+    // Skip "> " (closing bracket, space)
+    let msg_start = close_bracket_pos + 1;
+    let msg = if msg_start < message.len() {
+        let msg_slice = &message[msg_start..];
+        // Trim leading space if present
+        msg_slice.trim_start().to_string()
+    } else {
+        String::new()
+    };
+
+    Ok((source, msg))
+}
+
 /// Process a single DC message (works with both TCP and TLS)
 async fn process_dc_message(
     message: &str,
@@ -790,10 +868,14 @@ async fn handle_chat_message(
         return Ok(()); // Ignore messages before authentication
     }
 
-    // Parse chat: "<nickname> message"
-    let close_bracket = message.find('>').unwrap_or(0);
-    let source = message[1..close_bracket].to_string();
-    let msg = message[close_bracket + 2..].to_string(); // Skip "> "
+    // Parse chat using improved parser
+    let (source, msg) = match parse_chat_message(message) {
+        Ok((s, m)) => (s, m),
+        Err(e) => {
+            debug!("Failed to parse chat message '{}': {}", message, e);
+            return Ok(());
+        }
+    };
 
     debug!(
         "DC client {} received chat from {}: {}",
@@ -861,26 +943,22 @@ async fn handle_private_message(
         return Ok(());
     }
 
-    // Parse: "$To: target From: source $<source> message"
-    // This is simplified - real parsing is more complex
-    let parts: Vec<&str> = message.split('$').collect();
-    if parts.len() < 3 {
-        return Ok(());
-    }
+    // Parse private message using improved parser
+    let parts = match parse_private_message(message) {
+        Ok(p) => p,
+        Err(e) => {
+            debug!("Failed to parse private message '{}': {}", message, e);
+            return Ok(());
+        }
+    };
 
-    // Extract source from "<source>" pattern
-    let source_part = parts.iter().find(|s| s.starts_with('<')).unwrap_or(&"");
-    let source = source_part
-        .strip_prefix('<')
-        .and_then(|s| s.strip_suffix('>'))
-        .unwrap_or("")
-        .to_string();
-
-    let msg = parts.last().unwrap_or(&"").trim().to_string();
+    let source = parts.source;
+    let target = parts.target;
+    let msg = parts.message;
 
     debug!(
-        "DC client {} received private message from {}: {}",
-        client_id, source, msg
+        "DC client {} received private message from {} (to {}): {}",
+        client_id, source, target, msg
     );
 
     // Call LLM
@@ -890,6 +968,7 @@ async fn handle_private_message(
             "source": source,
             "message": msg,
             "is_private": true,
+            "target": target,
         }),
     );
 

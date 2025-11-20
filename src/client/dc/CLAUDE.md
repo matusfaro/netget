@@ -285,16 +285,25 @@ See `actions.rs` for complete action list with examples.
 
 **Workaround**: LLM can generate fake file list if requested by hub
 
-### 4. Simplified Message Parsing
+### 4. Message Parsing
 
-**Limitation**: Some complex NMDC message formats may not parse correctly
+**Feature**: ✅ **IMPROVED** - Robust message parsing with better error handling
 
-**Reason**: Focus on core hub interaction messages
+**Implementation**:
+- Proper NMDC private message parsing (`$To: <target> From: <source> $<<source>> <message>`)
+- Unicode-aware chat message parsing using char indices
+- Graceful error handling for malformed messages
+- Support for common NMDC commands (Lock, Hello, chat, private messages, search results, user lists, hub info, kick, redirect)
 
-**Examples**:
-- Private messages parsing is simplified
-- Some less common NMDC commands not implemented
-- Unicode/extended characters may have issues
+**Improvements**:
+- Private messages now correctly extract target, source, and message fields
+- Chat messages use char-based indexing to support Unicode nicknames and messages
+- Parse errors are logged but don't crash the client
+- Better handling of edge cases (missing delimiters, empty messages, etc.)
+
+**Remaining Limitations**:
+- Some less common NMDC commands not yet implemented ($GetINFO, $MyINFO, $ConnectToMe, etc.)
+- File list parsing not implemented (see limitation #3)
 
 ### 5. TLS Support (DCCS Protocol)
 
