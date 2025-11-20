@@ -298,7 +298,7 @@ struct AppStateInner {
     /// Total number of LLM calls made
     total_llm_calls: u64,
     /// SQLite database manager
-    database_manager: crate::state::DatabaseManager,
+    _database_manager: crate::state::DatabaseManager,
 }
 
 impl AppState {
@@ -361,7 +361,7 @@ impl AppState {
                 total_input_tokens: 0,
                 total_output_tokens: 0,
                 total_llm_calls: 0,
-                database_manager: crate::state::DatabaseManager::new(),
+                _database_manager: crate::state::DatabaseManager::new(),
             })),
         }
     }

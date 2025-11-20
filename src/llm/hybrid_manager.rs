@@ -7,7 +7,7 @@ use crate::llm::ollama_client::OllamaClient;
 use anyhow::{anyhow, Context, Result};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 #[cfg(feature = "embedded-llm")]
 use crate::llm::embedded_inference::{EmbeddedLLMBackend, InferenceConfig};

@@ -38,6 +38,7 @@ impl EasyRegistry {
     }
 
     /// Register a new easy protocol
+    #[allow(dead_code)]
     fn register(&mut self, protocol: Arc<dyn Easy>) {
         let name = protocol.protocol_name().to_string();
         self.protocols.insert(name, protocol);

@@ -422,7 +422,7 @@ impl ImapProtocol {
                     .join(" ")
             });
 
-        let read_write = action
+        let _read_write = action
             .get("read_write")
             .and_then(|v| v.as_bool())
             .unwrap_or(true);

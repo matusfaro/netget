@@ -78,10 +78,10 @@ pub struct ConversationHandler {
     protocol_docs_read: bool,
 
     /// Whether server documentation has been read in this conversation (enables open_server)
-    server_docs_read: bool,
+    _server_docs_read: bool,
 
     /// Whether client documentation has been read in this conversation (enables open_client)
-    client_docs_read: bool,
+    _client_docs_read: bool,
 
     /// Application state (for conversation tracking)
     state: Option<AppState>,
@@ -131,8 +131,8 @@ impl ConversationHandler {
             status_tx: None,
             last_logged_index: 0, // No messages logged yet
             protocol_docs_read: false,
-            server_docs_read: false,
-            client_docs_read: false,
+            _server_docs_read: false,
+            _client_docs_read: false,
             state: None,
             source: None,
             details: None,
@@ -230,8 +230,9 @@ impl ConversationHandler {
     }
 
     /// Mark server documentation as read in this conversation (enables open_server)
-    fn mark_server_docs_read(&mut self, available_actions: &[ActionDefinition]) {
-        self.server_docs_read = true;
+    #[allow(dead_code)]
+    fn _mark_server_docs_read(&mut self, available_actions: &[ActionDefinition]) {
+        self._server_docs_read = true;
         debug!("Server documentation read in conversation - open_server action is now enabled");
 
         // Rebuild the actions section in the system prompt
@@ -239,8 +240,9 @@ impl ConversationHandler {
     }
 
     /// Mark client documentation as read in this conversation (enables open_client)
-    fn mark_client_docs_read(&mut self, available_actions: &[ActionDefinition]) {
-        self.client_docs_read = true;
+    #[allow(dead_code)]
+    fn _mark_client_docs_read(&mut self, available_actions: &[ActionDefinition]) {
+        self._client_docs_read = true;
         debug!("Client documentation read in conversation - open_client action is now enabled");
 
         // Rebuild the actions section in the system prompt

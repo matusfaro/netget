@@ -109,7 +109,7 @@ pub async fn run_non_interactive(
 
     // Spawn a background task to forward status messages to stdout in real-time
     // This ensures the test helper can see server startup messages as they happen
-    let status_forwarder = tokio::spawn(async move {
+    let _status_forwarder = tokio::spawn(async move {
         use std::io::{self, Write};
         while let Some(msg) = status_rx.recv().await {
             // Skip internal control messages

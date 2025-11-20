@@ -261,7 +261,7 @@ impl StickyFooter {
         servers: &[ServerDisplayInfo],
         clients: &[ClientDisplayInfo],
         connections: &[ConnectionDisplayInfo],
-        tasks: &[crate::ui::app::TaskDisplayInfo],
+        _tasks: &[crate::ui::app::TaskDisplayInfo],
         expand_all: bool,
         conversations: &[ConversationInfo],
     ) -> u16 {
@@ -1083,7 +1083,6 @@ impl StickyFooter {
                 } else if usage_line_idx == 2 {
                     // Line 2: LLM stats (compact format)
                     let (input_tokens, output_tokens, llm_calls) = self.llm_stats;
-                    let total_tokens = input_tokens + output_tokens;
                     // Format: "L:5 12k/8k" (calls, in/out in thousands)
                     let format_tokens = |t: u64| {
                         if t >= 1_000_000 {
