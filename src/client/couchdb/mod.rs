@@ -118,8 +118,11 @@ impl CouchDbClient {
             {
                 Ok(result) => {
                     // Execute actions from LLM response
-                    for action in result.actions {
-                        if let Err(e) = execute_couchdb_action(
+                    // Use a queue to handle follow-up actions
+                    let mut action_queue: Vec<serde_json::Value> = result.actions;
+
+                    while let Some(action) = action_queue.pop() {
+                        match execute_couchdb_action(
                             &action,
                             client_id,
                             &client_for_connected,
@@ -129,7 +132,13 @@ impl CouchDbClient {
                         )
                         .await
                         {
-                            console_error!(status_tx, "Error executing action after connect: {}", e);
+                            Ok(follow_up_actions) => {
+                                // Add follow-up actions to the front of the queue
+                                action_queue.extend(follow_up_actions.into_iter().rev());
+                            }
+                            Err(e) => {
+                                console_error!(status_tx, "Error executing action after connect: {}", e);
+                            }
                         }
                     }
                 }
@@ -176,7 +185,7 @@ async fn execute_couchdb_action(
     app_state: &Arc<AppState>,
     llm_client: &OllamaClient,
     status_tx: &mpsc::UnboundedSender<String>,
-) -> Result<()> {
+) -> Result<Vec<serde_json::Value>> {
     let action_type = action
         .get("type")
         .and_then(|v| v.as_str())
@@ -192,7 +201,7 @@ async fn execute_couchdb_action(
             console_info!(status_tx, "Creating database: {}", db_name);
 
             let client_guard = client.lock().await;
-            match client_guard.make_db(db_name).await {
+            let actions = match client_guard.make_db(db_name).await {
                 Ok(_) => {
                     console_info!(status_tx, "Database {} created successfully", db_name);
                     send_response_event(
@@ -205,7 +214,7 @@ async fn execute_couchdb_action(
                         llm_client,
                         status_tx,
                     )
-                    .await;
+                    .await
                 }
                 Err(e) => {
                     console_error!(status_tx, "Failed to create database {}: {}", db_name, e);
@@ -219,9 +228,10 @@ async fn execute_couchdb_action(
                         llm_client,
                         status_tx,
                     )
-                    .await;
+                    .await
                 }
-            }
+            };
+            return Ok(actions);
         }
         "delete_database" => {
             let db_name = action
@@ -235,7 +245,7 @@ async fn execute_couchdb_action(
             match client_guard.destroy_db(db_name).await {
                 Ok(_) => {
                     console_info!(status_tx, "Database {} deleted successfully", db_name);
-                    send_response_event(
+                    return Ok(send_response_event(
                         client_id,
                         "delete_database",
                         true,
@@ -245,11 +255,11 @@ async fn execute_couchdb_action(
                         llm_client,
                         status_tx,
                     )
-                    .await;
+                    .await);
                 }
                 Err(e) => {
                     console_error!(status_tx, "Failed to delete database {}: {}", db_name, e);
-                    send_response_event(
+                    return Ok(send_response_event(
                         client_id,
                         "delete_database",
                         false,
@@ -259,7 +269,7 @@ async fn execute_couchdb_action(
                         llm_client,
                         status_tx,
                     )
-                    .await;
+                    .await);
                 }
             }
         }
@@ -270,7 +280,7 @@ async fn execute_couchdb_action(
             match client_guard.list_dbs().await {
                 Ok(dbs) => {
                     console_info!(status_tx, "Found {} databases", dbs.len());
-                    send_response_event(
+                    return Ok(send_response_event(
                         client_id,
                         "list_databases",
                         true,
@@ -280,11 +290,11 @@ async fn execute_couchdb_action(
                         llm_client,
                         status_tx,
                     )
-                    .await;
+                    .await);
                 }
                 Err(e) => {
                     console_error!(status_tx, "Failed to list databases: {}", e);
-                    send_response_event(
+                    return Ok(send_response_event(
                         client_id,
                         "list_databases",
                         false,
@@ -294,7 +304,7 @@ async fn execute_couchdb_action(
                         llm_client,
                         status_tx,
                     )
-                    .await;
+                    .await);
                 }
             }
         }
@@ -337,7 +347,7 @@ async fn execute_couchdb_action(
                 Ok(resp) => resp,
                 Err(e) => {
                     console_error!(status_tx, "Failed to create document: {}", e);
-                    send_response_event(
+                    return Ok(send_response_event(
                         client_id,
                         "create_document",
                         false,
@@ -347,8 +357,7 @@ async fn execute_couchdb_action(
                         llm_client,
                         status_tx,
                     )
-                    .await;
-                    return Ok(());
+                    .await);
                 }
             };
 
@@ -362,7 +371,7 @@ async fn execute_couchdb_action(
                             result.get("id").and_then(|v| v.as_str()).unwrap_or("unknown"),
                             result.get("rev").and_then(|v| v.as_str()).unwrap_or("unknown")
                         );
-                        send_response_event(
+                        return Ok(send_response_event(
                             client_id,
                             "create_document",
                             true,
@@ -372,7 +381,7 @@ async fn execute_couchdb_action(
                             llm_client,
                             status_tx,
                         )
-                        .await;
+                        .await);
                     } else {
                         console_error!(
                             status_tx,
@@ -380,7 +389,7 @@ async fn execute_couchdb_action(
                             status,
                             result.get("reason").and_then(|v| v.as_str()).unwrap_or("unknown error")
                         );
-                        send_response_event(
+                        return Ok(send_response_event(
                             client_id,
                             "create_document",
                             false,
@@ -394,12 +403,12 @@ async fn execute_couchdb_action(
                             llm_client,
                             status_tx,
                         )
-                        .await;
+                        .await);
                     }
                 }
                 Err(e) => {
                     console_error!(status_tx, "Failed to parse response: {}", e);
-                    send_response_event(
+                    return Ok(send_response_event(
                         client_id,
                         "create_document",
                         false,
@@ -409,7 +418,7 @@ async fn execute_couchdb_action(
                         llm_client,
                         status_tx,
                     )
-                    .await;
+                    .await);
                 }
             }
         }
@@ -431,7 +440,7 @@ async fn execute_couchdb_action(
                 Ok(db) => db,
                 Err(e) => {
                     console_error!(status_tx, "Failed to get database {}: {}", db_name, e);
-                    send_response_event(
+                    return Ok(send_response_event(
                         client_id,
                         "get_document",
                         false,
@@ -441,15 +450,14 @@ async fn execute_couchdb_action(
                         llm_client,
                         status_tx,
                     )
-                    .await;
-                    return Ok(());
+                    .await);
                 }
             };
 
             match db.get_raw(doc_id).await {
                 Ok(doc) => {
                     console_info!(status_tx, "Document retrieved: {}", doc_id);
-                    send_response_event(
+                    return Ok(send_response_event(
                         client_id,
                         "get_document",
                         true,
@@ -459,11 +467,11 @@ async fn execute_couchdb_action(
                         llm_client,
                         status_tx,
                     )
-                    .await;
+                    .await);
                 }
                 Err(e) => {
                     console_error!(status_tx, "Failed to get document {}: {}", doc_id, e);
-                    send_response_event(
+                    return Ok(send_response_event(
                         client_id,
                         "get_document",
                         false,
@@ -473,7 +481,7 @@ async fn execute_couchdb_action(
                         llm_client,
                         status_tx,
                     )
-                    .await;
+                    .await);
                 }
             }
         }
@@ -526,7 +534,7 @@ async fn execute_couchdb_action(
                 Ok(resp) => resp,
                 Err(e) => {
                     console_error!(status_tx, "Failed to update document: {}", e);
-                    send_response_event(
+                    return Ok(send_response_event(
                         client_id,
                         "update_document",
                         false,
@@ -536,8 +544,7 @@ async fn execute_couchdb_action(
                         llm_client,
                         status_tx,
                     )
-                    .await;
-                    return Ok(());
+                    .await);
                 }
             };
 
@@ -551,7 +558,7 @@ async fn execute_couchdb_action(
                             result.get("id").and_then(|v| v.as_str()).unwrap_or("unknown"),
                             result.get("rev").and_then(|v| v.as_str()).unwrap_or("unknown")
                         );
-                        send_response_event(
+                        return Ok(send_response_event(
                             client_id,
                             "update_document",
                             true,
@@ -561,7 +568,7 @@ async fn execute_couchdb_action(
                             llm_client,
                             status_tx,
                         )
-                        .await;
+                        .await);
                     } else {
                         // Check for conflict (409)
                         if status.as_u16() == 409 {
@@ -584,7 +591,7 @@ async fn execute_couchdb_action(
                             status,
                             result.get("reason").and_then(|v| v.as_str()).unwrap_or("unknown error")
                         );
-                        send_response_event(
+                        return Ok(send_response_event(
                             client_id,
                             "update_document",
                             false,
@@ -598,12 +605,12 @@ async fn execute_couchdb_action(
                             llm_client,
                             status_tx,
                         )
-                        .await;
+                        .await);
                     }
                 }
                 Err(e) => {
                     console_error!(status_tx, "Failed to parse response: {}", e);
-                    send_response_event(
+                    return Ok(send_response_event(
                         client_id,
                         "update_document",
                         false,
@@ -613,7 +620,7 @@ async fn execute_couchdb_action(
                         llm_client,
                         status_tx,
                     )
-                    .await;
+                    .await);
                 }
             }
         }
@@ -657,7 +664,7 @@ async fn execute_couchdb_action(
                 Ok(resp) => resp,
                 Err(e) => {
                     console_error!(status_tx, "Failed to delete document: {}", e);
-                    send_response_event(
+                    return Ok(send_response_event(
                         client_id,
                         "delete_document",
                         false,
@@ -667,8 +674,7 @@ async fn execute_couchdb_action(
                         llm_client,
                         status_tx,
                     )
-                    .await;
-                    return Ok(());
+                    .await);
                 }
             };
 
@@ -682,7 +688,7 @@ async fn execute_couchdb_action(
                             result.get("id").and_then(|v| v.as_str()).unwrap_or("unknown"),
                             result.get("rev").and_then(|v| v.as_str()).unwrap_or("unknown")
                         );
-                        send_response_event(
+                        return Ok(send_response_event(
                             client_id,
                             "delete_document",
                             true,
@@ -692,7 +698,7 @@ async fn execute_couchdb_action(
                             llm_client,
                             status_tx,
                         )
-                        .await;
+                        .await);
                     } else {
                         // Check for conflict (409)
                         if status.as_u16() == 409 {
@@ -722,7 +728,7 @@ async fn execute_couchdb_action(
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("unknown error")
                         );
-                        send_response_event(
+                        return Ok(send_response_event(
                             client_id,
                             "delete_document",
                             false,
@@ -742,12 +748,12 @@ async fn execute_couchdb_action(
                             llm_client,
                             status_tx,
                         )
-                        .await;
+                        .await);
                     }
                 }
                 Err(e) => {
                     console_error!(status_tx, "Failed to parse response: {}", e);
-                    send_response_event(
+                    return Ok(send_response_event(
                         client_id,
                         "delete_document",
                         false,
@@ -757,7 +763,7 @@ async fn execute_couchdb_action(
                         llm_client,
                         status_tx,
                     )
-                    .await;
+                    .await);
                 }
             }
         }
@@ -797,7 +803,7 @@ async fn execute_couchdb_action(
                 Ok(resp) => resp,
                 Err(e) => {
                     console_error!(status_tx, "Failed to perform bulk docs: {}", e);
-                    send_response_event(
+                    return Ok(send_response_event(
                         client_id,
                         "bulk_docs",
                         false,
@@ -807,8 +813,7 @@ async fn execute_couchdb_action(
                         llm_client,
                         status_tx,
                     )
-                    .await;
-                    return Ok(());
+                    .await);
                 }
             };
 
@@ -823,7 +828,7 @@ async fn execute_couchdb_action(
                             0
                         };
                         console_info!(status_tx, "Bulk docs completed: {} results", count);
-                        send_response_event(
+                        return Ok(send_response_event(
                             client_id,
                             "bulk_docs",
                             true,
@@ -833,7 +838,7 @@ async fn execute_couchdb_action(
                             llm_client,
                             status_tx,
                         )
-                        .await;
+                        .await);
                     } else {
                         console_error!(
                             status_tx,
@@ -844,7 +849,7 @@ async fn execute_couchdb_action(
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("unknown error")
                         );
-                        send_response_event(
+                        return Ok(send_response_event(
                             client_id,
                             "bulk_docs",
                             false,
@@ -864,12 +869,12 @@ async fn execute_couchdb_action(
                             llm_client,
                             status_tx,
                         )
-                        .await;
+                        .await);
                     }
                 }
                 Err(e) => {
                     console_error!(status_tx, "Failed to parse response: {}", e);
-                    send_response_event(
+                    return Ok(send_response_event(
                         client_id,
                         "bulk_docs",
                         false,
@@ -879,7 +884,7 @@ async fn execute_couchdb_action(
                         llm_client,
                         status_tx,
                     )
-                    .await;
+                    .await);
                 }
             }
         }
@@ -901,7 +906,7 @@ async fn execute_couchdb_action(
                 Ok(db) => db,
                 Err(e) => {
                     console_error!(status_tx, "Failed to get database {}: {}", db_name, e);
-                    send_response_event(
+                    return Ok(send_response_event(
                         client_id,
                         "list_documents",
                         false,
@@ -911,8 +916,7 @@ async fn execute_couchdb_action(
                         llm_client,
                         status_tx,
                     )
-                    .await;
-                    return Ok(());
+                    .await);
                 }
             };
 
@@ -925,7 +929,7 @@ async fn execute_couchdb_action(
                         "offset": all_docs.offset,
                         "rows": all_docs.rows
                     });
-                    send_response_event(
+                    return Ok(send_response_event(
                         client_id,
                         "list_documents",
                         true,
@@ -935,11 +939,11 @@ async fn execute_couchdb_action(
                         llm_client,
                         status_tx,
                     )
-                    .await;
+                    .await);
                 }
                 Err(e) => {
                     console_error!(status_tx, "Failed to list documents: {}", e);
-                    send_response_event(
+                    return Ok(send_response_event(
                         client_id,
                         "list_documents",
                         false,
@@ -949,13 +953,13 @@ async fn execute_couchdb_action(
                         llm_client,
                         status_tx,
                     )
-                    .await;
+                    .await);
                 }
             }
         }
         "query_view" => {
             console_info!(status_tx, "View queries not yet fully implemented in couch_rs");
-            send_response_event(
+            return Ok(send_response_event(
                 client_id,
                 "query_view",
                 false,
@@ -965,11 +969,11 @@ async fn execute_couchdb_action(
                 llm_client,
                 status_tx,
             )
-            .await;
+            .await);
         }
         "watch_changes" => {
             console_info!(status_tx, "Changes feed watching not yet fully implemented");
-            send_response_event(
+            return Ok(send_response_event(
                 client_id,
                 "watch_changes",
                 false,
@@ -979,20 +983,24 @@ async fn execute_couchdb_action(
                 llm_client,
                 status_tx,
             )
-            .await;
+            .await);
         }
         "disconnect" => {
             console_info!(status_tx, "Disconnecting CouchDB client {}", client_id);
             app_state
                 .update_client_status(client_id, ClientStatus::Disconnected)
                 .await;
+            return Ok(Vec::new());
+        }
+        "wait_for_more" => {
+            // No action needed - just acknowledge
+            return Ok(Vec::new());
         }
         _ => {
             console_error!(status_tx, "Unknown action type: {}", action_type);
+            return Ok(Vec::new());
         }
     }
-
-    Ok(())
 }
 
 /// Send response event to LLM
@@ -1005,7 +1013,7 @@ async fn send_response_event(
     app_state: &Arc<AppState>,
     llm_client: &OllamaClient,
     status_tx: &mpsc::UnboundedSender<String>,
-) {
+) -> Vec<serde_json::Value> {
     if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
         let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
 
@@ -1039,15 +1047,15 @@ async fn send_response_event(
                     app_state.set_memory_for_client(client_id, new_memory).await;
                 }
 
-                // Execute any new actions from LLM
-                // Note: We can't execute them here without access to the client
-                // This would require a more complex callback mechanism
+                // Return actions to be executed by caller
+                return result.actions;
             }
             Err(e) => {
                 error!("LLM error on response event: {}", e);
             }
         }
     }
+    Vec::new()
 }
 
 /// Send conflict event to LLM when document revision mismatch occurs

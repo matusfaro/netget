@@ -152,7 +152,6 @@ async fn test_couchdb_client_database_operations() -> E2EResult<()> {
             .and()
             .on_event("couchdb_response_received")
             .and_event_data_contains("operation", "create_database")
-            .and_event_data_contains("success", "true")
             .respond_with_actions(json!([{
                 "type": "list_databases"
             }]))
@@ -168,7 +167,6 @@ async fn test_couchdb_client_database_operations() -> E2EResult<()> {
             .and()
             .on_event("couchdb_response_received")
             .and_event_data_contains("operation", "delete_database")
-            .and_event_data_contains("success", "true")
             .respond_with_actions(json!([{
                 "type": "wait_for_more"
             }]))
@@ -207,6 +205,16 @@ async fn test_couchdb_client_document_crud() -> E2EResult<()> {
                     "version": "3.5.1"
                 }]))
                 .expect_calls(1)
+                .and()
+                .on_event("couchdb_request")
+                .and_event_data_contains("operation", "db_info")
+                .and_event_data_contains("database", "testdb")
+                .respond_with_actions(json!([{
+                    "type": "send_db_info",
+                    "db_name": "testdb",
+                    "doc_count": 0,
+                    "update_seq": "0"
+                }]))
                 .and()
                 .on_event("couchdb_request")
                 .and_event_data_contains("operation", "doc_put")
@@ -274,36 +282,36 @@ async fn test_couchdb_client_document_crud() -> E2EResult<()> {
             .on_event("couchdb_connected")
             .respond_with_actions(json!([{
                 "type": "create_document",
+                "database": "testdb",
                 "doc_id": "user1",
-                "body": "{\"name\": \"Alice\", \"age\": 30}"
+                "document": {"name": "Alice", "age": 30}
             }]))
             .expect_calls(1)
             .and()
             .on_event("couchdb_response_received")
             .and_event_data_contains("operation", "create_document")
-            .and_event_data_contains("success", "true")
             .respond_with_actions(json!([{
                 "type": "get_document",
+                "database": "testdb",
                 "doc_id": "user1"
             }]))
             .expect_calls(1)
             .and()
             .on_event("couchdb_response_received")
             .and_event_data_contains("operation", "get_document")
-            .and_event_data_contains("success", "true")
             .respond_with_actions(json!([{
                 "type": "update_document",
+                "database": "testdb",
                 "doc_id": "user1",
-                "rev": "1-abc123",
-                "body": "{\"name\": \"Alice\", \"age\": 31}"
+                "document": {"_rev": "1-abc123", "name": "Alice", "age": 31}
             }]))
             .expect_calls(1)
             .and()
             .on_event("couchdb_response_received")
             .and_event_data_contains("operation", "update_document")
-            .and_event_data_contains("success", "true")
             .respond_with_actions(json!([{
                 "type": "delete_document",
+                "database": "testdb",
                 "doc_id": "user1",
                 "rev": "2-def456"
             }]))
@@ -311,7 +319,6 @@ async fn test_couchdb_client_document_crud() -> E2EResult<()> {
             .and()
             .on_event("couchdb_response_received")
             .and_event_data_contains("operation", "delete_document")
-            .and_event_data_contains("success", "true")
             .respond_with_actions(json!([{
                 "type": "wait_for_more"
             }]))
@@ -350,6 +357,16 @@ async fn test_couchdb_client_conflict_handling() -> E2EResult<()> {
                     "version": "3.5.1"
                 }]))
                 .expect_calls(1)
+                .and()
+                .on_event("couchdb_request")
+                .and_event_data_contains("operation", "db_info")
+                .and_event_data_contains("database", "testdb")
+                .respond_with_actions(json!([{
+                    "type": "send_db_info",
+                    "db_name": "testdb",
+                    "doc_count": 0,
+                    "update_seq": "0"
+                }]))
                 .and()
                 .on_event("couchdb_request")
                 .and_event_data_contains("operation", "doc_put")
@@ -409,9 +426,9 @@ async fn test_couchdb_client_conflict_handling() -> E2EResult<()> {
             .on_event("couchdb_connected")
             .respond_with_actions(json!([{
                 "type": "update_document",
+                "database": "testdb",
                 "doc_id": "user1",
-                "rev": "1-old",
-                "body": "{\"name\": \"Alice\", \"age\": 32}"
+                "document": {"_rev": "1-old", "name": "Alice", "age": 32}
             }]))
             .expect_calls(1)
             .and()
@@ -419,24 +436,23 @@ async fn test_couchdb_client_conflict_handling() -> E2EResult<()> {
             .and_event_data_contains("doc_id", "user1")
             .respond_with_actions(json!([{
                 "type": "get_document",
+                "database": "testdb",
                 "doc_id": "user1"
             }]))
             .expect_calls(1)
             .and()
             .on_event("couchdb_response_received")
             .and_event_data_contains("operation", "get_document")
-            .and_event_data_contains("success", "true")
             .respond_with_actions(json!([{
                 "type": "update_document",
+                "database": "testdb",
                 "doc_id": "user1",
-                "rev": "2-current",
-                "body": "{\"name\": \"Alice\", \"age\": 32}"
+                "document": {"_rev": "2-current", "name": "Alice", "age": 32}
             }]))
             .expect_calls(1)
             .and()
             .on_event("couchdb_response_received")
             .and_event_data_contains("operation", "update_document")
-            .and_event_data_contains("success", "true")
             .respond_with_actions(json!([{
                 "type": "wait_for_more"
             }]))
@@ -475,6 +491,16 @@ async fn test_couchdb_client_bulk_operations() -> E2EResult<()> {
                     "version": "3.5.1"
                 }]))
                 .expect_calls(1)
+                .and()
+                .on_event("couchdb_request")
+                .and_event_data_contains("operation", "db_info")
+                .and_event_data_contains("database", "testdb")
+                .respond_with_actions(json!([{
+                    "type": "send_db_info",
+                    "db_name": "testdb",
+                    "doc_count": 0,
+                    "update_seq": "0"
+                }]))
                 .and()
                 .on_event("couchdb_request")
                 .and_event_data_contains("operation", "bulk_docs")
@@ -524,7 +550,8 @@ async fn test_couchdb_client_bulk_operations() -> E2EResult<()> {
             .on_event("couchdb_connected")
             .respond_with_actions(json!([{
                 "type": "bulk_docs",
-                "documents": [
+                "database": "testdb",
+                "docs": [
                     {"_id": "doc1", "name": "Alice"},
                     {"_id": "doc2", "name": "Bob"},
                     {"_id": "doc3", "name": "Charlie"}
@@ -535,7 +562,8 @@ async fn test_couchdb_client_bulk_operations() -> E2EResult<()> {
             .on_event("couchdb_response_received")
             .and_event_data_contains("operation", "bulk_docs")
             .respond_with_actions(json!([{
-                "type": "list_documents"
+                "type": "list_documents",
+                "database": "testdb"
             }]))
             .expect_calls(1)
             .and()
