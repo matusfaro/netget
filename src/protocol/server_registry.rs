@@ -41,6 +41,7 @@ impl ServerRegistry {
         // This avoids creating multiple AppState instances which trigger expensive environment detection
         #[cfg(any(
             feature = "mysql",
+            feature = "mssql",
             feature = "postgresql",
             feature = "redis",
             feature = "cassandra"
@@ -94,6 +95,9 @@ impl ServerRegistry {
 
         #[cfg(feature = "ntp")]
         self.register(Arc::new(crate::server::NtpProtocol::new()));
+
+        #[cfg(feature = "tftp")]
+        self.register(Arc::new(crate::server::TftpProtocol::new()));
 
         #[cfg(feature = "whois")]
         self.register(Arc::new(crate::server::WhoisProtocol::new()));
@@ -155,6 +159,18 @@ impl ServerRegistry {
             use tokio::sync::mpsc;
             let (tx, _rx) = mpsc::unbounded_channel();
             self.register(Arc::new(crate::server::MysqlProtocol::new(
+                ConnectionId::new(0), // Placeholder for protocol registry
+                dummy_state.clone(),
+                tx,
+            )));
+        }
+
+        #[cfg(feature = "mssql")]
+        {
+            use crate::server::connection::ConnectionId;
+            use tokio::sync::mpsc;
+            let (tx, _rx) = mpsc::unbounded_channel();
+            self.register(Arc::new(crate::server::MssqlProtocol::new(
                 ConnectionId::new(0), // Placeholder for protocol registry
                 dummy_state.clone(),
                 tx,

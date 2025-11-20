@@ -45,6 +45,7 @@ android-termux = [
     "smtp",
     "mdns",
     "mysql",
+    "mssql",
     "ipp",
     "postgresql",
     "redis",
@@ -114,13 +115,14 @@ maven = []  # Maven repository server (HTTP-based artifact distribution)
 udp = []
 datalink = []  # DataLink uses only pcap, no extra deps
 arp = ["pnet"]  # ARP (Address Resolution Protocol) uses pnet for packet handling
-dc = []  # DC (Direct Connect) uses only TCP, no extra deps
+dc = ["dep:rustls", "dep:tokio-rustls", "dep:webpki-roots"]  # DC (Direct Connect) - supports TLS (DCCS)
 dns = ["hickory-server", "hickory-proto", "dep:hickory-client"]
 dot = ["dns", "hickory-server/dns-over-rustls", "hickory-proto/dns-over-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen", "dep:webpki-roots"]  # DNS-over-TLS server
 doh = ["dns", "hickory-server/dns-over-https-rustls", "hickory-proto/dns-over-https-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen", "dep:h2"]  # DNS-over-HTTPS server
 dhcp = ["dhcproto"]
 bootp = ["dhcproto"]  # BOOTP (Bootstrap Protocol) - DHCP predecessor, uses same packet format
 ntp = ["dep:rsntp"]  # NTP client support
+tftp = []  # TFTP (Trivial File Transfer Protocol) server and client - custom implementation, no dependencies
 bluetooth-ble-client = ["btleplug"]  # Bluetooth Low Energy (BLE) client for connecting to BLE devices
 bluetooth-ble = ["ble-peripheral-rust"]  # Bluetooth Low Energy (BLE) GATT server (peripheral mode)
 nfc = ["dep:pcsc", "dep:ndef-rs"]  # NFC card emulation server via PC/SC (ISO14443, MIFARE, NFC tags)
@@ -154,12 +156,13 @@ telnet = ["nectar"]
 smtp = ["rust-smtp-server", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen", "dep:lettre"]
 mdns = ["mdns-sd"]
 mysql = ["dep:opensrv-mysql", "dep:mysql_async"]
+mssql = ["dep:tiberius"]
 ipp = ["dep:ipp"]
 postgresql = ["dep:pgwire", "dep:tokio-postgres"]
 redis = ["dep:redis-protocol", "dep:redis"]
 rss = ["dep:rss"]  # RSS feed server and client (RSS 2.0 XML generation and parsing)
-proxy = ["http-mitm-proxy", "dep:rcgen", "tokio-native-tls", "native-tls"]
-http_proxy = ["http-mitm-proxy", "dep:rcgen", "tokio-native-tls", "native-tls"]  # HTTP proxy (alternate name)
+proxy = ["http-mitm-proxy", "dep:rcgen", "tokio-native-tls", "native-tls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:webpki-roots"]
+http_proxy = ["http-mitm-proxy", "dep:rcgen", "tokio-native-tls", "native-tls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:webpki-roots"]  # HTTP proxy (alternate name)
 webdav = ["dav-server", "dep:reqwest_dav"]
 nfs = ["nfsserve", "dep:nfs3_client", "dep:nfs3_types"]
 cassandra = ["dep:cassandra-protocol", "tcp", "dep:scylla"]
@@ -223,7 +226,7 @@ http3 = ["dep:quinn", "dep:rustls", "dep:rustls-pemfile", "dep:rcgen", "dep:h3",
 torrent-tracker = ["dep:serde_bencode"]  # BitTorrent Tracker (HTTP-based peer discovery with announce/scrape)
 torrent-dht = ["dep:serde_bencode"]  # BitTorrent DHT (Kademlia-based distributed peer discovery)
 torrent-peer = ["dep:serde_bencode"]  # BitTorrent Peer Wire Protocol (peer-to-peer data transfer)
-tls = ["dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]  # TLS server for custom protocols on top of encrypted transport
+tls = ["dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen", "dep:webpki-roots"]  # TLS server and client for custom protocols on top of encrypted transport
 embedded-llm = ["dep:llama-cpp-2", "dep:hf-hub"]  # Embedded LLM inference via llama.cpp (fallback when Ollama unavailable)
 sqlite = ["dep:rusqlite"]  # SQLite database support for protocols (in-memory or file-based)
 all-protocols = [
@@ -244,6 +247,7 @@ all-protocols = [
     "dhcp",
     "bootp",
     "ntp",
+    "tftp",
     "bluetooth-ble-client",
     "whois",
     "snmp",
@@ -258,6 +262,7 @@ all-protocols = [
     "smtp",
     "mdns",
     "mysql",
+    "mssql",
     "ipp",
     "postgresql",
     "redis",
@@ -641,6 +646,8 @@ irc = { version = "1.1", optional = true }
 lettre = { version = "0.11", optional = true }
 # MySQL client
 mysql_async = { version = "0.34", optional = true }
+# MSSQL (SQL Server) client
+tiberius = { version = "0.12", optional = true }
 # PostgreSQL client
 tokio-postgres = { version = "0.7", optional = true }
 # Redis client
