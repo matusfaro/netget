@@ -122,12 +122,24 @@ impl TorClient {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         client_id: ClientId,
+        startup_params: Option<crate::protocol::StartupParams>,
     ) -> Result<SocketAddr> {
         info!("Tor client {} initializing...", client_id);
         let _ = status_tx.send(format!("[CLIENT] Tor client {} initializing...", client_id));
 
-        // Create and bootstrap Tor client
-        let config = TorClientConfig::default();
+        // Create Tor client config - use custom directory if provided
+        let config = if let Some(ref params) = startup_params {
+            if let Some(directory_server) = params.get_optional_string("directory_server") {
+                info!("Tor client {} using custom directory server: {}", client_id, directory_server);
+                let _ = status_tx.send(format!("[CLIENT] Tor client {} using custom directory: {}", client_id, directory_server));
+                Self::create_custom_config(&directory_server)?
+            } else {
+                TorClientConfig::default()
+            }
+        } else {
+            TorClientConfig::default()
+        };
+
         let tor_client = ArtiClient::create_bootstrapped(config)
             .await
             .context("Failed to bootstrap Tor client")?;
@@ -459,6 +471,40 @@ impl TorClient {
         });
 
         Ok(local_addr)
+    }
+
+    /// Create custom TorClientConfig pointing to a localhost directory server
+    ///
+    /// This allows testing with a local tor_directory server instead of real Tor network.
+    /// The directory_server parameter should be in format "127.0.0.1:9030"
+    #[cfg(feature = "tor")]
+    fn create_custom_config(directory_server: &str) -> Result<TorClientConfig> {
+        use arti_client::config::dir::FallbackDir;
+
+        // Parse the directory server address
+        let addr: SocketAddr = directory_server
+            .parse()
+            .context("Invalid directory_server address format. Expected 'IP:port' like '127.0.0.1:9030'")?;
+
+        // Create a fallback directory entry pointing to localhost
+        // Use dummy identities for testing (real Tor would validate these)
+        let mut fallback = FallbackDir::builder();
+        fallback
+            .rsa_identity([0x42; 20].into())  // Dummy RSA identity
+            .ed_identity([0x99; 32].into())  // Dummy Ed25519 identity
+            .orports()
+            .push(addr);
+
+        // Build config with custom fallback
+        let mut bld = TorClientConfig::builder();
+        bld.tor_network().set_fallback_caches(vec![fallback]);
+
+        // Note: We don't set custom authorities here because fallback_caches is sufficient
+        // for bootstrapping. The client will use the fallback to fetch the consensus.
+
+        let config = bld.build().context("Failed to build TorClientConfig")?;
+
+        Ok(config)
     }
 
     /// Get network directory from Arti (requires experimental-api feature)
