@@ -11,6 +11,11 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, trace, warn};
 
+#[cfg(feature = "tor")]
+use tor_netdir::{NetDir, Relay};
+#[cfg(feature = "tor")]
+use serde::Serialize;
+
 use crate::client::tor::actions::{TOR_CLIENT_CONNECTED_EVENT, TOR_CLIENT_DATA_RECEIVED_EVENT};
 use crate::llm::action_helper::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
@@ -32,6 +37,102 @@ struct ClientData {
     state: ConnectionState,
     queued_data: Vec<u8>,
     memory: String,
+}
+
+/// Relay filter criteria for directory queries
+#[cfg(feature = "tor")]
+#[derive(Debug, Clone, Default)]
+pub struct RelayFilter {
+    pub flags: Option<Vec<String>>,
+    pub min_bandwidth: Option<u64>,
+    pub nickname_pattern: Option<String>,
+    pub limit: Option<usize>,
+}
+
+#[cfg(feature = "tor")]
+impl RelayFilter {
+    /// Check if a relay matches this filter
+    fn matches(&self, relay: &Relay<'_>) -> bool {
+        // Check flags
+        if let Some(ref required_flags) = self.flags {
+            for flag in required_flags {
+                let matches = match flag.as_str() {
+                    "Guard" => relay.is_flagged_guard(),
+                    "Exit" => relay.is_flagged_exit(),
+                    "Fast" => relay.is_flagged_fast(),
+                    "Stable" => relay.is_flagged_stable(),
+                    "Running" => relay.is_flagged_running(),
+                    "Valid" => relay.is_flagged_valid(),
+                    _ => false,
+                };
+                if !matches {
+                    return false;
+                }
+            }
+        }
+
+        // Check nickname pattern (simple contains check)
+        if let Some(ref pattern) = self.nickname_pattern {
+            if !relay.nickname().contains(pattern.as_str()) {
+                return false;
+            }
+        }
+
+        true
+    }
+}
+
+/// Simplified relay information for LLM
+#[cfg(feature = "tor")]
+#[derive(Debug, Clone, Serialize)]
+pub struct RelayInfo {
+    pub nickname: String,
+    pub fingerprint: String,
+    pub flags: Vec<String>,
+    pub is_guard: bool,
+    pub is_exit: bool,
+    pub is_fast: bool,
+    pub is_stable: bool,
+    pub is_running: bool,
+    pub is_valid: bool,
+}
+
+#[cfg(feature = "tor")]
+impl RelayInfo {
+    /// Create RelayInfo from a Tor relay
+    fn from_relay(relay: &Relay<'_>) -> Self {
+        let mut flags = Vec::new();
+        if relay.is_flagged_guard() {
+            flags.push("Guard".to_string());
+        }
+        if relay.is_flagged_exit() {
+            flags.push("Exit".to_string());
+        }
+        if relay.is_flagged_fast() {
+            flags.push("Fast".to_string());
+        }
+        if relay.is_flagged_stable() {
+            flags.push("Stable".to_string());
+        }
+        if relay.is_flagged_running() {
+            flags.push("Running".to_string());
+        }
+        if relay.is_flagged_valid() {
+            flags.push("Valid".to_string());
+        }
+
+        Self {
+            nickname: relay.nickname().to_string(),
+            fingerprint: format!("{:?}", relay.rsa_identity()),
+            flags,
+            is_guard: relay.is_flagged_guard(),
+            is_exit: relay.is_flagged_exit(),
+            is_fast: relay.is_flagged_fast(),
+            is_stable: relay.is_flagged_stable(),
+            is_running: relay.is_flagged_running(),
+            is_valid: relay.is_flagged_valid(),
+        }
+    }
 }
 
 /// Tor client that connects through the Tor network
@@ -57,6 +158,10 @@ impl TorClient {
 
         info!("Tor client {} bootstrapped successfully", client_id);
         let _ = status_tx.send(format!("[CLIENT] Tor client {} bootstrapped", client_id));
+
+        // Store Tor client for directory queries (requires experimental-api feature)
+        #[cfg(feature = "tor")]
+        app_state.set_tor_client(client_id, Arc::new(tor_client.clone())).await;
 
         // Parse target address (can be hostname:port or .onion:port)
         let target = remote_addr.clone();
@@ -252,5 +357,70 @@ impl TorClient {
         });
 
         Ok(local_addr)
+    }
+
+    /// Get network directory from Arti (requires experimental-api feature)
+    #[cfg(feature = "tor")]
+    pub async fn get_netdir(
+        app_state: &Arc<crate::state::app_state::AppState>,
+        client_id: crate::state::ClientId,
+    ) -> Result<Arc<NetDir>> {
+        let tor_client = app_state
+            .get_tor_client(client_id)
+            .await
+            .context("Tor client not found in app state")?;
+
+        // Access directory manager (requires experimental-api feature)
+        let dirmgr = tor_client.dirmgr();
+
+        // Get current network directory
+        let netdir = dirmgr
+            .netdir(tor_netdir::Timeliness::Timely)
+            .context("No network directory available - client may still be bootstrapping")?;
+
+        Ok(netdir)
+    }
+
+    /// Query relays from network directory with optional filter
+    #[cfg(feature = "tor")]
+    pub async fn query_relays(
+        app_state: &Arc<crate::state::app_state::AppState>,
+        client_id: crate::state::ClientId,
+        filter: RelayFilter,
+    ) -> Result<Vec<RelayInfo>> {
+        let netdir = Self::get_netdir(app_state, client_id).await?;
+
+        let limit = filter.limit.unwrap_or(100);
+        let mut relays = Vec::new();
+
+        for relay in netdir.relays() {
+            if filter.matches(&relay) {
+                relays.push(RelayInfo::from_relay(&relay));
+                if relays.len() >= limit {
+                    break;
+                }
+            }
+        }
+
+        Ok(relays)
+    }
+
+    /// Get consensus metadata (relay count, validity times)
+    #[cfg(feature = "tor")]
+    pub async fn get_consensus_info(
+        app_state: &Arc<crate::state::app_state::AppState>,
+        client_id: crate::state::ClientId,
+    ) -> Result<serde_json::Value> {
+        let netdir = Self::get_netdir(app_state, client_id).await?;
+
+        let relay_count = netdir.relays().count();
+        let lifetime = netdir.lifetime();
+
+        Ok(serde_json::json!({
+            "relay_count": relay_count,
+            "valid_after": lifetime.valid_after().to_string(),
+            "fresh_until": lifetime.fresh_until().to_string(),
+            "valid_until": lifetime.valid_until().to_string(),
+        }))
     }
 }

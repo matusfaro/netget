@@ -240,6 +240,9 @@ struct AppStateInner {
     servers: HashMap<ServerId, ServerInstance>,
     /// All client instances
     clients: HashMap<ClientId, ClientInstance>,
+    /// Tor client instances (for directory queries)
+    #[cfg(feature = "tor")]
+    tor_clients: HashMap<ClientId, Arc<arti_client::TorClient>>,
     /// All easy protocol instances
     easy_instances: HashMap<EasyId, EasyInstance>,
     /// Mapping from underlying server ID to easy ID (for event routing)
@@ -334,6 +337,8 @@ impl AppState {
                 mode: Mode::Idle,
                 servers: HashMap::new(),
                 clients: HashMap::new(),
+                #[cfg(feature = "tor")]
+                tor_clients: HashMap::new(),
                 easy_instances: HashMap::new(),
                 server_to_easy: HashMap::new(),
                 client_to_easy: HashMap::new(),
@@ -2132,6 +2137,31 @@ impl AppState {
     ) -> anyhow::Result<()> {
         let mut inner = self.inner.write().await;
         inner.database_manager.delete_databases_by_client(client_id)
+    }
+
+    /// Store Tor client instance for directory queries
+    #[cfg(feature = "tor")]
+    pub async fn set_tor_client(
+        &self,
+        client_id: ClientId,
+        tor_client: Arc<arti_client::TorClient>,
+    ) {
+        let mut inner = self.inner.write().await;
+        inner.tor_clients.insert(client_id, tor_client);
+    }
+
+    /// Get Tor client instance by client ID
+    #[cfg(feature = "tor")]
+    pub async fn get_tor_client(&self, client_id: ClientId) -> Option<Arc<arti_client::TorClient>> {
+        let inner = self.inner.read().await;
+        inner.tor_clients.get(&client_id).cloned()
+    }
+
+    /// Remove Tor client instance (called when client closes)
+    #[cfg(feature = "tor")]
+    pub async fn remove_tor_client(&self, client_id: ClientId) {
+        let mut inner = self.inner.write().await;
+        inner.tor_clients.remove(&client_id);
     }
 }
 

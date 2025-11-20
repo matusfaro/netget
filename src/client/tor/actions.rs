@@ -47,6 +47,29 @@ pub static TOR_CLIENT_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|
     ])
 });
 
+/// Tor bootstrap complete event (directory consensus downloaded)
+#[cfg(feature = "tor")]
+pub static TOR_BOOTSTRAP_COMPLETE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
+    EventType::new(
+        "tor_bootstrap_complete",
+        "Tor client finished bootstrapping and downloaded network consensus",
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "relay_count".to_string(),
+            type_hint: "number".to_string(),
+            description: "Number of relays in consensus".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "valid_after".to_string(),
+            type_hint: "string".to_string(),
+            description: "Consensus valid-after timestamp".to_string(),
+            required: true,
+        },
+    ])
+});
+
 /// Tor client protocol action handler
 pub struct TorClientProtocol;
 
@@ -80,6 +103,62 @@ impl Protocol for TorClientProtocol {
                 parameters: vec![],
                 example: json!({
                     "type": "disconnect"
+                }),
+            },
+            #[cfg(feature = "tor")]
+            ActionDefinition {
+                name: "get_consensus_info".to_string(),
+                description: "Get network consensus metadata (relay count, validity times)".to_string(),
+                parameters: vec![],
+                example: json!({
+                    "type": "get_consensus_info"
+                }),
+            },
+            #[cfg(feature = "tor")]
+            ActionDefinition {
+                name: "list_relays".to_string(),
+                description: "List relays from the Tor network consensus".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "limit".to_string(),
+                        type_hint: "number".to_string(),
+                        description: "Maximum number of relays to return (default: 100)".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({
+                    "type": "list_relays",
+                    "limit": 50
+                }),
+            },
+            #[cfg(feature = "tor")]
+            ActionDefinition {
+                name: "search_relays".to_string(),
+                description: "Search for relays matching criteria (flags, nickname pattern)".to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "flags".to_string(),
+                        type_hint: "array".to_string(),
+                        description: "Required flags (e.g., [\"Guard\", \"Exit\", \"Fast\"])".to_string(),
+                        required: false,
+                    },
+                    Parameter {
+                        name: "nickname".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Nickname pattern to match".to_string(),
+                        required: false,
+                    },
+                    Parameter {
+                        name: "limit".to_string(),
+                        type_hint: "number".to_string(),
+                        description: "Maximum results (default: 100)".to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({
+                    "type": "search_relays",
+                    "flags": ["Exit", "Fast"],
+                    "limit": 20
                 }),
             },
         ]
@@ -195,6 +274,16 @@ impl Client for TorClientProtocol {
             }
             "disconnect" => Ok(ClientActionResult::Disconnect),
             "wait_for_more" => Ok(ClientActionResult::WaitForMore),
+
+            // Directory query actions (processed async in connect loop)
+            #[cfg(feature = "tor")]
+            "get_consensus_info" | "list_relays" | "search_relays" => {
+                Ok(ClientActionResult::Custom {
+                    name: action_type.to_string(),
+                    data: action.clone(),
+                })
+            }
+
             _ => Err(anyhow::anyhow!(
                 "Unknown Tor client action: {}",
                 action_type

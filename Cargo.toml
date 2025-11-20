@@ -202,7 +202,7 @@ grpc = ["dep:tonic", "dep:prost", "dep:prost-reflect", "dep:prost-types", "dep:t
 etcd = ["grpc", "dep:etcd-client"]  # etcd v3 key-value store server (KV service via gRPC)
 zookeeper = ["dep:zookeeper-async"]  # ZooKeeper distributed coordination server and client with binary protocol support
 xmlrpc = ["quick-xml", "dep:xmlrpc"]  # XML-RPC server and client with LLM-controlled method execution
-tor = ["dep:tor-netdoc", "dep:tor-cert", "dep:tor-cell", "dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:ed25519-dalek", "dep:x25519-dalek", "dep:sha2", "dep:aes", "dep:ctr", "dep:hmac", "dep:hkdf", "dep:arti-client", "dep:tor-rtcompat"]  # Tor directory mirror and OR protocol relay (Guard/Middle/Exit) with cell handling
+tor = ["dep:tor-netdoc", "dep:tor-cert", "dep:tor-cell", "dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:ed25519-dalek", "dep:x25519-dalek", "dep:sha2", "dep:aes", "dep:ctr", "dep:hmac", "dep:hkdf", "dep:arti-client", "dep:tor-rtcompat", "dep:tor-dirmgr", "dep:tor-netdir"]  # Tor directory mirror and OR protocol relay (Guard/Middle/Exit) with cell handling + client with directory queries
 vnc = []  # VNC server and client with custom RFB protocol implementation
 openapi = ["http", "dep:openapi-rs", "dep:matchit"]  # OpenAPI 3.1 server with runtime request validation and route matching
 openid = []  # OpenID Connect authentication provider with LLM-controlled token generation
@@ -661,9 +661,11 @@ async-native-tls = { version = "0.5", optional = true }
 rust-s3 = { version = "0.37", optional = true }
 aws-sdk-s3 = { version = "1.90", optional = true }
 aws-credential-types = { version = "1.2", optional = true }
-# Tor client
-arti-client = { version = "0.36", optional = true }
+# Tor client with experimental-api for directory access
+arti-client = { version = "0.36", optional = true, features = ["experimental-api"] }
 tor-rtcompat = { version = "0.36", optional = true }
+tor-dirmgr = { version = "0.36", optional = true }  # Tor directory manager types
+tor-netdir = { version = "0.36", optional = true }  # Tor network directory queries
 # Git client
 git2 = { version = "0.19", optional = true }
 # MQTT client
