@@ -355,6 +355,13 @@ all-protocols = [
     "nfc",
     "nfc-client",
     "embedded-llm",
+    "sqlite",
+    "http_proxy",
+    "dynamodb",
+    "openidconnect",
+    "saml",
+    "smb-client",
+    "rdkafka",
 ]
 
 [dependencies]
