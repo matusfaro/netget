@@ -181,14 +181,9 @@ async fn test_smb_session_setup() -> E2EResult<()> {
             mock
                 // IMPORTANT: Specific event matchers must come BEFORE on_any()
                 .on_event("smb_operation")
-                .respond_with_actions_from_event(|event_data| {
-                    // Check if this is a session_setup operation
-                    if event_data.get("operation").and_then(|v| v.as_str()) == Some("session_setup") {
-                        serde_json::json!([{"type": "smb_auth_success"}])
-                    } else {
-                        serde_json::json!([{"type": "wait_for_more"}])
-                    }
-                })
+                .and_event_data_contains("operation", "session_setup")
+                .respond_with_actions(serde_json::json!([{"type": "smb_auth_success"}]))
+                .expect_at_least(1)  // Expect at least 1 SMB operation event
                 .and()
                 .on_any()  // Matches initial user input
                 .respond_with_actions(serde_json::json!([
@@ -488,14 +483,9 @@ async fn test_smb_auth_llm_controlled() -> E2EResult<()> {
             mock
                 // IMPORTANT: Specific event matchers must come BEFORE on_any()
                 .on_event("smb_operation")
-                .respond_with_actions_from_event(|event_data| {
-                    // Check if this is a session_setup operation
-                    if event_data.get("operation").and_then(|v| v.as_str()) == Some("session_setup") {
-                        serde_json::json!([{"type": "wait_for_more"}])  // Deny auth
-                    } else {
-                        serde_json::json!([{"type": "wait_for_more"}])
-                    }
-                })
+                .and_event_data_contains("operation", "session_setup")
+                .respond_with_actions(serde_json::json!([{"type": "wait_for_more"}]))  // Deny auth
+                .expect_at_least(1)  // Expect at least 1 SMB operation event
                 .and()
                 .on_any()  // Matches initial user input
                 .respond_with_actions(serde_json::json!([
