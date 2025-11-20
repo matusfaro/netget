@@ -244,6 +244,7 @@ impl SmbServer {
                     // Extract command from header (offset 12-13, little-endian)
                     let command = u16::from_le_bytes([header_buf[12], header_buf[13]]);
                     debug!("SMB2 command 0x{:04x} from {}", command, peer_addr);
+                    let _ = status_tx.send(format!("[DEBUG] SMB2 command 0x{:04x} received from {}", command, peer_addr));
 
                     // Handle SMB2 command
                     let response = Self::handle_smb2_command(
@@ -359,6 +360,7 @@ impl SmbServer {
             }
             SMB2_SESSION_SETUP => {
                 debug!("SMB2 SESSION_SETUP request");
+                let _ = status_tx.send("[DEBUG] ===== SMB2 SESSION_SETUP RECEIVED =====".to_string());
 
                 // Read SESSION_SETUP request body (exactly 24 bytes for guest auth)
                 let mut body_buf = [0u8; 24];
@@ -384,7 +386,7 @@ impl SmbServer {
                 let _ = status_tx.send(format!("[INFO] SMB auth attempt: {}", username));
 
                 // Consult LLM to check if this user should be authenticated
-                let actions = Self::consult_llm(
+                let actions = match Self::consult_llm(
                     _llm_client,
                     _app_state,
                     _server_id,
@@ -396,7 +398,17 @@ impl SmbServer {
                     }),
                     status_tx,
                 )
-                .await?;
+                .await {
+                    Ok(actions) => actions,
+                    Err(e) => {
+                        warn!("LLM error during SMB authentication for user {}: {}", username, e);
+                        let _ = status_tx.send(format!("[WARN] LLM error: {} - denying auth", e));
+
+                        // Send AUTH_DENIED response instead of closing connection
+                        let response = Self::build_auth_denied_response(_header)?;
+                        return Ok(Some(response));
+                    }
+                };
 
                 // Check if LLM allowed the authentication
                 let auth_allowed = actions.iter().any(|a| {
