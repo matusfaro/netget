@@ -297,9 +297,6 @@ impl ServerRegistry {
         self.register(Arc::new(crate::server::ZookeeperProtocol::new()));
 
         #[cfg(feature = "tor")]
-        self.register(Arc::new(crate::server::TorDirectoryProtocol::new()));
-
-        #[cfg(feature = "tor")]
         self.register(Arc::new(crate::server::TorRelayProtocol::new()));
 
         #[cfg(feature = "vnc")]

@@ -546,13 +546,6 @@ pub use zookeeper::actions::ZookeeperProtocol;
 pub use zookeeper::ZookeeperServer;
 
 #[cfg(feature = "tor")]
-pub mod tor_directory;
-#[cfg(feature = "tor")]
-pub use tor_directory::actions::TorDirectoryProtocol;
-#[cfg(feature = "tor")]
-pub use tor_directory::TorDirectoryServer;
-
-#[cfg(feature = "tor")]
 pub mod tor_relay;
 #[cfg(feature = "tor")]
 pub use tor_relay::actions::TorRelayProtocol;
