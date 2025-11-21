@@ -105,6 +105,9 @@ impl IcmpServer {
                             std::slice::from_raw_parts(buffer.as_ptr() as *const u8, n).to_vec()
                         };
 
+                        // DEBUG: Log raw received data
+                        trace!("Raw socket received {} bytes: {}", n, hex::encode(&data[..std::cmp::min(n, 60)]));
+
                         // Parse IP packet
                         let ip_packet = match Ipv4Packet::new(&data) {
                             Some(p) => p,
@@ -114,13 +117,22 @@ impl IcmpServer {
                             }
                         };
 
+                        // DEBUG: Log IP packet details
+                        trace!("IP header length: {}, payload length: {}",
+                               ip_packet.get_header_length() * 4,
+                               ip_packet.payload().len());
+
                         // Check if it's ICMP
                         if ip_packet.get_next_level_protocol() != IpNextHeaderProtocols::Icmp {
                             continue;
                         }
 
+                        // DEBUG: Log the payload we're about to parse as ICMP
+                        let ip_payload = ip_packet.payload();
+                        trace!("IP payload (ICMP data): {}", hex::encode(ip_payload));
+
                         // Parse ICMP packet
-                        let icmp_packet = match IcmpPacket::new(ip_packet.payload()) {
+                        let icmp_packet = match IcmpPacket::new(ip_payload) {
                             Some(p) => p,
                             None => {
                                 debug!("Failed to parse ICMP packet");
