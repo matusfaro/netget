@@ -2588,6 +2588,10 @@ async fn handle_load(
                     scheduled_tasks,
                     feedback_instructions,
                 } => {
+                    // Create status channel for server startup messages
+                    // Messages will be logged via tracing macros in the spawn method
+                    let (status_tx, _status_rx) = tokio::sync::mpsc::unbounded_channel();
+
                     // Execute open_server action via server startup
                     match server_startup::start_server_from_action(
                         state,
@@ -2603,6 +2607,7 @@ async fn handle_load(
                         event_handlers,
                         scheduled_tasks,
                         feedback_instructions,
+                        status_tx,
                     )
                     .await
                     {

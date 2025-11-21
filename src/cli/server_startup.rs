@@ -220,6 +220,7 @@ pub async fn start_server_from_action(
     event_handlers: Option<Vec<serde_json::Value>>,
     scheduled_tasks: Option<Vec<crate::llm::actions::common::ServerTaskDefinition>>,
     feedback_instructions: Option<String>,
+    status_tx: mpsc::UnboundedSender<String>,
 ) -> Result<ServerId> {
     use crate::state::server::ServerStatus;
 
@@ -436,9 +437,6 @@ pub async fn start_server_from_action(
         None
     };
 
-    // Create a temporary status channel (commands don't use rolling TUI status)
-    let (status_tx, _status_rx) = mpsc::unbounded_channel();
-
     // Build spawn context
     // Use the configured LLM client from state (includes mock config, lock settings, etc.)
     // If not available (shouldn't happen), fall back to creating a new client
@@ -457,7 +455,7 @@ pub async fn start_server_from_action(
         port: final_port,
         llm_client,
         state: Arc::new(state.clone()),
-        status_tx,
+        status_tx: status_tx.clone(),
         server_id,
         startup_params: startup_params_obj,
     };
@@ -465,10 +463,32 @@ pub async fn start_server_from_action(
     // Spawn the server
     match protocol.spawn(spawn_ctx).await {
         Ok(actual_addr) => {
+            // Send startup message with actual address
+            let msg = format!(
+                "[SERVER] Starting server #{} ({}) on {}",
+                server_id.as_u32(),
+                base_stack,
+                actual_addr
+            );
+            let _ = status_tx.send(msg);
+
+            // Update server with actual listen address
             state.update_server_local_addr(server_id, actual_addr).await;
             state
                 .update_server_status(server_id, ServerStatus::Running)
                 .await;
+
+            // Send update message with actual bound address (for tests that use port 0)
+            if final_port.unwrap_or(0) == 0 || final_port.unwrap_or(0) != actual_addr.port() {
+                let update_msg = format!(
+                    "[SERVER] Server #{} ({}) listening on {}",
+                    server_id.as_u32(),
+                    base_stack,
+                    actual_addr
+                );
+                let _ = status_tx.send(update_msg);
+            }
+
             Ok(server_id)
         }
         Err(e) => {

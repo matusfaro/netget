@@ -160,7 +160,8 @@ impl IcmpServer {
                         let status_clone = status_tx.clone();
                         let protocol_task_clone = protocol_clone.clone();
                         let send_socket_clone = send_socket.clone();
-                        let icmp_payload = icmp_packet.payload().to_vec();
+                        // Store the full ICMP packet (including header) for parsing by specific packet types
+                        let icmp_packet_data = ip_packet.payload().to_vec();
 
                         // Spawn async task to handle packet with LLM
                         runtime.spawn(async move {
@@ -169,7 +170,7 @@ impl IcmpServer {
                                 IcmpTypes::EchoRequest => {
                                     // Parse echo request
                                     if let Some(echo_req) =
-                                        EchoRequestPacket::new(&icmp_payload)
+                                        EchoRequestPacket::new(&icmp_packet_data)
                                     {
                                         let identifier = echo_req.get_identifier();
                                         let sequence = echo_req.get_sequence_number();
@@ -224,7 +225,7 @@ impl IcmpServer {
                                             "destination_ip": dest_ip.to_string(),
                                             "icmp_type": icmp_type.0,
                                             "icmp_code": icmp_code.0,
-                                            "packet_hex": hex::encode(&icmp_payload),
+                                            "packet_hex": hex::encode(&icmp_packet_data),
                                         }),
                                     )
                                 }

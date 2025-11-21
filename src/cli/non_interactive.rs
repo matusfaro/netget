@@ -282,7 +282,7 @@ pub async fn run_with_actions(
     state.set_llm_client(llm.clone()).await;
 
     // Create status channel
-    let (_status_tx, mut status_rx) = mpsc::unbounded_channel::<String>();
+    let (status_tx, mut status_rx) = mpsc::unbounded_channel::<String>();
 
     println!("Loading {} action(s)...\n", actions.len());
 
@@ -323,6 +323,7 @@ pub async fn run_with_actions(
                         event_handlers,
                         scheduled_tasks,
                         feedback_instructions,
+                        status_tx.clone(),
                     )
                     .await
                     {
