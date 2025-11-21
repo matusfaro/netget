@@ -103,10 +103,101 @@ allows exact spec compliance and LLM integration points.
 
 - **Connecting** - BEGIN cell received, establishing TCP connection
 - **Active** - TCP connected, forwarding data bidirectionally
+- **Directory** - BEGIN_DIR cell received, serving directory documents over circuit (NEW)
 - **Closing** - END cell sent/received, closing connection
 - **Closed** - Stream fully closed
 
-### 4. Bidirectional Data Forwarding
+### 4. BEGIN_DIR Support (Directory Serving Over Circuits)
+
+**NEW in this commit**: Tor Relay now implements BEGIN_DIR protocol for serving directory documents over Tor circuits. This makes the `tor_directory` protocol obsolete.
+
+**Why BEGIN_DIR**:
+
+- Arti's `FallbackDir` requires OR protocol (not HTTP) for bootstrap
+- Directory documents should be served OVER Tor circuits, not plain HTTP
+- This matches real Tor architecture (directory authorities serve via OR + BEGIN_DIR)
+
+**Implementation**:
+
+1. **BEGIN_DIR Cell Handler** (`handle_begin_dir_cell`):
+   - Creates directory stream (no TCP connection)
+   - Responds with CONNECTED cell (like normal BEGIN)
+   - Stream enters `Directory` state
+
+2. **Directory Stream Type**:
+   - Special `StreamState::Directory` variant
+   - Buffers HTTP request data instead of forwarding to TCP
+   - Accumulates request until complete (`\r\n\r\n` terminator)
+
+3. **HTTP Request Parsing** (`handle_directory_data`):
+   - Detects directory streams in `handle_data_cell`
+   - Routes to `handle_directory_data` instead of TCP forwarder
+   - Parses HTTP method and path from accumulated data
+   - Checks for complete request (ends with `\r\n\r\n`)
+
+4. **Consensus Generation** (`generate_test_consensus`):
+   - Serves minimal but valid Tor consensus document
+   - 4 relay entries (127.0.0.1-4 for testing)
+   - Dynamic timestamps (valid-after, fresh-until, valid-until)
+   - Proper HTTP response with Content-Length
+   - TODO: Add LLM control for dynamic consensus generation
+
+5. **Response Sending** (`send_directory_response`):
+   - Chunks consensus into multiple DATA cells (max 498 bytes per cell)
+   - Encrypts each cell with circuit crypto
+   - Sends END cell after complete response
+   - Properly handles flow control windows
+
+**Consensus Format**:
+
+```
+HTTP/1.0 200 OK
+Content-Type: text/plain
+Content-Length: <len>
+
+network-status-version 3
+vote-status consensus
+consensus-method 35
+valid-after <timestamp>
+fresh-until <timestamp>
+valid-until <timestamp>
+...
+r TestRelay1 <base64-fingerprint> <IP> <ORPort> <IP> <DirPort>
+s Exit Fast Guard HSDir Running Stable V2Dir Valid
+v Tor 0.4.8.0
+w Bandwidth=5000
+p accept 1-65535
+...
+directory-footer
+bandwidth-weights ...
+directory-signature ...
+```
+
+**Status**:
+- ✅ BEGIN_DIR cell handling works
+- ✅ Circuit creation successful
+- ✅ HTTP request parsing works
+- ✅ Consensus served correctly
+- ❌ Arti bootstrap still fails (likely signature validation)
+
+**Arti Integration**:
+
+Tor client can now use `directory_server` startup parameter:
+
+```json
+{
+  "type": "open_client",
+  "protocol": "Tor",
+  "remote_addr": "example.com:80",
+  "startup_params": {
+    "directory_server": "127.0.0.1:9001"
+  }
+}
+```
+
+This configures Arti to use localhost relay as FallbackDir instead of real Tor network.
+
+### 5. Bidirectional Data Forwarding
 
 **Architecture**:
 
