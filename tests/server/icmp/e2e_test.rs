@@ -119,8 +119,10 @@ You are an ICMP echo server. When you receive echo requests:
                 .and_event_data_contains("sequence", "1")
                 .respond_with_actions_from_event(|event_data| {
                     let source_ip = event_data["source_ip"].as_str().unwrap_or("127.0.0.1");
-                    let identifier = event_data["identifier"].as_u64().unwrap_or(1234) as u16;
-                    let sequence = event_data["sequence"].as_u64().unwrap_or(1) as u16;
+                    let identifier = event_data["identifier"].as_str()
+                        .and_then(|s| s.parse::<u16>().ok()).unwrap_or(1234);
+                    let sequence = event_data["sequence"].as_str()
+                        .and_then(|s| s.parse::<u16>().ok()).unwrap_or(1);
                     let payload_hex = event_data["payload_hex"].as_str().unwrap_or("");
 
                     serde_json::json!([{
@@ -140,8 +142,10 @@ You are an ICMP echo server. When you receive echo requests:
                 .and_event_data_contains("sequence", "2")
                 .respond_with_actions_from_event(|event_data| {
                     let source_ip = event_data["source_ip"].as_str().unwrap_or("127.0.0.1");
-                    let identifier = event_data["identifier"].as_u64().unwrap_or(5678) as u16;
-                    let sequence = event_data["sequence"].as_u64().unwrap_or(2) as u16;
+                    let identifier = event_data["identifier"].as_str()
+                        .and_then(|s| s.parse::<u16>().ok()).unwrap_or(5678);
+                    let sequence = event_data["sequence"].as_str()
+                        .and_then(|s| s.parse::<u16>().ok()).unwrap_or(2);
                     let payload_hex = event_data["payload_hex"].as_str().unwrap_or("");
 
                     serde_json::json!([{

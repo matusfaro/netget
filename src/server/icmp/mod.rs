@@ -131,8 +131,29 @@ impl IcmpServer {
                         let ip_payload = ip_packet.payload();
                         trace!("IP payload (ICMP data): {}", hex::encode(ip_payload));
 
+                        // Handle IP-in-IP encapsulation (common on loopback)
+                        // If the payload starts with an IP header (0x45 = version 4, header length 5),
+                        // parse it as an inner IP packet and use its payload instead
+                        let icmp_data: Vec<u8>;
+                        let icmp_payload = if ip_payload.len() >= 20 && ip_payload[0] == 0x45 {
+                            if let Some(inner_ip) = Ipv4Packet::new(ip_payload) {
+                                if inner_ip.get_next_level_protocol() == IpNextHeaderProtocols::Icmp {
+                                    trace!("Detected IP-in-IP encapsulation on loopback, unwrapping inner packet");
+                                    icmp_data = inner_ip.payload().to_vec();
+                                    trace!("Inner IP payload (actual ICMP): {}", hex::encode(&icmp_data));
+                                    icmp_data.as_slice()
+                                } else {
+                                    ip_payload
+                                }
+                            } else {
+                                ip_payload
+                            }
+                        } else {
+                            ip_payload
+                        };
+
                         // Parse ICMP packet
-                        let icmp_packet = match IcmpPacket::new(ip_payload) {
+                        let icmp_packet = match IcmpPacket::new(icmp_payload) {
                             Some(p) => p,
                             None => {
                                 debug!("Failed to parse ICMP packet");
@@ -146,6 +167,13 @@ impl IcmpServer {
                         let ttl = ip_packet.get_ttl();
                         let icmp_type = icmp_packet.get_icmp_type();
                         let icmp_code = icmp_packet.get_icmp_code();
+
+                        // DEBUG: Log ICMP type extraction
+                        trace!("ICMP type extracted: {} (raw: {}), code: {}",
+                               icmp_type.0, icmp_type.0, icmp_code.0);
+                        trace!("First 4 bytes of icmp_payload: {:02x} {:02x} {:02x} {:02x}",
+                               icmp_payload[0], icmp_payload[1],
+                               icmp_payload.get(2).unwrap_or(&0), icmp_payload.get(3).unwrap_or(&0));
 
                         // DEBUG: Log summary
                         debug!(
@@ -173,7 +201,8 @@ impl IcmpServer {
                         let protocol_task_clone = protocol_clone.clone();
                         let send_socket_clone = send_socket.clone();
                         // Store the full ICMP packet (including header) for parsing by specific packet types
-                        let icmp_packet_data = ip_packet.payload().to_vec();
+                        // Use the unwrapped payload in case of IP-in-IP encapsulation
+                        let icmp_packet_data = icmp_payload.to_vec();
 
                         // Spawn async task to handle packet with LLM
                         runtime.spawn(async move {
@@ -193,8 +222,8 @@ impl IcmpServer {
                                             serde_json::json!({
                                                 "source_ip": source_ip.to_string(),
                                                 "destination_ip": dest_ip.to_string(),
-                                                "identifier": identifier,
-                                                "sequence": sequence,
+                                                "identifier": identifier.to_string(),
+                                                "sequence": sequence.to_string(),
                                                 "payload_hex": payload_hex,
                                                 "ttl": ttl,
                                             }),
