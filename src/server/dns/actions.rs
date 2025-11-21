@@ -400,12 +400,12 @@ impl DnsProtocol {
 fn send_dns_a_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_dns_a_response".to_string(),
-        description: "Send DNS A record response (IPv4 address)".to_string(),
+        description: "IMPORTANT: Use this action to respond to DNS A record queries (IPv4 addresses). This is the correct DNS-specific action - do NOT use generic 'send_data' or 'show_message' actions for DNS responses. Always include the query_id from the request, the domain name, and the IPv4 address to return.".to_string(),
         parameters: vec![
             Parameter {
                 name: "query_id".to_string(),
                 type_hint: "number".to_string(),
-                description: "DNS query ID from the request".to_string(),
+                description: "DNS query ID from the request (MUST match the request)".to_string(),
                 required: true,
             },
             Parameter {
@@ -417,13 +417,13 @@ fn send_dns_a_response_action() -> ActionDefinition {
             Parameter {
                 name: "ip".to_string(),
                 type_hint: "string".to_string(),
-                description: "IPv4 address to return (e.g., '192.0.2.1')".to_string(),
+                description: "IPv4 address to return (e.g., '192.0.2.1' or '93.184.216.34')".to_string(),
                 required: true,
             },
             Parameter {
                 name: "ttl".to_string(),
                 type_hint: "number".to_string(),
-                description: "Time-to-live in seconds. Default: 300".to_string(),
+                description: "Time-to-live in seconds (how long clients should cache this response). Default: 300".to_string(),
                 required: false,
             },
         ],
@@ -608,18 +608,18 @@ fn send_dns_txt_response_action() -> ActionDefinition {
 fn send_dns_nxdomain_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_dns_nxdomain".to_string(),
-        description: "Send DNS NXDOMAIN response (domain does not exist)".to_string(),
+        description: "IMPORTANT: Use this action to respond when a DNS domain does not exist. This is the correct DNS-specific action for NXDOMAIN responses - do NOT use generic error actions. This tells the client that the requested domain name does not exist in the DNS system.".to_string(),
         parameters: vec![
             Parameter {
                 name: "query_id".to_string(),
                 type_hint: "number".to_string(),
-                description: "DNS query ID from the request".to_string(),
+                description: "DNS query ID from the request (MUST match the request)".to_string(),
                 required: true,
             },
             Parameter {
                 name: "domain".to_string(),
                 type_hint: "string".to_string(),
-                description: "Domain name being queried".to_string(),
+                description: "Domain name being queried (the nonexistent domain)".to_string(),
                 required: true,
             },
         ],

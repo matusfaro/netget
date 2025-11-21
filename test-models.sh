@@ -133,9 +133,10 @@ echo "Running tests sequentially for accurate benchmarking..."
 echo "Testing same test across all models for direct comparison"
 echo ""
 
-# Single log file for all tests
-LOG_FILE="$RUN_DIR/test_results.log"
-echo "Log file: $LOG_FILE"
+# Individual log files for each test/model combination
+LOGS_DIR="$RUN_DIR/logs"
+mkdir -p "$LOGS_DIR"
+echo "Log directory: $LOGS_DIR"
 echo ""
 
 # Print table header
@@ -173,6 +174,13 @@ for test_name in "${TEST_NAMES[@]}"; do
 
     # Run this test for each model and print results in columns
     for model in "${MODELS[@]}"; do
+        # Sanitize names for filename (replace : and / with _)
+        model_safe=$(echo "$model" | tr ':/' '_')
+        test_safe=$(echo "$test_name" | tr ':/' '_')
+
+        # Create individual log file: {test_name}_{model}.log
+        LOG_FILE="$LOGS_DIR/${test_safe}_${model_safe}.log"
+
         # Print header to log file
         echo "" >> "$LOG_FILE"
         echo "═══════════════════════════════════════════════════════════════" >> "$LOG_FILE"
@@ -240,36 +248,6 @@ done
 
 echo ""
 echo "╔════════════════════════════════════════════════════════════════╗"
-echo "║                     FINAL RESULTS TABLE                        ║"
-echo "╚════════════════════════════════════════════════════════════════╝"
-echo ""
-
-# Print header with model names on separate lines for better alignment
-echo "Test Name                                          │ Results"
-echo "───────────────────────────────────────────────────┼────────────────────────"
-
-# Print each model name on its own line
-for model in "${MODELS[@]}"; do
-    model_short=$(echo "$model" | rev | cut -c1-20 | rev)
-    echo "                                                   │ $model_short"
-done
-echo "───────────────────────────────────────────────────┼────────────────────────"
-
-# Print test results
-for test_name in "${TEST_NAMES[@]}"; do
-    # Shorten test name (remove test_ prefix)
-    test_display=$(echo "$test_name" | sed 's/^test_//' | cut -c1-48)
-    printf "%-50s │" "$test_display"
-
-    for model in "${MODELS[@]}"; do
-        result=$(get_result "$model" "$test_name")
-        printf " %-3s" "$result"
-    done
-    echo ""
-done
-
-echo ""
-echo "╔════════════════════════════════════════════════════════════════╗"
 echo "║                        SUMMARY                                 ║"
 echo "╚════════════════════════════════════════════════════════════════╝"
 echo ""
@@ -302,23 +280,27 @@ for model in "${MODELS[@]}"; do
 done
 
 echo "╔════════════════════════════════════════════════════════════════╗"
-echo "║                     DETAILED LOG                               ║"
+echo "║                     DETAILED LOGS                              ║"
 echo "╚════════════════════════════════════════════════════════════════╝"
 echo ""
-echo "📄 Complete test log: $LOG_FILE"
+echo "📁 Individual test logs: $LOGS_DIR"
 echo ""
 
-# Count failures in the log
-failure_count=$(grep -c "Error: Test failed" "$LOG_FILE" 2>/dev/null || echo "0")
+# Count total log files and failures across all logs
+log_count=$(ls -1 "$LOGS_DIR"/*.log 2>/dev/null | wc -l | tr -d ' ')
+failure_count=$(grep -h "Error: Test failed" "$LOGS_DIR"/*.log 2>/dev/null | wc -l | tr -d ' ')
+echo "   Total log files: $log_count"
 echo "   Total assertion failures: $failure_count"
 echo ""
 
-echo "The log file contains:"
-echo "  • Headers for each model/test combination"
-echo "  • Full cargo test output"
-echo "  • LLM responses for each test"
-echo "  • Specific assertion failures with expected vs actual values"
+echo "Each log file contains:"
+echo "  • Header with model and test name"
+echo "  • Full cargo test output for that specific test"
+echo "  • LLM responses"
+echo "  • Assertion failures with expected vs actual values"
 echo "  • Stack traces for panics"
+echo ""
+echo "Log naming format: {test_name}_{model}.log"
 echo ""
 echo "╔════════════════════════════════════════════════════════════════╗"
 echo "║                       COMPLETE                                 ║"
@@ -327,52 +309,214 @@ echo ""
 echo "✨ Benchmark complete!"
 echo "📊 Results table: See above"
 echo "📂 All files saved to: $RUN_DIR"
-echo "📝 Markdown report: $RUN_DIR/REPORT.md"
+echo "📁 Individual logs: $LOGS_DIR"
+echo "📝 HTML report: $RUN_DIR/report.html"
 echo ""
 
-# Generate a markdown report
-REPORT_FILE="$RUN_DIR/REPORT.md"
+# Generate an HTML report
+REPORT_FILE="$RUN_DIR/report.html"
 
-cat > "$REPORT_FILE" <<EOF
-# Ollama Model Benchmark Report
+# Count total failures across all log files
+log_count=$(ls -1 "$LOGS_DIR"/*.log 2>/dev/null | wc -l | tr -d ' ')
+failure_count=$(grep -h "Error: Test failed" "$LOGS_DIR"/*.log 2>/dev/null | wc -l | tr -d ' ')
 
-**Date**: $(date)
-**Models Tested**: ${#MODELS[@]}
-**Tests Run**: ${#TEST_NAMES[@]}
+# Start HTML document
+cat > "$REPORT_FILE" <<'EOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ollama Model Benchmark Report</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            color: #24292e;
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f6f8fa;
+        }
+        .header {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        h1 { margin: 0 0 10px 0; color: #0366d6; }
+        .meta { color: #586069; font-size: 14px; }
+        .meta span { margin-right: 20px; }
 
-## Results Table
+        .toc {
+            background: white;
+            padding: 20px 30px;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .toc h2 { margin-top: 0; color: #24292e; font-size: 20px; }
+        .toc ul { list-style: none; padding: 0; margin: 0; }
+        .toc li { padding: 8px 0; border-bottom: 1px solid #e1e4e8; }
+        .toc li:last-child { border-bottom: none; }
+        .toc a { color: #0366d6; text-decoration: none; }
+        .toc a:hover { text-decoration: underline; }
 
-| Test Name | $(printf "%s | " "${MODELS[@]}") |
-|-----------|$(printf -- "------------|%.0s" "${MODELS[@]}")---|
+        .test-section {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .test-section h2 {
+            margin-top: 0;
+            color: #24292e;
+            border-bottom: 2px solid #e1e4e8;
+            padding-bottom: 10px;
+        }
+
+        .model-result {
+            border: 1px solid #e1e4e8;
+            border-radius: 6px;
+            padding: 20px;
+            margin: 15px 0;
+            background: #fafbfc;
+        }
+        .model-result h3 {
+            margin: 0 0 15px 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .status {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .status.pass { background: #dcffe4; color: #22863a; }
+        .status.fail { background: #ffdce0; color: #d73a49; }
+        .status.timeout { background: #fff5b1; color: #735c0f; }
+
+        .failure-details {
+            background: #fff5f5;
+            border-left: 4px solid #d73a49;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+        .failure-details h4 {
+            margin: 0 0 10px 0;
+            color: #d73a49;
+            font-size: 14px;
+        }
+        .failure-details pre {
+            background: white;
+            padding: 10px;
+            border-radius: 3px;
+            overflow-x: auto;
+            font-size: 12px;
+            margin: 5px 0;
+        }
+        .expected-actual {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .expected-actual > div {
+            background: white;
+            padding: 10px;
+            border-radius: 3px;
+        }
+        .expected-actual h5 {
+            margin: 0 0 8px 0;
+            font-size: 12px;
+            text-transform: uppercase;
+            color: #586069;
+        }
+
+        details {
+            margin: 15px 0;
+            border: 1px solid #e1e4e8;
+            border-radius: 6px;
+            padding: 10px;
+            background: white;
+        }
+        summary {
+            cursor: pointer;
+            font-weight: 600;
+            padding: 5px;
+            user-select: none;
+            color: #0366d6;
+        }
+        summary:hover { text-decoration: underline; }
+        .log-content {
+            margin-top: 10px;
+            padding: 15px;
+            background: #f6f8fa;
+            border-radius: 4px;
+            max-height: 400px;
+            overflow: auto;
+        }
+        .log-content pre {
+            margin: 0;
+            font-size: 11px;
+            line-height: 1.4;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .back-to-top {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #0366d6;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 6px;
+            text-decoration: none;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        }
+        .back-to-top:hover { background: #0256c7; }
+    </style>
+</head>
+<body>
+EOF
+
+# Add header
+cat >> "$REPORT_FILE" <<EOF
+    <div class="header">
+        <h1>🤖 Ollama Model Benchmark Report</h1>
+        <div class="meta">
+            <span>📅 <strong>Date:</strong> $(date)</span>
+            <span>🔢 <strong>Models:</strong> ${#MODELS[@]}</span>
+            <span>🧪 <strong>Tests:</strong> ${#TEST_NAMES[@]}</span>
+            <span>📁 <strong>Log Files:</strong> $log_count</span>
+            <span>❌ <strong>Failures:</strong> $failure_count</span>
+        </div>
+    </div>
+EOF
+
+# Add table of contents
+cat >> "$REPORT_FILE" <<'EOF'
+    <div class="toc">
+        <h2>📑 Table of Contents</h2>
+        <ul>
 EOF
 
 for test_name in "${TEST_NAMES[@]}"; do
     test_display=$(echo "$test_name" | sed 's/^test_//')
-    echo -n "| $test_display |" >> "$REPORT_FILE"
-    for model in "${MODELS[@]}"; do
-        result=$(get_result "$model" "$test_name")
-        echo -n " $result |" >> "$REPORT_FILE"
-    done
-    echo "" >> "$REPORT_FILE"
-done
+    test_anchor=$(echo "$test_name" | tr '[:upper:]' '[:lower:]' | tr '_' '-')
 
-cat >> "$REPORT_FILE" <<EOF
-
-**Legend**: ✅ = Passed, ❌ = Failed, ⏱️ = Timeout/Pending
-
-EOF
-
-cat >> "$REPORT_FILE" <<EOF
-
-## Summary
-
-EOF
-
-for model in "${MODELS[@]}"; do
+    # Count pass/fail across all models for this test
     passed=0
     failed=0
-
-    for test_name in "${TEST_NAMES[@]}"; do
+    for model in "${MODELS[@]}"; do
         result=$(get_result "$model" "$test_name")
         if [ "$result" = "✅" ]; then
             ((passed++)) || true
@@ -381,39 +525,160 @@ for model in "${MODELS[@]}"; do
         fi
     done
 
-    total=$((passed + failed))
-    if [ $total -gt 0 ]; then
-        success_rate=$((passed * 100 / total))
+    # Determine overall status
+    if [ $failed -eq 0 ]; then
+        status_badge="<span class=\"status pass\">✅ PASS</span>"
+    elif [ $passed -eq 0 ]; then
+        status_badge="<span class=\"status fail\">❌ FAIL</span>"
     else
-        success_rate=0
+        status_badge="<span class=\"status timeout\">⚠️ MIXED</span>"
+    fi
+
+    echo "            <li><a href=\"#test-$test_anchor\">$status_badge $test_display</a></li>" >> "$REPORT_FILE"
+done
+
+cat >> "$REPORT_FILE" <<'EOF'
+        </ul>
+    </div>
+EOF
+
+# Function to extract failure details from log
+extract_failure_details() {
+    local log_file="$1"
+    local temp_file=$(mktemp)
+
+    grep -B 3 -A 10 -i "failures:|=== LLM RESPONSE ===|assertion\|expected\|panicked at" "$log_file" 2>/dev/null | \
+        grep -v "^--$" | \
+        head -50 > "$temp_file"
+
+    cat "$temp_file"
+    rm -f "$temp_file"
+}
+
+# Add test sections
+for test_name in "${TEST_NAMES[@]}"; do
+    test_display=$(echo "$test_name" | sed 's/^test_//')
+    test_anchor=$(echo "$test_name" | tr '[:upper:]' '[:lower:]' | tr '_' '-')
+
+    # Count pass/fail across all models for this test
+    passed=0
+    failed=0
+    for model in "${MODELS[@]}"; do
+        result=$(get_result "$model" "$test_name")
+        if [ "$result" = "✅" ]; then
+            ((passed++)) || true
+        else
+            ((failed++)) || true
+        fi
+    done
+
+    # Determine overall status for header
+    if [ $failed -eq 0 ]; then
+        header_status="✅ PASS"
+    elif [ $passed -eq 0 ]; then
+        header_status="❌ FAIL"
+    else
+        header_status="⚠️ MIXED"
     fi
 
     cat >> "$REPORT_FILE" <<EOF
-### $model
+    <div class="test-section" id="test-$test_anchor">
+        <h2>$header_status - $test_display</h2>
+EOF
 
-- **Passed**: $passed/$total ($success_rate%)
-- **Failed**: $failed/$total
+    # Add results for each model
+    for model in "${MODELS[@]}"; do
+        result=$(get_result "$model" "$test_name")
 
+        # Determine status class
+        status_class="timeout"
+        status_text="Timeout"
+        if [ "$result" = "✅" ]; then
+            status_class="pass"
+            status_text="Passed"
+        elif [ "$result" = "❌" ]; then
+            status_class="fail"
+            status_text="Failed"
+        fi
+
+        # Get log file
+        model_safe=$(echo "$model" | tr ':/' '_')
+        test_safe=$(echo "$test_name" | tr ':/' '_')
+        log_file="$LOGS_DIR/${test_safe}_${model_safe}.log"
+
+        cat >> "$REPORT_FILE" <<EOF
+        <div class="model-result">
+            <h3>
+                <span>$model</span>
+                <span class="status $status_class">$status_text</span>
+            </h3>
+EOF
+
+        # If failed, extract and show failure details
+        if [ "$result" = "❌" ] && [ -f "$log_file" ]; then
+            failure_details=$(extract_failure_details "$log_file")
+
+            if [ -n "$failure_details" ]; then
+                # HTML escape the content
+                failure_details_escaped=$(echo "$failure_details" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g')
+
+                cat >> "$REPORT_FILE" <<EOF
+            <div class="failure-details">
+                <h4>❌ Failure Details</h4>
+                <pre>$failure_details_escaped</pre>
+            </div>
+EOF
+            fi
+        fi
+
+        # Add collapsible full log
+        if [ -f "$log_file" ]; then
+            log_content=$(cat "$log_file" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
+
+            cat >> "$REPORT_FILE" <<EOF
+            <details>
+                <summary>📋 View Full Log</summary>
+                <div class="log-content">
+                    <pre>$log_content</pre>
+                </div>
+            </details>
+EOF
+        fi
+
+        cat >> "$REPORT_FILE" <<'EOF'
+        </div>
+EOF
+    done
+
+    cat >> "$REPORT_FILE" <<'EOF'
+    </div>
 EOF
 done
 
-# Count total failures
-failure_count=$(grep -c "Error: Test failed" "$LOG_FILE" 2>/dev/null || echo "0")
+# Close HTML
+cat >> "$REPORT_FILE" <<'EOF'
+    <a href="#" class="back-to-top">↑ Back to Top</a>
 
-cat >> "$REPORT_FILE" <<EOF
+    <script>
+        // Scroll log content to bottom when details are opened
+        document.addEventListener('DOMContentLoaded', function() {
+            const detailsElements = document.querySelectorAll('details');
 
-## Detailed Log
-
-The complete test log contains all test runs with headers for each model/test combination.
-
-- **Log File**: [test_results.log](./test_results.log)
-- **Total Assertion Failures**: $failure_count
-
-The log file includes:
-- Headers showing which model and test is running
-- Full cargo test output
-- LLM responses for each test
-- Specific assertion failures with expected vs actual values
-- Stack traces for any panics
-
+            detailsElements.forEach(function(details) {
+                details.addEventListener('toggle', function() {
+                    if (this.open) {
+                        const logContent = this.querySelector('.log-content');
+                        if (logContent) {
+                            // Small delay to ensure content is rendered
+                            setTimeout(function() {
+                                logContent.scrollTop = logContent.scrollHeight;
+                            }, 10);
+                        }
+                    }
+                });
+            });
+        });
+    </script>
+</body>
+</html>
 EOF

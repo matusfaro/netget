@@ -279,11 +279,11 @@ fn list_connections_action() -> ActionDefinition {
 fn send_tcp_data_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_tcp_data".to_string(),
-        description: "Send data over the current TCP connection".to_string(),
+        description: "IMPORTANT: Use this action to send data over TCP connections. This is the ONLY correct action for TCP responses - do NOT use generic 'send_data' or 'show_message' actions. The 'data' field contains the exact bytes to send to the client (text or hex-encoded binary).".to_string(),
         parameters: vec![Parameter {
             name: "data".to_string(),
             type_hint: "string".to_string(),
-            description: "Data to send".to_string(),
+            description: "Data to send over TCP connection (text string or hex-encoded for binary data)".to_string(),
             required: true,
         }],
         example: json!({

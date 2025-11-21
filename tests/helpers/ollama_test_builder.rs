@@ -245,8 +245,14 @@ impl OllamaTestBuilder {
                 format!("{}\n\n# User Input\n\n{}", system_prompt, user_message)
             }
             PromptContext::NetworkRequest { event, instruction, server_id } => {
-                // Set the server instruction in state
-                let _ = state.set_instruction(server_id, instruction.clone()).await;
+                // Create a dummy server for testing so the instruction can be set
+                let dummy_server = netget::state::server::ServerInstance::new(
+                    server_id,
+                    8080,  // Dummy port
+                    "tcp".to_string(),  // Dummy protocol
+                    instruction.clone(),
+                );
+                state.add_server_with_id(dummy_server).await;
 
                 // Get protocol-specific actions from registry
                 // For now, just use common actions - protocol actions would come from the server

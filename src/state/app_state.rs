@@ -2162,6 +2162,20 @@ impl AppState {
         let mut inner = self.inner.write().await;
         inner._database_manager.delete_databases_by_client(client_id)
     }
+
+    /// Test-only helper to add a server with a specific ID (bypasses auto-increment)
+    ///
+    /// WARNING: This method is intended for testing only. In production code, use `add_server()`
+    /// which properly assigns server IDs.
+    pub async fn add_server_with_id(&self, server: ServerInstance) {
+        let mut inner = self.inner.write().await;
+        inner.servers.insert(server.id, server);
+
+        // Set mode to Server if this is the first server
+        if inner.mode == Mode::Idle {
+            inner.mode = Mode::Server;
+        }
+    }
 }
 
 impl Default for AppState {
