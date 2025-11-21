@@ -48,6 +48,8 @@ android-termux = [
     "mssql",
     "ipp",
     "postgresql",
+    "mongodb-server",
+    "mongodb",
     "redis",
     "rss",
     "proxy",
@@ -160,6 +162,8 @@ mysql = ["dep:opensrv-mysql", "dep:mysql_async"]
 mssql = ["dep:tiberius"]
 ipp = ["dep:ipp"]
 postgresql = ["dep:pgwire", "dep:tokio-postgres"]
+mongodb-server = ["dep:bson"]  # MongoDB server with LLM-controlled database operations
+mongodb = ["dep:mongodb", "dep:bson"]  # MongoDB client
 redis = ["dep:redis-protocol", "dep:redis"]
 rss = ["dep:rss"]  # RSS feed server and client (RSS 2.0 XML generation and parsing)
 proxy = ["http-mitm-proxy", "dep:rcgen", "tokio-native-tls", "native-tls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:webpki-roots"]
@@ -267,6 +271,8 @@ all-protocols = [
     "mssql",
     "ipp",
     "postgresql",
+    "mongodb-server",
+    "mongodb",
     "redis",
     "rss",
     "proxy",
@@ -656,6 +662,9 @@ mysql_async = { version = "0.34", optional = true }
 tiberius = { version = "0.12", optional = true }
 # PostgreSQL client
 tokio-postgres = { version = "0.7", optional = true }
+# MongoDB server and client
+bson = { version = "3.0", optional = true, features = ["serde", "serde_with-3", "serde_json-1"] }  # BSON encoding/decoding for MongoDB
+mongodb = { version = "3.3", optional = true }  # Official MongoDB async driver
 # Redis client
 redis = { version = "0.27", optional = true, features = ["tokio-comp"] }
 # CouchDB client

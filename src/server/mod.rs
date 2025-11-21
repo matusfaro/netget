@@ -247,6 +247,13 @@ pub use mysql::actions::MysqlProtocol;
 #[cfg(feature = "mysql")]
 pub use mysql::MysqlServer;
 
+#[cfg(feature = "mongodb-server")]
+pub mod mongodb;
+#[cfg(feature = "mongodb-server")]
+pub use mongodb::actions::MongodbProtocol;
+#[cfg(feature = "mongodb-server")]
+pub use mongodb::MongodbServer;
+
 #[cfg(feature = "mssql")]
 pub mod mssql;
 #[cfg(feature = "mssql")]

@@ -12,6 +12,8 @@ pub mod dc;
 pub mod http;
 #[cfg(feature = "ipp")]
 pub mod ipp;
+#[cfg(feature = "mongodb")]
+pub mod mongodb;
 #[cfg(feature = "ollama")]
 pub mod ollama;
 #[cfg(feature = "openai")]

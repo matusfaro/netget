@@ -44,7 +44,8 @@ impl ServerRegistry {
             feature = "mssql",
             feature = "postgresql",
             feature = "redis",
-            feature = "cassandra"
+            feature = "cassandra",
+            feature = "mongodb-server"
         ))]
         let dummy_state = Arc::new(crate::state::app_state::AppState::new());
 
@@ -210,6 +211,18 @@ impl ServerRegistry {
             use tokio::sync::mpsc;
             let (tx, _rx) = mpsc::unbounded_channel();
             self.register(Arc::new(crate::server::CassandraProtocol::new(
+                ConnectionId::new(0), // Placeholder for protocol registry
+                dummy_state.clone(),
+                tx,
+            )));
+        }
+
+        #[cfg(feature = "mongodb-server")]
+        {
+            use crate::server::connection::ConnectionId;
+            use tokio::sync::mpsc;
+            let (tx, _rx) = mpsc::unbounded_channel();
+            self.register(Arc::new(crate::server::MongodbProtocol::new(
                 ConnectionId::new(0), // Placeholder for protocol registry
                 dummy_state.clone(),
                 tx,

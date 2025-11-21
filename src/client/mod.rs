@@ -226,6 +226,12 @@ pub mod mysql;
 #[cfg(feature = "mysql")]
 pub use mysql::actions::MysqlClientProtocol;
 
+// mongodb client
+#[cfg(feature = "mongodb")]
+pub mod mongodb;
+#[cfg(feature = "mongodb")]
+pub use mongodb::actions::MongodbClientProtocol;
+
 // nfs client
 #[cfg(feature = "nfs")]
 pub mod nfs;
