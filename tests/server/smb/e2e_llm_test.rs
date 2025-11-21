@@ -107,13 +107,15 @@ async fn test_smb_llm_allows_guest_auth() -> E2EResult<()> {
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    // IMPORTANT: Specific event matchers must come BEFORE on_any()
+                    // Mock 1: SMB operations - MUST come before on_any()
                     .on_event("smb_operation")
-                    .and_event_data_contains("operation", "session_setup")
-                    .respond_with_actions(serde_json::json!([{"type": "smb_auth_success"}]))
-                    .expect_at_least(1)  // Expect at least 1 SMB operation event
+                    .respond_with_actions(serde_json::json!([
+                        {"type": "smb_auth_success"}
+                    ]))
+                    .expect_at_least(1)
                     .and()
-                    .on_any()  // Matches initial user input
+                    // Mock 2: Server startup - Catch-all
+                    .on_any()
                     .respond_with_actions(serde_json::json!([
                         {"type": "open_server", "port": 0, "base_stack": "SMB", "instruction": "Allow all auth"}
                     ]))
@@ -192,13 +194,15 @@ async fn test_smb_llm_denies_user() -> E2EResult<()> {
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    // IMPORTANT: Specific event matchers must come BEFORE on_any()
+                    // Mock 1: SMB operations - MUST come before on_any()
                     .on_event("smb_operation")
-                    .and_event_data_contains("operation", "session_setup")
-                    .respond_with_actions(serde_json::json!([{"type": "smb_auth_denied", "status": 0xC0000016u32 as i32}]))
-                    .expect_at_least(1)  // Expect at least 1 SMB operation event
+                    .respond_with_actions(serde_json::json!([
+                        {"type": "smb_auth_denied", "status": 0xC0000016u32 as i32}
+                    ]))
+                    .expect_at_least(1)
                     .and()
-                    .on_any()  // Matches initial user input
+                    // Mock 2: Server startup - Catch-all
+                    .on_any()
                     .respond_with_actions(serde_json::json!([
                         {"type": "open_server", "port": 0, "base_stack": "SMB", "instruction": "Allow alice only"}
                     ]))

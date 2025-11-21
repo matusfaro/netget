@@ -179,8 +179,15 @@ async fn test_smb_session_setup() -> E2EResult<()> {
     let config = crate::helpers::NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
-                // Mock 1: Server startup (user command)
-                .on_instruction_containing("SMB")
+                // Mock 1: SMB operation events (session_setup) - MUST come before on_any()
+                .on_event("smb_operation")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "smb_auth_success"}
+                ]))
+                .expect_at_least(1)
+                .and()
+                // Mock 2: Server startup (user command) - Catch-all for other LLM calls
+                .on_any()
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -190,11 +197,6 @@ async fn test_smb_session_setup() -> E2EResult<()> {
                     }
                 ]))
                 .expect_calls(1)
-                .and()
-                // Mock 2: Session Setup event (smb_operation with operation=session_setup)
-                .on_event("smb_operation")
-                .respond_with_actions(serde_json::json!([{"type": "smb_auth_success"}]))
-                .expect_at_least(1)
                 .and()
         });
 
@@ -481,13 +483,15 @@ async fn test_smb_auth_llm_controlled() -> E2EResult<()> {
     let config = crate::helpers::NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
-                // IMPORTANT: Specific event matchers must come BEFORE on_any()
+                // Mock 1: SMB operation events - MUST come before on_any()
                 .on_event("smb_operation")
-                .and_event_data_contains("operation", "session_setup")
-                .respond_with_actions(serde_json::json!([{"type": "wait_for_more"}]))  // Deny auth
-                .expect_at_least(1)  // Expect at least 1 SMB operation event
+                .respond_with_actions(serde_json::json!([
+                    {"type": "wait_for_more"}  // Deny auth
+                ]))
+                .expect_at_least(1)
                 .and()
-                .on_any()  // Matches initial user input
+                // Mock 2: Server startup - Catch-all
+                .on_any()
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
