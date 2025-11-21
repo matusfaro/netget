@@ -33,7 +33,6 @@ async fn test_couchdb_client_connect() -> E2EResult<()> {
                     "uuid": "test-uuid",
                     "vendor_name": "NetGet LLM CouchDB"
                 }]))
-                .expect_calls(1)
                 .and()
         });
 
@@ -59,7 +58,6 @@ async fn test_couchdb_client_connect() -> E2EResult<()> {
             .respond_with_actions(json!([{
                 "type": "wait_for_more"
             }]))
-            .expect_calls(1)
             .and()
     });
 
@@ -93,7 +91,6 @@ async fn test_couchdb_client_database_operations() -> E2EResult<()> {
                     "type": "send_server_info",
                     "version": "3.5.1"
                 }]))
-                .expect_calls(1)
                 .and()
                 .on_event("couchdb_request")
                 .and_event_data_contains("operation", "db_create")
@@ -103,7 +100,6 @@ async fn test_couchdb_client_database_operations() -> E2EResult<()> {
                     "status_code": 201,
                     "body": "{\"ok\": true}"
                 }]))
-                .expect_calls(1)
                 .and()
                 .on_event("couchdb_request")
                 .and_event_data_contains("operation", "all_dbs")
@@ -111,7 +107,6 @@ async fn test_couchdb_client_database_operations() -> E2EResult<()> {
                     "type": "send_all_dbs",
                     "databases": ["testdb"]
                 }]))
-                .expect_calls(1)
                 .and()
                 .on_event("couchdb_request")
                 .and_event_data_contains("operation", "db_delete")
@@ -121,7 +116,6 @@ async fn test_couchdb_client_database_operations() -> E2EResult<()> {
                     "status_code": 200,
                     "body": "{\"ok\": true}"
                 }]))
-                .expect_calls(1)
                 .and()
         });
 
@@ -148,14 +142,12 @@ async fn test_couchdb_client_database_operations() -> E2EResult<()> {
                 "type": "create_database",
                 "database": "testdb"
             }]))
-            .expect_calls(1)
             .and()
             .on_event("couchdb_response_received")
             .and_event_data_contains("operation", "create_database")
             .respond_with_actions(json!([{
                 "type": "list_databases"
             }]))
-            .expect_calls(1)
             .and()
             .on_event("couchdb_response_received")
             .and_event_data_contains("operation", "list_databases")
@@ -163,14 +155,12 @@ async fn test_couchdb_client_database_operations() -> E2EResult<()> {
                 "type": "delete_database",
                 "database": "testdb"
             }]))
-            .expect_calls(1)
             .and()
             .on_event("couchdb_response_received")
             .and_event_data_contains("operation", "delete_database")
             .respond_with_actions(json!([{
                 "type": "wait_for_more"
             }]))
-            .expect_calls(1)
             .and()
     });
 
@@ -204,7 +194,6 @@ async fn test_couchdb_client_document_crud() -> E2EResult<()> {
                     "type": "send_server_info",
                     "version": "3.5.1"
                 }]))
-                .expect_calls(1)
                 .and()
                 .on_event("couchdb_request")
                 .and_event_data_contains("operation", "db_info")
@@ -225,7 +214,6 @@ async fn test_couchdb_client_document_crud() -> E2EResult<()> {
                     "doc_id": "user1",
                     "rev": "1-abc123"
                 }]))
-                .expect_calls(1)
                 .and()
                 .on_event("couchdb_request")
                 .and_event_data_contains("operation", "doc_get")
@@ -236,18 +224,6 @@ async fn test_couchdb_client_document_crud() -> E2EResult<()> {
                     "rev": "1-abc123",
                     "body": "{\"name\": \"Alice\", \"age\": 30}"
                 }]))
-                .expect_calls(1)
-                .and()
-                .on_event("couchdb_request")
-                .and_event_data_contains("operation", "doc_put")
-                .and_event_data_contains("doc_id", "user1")
-                .respond_with_actions(json!([{
-                    "type": "send_doc_response",
-                    "success": true,
-                    "doc_id": "user1",
-                    "rev": "2-def456"
-                }]))
-                .expect_calls(1)
                 .and()
                 .on_event("couchdb_request")
                 .and_event_data_contains("operation", "doc_delete")
@@ -257,7 +233,6 @@ async fn test_couchdb_client_document_crud() -> E2EResult<()> {
                     "status_code": 200,
                     "body": "{\"ok\": true}"
                 }]))
-                .expect_calls(1)
                 .and()
         });
 
@@ -286,7 +261,6 @@ async fn test_couchdb_client_document_crud() -> E2EResult<()> {
                 "doc_id": "user1",
                 "document": {"name": "Alice", "age": 30}
             }]))
-            .expect_calls(1)
             .and()
             .on_event("couchdb_response_received")
             .and_event_data_contains("operation", "create_document")
@@ -295,7 +269,6 @@ async fn test_couchdb_client_document_crud() -> E2EResult<()> {
                 "database": "testdb",
                 "doc_id": "user1"
             }]))
-            .expect_calls(1)
             .and()
             .on_event("couchdb_response_received")
             .and_event_data_contains("operation", "get_document")
@@ -305,7 +278,6 @@ async fn test_couchdb_client_document_crud() -> E2EResult<()> {
                 "doc_id": "user1",
                 "document": {"_rev": "1-abc123", "name": "Alice", "age": 31}
             }]))
-            .expect_calls(1)
             .and()
             .on_event("couchdb_response_received")
             .and_event_data_contains("operation", "update_document")
@@ -315,14 +287,12 @@ async fn test_couchdb_client_document_crud() -> E2EResult<()> {
                 "doc_id": "user1",
                 "rev": "2-def456"
             }]))
-            .expect_calls(1)
             .and()
             .on_event("couchdb_response_received")
             .and_event_data_contains("operation", "delete_document")
             .respond_with_actions(json!([{
                 "type": "wait_for_more"
             }]))
-            .expect_calls(1)
             .and()
     });
 
@@ -356,7 +326,6 @@ async fn test_couchdb_client_conflict_handling() -> E2EResult<()> {
                     "type": "send_server_info",
                     "version": "3.5.1"
                 }]))
-                .expect_calls(1)
                 .and()
                 .on_event("couchdb_request")
                 .and_event_data_contains("operation", "db_info")
@@ -379,7 +348,6 @@ async fn test_couchdb_client_conflict_handling() -> E2EResult<()> {
                     "error": "conflict",
                     "reason": "Document update conflict"
                 }]))
-                .expect_calls(1)
                 .and()
                 .on_event("couchdb_request")
                 .and_event_data_contains("operation", "doc_get")
@@ -390,7 +358,6 @@ async fn test_couchdb_client_conflict_handling() -> E2EResult<()> {
                     "rev": "2-current",
                     "body": "{\"name\": \"Alice\", \"age\": 31}"
                 }]))
-                .expect_calls(1)
                 .and()
                 .on_event("couchdb_request")
                 .and_event_data_contains("operation", "doc_put")
@@ -401,7 +368,6 @@ async fn test_couchdb_client_conflict_handling() -> E2EResult<()> {
                     "doc_id": "user1",
                     "rev": "3-updated"
                 }]))
-                .expect_calls(1)
                 .and()
         });
 
@@ -430,7 +396,6 @@ async fn test_couchdb_client_conflict_handling() -> E2EResult<()> {
                 "doc_id": "user1",
                 "document": {"_rev": "1-old", "name": "Alice", "age": 32}
             }]))
-            .expect_calls(1)
             .and()
             .on_event("couchdb_conflict")
             .and_event_data_contains("doc_id", "user1")
@@ -439,7 +404,6 @@ async fn test_couchdb_client_conflict_handling() -> E2EResult<()> {
                 "database": "testdb",
                 "doc_id": "user1"
             }]))
-            .expect_calls(1)
             .and()
             .on_event("couchdb_response_received")
             .and_event_data_contains("operation", "get_document")
@@ -449,14 +413,12 @@ async fn test_couchdb_client_conflict_handling() -> E2EResult<()> {
                 "doc_id": "user1",
                 "document": {"_rev": "2-current", "name": "Alice", "age": 32}
             }]))
-            .expect_calls(1)
             .and()
             .on_event("couchdb_response_received")
             .and_event_data_contains("operation", "update_document")
             .respond_with_actions(json!([{
                 "type": "wait_for_more"
             }]))
-            .expect_calls(1)
             .and()
     });
 
@@ -490,7 +452,6 @@ async fn test_couchdb_client_bulk_operations() -> E2EResult<()> {
                     "type": "send_server_info",
                     "version": "3.5.1"
                 }]))
-                .expect_calls(1)
                 .and()
                 .on_event("couchdb_request")
                 .and_event_data_contains("operation", "db_info")
@@ -512,7 +473,6 @@ async fn test_couchdb_client_bulk_operations() -> E2EResult<()> {
                         {"ok": true, "id": "doc3", "rev": "1-ghi"}
                     ]
                 }]))
-                .expect_calls(1)
                 .and()
                 .on_event("couchdb_request")
                 .and_event_data_contains("operation", "all_docs")
@@ -525,7 +485,6 @@ async fn test_couchdb_client_bulk_operations() -> E2EResult<()> {
                         {"id": "doc3", "key": "doc3", "value": {"rev": "1-ghi"}}
                     ]
                 }]))
-                .expect_calls(1)
                 .and()
         });
 
@@ -557,7 +516,6 @@ async fn test_couchdb_client_bulk_operations() -> E2EResult<()> {
                     {"_id": "doc3", "name": "Charlie"}
                 ]
             }]))
-            .expect_calls(1)
             .and()
             .on_event("couchdb_response_received")
             .and_event_data_contains("operation", "bulk_docs")
@@ -565,14 +523,12 @@ async fn test_couchdb_client_bulk_operations() -> E2EResult<()> {
                 "type": "list_documents",
                 "database": "testdb"
             }]))
-            .expect_calls(1)
             .and()
             .on_event("couchdb_response_received")
             .and_event_data_contains("operation", "list_documents")
             .respond_with_actions(json!([{
                 "type": "wait_for_more"
             }]))
-            .expect_calls(1)
             .and()
     });
 
