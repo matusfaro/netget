@@ -486,13 +486,19 @@ impl TorClient {
             .parse()
             .context("Invalid directory_server address format. Expected 'IP:port' like '127.0.0.1:9030'")?;
 
-        // Create a fallback directory entry pointing to localhost
-        // Use dummy identities for testing (real Tor would validate these)
+        // WARNING: Arti FallbackDir requires an OR (relay) port, but we only have HTTP directory
+        // This configuration will likely fail during bootstrap because Arti expects a working
+        // Tor relay at the OR port, not just an HTTP directory server.
+        //
+        // For now, we configure the OR port to point to the same address as a workaround,
+        // but this is a fundamental incompatibility: Arti needs a full Tor relay to bootstrap,
+        // not just a directory server.
+
         let mut fallback = FallbackDir::builder();
         fallback
             .rsa_identity([0x42; 20].into())  // Dummy RSA identity
             .ed_identity([0x99; 32].into())  // Dummy Ed25519 identity
-            .orports()
+            .orports()  // Arti only supports orports(), not dirports()
             .push(addr);
 
         // Build config with custom fallback

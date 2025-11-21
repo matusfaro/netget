@@ -2,26 +2,48 @@
 
 ## Test Approach
 
-**Fully local E2E testing** using NetGet's tor_directory server. The Tor client is configured to use a localhost directory server instead of the real Tor network.
+**LIMITATION**: Local E2E testing with tor_directory server is NOT possible with current Arti architecture.
 
-**Key Innovation**: Arti's `TorClientConfig` can be configured with custom `fallback_caches` pointing to localhost, enabling completely offline testing!
+**Problem**: Arti's `FallbackDir` requires a working Tor relay (OR protocol), not just an HTTP directory server. Our tor_directory only serves HTTP - it cannot handle Tor circuit protocol needed for bootstrap.
 
-## LLM Call Budget
+**Current Status**: Tests fail with "Failed to bootstrap Tor client" because Arti cannot establish OR connection to localhost directory.
 
-**Target: < 10 LLM calls per test suite** (all mocked)
+## Testing Options
 
-### Breakdown
+### Option 1: Skip Tests (Current Default)
 
-1. **Local Directory Bootstrap** (4 mocked calls): Server startup, directory request, client startup, bootstrap event
-2. **Directory Query Test** (6 mocked calls): Server startup, directory request, client startup, bootstrap, query action, response
+Tests are currently failing and should be skipped until a solution is implemented:
+```bash
+# Skip Tor client tests
+cargo test --all-features --test client -- --skip tor_client_tests
+```
 
-**Total: 10 mocked LLM calls** (0 real Ollama calls, 0 internet required)
+### Option 2: Use Real Tor Network (Requires Internet)
 
-## Test Runtime
+Tests could be rewritten to bootstrap from real Tor network:
+- **Pros**: Actually tests Tor functionality
+- **Cons**: Requires internet, 10-30s bootstrap time, privacy concerns
+- **LLM Calls**: 2-4 (client startup, bootstrap event, optional queries)
 
-- **< 5 seconds per test** - Local directory server responds instantly
-- **No internet required** - Fully offline testing
-- **No Tor network dependency** - Uses local tor_directory server
+## Why Local Testing Doesn't Work
+
+**Technical Root Cause**:
+1. Arti's `FallbackDir::builder()` only has `.orports()` method (no `.dirports()`)
+2. OR port = Onion Router port (Tor circuit protocol, port 9001/443)
+3. Dir port = Directory port (HTTP consensus serving, port 80/9030)
+4. Our tor_directory = HTTP-only server (no OR protocol implementation)
+5. Arti tries OR connection → fails → bootstrap fails
+
+**Evidence**:
+```
+[ERROR] Failed to connect Tor client #1: Failed to bootstrap Tor client
+```
+
+**Why FallbackDir Needs OR Port**:
+- Arti uses FallbackDir to build initial Tor circuits
+- Circuits require OR protocol handshake (not HTTP)
+- Only after circuit is established can Arti fetch directory over HTTP
+- So FallbackDir must be a full relay, not just directory server
 
 ## Test Strategy
 
@@ -179,21 +201,29 @@ test tor_client_tests::test_tor_directory_query_local ... ok (3.5s)
 
 **Mitigation**: Future tests can add relay simulation (separate feature)
 
-## Advantages Over Internet-Based Testing
+## Possible Solutions
 
-### Before (with internet dependency):
-- ❌ Required real Tor network access
-- ❌ 10-30 second bootstrap time
-- ❌ Flaky (network issues, Tor blocks)
-- ❌ Privacy concerns (connecting to Tor)
-- ❌ Can't run in restricted environments
+### 1. Implement OR Protocol in tor_directory (Very Complex)
+- Requires full Tor relay protocol implementation
+- Estimated effort: Several weeks of development
+- Reference: See C Tor relay implementation (~100K LOC)
+- **Status**: Not feasible for testing purposes
 
-### Now (fully local):
-- ✅ NO internet required
-- ✅ < 5 second test time
-- ✅ 100% reliable (no network)
-- ✅ Complete privacy (localhost only)
-- ✅ Works anywhere (firewall, CI, offline)
+### 2. Request Arti Upstream Changes
+- Add `dirports()` method to FallbackDir
+- Add config option to skip circuit building for testing
+- **Status**: Would need community discussion, long timeline
+
+### 3. Mock Arti's Bootstrap Layer
+- Intercept Arti's bootstrap before OR connection
+- Inject fake NetDir without network
+- **Status**: Invasive, breaks integration testing value
+
+### 4. Accept Limitation & Use Real Tor (Current Recommendation)
+- Document that local testing isn't possible
+- Use real Tor network for E2E tests
+- Focus unit tests on directory query logic (post-bootstrap)
+- **Status**: Simple, works today, requires internet
 
 ## Future Enhancements
 

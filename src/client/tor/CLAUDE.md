@@ -306,6 +306,44 @@ See `tests/client/tor/CLAUDE.md` for testing details.
 - `httpbin.org`: HTTP testing (accessible through Tor)
 - DuckDuckGo onion: `duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion`
 
+### Bootstrap Limitation with Local Directory Server
+
+**CRITICAL**: Arti cannot bootstrap from a localhost HTTP-only directory server (e.g., `tor_directory`).
+
+**Problem**: Arti's `FallbackDir` configuration requires a working **Tor relay** (OR protocol port), not just an HTTP directory server:
+- `FallbackDir::builder().orports()` - Only accepts OR (Onion Router) ports
+- NO `dirports()` method exists in Arti API
+- OR port handles Tor circuit protocol, NOT HTTP directory requests
+
+**Why This Fails**:
+1. Our `tor_directory` server only serves HTTP (consensus documents via HTTP/1.1)
+2. Arti tries to establish Tor circuit through the OR port
+3. Connection fails because `tor_directory` doesn't speak OR protocol
+4. Bootstrap error: "Failed to bootstrap Tor client"
+
+**Workaround**: The `directory_server` startup parameter exists but doesn't work for localhost testing because:
+- Arti needs a full Tor relay (both OR port + directory function)
+- Implementing OR protocol in `tor_directory` is extremely complex (would require full relay implementation)
+
+**Solution for Testing**: Use the real Tor network for bootstrap:
+```rust
+// Works: Bootstrap from real Tor network
+TorClient::connect_with_llm_actions(
+    "example.com:80",
+    llm_client,
+    app_state,
+    status_tx,
+    client_id,
+    None  // No directory_server param - uses real Tor network
+).await?
+```
+
+**Future Enhancement**: Possible approaches to enable local testing:
+1. Implement minimal OR protocol in `tor_directory` (very complex)
+2. Add Arti configuration for HTTP-only directory authorities (requires Arti upstream changes)
+3. Mock Arti's bootstrap layer (invasive, loses integration testing value)
+4. Document as known limitation and use real Tor network for testing
+
 ## Future Enhancements
 
 1. **Bootstrap Progress**: Show directory fetch progress to user

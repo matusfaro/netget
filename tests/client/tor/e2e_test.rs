@@ -33,43 +33,39 @@ p accept 1-65535
     }
 
     /// Test Tor client connecting to local tor_directory server
-    /// Uses static event handlers to automatically serve consensus
-    /// LLM calls: 2 (server startup, client startup)
+    /// LLM controls both server responses and client behavior
+    /// LLM calls: 4 (server startup, directory request, client startup, bootstrap)
     #[tokio::test]
     async fn test_tor_client_with_local_directory() -> E2EResult<()> {
-        // Start a local tor_directory server with static consensus handler
+        // Start a local tor_directory server with LLM-controlled responses
         let consensus_data = create_minimal_consensus();
 
         let server_config = NetGetConfig::new(
-            "Listen on port {AVAILABLE_PORT} via Tor Directory. Serve consensus automatically."
+            "Listen on port {AVAILABLE_PORT} via Tor Directory. Serve consensus when requested."
         )
             .with_mock(|mock| {
                 mock
-                    // Mock: Server startup only
+                    // Mock 1: Server startup
                     .on_instruction_containing("Tor Directory")
                     .respond_with_actions(json!([
                         {
                             "type": "open_server",
                             "port": 0,
                             "base_stack": "Tor Directory",
-                            "instruction": "Serve consensus on demand",
-                            "event_handlers": [
-                                {
-                                    "event_pattern": "tor_directory_request",
-                                    "handler": {
-                                        "type": "static",
-                                        "actions": [
-                                            {
-                                                "type": "serve_consensus",
-                                                "consensus_data": consensus_data.clone()
-                                            }
-                                        ]
-                                    }
-                                }
-                            ]
+                            "instruction": "Serve minimal consensus to clients"
                         }
                     ]))
                     .expect_calls(1)
+                    .and()
+                    // Mock 2: LLM decides what consensus to serve
+                    .on_event("tor_directory_request")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "serve_consensus",
+                            "consensus_data": consensus_data.clone()
+                        }
+                    ]))
+                    .expect_calls(1)  // Should be called when Arti connects
                     .and()
             });
 
@@ -87,7 +83,7 @@ p accept 1-65535
         ))
             .with_mock(|mock| {
                 mock
-                    // Mock: Client startup with directory_server parameter
+                    // Mock 3: Client startup with directory_server parameter
                     .on_instruction_containing("Connect via Tor")
                     .and_instruction_containing("local directory")
                     .respond_with_actions(json!([
@@ -95,7 +91,7 @@ p accept 1-65535
                             "type": "open_client",
                             "remote_addr": "example.com:80",
                             "protocol": "Tor",
-                            "instruction": "Bootstrap and wait",
+                            "instruction": "Bootstrap from local directory",
                             "startup_params": {
                                 "directory_server": format!("127.0.0.1:{}", server.port)
                             }
@@ -103,12 +99,32 @@ p accept 1-65535
                     ]))
                     .expect_calls(1)
                     .and()
+                    // Mock 4: LLM responds to bootstrap completion (optional - may not fire)
+                    .on_event("tor_bootstrap_complete")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "wait_for_more"
+                        }
+                    ]))
+                    .expect_at_least(0)  // Optional - bootstrap may not complete in test timeframe
+                    .and()
             });
 
         let client = start_netget_client(client_config).await?;
 
-        // Give time for bootstrap (local directory should be fast)
-        tokio::time::sleep(Duration::from_secs(10)).await;
+        // Give time for Arti to attempt bootstrap
+        println!("Waiting for Arti bootstrap attempt...");
+        tokio::time::sleep(Duration::from_secs(5)).await;
+
+        // Check server output to see if any requests were received
+        let server_output = server.get_output().await;
+        println!("=== Server Output ===");
+        for line in &server_output {
+            println!("{}", line);
+        }
+        println!("=== End Server Output ===");
+
+        tokio::time::sleep(Duration::from_secs(5)).await;
 
         // Verify mocks were called
         server.verify_mocks().await?;
@@ -138,38 +154,36 @@ p accept 1-65535
     }
 
     /// Test directory query actions with local directory
-    /// LLM calls: 2 (server startup, client startup)
+    /// LLM controls both directory responses and client actions
+    /// LLM calls: 3+ (server startup, directory request, client startup)
     #[tokio::test]
     async fn test_tor_directory_query_local() -> E2EResult<()> {
-        // Start local tor_directory server with static handler
+        // Start local tor_directory server with LLM-controlled responses
         let consensus_data = create_minimal_consensus();
 
         let server_config = NetGetConfig::new(
-            "Listen on port {AVAILABLE_PORT} via Tor Directory. Auto-serve consensus."
+            "Listen on port {AVAILABLE_PORT} via Tor Directory. Serve consensus to clients."
         )
             .with_mock(|mock| {
                 mock
+                    // Mock 1: Server startup
                     .on_instruction_containing("Tor Directory")
                     .respond_with_actions(json!([
                         {
                             "type": "open_server",
                             "port": 0,
                             "base_stack": "Tor Directory",
-                            "instruction": "Serve consensus",
-                            "event_handlers": [
-                                {
-                                    "event_pattern": "tor_directory_request",
-                                    "handler": {
-                                        "type": "static",
-                                        "actions": [
-                                            {
-                                                "type": "serve_consensus",
-                                                "consensus_data": consensus_data.clone()
-                                            }
-                                        ]
-                                    }
-                                }
-                            ]
+                            "instruction": "Serve consensus when requested"
+                        }
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 2: LLM decides what consensus to serve
+                    .on_event("tor_directory_request")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "serve_consensus",
+                            "consensus_data": consensus_data.clone()
                         }
                     ]))
                     .expect_calls(1)
@@ -188,6 +202,7 @@ p accept 1-65535
         ))
             .with_mock(|mock| {
                 mock
+                    // Mock 3: Client startup
                     .on_instruction_containing("Connect via Tor")
                     .and_instruction_containing("directory")
                     .respond_with_actions(json!([
@@ -203,10 +218,31 @@ p accept 1-65535
                     ]))
                     .expect_calls(1)
                     .and()
+                    // Mock 4: LLM responds to bootstrap (optional)
+                    .on_event("tor_bootstrap_complete")
+                    .respond_with_actions(json!([
+                        {
+                            "type": "wait_for_more"
+                        }
+                    ]))
+                    .expect_at_least(0)
+                    .and()
             });
 
         let client = start_netget_client(client_config).await?;
-        tokio::time::sleep(Duration::from_secs(10)).await;
+
+        println!("Waiting for bootstrap...");
+        tokio::time::sleep(Duration::from_secs(5)).await;
+
+        // Check if server received any requests
+        let server_output = server.get_output().await;
+        println!("=== Server Output (Test 2) ===");
+        for line in &server_output {
+            println!("{}", line);
+        }
+        println!("=== End Server Output ===");
+
+        tokio::time::sleep(Duration::from_secs(5)).await;
 
         // Verify mocks
         server.verify_mocks().await?;
