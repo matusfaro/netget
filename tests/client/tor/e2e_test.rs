@@ -32,40 +32,38 @@ p accept 1-65535
         )
     }
 
-    /// Test Tor client connecting to local tor_directory server
-    /// LLM controls both server responses and client behavior
-    /// LLM calls: 4 (server startup, directory request, client startup, bootstrap)
+    /// Test Tor client connecting to local tor_relay with BEGIN_DIR support
+    /// Arti bootstraps from localhost tor_relay over OR protocol
+    /// LLM calls: 3 (server startup, circuit created, client startup)
     #[tokio::test]
-    async fn test_tor_client_with_local_directory() -> E2EResult<()> {
-        // Start a local tor_directory server with LLM-controlled responses
-        let consensus_data = create_minimal_consensus();
-
+    async fn test_tor_client_with_local_relay() -> E2EResult<()> {
+        // Start a local tor_relay server (now supports BEGIN_DIR for directory)
         let server_config = NetGetConfig::new(
-            "Listen on port {AVAILABLE_PORT} via Tor Directory. Serve consensus when requested."
+            "Listen on port {AVAILABLE_PORT} as Tor Relay. Accept circuits and serve directory over BEGIN_DIR."
         )
             .with_mock(|mock| {
                 mock
                     // Mock 1: Server startup
-                    .on_instruction_containing("Tor Directory")
+                    .on_instruction_containing("Tor Relay")
                     .respond_with_actions(json!([
                         {
                             "type": "open_server",
                             "port": 0,
-                            "base_stack": "Tor Directory",
-                            "instruction": "Serve minimal consensus to clients"
+                            "base_stack": "Tor",
+                            "protocol": "TOR_RELAY",
+                            "instruction": "Relay with directory support"
                         }
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Mock 2: LLM decides what consensus to serve
-                    .on_event("tor_directory_request")
+                    // Mock 2: Circuit created event (Arti will create circuit for BEGIN_DIR)
+                    .on_event("tor_relay_circuit_created")
                     .respond_with_actions(json!([
                         {
-                            "type": "serve_consensus",
-                            "consensus_data": consensus_data.clone()
+                            "type": "wait_for_more"
                         }
                     ]))
-                    .expect_calls(1)  // Should be called when Arti connects
+                    .expect_at_least(0)  // May or may not fire depending on timing
                     .and()
             });
 

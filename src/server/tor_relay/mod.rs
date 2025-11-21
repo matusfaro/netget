@@ -576,6 +576,9 @@ impl TorRelaySession {
             relay_command::BEGIN => {
                 return self.handle_begin_cell(circuit_id, stream_id, data).await;
             }
+            relay_command::BEGIN_DIR => {
+                return self.handle_begin_dir_cell(circuit_id, stream_id).await;
+            }
             relay_command::DATA => {
                 return self.handle_data_cell(circuit_id, stream_id, data).await;
             }
@@ -730,7 +733,47 @@ impl TorRelaySession {
         }
     }
 
-    /// Handle DATA cell - forward data to TCP connection
+    /// Handle BEGIN_DIR cell - create directory stream for serving consensus
+    async fn handle_begin_dir_cell(
+        &mut self,
+        circuit_id: CircuitId,
+        stream_id: StreamId,
+    ) -> Result<Option<Vec<u8>>> {
+        info!(
+            "BEGIN_DIR stream {} on circuit {} (directory request over circuit)",
+            stream_id.as_u16(),
+            circuit_id.as_u32()
+        );
+        let _ = self.status_tx.send(format!(
+            "[INFO] BEGIN_DIR stream {} (directory over circuit)",
+            stream_id.as_u16()
+        ));
+
+        // Create directory stream in circuit manager
+        self.circuit_manager
+            .create_directory_stream(circuit_id, stream_id)
+            .await?;
+
+        info!("Directory stream {} ready on circuit {}", stream_id.as_u16(), circuit_id.as_u32());
+
+        // Build CONNECTED response (same as normal stream)
+        let connected_cell = build_relay_cell(
+            circuit_id.as_u32(),
+            stream_id.as_u16(),
+            relay_command::CONNECTED,
+            &[],
+        );
+
+        // Encrypt response
+        let mut encrypted = connected_cell.clone();
+        self.circuit_manager
+            .encrypt_relay_cell(circuit_id, &mut encrypted[5..514])
+            .await?;
+
+        Ok(Some(encrypted))
+    }
+
+    /// Handle DATA cell - forward data to TCP connection or handle directory request
     async fn handle_data_cell(
         &mut self,
         circuit_id: CircuitId,
@@ -767,6 +810,11 @@ impl TorRelaySession {
                 .await?;
             let _ = self.circuit_manager.record_sent(circuit_id, 509).await;
             let _ = self.outgoing_tx.send(encrypted);
+        }
+
+        // Check if this is a directory stream (BEGIN_DIR)
+        if self.circuit_manager.is_directory_stream(circuit_id, stream_id).await? {
+            return self.handle_directory_data(circuit_id, stream_id, data).await;
         }
 
         // Get TCP connection for this stream
@@ -816,6 +864,104 @@ impl TorRelaySession {
         }
 
         Ok(None)
+    }
+
+    /// Handle directory stream DATA - accumulate HTTP request and respond
+    async fn handle_directory_data(
+        &mut self,
+        circuit_id: CircuitId,
+        stream_id: StreamId,
+        data: &[u8],
+    ) -> Result<Option<Vec<u8>>> {
+        // Append data to directory request buffer
+        self.circuit_manager
+            .append_directory_data(circuit_id, stream_id, data)
+            .await?;
+
+        // Get accumulated request
+        let request_data = self
+            .circuit_manager
+            .get_directory_request(circuit_id, stream_id)
+            .await?;
+
+        // Check if we have a complete HTTP request (ends with \r\n\r\n)
+        if let Some(pos) = request_data.windows(4).position(|w| w == b"\r\n\r\n") {
+            // Extract HTTP request line
+            let request_str = String::from_utf8_lossy(&request_data[..pos]);
+            let first_line = request_str.lines().next().unwrap_or("");
+
+            debug!("Directory request: {}", first_line);
+
+            // Parse HTTP method and path
+            let parts: Vec<&str> = first_line.split_whitespace().collect();
+            let (_method, path) = if parts.len() >= 2 {
+                (parts[0], parts[1])
+            } else {
+                ("GET", "/")
+            };
+
+            // For now, return a simple test consensus
+            // TODO: Call LLM to generate proper consensus based on path
+            let consensus = if path.contains("consensus") {
+                b"HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n\r\nnetwork-status-version 3\nvalid-after 2025-01-01 00:00:00\nfresh-until 2025-01-01 01:00:00\nvalid-until 2025-01-01 03:00:00\n".to_vec()
+            } else {
+                b"HTTP/1.0 404 Not Found\r\n\r\n".to_vec()
+            };
+
+            info!("Serving {} response for directory path: {}",
+                  if path.contains("consensus") { "consensus" } else { "404" },
+                  path);
+
+            // Send response as DATA cells
+            self.send_directory_response(circuit_id, stream_id, &consensus)
+                .await?;
+
+            // Close stream after response
+            let end_cell = build_relay_cell(
+                circuit_id.as_u32(),
+                stream_id.as_u16(),
+                relay_command::END,
+                &[end_reason::DONE],
+            );
+
+            let mut encrypted = end_cell.clone();
+            self.circuit_manager
+                .encrypt_relay_cell(circuit_id, &mut encrypted[5..514])
+                .await?;
+
+            return Ok(Some(encrypted));
+        }
+
+        Ok(None)
+    }
+
+    /// Send directory response data as multiple DATA cells
+    async fn send_directory_response(
+        &mut self,
+        circuit_id: CircuitId,
+        stream_id: StreamId,
+        data: &[u8],
+    ) -> Result<()> {
+        const MAX_RELAY_PAYLOAD: usize = 498; // tor-spec: relay cell payload max
+
+        for chunk in data.chunks(MAX_RELAY_PAYLOAD) {
+            let data_cell = build_relay_cell(
+                circuit_id.as_u32(),
+                stream_id.as_u16(),
+                relay_command::DATA,
+                chunk,
+            );
+
+            let mut encrypted = data_cell.clone();
+            self.circuit_manager
+                .encrypt_relay_cell(circuit_id, &mut encrypted[5..514])
+                .await?;
+
+            self.outgoing_tx.send(encrypted)?;
+            let _ = self.circuit_manager.record_sent(circuit_id, 509).await;
+        }
+
+        Ok(())
     }
 
     /// Handle END cell - close stream
