@@ -192,6 +192,10 @@ pub mod udp;
 pub mod vnc;
 #[cfg(feature = "webdav")]
 pub mod webdav;
+#[cfg(feature = "webrtc")]
+pub mod webrtc;
+#[cfg(feature = "webrtc")]
+pub mod webrtc_signaling;
 #[cfg(feature = "wireguard")]
 pub mod wireguard;
 #[cfg(feature = "xmlrpc")]
