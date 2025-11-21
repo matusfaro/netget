@@ -378,53 +378,6 @@ pub struct SpawnContext {
 }
 
 impl SpawnContext {
-    /// Create a new spawn context (DEPRECATED)
-    #[deprecated(since = "1.0.0", note = "Use new_with_binding instead")]
-    pub fn new(
-        listen_addr: SocketAddr,
-        llm_client: OllamaClient,
-        state: Arc<AppState>,
-        status_tx: mpsc::UnboundedSender<String>,
-        server_id: ServerId,
-    ) -> Self {
-        Self {
-            listen_addr,
-            mac_address: None,
-            interface: None,
-            host: None,
-            port: None,
-            llm_client,
-            state,
-            status_tx,
-            server_id,
-            startup_params: None,
-        }
-    }
-
-    /// Create spawn context with startup parameters (DEPRECATED)
-    #[deprecated(since = "1.0.0", note = "Use new_with_binding instead")]
-    pub fn with_params(
-        listen_addr: SocketAddr,
-        llm_client: OllamaClient,
-        state: Arc<AppState>,
-        status_tx: mpsc::UnboundedSender<String>,
-        server_id: ServerId,
-        startup_params: StartupParams,
-    ) -> Self {
-        Self {
-            listen_addr,
-            mac_address: None,
-            interface: None,
-            host: None,
-            port: None,
-            llm_client,
-            state,
-            status_tx,
-            server_id,
-            startup_params: Some(startup_params),
-        }
-    }
-
     /// Helper method to get socket address from host and port
     ///
     /// Port-based protocols can use this to construct a SocketAddr from
