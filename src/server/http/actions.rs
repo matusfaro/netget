@@ -202,6 +202,30 @@ pub static HTTP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             },
         ])
         .with_actions(vec![SEND_HTTP_RESPONSE_ACTION.clone()])
+        .with_typical_example(serde_json::json!({
+            "type": "send_http_response",
+            "status": 200,
+            "headers": {
+                "Content-Type": "text/html"
+            },
+            "body": "<html><body>Hello World</body></html>"
+        }))
+        .with_optional_example(serde_json::json!({
+            "type": "send_http_response",
+            "status": 404,
+            "headers": {
+                "Content-Type": "text/plain"
+            },
+            "body": "Not Found"
+        }))
+        .with_optional_example(serde_json::json!({
+            "type": "send_http_response",
+            "status": 201,
+            "headers": {
+                "Content-Type": "application/json"
+            },
+            "body": "{\"status\": \"created\"}"
+        }))
 });
 
 /// Get HTTP event types

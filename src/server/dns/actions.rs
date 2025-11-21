@@ -696,6 +696,25 @@ pub static DNS_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             send_dns_response_action(),
             ignore_query_action(),
         ])
+        .with_typical_example(serde_json::json!({
+            "type": "send_dns_a_response",
+            "query_id": 12345,
+            "domain": "example.com",
+            "ip": "93.184.216.34",
+            "ttl": 300
+        }))
+        .with_optional_example(serde_json::json!({
+            "type": "send_dns_nxdomain",
+            "query_id": 12345,
+            "domain": "unknown.example.com"
+        }))
+        .with_optional_example(serde_json::json!({
+            "type": "send_dns_aaaa_response",
+            "query_id": 12345,
+            "domain": "example.com",
+            "ip": "2606:2800:220:1:248:1893:25c8:1946",
+            "ttl": 300
+        }))
 });
 
 /// Get DNS event types

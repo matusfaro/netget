@@ -342,6 +342,10 @@ pub static TCP_CONNECTION_OPENED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         SEND_TCP_DATA_ACTION.clone(),
         CLOSE_THIS_CONNECTION_ACTION.clone(),
     ])
+    .with_typical_example(serde_json::json!({
+        "type": "send_tcp_data",
+        "data": "220 Welcome to server\r\n"
+    }))
 });
 
 /// TCP data received event - triggered when data is received on connection
@@ -358,6 +362,16 @@ pub static TCP_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             WAIT_FOR_MORE_ACTION.clone(),
             CLOSE_THIS_CONNECTION_ACTION.clone(),
         ])
+        .with_typical_example(serde_json::json!({
+            "type": "send_tcp_data",
+            "data": "48656c6c6f"
+        }))
+        .with_optional_example(serde_json::json!({
+            "type": "wait_for_more"
+        }))
+        .with_optional_example(serde_json::json!({
+            "type": "close_connection"
+        }))
 });
 
 /// Get TCP event types
