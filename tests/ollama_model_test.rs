@@ -153,7 +153,8 @@ async fn test_open_client() -> Result<()> {
         .with_user_input("connect to redis server at localhost:6379")
         .expect_action_type("open_client")
         .expect_protocol("redis")
-        .expect_field_contains("remote_addr", "localhost:6379")
+        .expect_field_contains("host", "localhost")
+        .expect_field_exact("port", json!(6379))
         .run()
         .await?
         .assert_success()

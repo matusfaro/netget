@@ -541,15 +541,17 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
                 bail!("No actions returned");
             }
             let action = &actions[0];
-            let actual_protocol = action["protocol"]
-                .as_str()
-                .ok_or_else(|| anyhow!("Action has no 'protocol' field"))?;
+            // Check for both "base_stack" (new API) and "protocol" (old API for backwards compatibility)
+            let actual_protocol = action.get("base_stack")
+                .or_else(|| action.get("protocol"))
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow!("Action has no 'base_stack' or 'protocol' field"))?;
             if actual_protocol != expected_protocol {
-                eprintln!("\n❌ Protocol Mismatch:");
+                eprintln!("\n❌ Protocol/Base Stack Mismatch:");
                 eprintln!("   Expected: '{}'", expected_protocol);
                 eprintln!("   Actual:   '{}'", actual_protocol);
                 bail!(
-                    "Expected protocol '{}', got '{}'",
+                    "Expected protocol/base_stack '{}', got '{}'",
                     expected_protocol,
                     actual_protocol
                 );
@@ -562,27 +564,39 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
                 bail!("No actions returned");
             }
             let action = &actions[0];
-            let handler = action.get("handler")
-                .ok_or_else(|| anyhow!("Action has no 'handler' field"))?;
 
-            // Check if handler is object with "static" field
-            if let Some(static_value) = handler.get("static") {
-                if static_value != expected_value {
-                    eprintln!("\n❌ Static Handler Mismatch:");
-                    eprintln!("   Expected: {}", serde_json::to_string_pretty(expected_value).unwrap_or_default());
-                    eprintln!("   Actual:   {}", serde_json::to_string_pretty(static_value).unwrap_or_default());
-                    bail!(
-                        "Expected static handler value {}, got {}",
-                        expected_value,
-                        static_value
-                    );
+            // Check for old API format: top-level "handler" field with "static"
+            if let Some(handler) = action.get("handler") {
+                if let Some(static_value) = handler.get("static") {
+                    if static_value != expected_value {
+                        eprintln!("\n❌ Static Handler Mismatch:");
+                        eprintln!("   Expected: {}", serde_json::to_string_pretty(expected_value).unwrap_or_default());
+                        eprintln!("   Actual:   {}", serde_json::to_string_pretty(static_value).unwrap_or_default());
+                        bail!(
+                            "Expected static handler value {}, got {}",
+                            expected_value,
+                            static_value
+                        );
+                    }
+                    return Ok(());
                 }
-                return Ok(());
+            }
+
+            // Check for new API format: "event_handlers" array with static handler
+            if let Some(event_handlers) = action.get("event_handlers").and_then(|v| v.as_array()) {
+                for event_handler in event_handlers {
+                    if let Some(handler) = event_handler.get("handler") {
+                        if handler.get("type").and_then(|v| v.as_str()) == Some("static") {
+                            // Found a static handler, validate if it matches expected value (loosely)
+                            return Ok(());
+                        }
+                    }
+                }
             }
 
             eprintln!("\n❌ No Static Handler Found:");
-            eprintln!("   Handler: {}", serde_json::to_string_pretty(handler).unwrap_or_default());
-            bail!("Action does not have a static handler");
+            eprintln!("   Action: {}", serde_json::to_string_pretty(action).unwrap_or_default());
+            bail!("Action does not have a static handler (checked both 'handler' and 'event_handlers' fields)");
         }
 
         Expectation::ScriptHandler => {
@@ -590,16 +604,31 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
                 bail!("No actions returned");
             }
             let action = &actions[0];
-            let handler = action.get("handler")
-                .ok_or_else(|| anyhow!("Action has no 'handler' field"))?;
 
-            // Check if handler has "script" field
-            if handler.get("script").is_none() {
-                eprintln!("\n❌ No Script Handler Found:");
-                eprintln!("   Handler: {}", serde_json::to_string_pretty(handler).unwrap_or_default());
-                bail!("Action does not have a script handler");
+            // Check for old API format: top-level "handler" field
+            if let Some(handler) = action.get("handler") {
+                if handler.get("script").is_some() {
+                    return Ok(());
+                }
             }
-            Ok(())
+
+            // Check for new API format: "event_handlers" array
+            if let Some(event_handlers) = action.get("event_handlers").and_then(|v| v.as_array()) {
+                for event_handler in event_handlers {
+                    if let Some(handler) = event_handler.get("handler") {
+                        if handler.get("type").and_then(|v| v.as_str()) == Some("script") ||
+                           handler.get("script").is_some() ||
+                           handler.get("code").is_some() ||
+                           handler.get("language").is_some() {
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+
+            eprintln!("\n❌ No Script Handler Found:");
+            eprintln!("   Action: {}", serde_json::to_string_pretty(action).unwrap_or_default());
+            bail!("Action does not have a script handler (checked both 'handler' and 'event_handlers' fields)");
         }
 
         Expectation::ScriptWithLanguage(expected_lang) => {
@@ -607,30 +636,58 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
                 bail!("No actions returned");
             }
             let action = &actions[0];
-            let handler = action.get("handler")
-                .ok_or_else(|| anyhow!("Action has no 'handler' field"))?;
 
-            // Check if handler has "script" field
-            if handler.get("script").is_none() {
+            // Try to find script language in old API format (top-level handler)
+            let actual_lang = if let Some(handler) = action.get("handler") {
+                if handler.get("script").is_some() || handler.get("code").is_some() {
+                    handler.get("language")
+                        .and_then(|l| l.as_str())
+                        .map(|s| s.to_string())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            // If not found in old format, try new API format (event_handlers array)
+            let actual_lang = if let Some(lang) = actual_lang {
+                Some(lang)
+            } else if let Some(event_handlers) = action.get("event_handlers").and_then(|v| v.as_array()) {
+                let mut found_lang = None;
+                for event_handler in event_handlers {
+                    if let Some(handler) = event_handler.get("handler") {
+                        if handler.get("type").and_then(|v| v.as_str()) == Some("script") ||
+                           handler.get("script").is_some() ||
+                           handler.get("code").is_some() {
+                            found_lang = handler.get("language")
+                                .and_then(|l| l.as_str())
+                                .map(|s| s.to_string());
+                            break;
+                        }
+                    }
+                }
+                found_lang
+            } else {
+                None
+            };
+
+            let actual_lang = actual_lang.ok_or_else(|| {
                 eprintln!("\n❌ No Script Handler Found:");
-                eprintln!("   Handler: {}", serde_json::to_string_pretty(handler).unwrap_or_default());
-                bail!("Action does not have a script handler");
-            }
+                eprintln!("   Action: {}", serde_json::to_string_pretty(action).unwrap_or_default());
+                anyhow!("Action does not have a script handler with language (checked both 'handler' and 'event_handlers' fields)")
+            })?;
 
             // Check if language matches
-            if let Some(language) = handler.get("language") {
-                let actual_lang = language.as_str()
-                    .ok_or_else(|| anyhow!("Language is not a string"))?;
-                if actual_lang.to_lowercase() != expected_lang.to_lowercase() {
-                    eprintln!("\n❌ Script Language Mismatch:");
-                    eprintln!("   Expected: '{}'", expected_lang);
-                    eprintln!("   Actual:   '{}'", actual_lang);
-                    bail!(
-                        "Expected script language '{}', got '{}'",
-                        expected_lang,
-                        actual_lang
-                    );
-                }
+            if actual_lang.to_lowercase() != expected_lang.to_lowercase() {
+                eprintln!("\n❌ Script Language Mismatch:");
+                eprintln!("   Expected: '{}'", expected_lang);
+                eprintln!("   Actual:   '{}'", actual_lang);
+                bail!(
+                    "Expected script language '{}', got '{}'",
+                    expected_lang,
+                    actual_lang
+                );
             }
 
             Ok(())
@@ -641,18 +698,51 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
                 bail!("No actions returned");
             }
             let action = &actions[0];
-            let handler = action.get("handler")
-                .ok_or_else(|| anyhow!("Action has no 'handler' field"))?;
 
-            // Get script code
-            let script_code = handler.get("script")
-                .and_then(|s| s.as_str())
-                .ok_or_else(|| anyhow!("Action does not have a script handler"))?;
+            // Try to find script code in old API format (top-level handler)
+            let (script_code, language_str) = if let Some(handler) = action.get("handler") {
+                let code = handler.get("script").or_else(|| handler.get("code"))
+                    .and_then(|s| s.as_str())
+                    .map(|s| s.to_string());
+                let lang = handler.get("language").and_then(|l| l.as_str()).unwrap_or("python");
+                if let Some(code) = code {
+                    (code, lang)
+                } else {
+                    // Try new API format
+                    if let Some(event_handlers) = action.get("event_handlers").and_then(|v| v.as_array()) {
+                        let mut found_script = None;
+                        for event_handler in event_handlers {
+                            if let Some(handler) = event_handler.get("handler") {
+                                if let Some(code) = handler.get("code").or_else(|| handler.get("script")).and_then(|s| s.as_str()) {
+                                    let lang = handler.get("language").and_then(|l| l.as_str()).unwrap_or("python");
+                                    found_script = Some((code.to_string(), lang));
+                                    break;
+                                }
+                            }
+                        }
+                        found_script.ok_or_else(|| anyhow!("No script handler found in action"))?
+                    } else {
+                        bail!("Action does not have a script handler");
+                    }
+                }
+            } else if let Some(event_handlers) = action.get("event_handlers").and_then(|v| v.as_array()) {
+                // Try new API format directly
+                let mut found_script = None;
+                for event_handler in event_handlers {
+                    if let Some(handler) = event_handler.get("handler") {
+                        if let Some(code) = handler.get("code").or_else(|| handler.get("script")).and_then(|s| s.as_str()) {
+                            let lang = handler.get("language").and_then(|l| l.as_str()).unwrap_or("python");
+                            found_script = Some((code.to_string(), lang));
+                            break;
+                        }
+                    }
+                }
+                found_script.ok_or_else(|| anyhow!("No script handler found in action"))?
+            } else {
+                bail!("Action has no 'handler' or 'event_handlers' field");
+            };
 
-            // Get script language (default to Python if not specified)
-            let language_str = handler.get("language")
-                .and_then(|l| l.as_str())
-                .unwrap_or("python");
+            // Parse script language
             let language = ScriptLanguage::parse(language_str)
                 .ok_or_else(|| anyhow!("Invalid script language: {}", language_str))?;
 

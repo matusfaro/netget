@@ -16,3 +16,53 @@ You may optionally include `<reasoning>` tags to explain complex decisions (auth
 - Follow the server's instruction field for behavior
 - You can update memory to track state across requests
 - Keep reasoning brief (1-2 sentences) when included
+
+### Protocol-Specific Response Actions
+
+**IMPORTANT**: Always use the protocol-specific response action for the protocol you're handling. Do NOT use generic `send_data` or `show_message` actions.
+
+#### HTTP Responses
+Use `send_http_response` for HTTP servers:
+```json
+{
+  "type": "send_http_response",
+  "status": 200,
+  "body": "Hello, World!",
+  "headers": {"Content-Type": "text/plain"}
+}
+```
+
+#### TCP Data
+Use `send_tcp_data` for TCP servers:
+```json
+{
+  "type": "send_tcp_data",
+  "data_hex": "48656c6c6f"
+}
+```
+
+#### DNS Responses
+Use DNS-specific actions for DNS servers:
+```json
+{
+  "type": "send_dns_a_response",
+  "query_id": 12345,
+  "domain": "example.com",
+  "ip": "93.184.216.34"
+}
+```
+Or for domain not found:
+```json
+{
+  "type": "send_dns_nxdomain",
+  "query_id": 12345,
+  "domain": "unknown.com"
+}
+```
+
+#### Other Protocols
+- **UDP**: Use `send_udp_data` with `data_hex` or `data` field
+- **SMTP**: Use `send_smtp_response` with appropriate SMTP codes
+- **FTP**: Use `send_ftp_response` with FTP response codes
+
+When in doubt, check the available actions list for your protocol's specific response actions.
