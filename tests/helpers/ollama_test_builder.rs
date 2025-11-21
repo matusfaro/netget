@@ -393,6 +393,36 @@ fn parse_actions_from_response(response: &str) -> Result<Vec<Value>> {
     bail!("Could not parse actions from response. Expected {{\"actions\": [...]}} format.\nResponse: {}", response)
 }
 
+/// Check if two JSON values are equivalent, treating numeric strings and numbers as equal
+/// For example, "123" (string) and 123 (number) are considered equivalent
+fn values_are_equivalent(expected: &Value, actual: &Value) -> bool {
+    // If they're exactly equal, they're equivalent
+    if expected == actual {
+        return true;
+    }
+
+    // Try to parse both as numbers and compare
+    let expected_as_num = match expected {
+        Value::Number(n) => n.as_u64().or_else(|| n.as_i64().map(|i| i as u64)),
+        Value::String(s) => s.parse::<u64>().ok(),
+        _ => None,
+    };
+
+    let actual_as_num = match actual {
+        Value::Number(n) => n.as_u64().or_else(|| n.as_i64().map(|i| i as u64)),
+        Value::String(s) => s.parse::<u64>().ok(),
+        _ => None,
+    };
+
+    // If both can be parsed as numbers, compare the numbers
+    if let (Some(exp_num), Some(act_num)) = (expected_as_num, actual_as_num) {
+        return exp_num == act_num;
+    }
+
+    // Otherwise, they're not equivalent
+    false
+}
+
 /// Extract JSON from markdown code block
 fn extract_json_from_markdown(text: &str) -> Option<String> {
     // Look for ```json ... ``` or ``` ... ```
@@ -442,7 +472,7 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
             let action = &actions[0];
             let actual_value = action.get(field)
                 .ok_or_else(|| anyhow!("Action has no '{}' field", field))?;
-            if actual_value != value {
+            if !values_are_equivalent(value, actual_value) {
                 eprintln!("\n❌ Field Exact Match:");
                 eprintln!("   Field:    '{}'", field);
                 eprintln!("   Expected:\n{}", serde_json::to_string_pretty(value).unwrap_or_default());
