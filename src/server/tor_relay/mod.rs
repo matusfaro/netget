@@ -900,16 +900,17 @@ impl TorRelaySession {
                 ("GET", "/")
             };
 
-            // For now, return a simple test consensus
-            // TODO: Call LLM to generate proper consensus based on path
+            // Generate consensus response
+            // TODO: Call LLM to generate dynamic consensus based on path and instruction
             let consensus = if path.contains("consensus") {
-                b"HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n\r\nnetwork-status-version 3\nvalid-after 2025-01-01 00:00:00\nfresh-until 2025-01-01 01:00:00\nvalid-until 2025-01-01 03:00:00\n".to_vec()
+                Self::generate_test_consensus()
             } else {
                 b"HTTP/1.0 404 Not Found\r\n\r\n".to_vec()
             };
 
-            info!("Serving {} response for directory path: {}",
+            info!("Serving {} response ({} bytes) for directory path: {}",
                   if path.contains("consensus") { "consensus" } else { "404" },
+                  consensus.len(),
                   path);
 
             // Send response as DATA cells
@@ -1021,6 +1022,87 @@ impl TorRelaySession {
                 .await;
         }
         Ok(None)
+    }
+
+    /// Generate a test consensus document for Arti bootstrap
+    /// Returns HTTP response with minimal but valid consensus
+    fn generate_test_consensus() -> Vec<u8> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        // Get current time for valid-after/until
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let hour = now - (now % 3600); // Round down to hour
+
+        // Format timestamps (RFC 3339 style for Tor)
+        let valid_after = chrono::DateTime::from_timestamp(hour as i64, 0)
+            .unwrap()
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        let fresh_until = chrono::DateTime::from_timestamp((hour + 3600) as i64, 0)
+            .unwrap()
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        let valid_until = chrono::DateTime::from_timestamp((hour + 10800) as i64, 0)
+            .unwrap()
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+
+        let consensus_body = format!(
+            "network-status-version 3\n\
+             vote-status consensus\n\
+             consensus-method 35\n\
+             valid-after {}\n\
+             fresh-until {}\n\
+             valid-until {}\n\
+             voting-delay 300 300\n\
+             client-versions 0.4.7.0-alpha-dev,0.4.8.0\n\
+             server-versions 0.4.7.0-alpha-dev,0.4.8.0\n\
+             known-flags Authority BadExit Exit Fast Guard HSDir NoEdConsensus Running Stable StaleDesc Sybil V2Dir Valid\n\
+             params CircuitPriorityHalflifeMsec=30000 DoSCircuitCreationEnabled=1 DoSConnectionEnabled=1\n\
+             r TestRelay1 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= 127.0.0.1 9001 127.0.0.1 9030\n\
+             s Exit Fast Guard HSDir Running Stable V2Dir Valid\n\
+             v Tor 0.4.8.0\n\
+             w Bandwidth=5000\n\
+             p accept 1-65535\n\
+             r TestRelay2 BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB= 127.0.0.2 9001 127.0.0.2 9030\n\
+             s Exit Fast Guard HSDir Running Stable V2Dir Valid\n\
+             v Tor 0.4.8.0\n\
+             w Bandwidth=5000\n\
+             p accept 1-65535\n\
+             r TestRelay3 CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC= 127.0.0.3 9001 127.0.0.3 9030\n\
+             s Exit Fast Guard HSDir Running Stable V2Dir Valid\n\
+             v Tor 0.4.8.0\n\
+             w Bandwidth=5000\n\
+             p accept 1-65535\n\
+             r TestRelay4 DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD= 127.0.0.4 9001 127.0.0.4 9030\n\
+             s Exit Fast Guard HSDir Running Stable V2Dir Valid\n\
+             v Tor 0.4.8.0\n\
+             w Bandwidth=5000\n\
+             p accept 1-65535\n\
+             directory-footer\n\
+             bandwidth-weights Wbd=0 Wbe=0 Wbg=4096 Wbm=10000 Wdb=10000 Web=10000 Wed=10000 Wee=10000 Weg=10000 Wem=10000 Wgb=10000 Wgd=0 Wgg=5920 Wgm=5920 Wmb=10000 Wmd=0 Wme=0 Wmg=4096 Wmm=10000\n\
+             directory-signature 0000000000000000000000000000000000000000 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n\
+             -----BEGIN SIGNATURE-----\n\
+             AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n\
+             -----END SIGNATURE-----\n",
+            valid_after, fresh_until, valid_until
+        );
+
+        // Build HTTP response
+        let http_response = format!(
+            "HTTP/1.0 200 OK\r\n\
+             Content-Type: text/plain\r\n\
+             Content-Length: {}\r\n\
+             \r\n\
+             {}",
+            consensus_body.len(),
+            consensus_body
+        );
+
+        http_response.into_bytes()
     }
 
     /// Spawn background task to forward data from TCP connection back to Tor client
