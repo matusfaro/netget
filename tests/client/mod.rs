@@ -2,16 +2,26 @@
 
 #[cfg(feature = "amqp")]
 pub mod amqp;
+#[cfg(feature = "couchdb")]
+pub mod couchdb;
 #[cfg(feature = "datalink")]
 pub mod datalink;
+#[cfg(feature = "dc")]
+pub mod dc;
 #[cfg(feature = "http")]
 pub mod http;
 #[cfg(feature = "ipp")]
 pub mod ipp;
+#[cfg(feature = "mongodb")]
+pub mod mongodb;
 #[cfg(feature = "ollama")]
 pub mod ollama;
 #[cfg(feature = "openai")]
 pub mod openai;
+#[cfg(feature = "openapi")]
+pub mod openapi;
+#[cfg(feature = "mssql")]
+pub mod mssql;
 #[cfg(feature = "redis")]
 pub mod redis;
 #[cfg(feature = "saml")]
@@ -22,6 +32,8 @@ pub mod ssh_agent;
 pub mod tcp;
 #[cfg(feature = "telnet")]
 pub mod telnet;
+#[cfg(feature = "tls")]
+pub mod tls;
 #[cfg(feature = "tor")]
 pub mod tor;
 #[cfg(feature = "webrtc")]

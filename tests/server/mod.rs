@@ -42,6 +42,8 @@ pub mod bluetooth_ble_weight_scale;
 pub mod bootp;
 #[cfg(feature = "cassandra")]
 pub mod cassandra;
+#[cfg(feature = "couchdb")]
+pub mod couchdb;
 #[cfg(feature = "datalink")]
 pub mod datalink;
 #[cfg(feature = "dc")]
@@ -96,10 +98,14 @@ pub mod mcp;
 pub mod mdns;
 #[cfg(feature = "mercurial")]
 pub mod mercurial;
+#[cfg(feature = "mongodb-server")]
+pub mod mongodb;
 #[cfg(feature = "mqtt")]
 pub mod mqtt;
 #[cfg(feature = "mysql")]
 pub mod mysql;
+#[cfg(feature = "mssql")]
+pub mod mssql;
 #[cfg(feature = "nfs")]
 pub mod nfs;
 #[cfg(feature = "nntp")]
@@ -160,6 +166,8 @@ pub mod syslog;
 pub mod tcp;
 #[cfg(feature = "telnet")]
 pub mod telnet;
+#[cfg(feature = "tftp")]
+pub mod tftp;
 #[cfg(feature = "tor")]
 pub mod tor_integration;
 #[cfg(feature = "tor")]
@@ -184,6 +192,10 @@ pub mod udp;
 pub mod vnc;
 #[cfg(feature = "webdav")]
 pub mod webdav;
+#[cfg(feature = "webrtc")]
+pub mod webrtc;
+#[cfg(feature = "webrtc")]
+pub mod webrtc_signaling;
 #[cfg(feature = "wireguard")]
 pub mod wireguard;
 #[cfg(feature = "xmlrpc")]

@@ -41,9 +41,11 @@ impl ServerRegistry {
         // This avoids creating multiple AppState instances which trigger expensive environment detection
         #[cfg(any(
             feature = "mysql",
+            feature = "mssql",
             feature = "postgresql",
             feature = "redis",
-            feature = "cassandra"
+            feature = "cassandra",
+            feature = "mongodb-server"
         ))]
         let dummy_state = Arc::new(crate::state::app_state::AppState::new());
 
@@ -94,6 +96,9 @@ impl ServerRegistry {
 
         #[cfg(feature = "ntp")]
         self.register(Arc::new(crate::server::NtpProtocol::new()));
+
+        #[cfg(feature = "tftp")]
+        self.register(Arc::new(crate::server::TftpProtocol::new()));
 
         #[cfg(feature = "whois")]
         self.register(Arc::new(crate::server::WhoisProtocol::new()));
@@ -161,6 +166,18 @@ impl ServerRegistry {
             )));
         }
 
+        #[cfg(feature = "mssql")]
+        {
+            use crate::server::connection::ConnectionId;
+            use tokio::sync::mpsc;
+            let (tx, _rx) = mpsc::unbounded_channel();
+            self.register(Arc::new(crate::server::MssqlProtocol::new(
+                ConnectionId::new(0), // Placeholder for protocol registry
+                dummy_state.clone(),
+                tx,
+            )));
+        }
+
         #[cfg(feature = "postgresql")]
         {
             use crate::server::connection::ConnectionId;
@@ -200,6 +217,18 @@ impl ServerRegistry {
             )));
         }
 
+        #[cfg(feature = "mongodb-server")]
+        {
+            use crate::server::connection::ConnectionId;
+            use tokio::sync::mpsc;
+            let (tx, _rx) = mpsc::unbounded_channel();
+            self.register(Arc::new(crate::server::MongodbProtocol::new(
+                ConnectionId::new(0), // Placeholder for protocol registry
+                dummy_state.clone(),
+                tx,
+            )));
+        }
+
         #[cfg(feature = "dynamo")]
         self.register(Arc::new(crate::server::DynamoProtocol::new()));
 
@@ -211,6 +240,9 @@ impl ServerRegistry {
 
         #[cfg(feature = "elasticsearch")]
         self.register(Arc::new(crate::server::ElasticsearchProtocol::new()));
+
+        #[cfg(feature = "couchdb")]
+        self.register(Arc::new(crate::server::CouchDbProtocol::new()));
 
         #[cfg(feature = "npm")]
         self.register(Arc::new(crate::server::NpmProtocol::new()));
@@ -250,6 +282,12 @@ impl ServerRegistry {
 
         #[cfg(feature = "turn")]
         self.register(Arc::new(crate::server::TurnProtocol::new()));
+
+        #[cfg(feature = "webrtc")]
+        self.register(Arc::new(crate::server::WebRtcProtocol::new()));
+
+        #[cfg(feature = "webrtc")]
+        self.register(Arc::new(crate::server::WebRtcSignalingProtocol::new()));
 
         #[cfg(feature = "sip")]
         self.register(Arc::new(crate::server::SipProtocol::new()));

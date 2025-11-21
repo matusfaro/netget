@@ -953,6 +953,104 @@ let response = client.chat().create(request).await?;
 
 ---
 
+### OpenAPI Client ✅
+**Complexity:** Medium (Already Implemented)
+**Client Library:** `openapi-rs` (parser), `reqwest` (HTTP client)
+**Status:** ✅ Implemented in `src/client/openapi/`
+
+**LLM Control:**
+- Operation selection by ID (no path memorization)
+- Path parameter provision
+- Query parameter provision
+- Request body construction
+- Header customization
+
+**Implementation Strategy:**
+```rust
+use openapi_rs::model::parse::OpenAPI;
+use reqwest::Client;
+
+// 1. Parse OpenAPI spec (YAML or JSON)
+let spec: OpenAPI = serde_yaml::from_str(&spec_yaml)?;
+
+// 2. Extract base URL from spec
+let base_url = spec.servers.first().map(|s| &s.url)?;
+
+// 3. LLM chooses operation by ID
+let (path_template, method, operation) = find_operation(&spec, "listUsers")?;
+
+// 4. Substitute path parameters
+// "/users/{id}" + {"id": "123"} → "/users/123"
+let path = substitute_path_params(path_template, &path_params)?;
+
+// 5. Build and execute HTTP request
+let url = format!("{}{}", base_url, path);
+let response = http_client.request(method, &url)
+    .query(&query_params)
+    .headers(headers)
+    .json(&body)
+    .send().await?;
+```
+
+**Features:**
+- ✅ Inline spec (YAML/JSON string)
+- ✅ Spec file loading (`spec_file` parameter)
+- ✅ Base URL override
+- ✅ Operation lookup by `operation_id`
+- ✅ Path parameter substitution (`/users/{id}` → `/users/123`)
+- ✅ Query parameter merging
+- ✅ Header merging (spec defaults + overrides)
+- ✅ JSON request bodies
+- ✅ HTTPS with HTTP/2 support
+
+**Benefits vs HTTP Client:**
+1. **Spec-Driven**: LLM doesn't memorize paths/methods
+2. **Type Safety**: Parameters defined by spec
+3. **Self-Documenting**: Operation list sent to LLM automatically
+4. **Path Parameters**: Automatic substitution
+5. **Consistency**: All requests follow spec structure
+6. **Discovery**: LLM sees available operations on connect
+
+**Use Cases:**
+- API testing against OpenAPI specs
+- API exploration (GitHub API, Swagger Petstore)
+- Automated workflows (create N resources)
+- Spec compliance testing
+- Integration testing with OpenAPI-first APIs
+
+**Events:**
+- `openapi_client_connected` - Spec loaded, operations listed
+- `openapi_operation_response` - Response received with operation context
+
+**Actions:**
+- `execute_operation` - Execute operation by ID with parameters
+- `list_operations` - View all operations (auto-sent on connect)
+- `get_operation_details` - Inspect specific operation
+- `disconnect` - Stop client
+
+**Testing:**
+- Mock-based E2E tests in `tests/client/openapi/e2e_test.rs`
+- Test coverage: spec parsing, operation execution, path substitution
+- LLM call budget: 4 calls per test (< 5 target)
+
+**Implementation:** ~1000 lines across:
+- `src/client/openapi/mod.rs` - Main implementation
+- `src/client/openapi/actions.rs` - Client trait
+- `src/client/openapi/CLAUDE.md` - Documentation
+- `tests/client/openapi/e2e_test.rs` - E2E tests
+- `tests/client/openapi/CLAUDE.md` - Test documentation
+
+**Limitations:**
+- No response schema validation (future)
+- No request body validation (future)
+- No authentication flow handling (future)
+- Single base URL (cannot switch between servers)
+- No WebSocket/SSE operations
+
+**Note:** This is the spec-driven complement to the raw HTTP client. Use OpenAPI client when you have a spec, HTTP client for arbitrary HTTP requests.
+
+---
+
 ## Routing Protocols
 
 ### BGP 🟠

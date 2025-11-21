@@ -20,6 +20,13 @@ pub const TCP_CLIENT_SENT: &str = "bytes after connect";
 pub const TCP_CLIENT_RECEIVED: &str = "bytes from server";
 pub const TCP_CLIENT_DISCONNECTED: &str = "disconnected";
 
+// Client patterns - TLS
+pub const TLS_CLIENT: &str = "TLS client";
+pub const TLS_CLIENT_CONNECTED: &str = "connected to";
+pub const TLS_CLIENT_SENT: &str = "bytes after connect";
+pub const TLS_CLIENT_RECEIVED: &str = "bytes from server";
+pub const TLS_CLIENT_DISCONNECTED: &str = "disconnected";
+
 // Client patterns - Telnet
 pub const TELNET_CLIENT: &str = "Telnet client";
 pub const TELNET_CLIENT_CONNECTED: &str = "connected to";

@@ -9,7 +9,8 @@ async fn main() -> Result<()> {
         feature = "dot",
         feature = "doh",
         feature = "proxy",
-        feature = "tor"
+        feature = "tor",
+        feature = "tls"
     ))]
     {
         use rustls::crypto::CryptoProvider;

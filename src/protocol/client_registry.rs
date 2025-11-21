@@ -74,6 +74,9 @@ impl ClientRegistry {
             crate::client::datalink::DataLinkClientProtocol::new(),
         ));
 
+        #[cfg(feature = "dc")]
+        self.register(Arc::new(crate::client::dc::DcClientProtocol::new()));
+
         #[cfg(feature = "dhcp")]
         self.register(Arc::new(crate::client::dhcp::DhcpClientProtocol::new()));
 
@@ -175,6 +178,9 @@ impl ClientRegistry {
         #[cfg(feature = "mysql")]
         self.register(Arc::new(crate::client::mysql::MysqlClientProtocol::new()));
 
+        #[cfg(feature = "mongodb")]
+        self.register(Arc::new(crate::client::mongodb::MongodbClientProtocol::new()));
+
         #[cfg(feature = "nfs")]
         self.register(Arc::new(crate::client::nfs::NfsClientProtocol::new()));
 
@@ -199,6 +205,11 @@ impl ClientRegistry {
         #[cfg(feature = "ollama")]
         self.register(Arc::new(crate::client::ollama::OllamaClientProtocol::new()));
 
+        #[cfg(feature = "openapi")]
+        self.register(Arc::new(
+            crate::client::openapi::OpenApiClientProtocol::new(),
+        ));
+
         #[cfg(feature = "openidconnect")]
         self.register(Arc::new(
             crate::client::openidconnect::OpenIdConnectClientProtocol::new(),
@@ -215,8 +226,18 @@ impl ClientRegistry {
         #[cfg(feature = "pypi")]
         self.register(Arc::new(crate::client::pypi::PypiClientProtocol::new()));
 
+        #[cfg(feature = "mssql")]
+        self.register(Arc::new(crate::client::mssql::MssqlClientProtocol::new()));
+
         #[cfg(feature = "redis")]
         self.register(Arc::new(crate::client::redis::RedisClientProtocol::new()));
+
+        #[cfg(feature = "couchdb")]
+        self.register(Arc::new(crate::client::couchdb::CouchDbClientProtocol::new()));
+
+        // TFTP client temporarily disabled - API fixes needed
+        // #[cfg(feature = "tftp")]
+        // self.register(Arc::new(crate::client::tftp::TftpClientProtocol::new()));
 
         // RSS client temporarily disabled - needs API updates
         // #[cfg(feature = "rss")]
@@ -276,6 +297,9 @@ impl ClientRegistry {
 
         #[cfg(feature = "telnet")]
         self.register(Arc::new(crate::client::telnet::TelnetClientProtocol::new()));
+
+        #[cfg(feature = "tls")]
+        self.register(Arc::new(crate::client::tls::TlsClientProtocol::new()));
 
         #[cfg(feature = "tor")]
         self.register(Arc::new(crate::client::tor::TorClientProtocol::new()));
