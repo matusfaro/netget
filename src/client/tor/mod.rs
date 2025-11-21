@@ -473,10 +473,10 @@ impl TorClient {
         Ok(local_addr)
     }
 
-    /// Create custom TorClientConfig pointing to a localhost directory server
+    /// Create custom TorClientConfig pointing to a localhost Tor relay
     ///
-    /// This allows testing with a local tor_directory server instead of real Tor network.
-    /// The directory_server parameter should be in format "127.0.0.1:9030"
+    /// This allows testing with a local tor_relay server (using BEGIN_DIR for directory queries)
+    /// instead of real Tor network. The directory_server parameter should be in format "127.0.0.1:9001"
     #[cfg(feature = "tor")]
     fn create_custom_config(directory_server: &str) -> Result<TorClientConfig> {
         use arti_client::config::dir::FallbackDir;

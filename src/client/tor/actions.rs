@@ -85,9 +85,9 @@ impl Protocol for TorClientProtocol {
         vec![ParameterDefinition {
             name: "directory_server".to_string(),
             type_hint: "string".to_string(),
-            description: "Optional: Custom Tor directory server address (e.g., '127.0.0.1:9030') for testing. When provided, the Tor client will bootstrap from this local directory instead of the public Tor network. Useful for local testing with tor_directory server.".to_string(),
+            description: "Optional: Custom Tor relay address (e.g., '127.0.0.1:9001') for testing. When provided, the Tor client will bootstrap from this local relay using BEGIN_DIR (directory over circuit) instead of the public Tor network. Useful for local testing with tor_relay server.".to_string(),
             required: false,
-            example: json!("127.0.0.1:9030"),
+            example: json!("127.0.0.1:9001"),
         }]
     }
 
