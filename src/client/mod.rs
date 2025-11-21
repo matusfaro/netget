@@ -316,6 +316,12 @@ pub mod redis;
 #[cfg(feature = "redis")]
 pub use redis::actions::RedisClientProtocol;
 
+// couchdb client
+#[cfg(feature = "couchdb")]
+pub mod couchdb;
+#[cfg(feature = "couchdb")]
+pub use couchdb::actions::CouchDbClientProtocol;
+
 // tftp client - temporarily disabled (API fixes needed)
 // #[cfg(feature = "tftp")]
 // pub mod tftp;

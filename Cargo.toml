@@ -66,6 +66,7 @@ android-termux = [
     "amqp",
     "socks5",
     "elasticsearch",
+    "couchdb",
     "dynamo",
     "s3",
     "sqs",
@@ -180,6 +181,7 @@ mqtt = ["dep:rumqttd", "dep:rumqttc"]  # MQTT broker and client for IoT messagin
 amqp = ["dep:lapin"]  # AMQP broker and client for RabbitMQ compatibility
 socks5 = ["dep:tokio-socks"]  # SOCKS5 server and client (client uses tokio-socks)
 elasticsearch = []  # Elasticsearch uses only HTTP, no extra deps
+couchdb = ["dep:couch_rs", "dep:form_urlencoded"]  # CouchDB server and client (server uses HTTP, client uses couch_rs)
 dynamo = ["aws-config", "aws-sdk-dynamodb", "aws-smithy-types"]  # DynamoDB client
 dynamodb = ["aws-config", "aws-sdk-dynamodb", "aws-smithy-types"]  # DynamoDB client (alternate name)
 s3 = ["aws-config", "dep:aws-sdk-s3", "dep:aws-credential-types", "dep:rust-s3"]  # S3 client
@@ -284,6 +286,7 @@ all-protocols = [
     "amqp",
     "socks5",
     "elasticsearch",
+    "couchdb",
     "dynamo",
     "s3",
     "sqs",
@@ -652,6 +655,9 @@ tiberius = { version = "0.12", optional = true }
 tokio-postgres = { version = "0.7", optional = true }
 # Redis client
 redis = { version = "0.27", optional = true, features = ["tokio-comp"] }
+# CouchDB client
+couch_rs = { version = "0.10", optional = true }
+form_urlencoded = { version = "1.2", optional = true }
 # RSS feed generation and parsing
 rss = { version = "2.0", optional = true }
 # WebDAV client
