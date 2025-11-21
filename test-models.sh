@@ -165,8 +165,8 @@ for test_name in "${TEST_NAMES[@]}"; do
     # Shorten test name for display
     test_display=$(echo "$test_name" | sed 's/^test_//' | cut -c1-38)
 
-    # Print test name and separator
-    printf "%-40s │" "$test_display"
+    # Print test name (no trailing separator - matches header format)
+    printf "%-40s" "$test_display"
 
     # Flush output to show the row immediately
     printf ""
