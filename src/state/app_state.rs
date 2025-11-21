@@ -2066,7 +2066,7 @@ impl AppState {
         inner.next_unified_id += 1;
 
         inner
-            .database_manager
+            ._database_manager
             .create_database(id, name, path, owner, init_sql)
             .context("Failed to create database")?;
 
@@ -2081,7 +2081,7 @@ impl AppState {
         sql: &str,
     ) -> anyhow::Result<crate::state::QueryResult> {
         let mut inner = self.inner.write().await;
-        inner.database_manager.execute_query(db_id, sql)
+        inner._database_manager.execute_query(db_id, sql)
     }
 
     /// Get all databases
@@ -2089,7 +2089,7 @@ impl AppState {
     pub async fn get_all_databases(&self) -> Vec<crate::state::DatabaseInstance> {
         let inner = self.inner.read().await;
         inner
-            .database_manager
+            ._database_manager
             .get_all_instances()
             .into_iter()
             .cloned()
@@ -2103,14 +2103,14 @@ impl AppState {
         db_id: crate::state::DatabaseId,
     ) -> Option<crate::state::DatabaseInstance> {
         let inner = self.inner.read().await;
-        inner.database_manager.get_instance(db_id).cloned()
+        inner._database_manager.get_instance(db_id).cloned()
     }
 
     /// Delete a database
     #[cfg(feature = "sqlite")]
     pub async fn delete_database(&self, db_id: crate::state::DatabaseId) -> anyhow::Result<()> {
         let mut inner = self.inner.write().await;
-        inner.database_manager.delete_database(db_id)
+        inner._database_manager.delete_database(db_id)
     }
 
     /// Get databases owned by a server
@@ -2121,7 +2121,7 @@ impl AppState {
     ) -> Vec<crate::state::DatabaseInstance> {
         let inner = self.inner.read().await;
         inner
-            .database_manager
+            ._database_manager
             .get_databases_by_server(server_id)
             .into_iter()
             .cloned()
@@ -2136,7 +2136,7 @@ impl AppState {
     ) -> Vec<crate::state::DatabaseInstance> {
         let inner = self.inner.read().await;
         inner
-            .database_manager
+            ._database_manager
             .get_databases_by_client(client_id)
             .into_iter()
             .cloned()
@@ -2150,7 +2150,7 @@ impl AppState {
         server_id: crate::state::ServerId,
     ) -> anyhow::Result<()> {
         let mut inner = self.inner.write().await;
-        inner.database_manager.delete_databases_by_server(server_id)
+        inner._database_manager.delete_databases_by_server(server_id)
     }
 
     /// Delete all databases owned by a client (called when client disconnects)
@@ -2160,7 +2160,7 @@ impl AppState {
         client_id: crate::state::ClientId,
     ) -> anyhow::Result<()> {
         let mut inner = self.inner.write().await;
-        inner.database_manager.delete_databases_by_client(client_id)
+        inner._database_manager.delete_databases_by_client(client_id)
     }
 }
 

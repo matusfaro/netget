@@ -540,6 +540,7 @@ impl OllamaClient {
     /// * `model` - Model name
     /// * `prompt` - The prompt string
     /// * `expected_format` - Description of expected format for error message
+    /// * `max_retries` - Maximum number of retries (0 = no retries, just one attempt)
     ///
     /// # Returns
     /// * `Ok(String)` - The LLM response (may be after retry)
@@ -548,14 +549,17 @@ impl OllamaClient {
         model: &str,
         prompt: &str,
         expected_format: &str,
+        max_retries: usize,
     ) -> Result<String> {
-        const MAX_RETRIES: usize = 1;
+        // Make prompt owned so we can update it for retries
+        let mut current_prompt = prompt.to_string();
 
-        for attempt in 1..=MAX_RETRIES + 1 {
-            debug!("Generate attempt {}/{}", attempt, MAX_RETRIES + 1);
+        for attempt in 1..=max_retries + 1 {
+            debug!("Generate attempt {}/{}", attempt, max_retries + 1);
+            trace!("Retry loop: attempt={}, prompt_len={}", attempt, current_prompt.len());
 
             // Generate response
-            let generate_response = self.generate(model, prompt).await?;
+            let generate_response = self.generate(model, &current_prompt).await?;
 
             // Try to parse as ActionResponse to check format
             match ActionResponse::from_str(&generate_response.text) {
@@ -564,10 +568,11 @@ impl OllamaClient {
                     if attempt > 1 {
                         info!("Retry successful on attempt {}", attempt);
                     }
+                    trace!("Parse succeeded on attempt {}", attempt);
                     return Ok(generate_response.text);
                 }
                 Err(e) => {
-                    if attempt <= MAX_RETRIES {
+                    if attempt <= max_retries {
                         // We have retries left
                         warn!("Parse error on attempt {}: {}", attempt, e);
                         warn!(
@@ -578,30 +583,22 @@ impl OllamaClient {
                                 generate_response.text.clone()
                             }
                         );
+                        trace!("Will retry with corrective feedback (attempt {}/{})", attempt, max_retries + 1);
 
                         // Build retry prompt with correction
-                        let retry_prompt = format!(
+                        current_prompt = format!(
                             "{}\n\n---\n\nYour previous response was invalid and could not be parsed.\n\nError: {}\n\nRequired format: {}\n\nPlease provide your response again in the correct format.",
-                            prompt,
+                            current_prompt,
                             e,
                             expected_format
                         );
 
-                        // Try again with corrected prompt (will happen in next loop iteration)
-                        // Update the prompt variable for next attempt
-                        if attempt < MAX_RETRIES + 1 {
-                            info!("Retrying with corrective feedback...");
-                            // Recursive call with corrected prompt (needs Box::pin for recursion)
-                            return Box::pin(self.generate_with_retry(
-                                model,
-                                &retry_prompt,
-                                expected_format,
-                            ))
-                            .await;
-                        }
+                        info!("Retrying with corrective feedback (attempt {}/{})", attempt + 1, max_retries + 1);
+                        // Continue to next loop iteration with updated prompt
                     } else {
                         // No more retries
                         error!("Failed to get valid response after {} attempts", attempt);
+                        trace!("Max retries exhausted, returning error");
                         return Err(e).context("LLM failed to provide valid format after retry");
                     }
                 }
