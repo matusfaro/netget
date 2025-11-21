@@ -256,7 +256,7 @@ impl OllamaTestBuilder {
         let prompt_context = self.prompt_context
             .ok_or_else(|| anyhow!("No prompt context set"))?;
 
-        let (prompt, available_actions) = match prompt_context {
+        let (prompt, _available_actions) = match prompt_context {
             PromptContext::UserInput { prompt, available_actions } => {
                 let full_prompt = format!(
                     "You are a network protocol assistant. The user said: \"{}\"\n\n\
