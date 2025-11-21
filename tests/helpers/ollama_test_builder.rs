@@ -2,12 +2,14 @@ use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-use netget::llm::OllamaClient;
-use netget::protocol::{Event, EventType};
+use netget::llm::{OllamaClient, prompt::PromptBuilder};
+use netget::protocol::Event;
 use netget::scripting::{
-    ConnectionContext, ScriptConfig, ScriptInput, ScriptLanguage, ScriptSource, ServerContext,
+    ScriptConfig, ScriptInput, ScriptLanguage, ScriptSource, ServerContext,
     execute_script,
 };
+use netget::state::app_state::AppState;
+use netget::state::ServerId;
 
 /// Helper function to convert Event to JSON for serialization
 fn event_to_json(event: &Event) -> Result<Value> {
@@ -28,14 +30,13 @@ pub struct OllamaTestBuilder {
 pub enum PromptContext {
     /// User input from CLI
     UserInput {
-        prompt: String,
-        available_actions: Vec<Value>,
+        user_message: String,
     },
     /// Network request event
     NetworkRequest {
         event: Event,
         instruction: String,
-        available_actions: Vec<Value>,
+        server_id: ServerId,
     },
 }
 
@@ -89,48 +90,9 @@ impl OllamaTestBuilder {
     }
 
     /// Set user input context
-    pub fn with_user_input(mut self, prompt: impl Into<String>) -> Self {
-        // Get global actions for user commands
-        let available_actions = vec![
-            json!({
-                "type": "open_server",
-                "description": "Open a new server on a specified protocol",
-                "parameters": {
-                    "protocol": "The protocol to use (e.g., 'tcp', 'http', 'dns')",
-                    "port": "Port number (optional, will auto-assign if not provided)",
-                    "instruction": "Instructions for how the server should behave",
-                    "handler": "Handler configuration (optional): 'static' (JSON value) or 'script' (Lua code)",
-                    "scheduled_tasks": "Array of scheduled tasks (optional)"
-                }
-            }),
-            json!({
-                "type": "open_client",
-                "description": "Open a new client connection to a remote server",
-                "parameters": {
-                    "protocol": "The protocol to use (e.g., 'tcp', 'http', 'redis')",
-                    "remote_addr": "Remote address (host:port)",
-                    "instruction": "Instructions for how the client should behave"
-                }
-            }),
-            json!({
-                "type": "close_server",
-                "description": "Close a running server",
-                "parameters": {
-                    "server_id": "ID of the server to close"
-                }
-            }),
-            json!({
-                "type": "web_search",
-                "description": "Search the web for information",
-                "parameters": {
-                    "query": "Search query"
-                }
-            }),
-        ];
-
+    pub fn with_user_input(mut self, user_message: impl Into<String>) -> Self {
         self.prompt_context = Some(PromptContext::UserInput {
-            prompt: prompt.into(),
-            available_actions,
+            user_message: user_message.into(),
         });
         self
     }
@@ -140,12 +102,12 @@ impl OllamaTestBuilder {
         mut self,
         event: Event,
         instruction: impl Into<String>,
-        available_actions: Vec<Value>,
+        server_id: ServerId,
     ) -> Self {
         self.prompt_context = Some(PromptContext::NetworkRequest {
             event,
             instruction: instruction.into(),
-            available_actions,
+            server_id,
         });
         self
     }
@@ -245,6 +207,16 @@ impl OllamaTestBuilder {
 
     /// Run the test
     pub async fn run(self) -> Result<TestResult> {
+        // Initialize tracing subscriber (once) to capture RUST_LOG output
+        use std::sync::Once;
+        static INIT: Once = Once::new();
+        INIT.call_once(|| {
+            let _ = tracing_subscriber::fmt()
+                .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+                .with_test_writer()
+                .try_init();
+        });
+
         // Get model from env var or use default (7B balances speed and capability for tests)
         let model = self.model
             .or_else(|| std::env::var("OLLAMA_MODEL").ok())
@@ -252,33 +224,51 @@ impl OllamaTestBuilder {
 
         println!("Testing with model: {}", model);
 
-        // Build prompt based on context
+        // Build prompt based on context using real prompt generation
         let prompt_context = self.prompt_context
             .ok_or_else(|| anyhow!("No prompt context set"))?;
 
-        let (prompt, available_actions) = match prompt_context {
-            PromptContext::UserInput { prompt, available_actions } => {
-                let full_prompt = format!(
-                    "You are a network protocol assistant. The user said: \"{}\"\n\n\
-                     Analyze the user's request and respond with ONE action from the available actions.\n\n\
-                     Available actions:\n{}\n\n\
-                     Respond with a JSON array containing exactly one action object.",
-                    prompt,
-                    serde_json::to_string_pretty(&available_actions)?
-                );
-                (full_prompt, available_actions)
+        // Create a minimal AppState for testing (no servers, default settings)
+        let state = AppState::new();
+
+        let prompt = match prompt_context {
+            PromptContext::UserInput { user_message } => {
+                // Use real prompt generation for user input
+                let system_prompt = PromptBuilder::build_user_input_system_prompt(
+                    &state,
+                    Vec::new(), // No protocol-specific actions for generic tests
+                    None,       // No conversation history
+                )
+                .await;
+
+                // Combine system prompt with user message
+                format!("{}\n\n# User Input\n\n{}", system_prompt, user_message)
             }
-            PromptContext::NetworkRequest { event, instruction, available_actions } => {
-                let full_prompt = format!(
-                    "You are handling a network request for a server with this instruction: \"{}\"\n\n\
-                     Network event received:\n{}\n\n\
-                     Available actions:\n{}\n\n\
-                     Respond with a JSON array of action objects to handle this request.",
-                    instruction,
-                    serde_json::to_string_pretty(&event_to_json(&event)?)?,
-                    serde_json::to_string_pretty(&available_actions)?
+            PromptContext::NetworkRequest { event, instruction, server_id } => {
+                // Set the server instruction in state
+                let _ = state.set_instruction(server_id, instruction.clone()).await;
+
+                // Get protocol-specific actions from registry
+                // For now, just use common actions - protocol actions would come from the server
+                let actions = netget::llm::actions::get_network_event_common_actions();
+
+                // Use real prompt generation for network events
+                let system_prompt = PromptBuilder::build_network_event_action_prompt_for_server(
+                    &state,
+                    server_id,
+                    actions,
+                )
+                .await;
+
+                // Build event trigger message
+                let event_message = PromptBuilder::build_event_trigger_message_with_id(
+                    &event.event_type.id,
+                    &event.event_type.description,
+                    event.data.clone(),
                 );
-                (full_prompt, available_actions)
+
+                // Combine system prompt with event message
+                format!("{}\n\n# Network Event\n\n{}", system_prompt, event_message)
             }
         };
 
@@ -288,11 +278,14 @@ impl OllamaTestBuilder {
                 .unwrap_or_else(|_| "http://localhost:11434".to_string()),
         );
 
+        tracing::info!("=== FULL PROMPT ===\n{}\n=== END PROMPT ===", prompt);
+
         let response = ollama_client
-            .generate_with_retry(&model, &prompt, "JSON array of action objects")
+            .generate_with_retry(&model, &prompt, "JSON response with actions array", 0)
             .await
             .context("Failed to call Ollama API")?;
 
+        tracing::info!("=== LLM RESPONSE ===\n{}\n=== END RESPONSE ===", response);
         println!("LLM Response:\n{}", response);
 
         // Parse actions from response
@@ -309,12 +302,12 @@ impl OllamaTestBuilder {
             match validate_expectation(&expectation, &actions).await {
                 Ok(_) => {
                     let desc = expectation_description(&expectation);
-                    println!("✓ PASS: {}", desc);
+                    println!("✅ PASS {}", desc);
                     passed.push(desc);
                 }
                 Err(e) => {
                     let desc = expectation_description(&expectation);
-                    println!("✗ FAIL: {}: {}", desc, e);
+                    println!("❌ FAIL {}: {}", desc, e);
                     failed.push((desc, e.to_string()));
                 }
             }
@@ -365,33 +358,39 @@ impl TestResult {
 }
 
 /// Parse actions from LLM response
+/// The real prompt expects {"actions": [...]} format
 fn parse_actions_from_response(response: &str) -> Result<Vec<Value>> {
-    // Try to find JSON array in response
     let trimmed = response.trim();
 
-    // Try parsing as direct JSON array
-    if let Ok(actions) = serde_json::from_str::<Vec<Value>>(trimmed) {
-        return Ok(actions);
+    // Try parsing as {"actions": [...]} format (real netget format)
+    if let Ok(action_response) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        if let Some(actions) = action_response.get("actions").and_then(|a| a.as_array()) {
+            return Ok(actions.clone());
+        }
     }
 
     // Try to extract JSON from markdown code block
     if let Some(json_str) = extract_json_from_markdown(trimmed) {
-        if let Ok(actions) = serde_json::from_str::<Vec<Value>>(&json_str) {
-            return Ok(actions);
-        }
-    }
-
-    // Try to find any JSON array in the text
-    if let Some(start) = trimmed.find('[') {
-        if let Some(end) = trimmed.rfind(']') {
-            let json_str = &trimmed[start..=end];
-            if let Ok(actions) = serde_json::from_str::<Vec<Value>>(json_str) {
-                return Ok(actions);
+        if let Ok(action_response) = serde_json::from_str::<serde_json::Value>(&json_str) {
+            if let Some(actions) = action_response.get("actions").and_then(|a| a.as_array()) {
+                return Ok(actions.clone());
             }
         }
     }
 
-    bail!("Could not parse actions from response: {}", response)
+    // Try to find JSON object with "actions" field
+    if let Some(start) = trimmed.find('{') {
+        if let Some(end) = trimmed.rfind('}') {
+            let json_str = &trimmed[start..=end];
+            if let Ok(action_response) = serde_json::from_str::<serde_json::Value>(json_str) {
+                if let Some(actions) = action_response.get("actions").and_then(|a| a.as_array()) {
+                    return Ok(actions.clone());
+                }
+            }
+        }
+    }
+
+    bail!("Could not parse actions from response. Expected {{\"actions\": [...]}} format.\nResponse: {}", response)
 }
 
 /// Extract JSON from markdown code block
@@ -430,8 +429,8 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
                 eprintln!("\n❌ Action Type Mismatch:");
                 eprintln!("   Expected: '{}'", expected_type);
                 eprintln!("   Actual:   '{}'", actual_type);
-                eprintln!("   Full action: {}", serde_json::to_string_pretty(action).unwrap_or_default());
-                bail!("Expected action type '{}', got '{}'", expected_type, actual_type);
+                eprintln!("   Full action:\n{}", serde_json::to_string_pretty(action).unwrap_or_default());
+                bail!("Expected type '{}', got '{}'", expected_type, actual_type);
             }
             Ok(())
         }
@@ -444,12 +443,12 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
             let actual_value = action.get(field)
                 .ok_or_else(|| anyhow!("Action has no '{}' field", field))?;
             if actual_value != value {
-                eprintln!("\n❌ Field Exact Match Failed:");
+                eprintln!("\n❌ Field Exact Match:");
                 eprintln!("   Field:    '{}'", field);
-                eprintln!("   Expected: {}", serde_json::to_string_pretty(value).unwrap_or_default());
-                eprintln!("   Actual:   {}", serde_json::to_string_pretty(actual_value).unwrap_or_default());
+                eprintln!("   Expected:\n{}", serde_json::to_string_pretty(value).unwrap_or_default());
+                eprintln!("   Actual:\n{}", serde_json::to_string_pretty(actual_value).unwrap_or_default());
                 bail!(
-                    "Expected field '{}' to be {}, got {}",
+                    "Field '{}': expected {}, got {}",
                     field,
                     value,
                     actual_value
@@ -468,12 +467,12 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
                 .as_str()
                 .ok_or_else(|| anyhow!("Field '{}' is not a string", field))?;
             if !actual_value.contains(substring) {
-                eprintln!("\n❌ Field Contains Failed:");
-                eprintln!("   Field:          '{}'", field);
-                eprintln!("   Expected substring: '{}'", substring);
-                eprintln!("   Actual value:   '{}'", actual_value);
+                eprintln!("\n❌ Field Contains:");
+                eprintln!("   Field:           '{}'", field);
+                eprintln!("   Expected substr: '{}'", substring);
+                eprintln!("   Actual value:    '{}'", actual_value);
                 bail!(
-                    "Expected field '{}' to contain '{}', got '{}'",
+                    "Field '{}': expected to contain '{}', got '{}'",
                     field,
                     substring,
                     actual_value

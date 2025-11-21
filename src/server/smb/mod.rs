@@ -85,7 +85,6 @@ impl SmbServer {
         status_tx: mpsc::UnboundedSender<String>,
         server_id: ServerId,
     ) -> Result<SocketAddr> {
-        eprintln!("===== spawn_with_llm_actions CALLED for {} =====", listen_addr);
         info!(
             "SMB server (LLM-controlled, guest-only) starting on {}",
             listen_addr
@@ -95,75 +94,25 @@ impl SmbServer {
         let protocol = Arc::new(SmbProtocol::new());
 
         // Bind TCP listener
-        eprintln!("===== BINDING SMB LISTENER to {} =====", listen_addr);
         let listener = TcpListener::bind(listen_addr)
             .await
             .context("Failed to bind SMB TCP listener")?;
-        eprintln!("===== BIND SUCCESSFUL =====");
 
         let actual_addr = listener.local_addr()?;
-        eprintln!("===== LISTENER LOCAL ADDR: {} =====", actual_addr);
 
-        // Generate unique server instance ID
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let instance_id = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() % 100000;
-        eprintln!("===== SERVER INSTANCE ID: {} =====", instance_id);
         info!("SMB server listening on {}", actual_addr);
         let _ = status_tx.send(format!("→ SMB server listening on {}", actual_addr));
 
         // Spawn connection acceptor
-        let acceptor_id = format!("{:p}", &listener);
-        eprintln!("===== CREATING ACCEPTOR TASK {} for {} (instance {}) =====", acceptor_id, actual_addr, instance_id);
-
-        // Spawn a heartbeat task to prove tasks can run
-        let heartbeat_tx = status_tx.clone();
         tokio::spawn(async move {
-            let mut count = 0;
-            loop {
-                count += 1;
-                eprintln!("===== HEARTBEAT {} for instance {} =====", count, instance_id);
-                let _ = heartbeat_tx.send(format!("[HEARTBEAT] {} (instance {})", count, instance_id));
-                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-            }
-        });
-
-        tokio::spawn(async move {
-            eprintln!("===== SMB ACCEPTOR TASK {} STARTED (instance {}) =====", acceptor_id, instance_id);
             info!("SMB server connection acceptor started");
-            let _ = status_tx.send("[INFO] SMB connection acceptor loop starting".to_string());
 
-            let mut accept_call_count = 0;
             loop {
-                accept_call_count += 1;
-                eprintln!("===== SMB ACCEPTOR (instance {}): CALLING accept() (call #{}) =====", instance_id, accept_call_count);
                 trace!("SMB acceptor: waiting for connection");
 
-                // Try a simple yield to let other tasks run
-                eprintln!("===== BEFORE tokio::task::yield_now() (instance {}) =====", instance_id);
-                tokio::task::yield_now().await;
-                eprintln!("===== AFTER tokio::task::yield_now() (instance {}) =====", instance_id);
-
-                // Add timeout to detect if accept() is truly blocking
-                eprintln!("===== BEFORE select! with accept() (instance {}) =====", instance_id);
-                let accept_result = tokio::select! {
-                    result = listener.accept() => {
-                        eprintln!("===== SELECT: accept() branch completed (instance {}) =====", instance_id);
-                        Some(result)
-                    }
-                    _ = tokio::time::sleep(tokio::time::Duration::from_secs(3)) => {
-                        eprintln!("===== SELECT: timeout branch (3s elapsed, instance {}) =====", instance_id);
-                        None
-                    }
-                };
-                eprintln!("===== AFTER select! - got result: {} (instance {}) =====",
-                    accept_result.is_some(), instance_id);
-
-                match accept_result {
-                    Some(Ok((stream, peer_addr))) => {
-                        eprintln!("===== SMB ACCEPT RETURNED OK: {} (instance {}) =====", peer_addr, instance_id);
+                match listener.accept().await {
+                    Ok((stream, peer_addr)) => {
+                        eprintln!("[SMB] Connection accepted from {}", peer_addr);
                         info!("SMB connection accepted from {}", peer_addr);
                         let _ =
                             status_tx.send(format!("→ SMB connection from {}", peer_addr));
@@ -174,9 +123,8 @@ impl SmbServer {
                         let protocol = protocol.clone();
                         let status_tx = status_tx.clone();
 
-                        eprintln!("===== SPAWNING HANDLER TASK for {} =====", peer_addr);
-                        let task_handle = tokio::spawn(async move {
-                            eprintln!("===== HANDLER TASK STARTED for {} =====", peer_addr);
+                        tokio::spawn(async move {
+                            eprintln!("[SMB] Handler task started for {}", peer_addr);
                             if let Err(e) = Self::handle_connection(
                                 stream,
                                 peer_addr,
@@ -195,24 +143,13 @@ impl SmbServer {
                                 ));
                             }
                         });
-                        eprintln!("===== SPAWNED HANDLER TASK (returned immediately) =====");
-                        eprintln!("===== LOOPING BACK TO ACCEPT NEXT CONNECTION =====");
                     }
-                    Some(Err(e)) => {
-                        eprintln!("===== SMB ACCEPT ERROR: {} =====", e);
+                    Err(e) => {
                         error!("SMB accept error: {}", e);
                         let _ = status_tx.send(format!("✗ SMB accept error: {}", e));
                     }
-                    None => {
-                        eprintln!("===== SELECT TIMEOUT! (3 seconds) - accept() didn't complete =====");
-                        error!("SMB accept() didn't complete within 3 seconds");
-                        let _ = status_tx.send("[ERROR] SMB select timeout - accept() hung!".to_string());
-                        // Continue looping to try again
-                    }
                 }
-                eprintln!("===== END OF ACCEPT MATCH, LOOPING =====");
             }
-            eprintln!("===== SMB ACCEPTOR LOOP EXITED =====");
         });
 
         Ok(actual_addr)
@@ -241,10 +178,8 @@ impl SmbServer {
         protocol: Arc<SmbProtocol>,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
-        eprintln!("===== HANDLE_CONNECTION CALLED for {} =====", peer_addr);
         // Generate connection ID
         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
-        eprintln!("===== CONNECTION ID: {} =====", connection_id);
 
         console_info!(
             status_tx,
@@ -282,20 +217,15 @@ impl SmbServer {
         let state = Arc::new(Mutex::new(SmbConnectionState::new()));
 
         // SMB2 protocol handling loop
-        let mut iteration = 0;
         loop {
-            iteration += 1;
-            debug!("SMB connection loop iteration {} for {}", iteration, peer_addr);
-            let _ = status_tx.send(format!("[DEBUG] SMB loop iteration {} for {}", iteration, peer_addr));
-
             // Read SMB2 message
             // SMB2 header is 64 bytes minimum
             let mut header_buf = vec![0u8; 64];
 
+            eprintln!("[SMB] Reading packet from {}", peer_addr);
             match stream.read_exact(&mut header_buf).await {
                 Ok(_) => {
-                    debug!("Successfully read 64-byte header in iteration {}", iteration);
-                    let _ = status_tx.send(format!("[DEBUG] Read header OK (iteration {})", iteration));
+                    eprintln!("[SMB] Read 64-byte header from {}", peer_addr);
                     // Update connection stats for received data
                     app_state
                         .update_connection_stats(
@@ -319,10 +249,8 @@ impl SmbServer {
                     // Extract command from header (offset 12-13, little-endian)
                     let command = u16::from_le_bytes([header_buf[12], header_buf[13]]);
                     debug!("SMB2 command 0x{:04x} from {}", command, peer_addr);
-                    let _ = status_tx.send(format!("[DEBUG] SMB2 command 0x{:04x} received from {}", command, peer_addr));
 
                     // Handle SMB2 command
-                    debug!("Calling handle_smb2_command for 0x{:04x}", command);
                     let response = match Self::handle_smb2_command(
                         command,
                         &header_buf,
@@ -336,24 +264,19 @@ impl SmbServer {
                         &status_tx,
                     )
                     .await {
-                        Ok(r) => {
-                            debug!("handle_smb2_command succeeded for 0x{:04x}", command);
-                            r
-                        },
+                        Ok(r) => r,
                         Err(e) => {
                             error!("handle_smb2_command error for 0x{:04x}: {}", command, e);
-                            let _ = status_tx.send(format!("[ERROR] Command handler failed: {}", e));
                             break;
                         }
                     };
 
                     // Send response
                     if let Some(response_data) = response {
-                        debug!("Sending {}-byte response for command 0x{:04x}", response_data.len(), command);
+                        eprintln!("[SMB] Sending {}-byte response to {}", response_data.len(), peer_addr);
                         match stream.write_all(&response_data).await {
                             Ok(_) => {
-                                debug!("Response sent successfully, continuing to next command");
-                                let _ = status_tx.send(format!("[DEBUG] Response sent ({} bytes), looping", response_data.len()));
+                                eprintln!("[SMB] Response sent, looping back to read next packet");
                                 trace!(
                                     "SMB2 response sent to {}, {} bytes",
                                     peer_addr,
@@ -371,13 +294,9 @@ impl SmbServer {
                                         Some(1),
                                     )
                                     .await;
-
-                                debug!("End of iteration {}, looping back", iteration);
-                                let _ = status_tx.send(format!("[DEBUG] Iteration {} complete, continuing", iteration));
                             }
                             Err(e) => {
                                 error!("Failed to send response for 0x{:04x}: {}", command, e);
-                                let _ = status_tx.send(format!("[ERROR] Write failed: {}", e));
                                 break;
                             }
                         }
@@ -385,19 +304,14 @@ impl SmbServer {
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                     console_info!(status_tx, "SMB client {} disconnected", peer_addr);
-                    let _ = status_tx.send(format!("[DEBUG] Loop exit: EOF after {} iterations", iteration));
                     break;
                 }
                 Err(e) => {
                     error!("SMB read error from {}: {}", peer_addr, e);
-                    let _ = status_tx.send(format!("✗ SMB read error from {}: {} (iteration {})", peer_addr, e, iteration));
                     break;
                 }
             }
         }
-
-        debug!("Connection loop exited after {} iterations", iteration);
-        let _ = status_tx.send(format!("[DEBUG] ===== Connection loop exited: {} iterations =====", iteration));
 
         // Mark connection as closed
         app_state
@@ -464,19 +378,11 @@ impl SmbServer {
             }
             SMB2_SESSION_SETUP => {
                 debug!("SMB2 SESSION_SETUP request");
-                let _ = status_tx.send("[DEBUG] ===== SMB2 SESSION_SETUP RECEIVED =====".to_string());
 
                 // Read SESSION_SETUP request body (exactly 24 bytes for guest auth)
                 let mut body_buf = [0u8; 24];
-                match _stream.read_exact(&mut body_buf).await {
-                    Ok(_) => {
-                        debug!("SESSION_SETUP body: 24 bytes consumed");
-                        let _ = status_tx.send("[DEBUG] SESSION_SETUP body read successfully".to_string());
-                    }
-                    Err(e) => {
-                        warn!("Error reading SESSION_SETUP body: {} - continuing anyway", e);
-                        let _ = status_tx.send(format!("[WARN] SESSION_SETUP body read error: {}", e));
-                    }
+                if let Err(e) = _stream.read_exact(&mut body_buf).await {
+                    warn!("Error reading SESSION_SETUP body: {} - continuing anyway", e);
                 }
                 let bytes_read = body_buf.len();
 
