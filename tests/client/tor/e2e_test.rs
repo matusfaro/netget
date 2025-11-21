@@ -1,36 +1,13 @@
-//! E2E tests for Tor client with local directory server
+//! E2E tests for Tor client with local tor_relay server
 //!
-//! These tests verify Tor client functionality using a local tor_directory server
-//! (fully local, no internet required).
+//! These tests verify Tor client functionality using a local tor_relay server
+//! with BEGIN_DIR support (fully local, no internet required).
 
 #[cfg(all(test, feature = "tor"))]
 mod tor_client_tests {
     use crate::helpers::*;
     use serde_json::json;
     use std::time::Duration;
-
-    /// Minimal Arti-compatible consensus document
-    /// This format is accepted by Arti for bootstrapping
-    fn create_minimal_consensus() -> String {
-        format!(
-            "network-status-version 3
-vote-status consensus
-consensus-method 35
-valid-after 2025-01-01 00:00:00
-fresh-until 2025-01-01 01:00:00
-valid-until 2025-01-01 03:00:00
-voting-delay 300 300
-client-versions 0.4.7.0-0.4.8.0
-server-versions 0.4.7.0-0.4.8.0
-known-flags Authority Exit Fast Guard Running Stable Valid
-params cbtnummodes=3
-r TestRelay1 AAAAAAAAAAAAAAAAAAAAAAAAAAA 127.0.0.1 9001 0 0
-s Exit Fast Guard Running Stable Valid
-w Bandwidth=1000
-p accept 1-65535
-"
-        )
-    }
 
     /// Test Tor client connecting to local tor_relay with BEGIN_DIR support
     /// Arti bootstraps from localhost tor_relay over OR protocol

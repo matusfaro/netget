@@ -41,8 +41,10 @@ struct OllamaChatRequest {
     model: String,
     messages: Vec<OllamaMessage>,
     #[serde(default)]
+    #[allow(dead_code)]
     stream: bool,
     #[serde(default)]
+    #[allow(dead_code)]
     format: Option<serde_json::Value>,
 }
 
@@ -75,8 +77,10 @@ struct OllamaGenerateRequest {
     model: String,
     prompt: String,
     #[serde(default)]
+    #[allow(dead_code)]
     stream: bool,
     #[serde(default)]
+    #[allow(dead_code)]
     format: Option<serde_json::Value>,
 }
 
@@ -678,7 +682,6 @@ fn extract_context_from_prompt(prompt: &str) -> LlmContext {
                     {
                         debug!("🔧 Extracted instruction (forward fallback): '{}'", trimmed);
                         context.instruction = trimmed.to_string();
-                        found = true;
                         break;
                     }
                 }

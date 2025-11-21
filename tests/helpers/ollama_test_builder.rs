@@ -3,9 +3,9 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 use netget::llm::OllamaClient;
-use netget::protocol::{Event, EventType};
+use netget::protocol::Event;
 use netget::scripting::{
-    ConnectionContext, ScriptConfig, ScriptInput, ScriptLanguage, ScriptSource, ServerContext,
+    ScriptConfig, ScriptInput, ScriptLanguage, ScriptSource, ServerContext,
     execute_script,
 };
 
