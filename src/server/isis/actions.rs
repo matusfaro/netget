@@ -20,15 +20,14 @@ impl IsisProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for IsisProtocol {
+    fn default_binding(&self) -> Option<crate::protocol::BindingDefaults> {
+        // IS-IS uses interface-based binding (loopback by default)
+        Some(crate::protocol::BindingDefaults::interface_based("lo"))
+    }
+
     fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        // Interface is now provided via flexible binding system
         vec![
-                crate::llm::actions::ParameterDefinition {
-                    name: "interface".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Network interface name for IS-IS operation (e.g., 'eth0', 'en0', 'wlan0'). Requires root privileges.".to_string(),
-                    required: true,
-                    example: json!("eth0"),
-                },
                 crate::llm::actions::ParameterDefinition {
                     name: "system_id".to_string(),
                     type_hint: "string".to_string(),
@@ -111,14 +110,12 @@ impl Server for IsisProtocol {
         Box::pin(async move {
             use crate::server::isis::IsisServer;
 
-            // IS-IS doesn't use SocketAddr, it uses interface name
-            // Extract interface from startup_params
-            let params = ctx
-                .startup_params
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("IS-IS requires startup parameters (interface)"))?;
-
-            let interface = params.get_string("interface");
+            // IS-IS uses interface-based binding
+            // Extract interface from context (defaults already applied)
+            let interface = ctx
+                .interface()
+                .context("IS-IS requires network interface")?
+                .to_string();
 
             // Spawn the IS-IS server
             let _interface_name = IsisServer::spawn_with_llm_actions(
