@@ -102,6 +102,8 @@ pub mod mercurial;
 pub mod mqtt;
 #[cfg(feature = "mysql")]
 pub mod mysql;
+#[cfg(feature = "mssql")]
+pub mod mssql;
 #[cfg(feature = "nfs")]
 pub mod nfs;
 #[cfg(feature = "nntp")]
@@ -162,6 +164,8 @@ pub mod syslog;
 pub mod tcp;
 #[cfg(feature = "telnet")]
 pub mod telnet;
+#[cfg(feature = "tftp")]
+pub mod tftp;
 #[cfg(feature = "tor")]
 pub mod tor_directory;
 #[cfg(feature = "tor")]
