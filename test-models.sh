@@ -214,6 +214,13 @@ for test_name in "${TEST_NAMES[@]}"; do
             set -e
         fi
 
+        # Print footer to log file
+        echo "" >> "$LOG_FILE"
+        echo "───────────────────────────────────────────────────────────────" >> "$LOG_FILE"
+        echo "End: $test_name ($model) - Exit code: $test_exit_code" >> "$LOG_FILE"
+        echo "───────────────────────────────────────────────────────────────" >> "$LOG_FILE"
+        echo "" >> "$LOG_FILE"
+
         # Store and print result
         # Match header format exactly: " │ %-12s" where emoji(2) + 10 spaces = 12 visual chars
         if [ $test_exit_code -eq 0 ]; then
