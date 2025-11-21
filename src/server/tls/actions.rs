@@ -30,6 +30,20 @@ impl Protocol for TlsProtocol {
                     required: false,
                     example: serde_json::json!(false),
                 },
+                crate::llm::actions::ParameterDefinition {
+                    name: "cert_path".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Path to TLS certificate file (PEM format). If not provided, a self-signed certificate will be generated.".to_string(),
+                    required: false,
+                    example: serde_json::json!("/path/to/cert.pem"),
+                },
+                crate::llm::actions::ParameterDefinition {
+                    name: "key_path".to_string(),
+                    type_hint: "string".to_string(),
+                    description: "Path to TLS private key file (PEM format). Required if cert_path is provided.".to_string(),
+                    required: false,
+                    example: serde_json::json!("/path/to/key.pem"),
+                },
             ]
     }
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
@@ -93,9 +107,28 @@ impl Server for TlsProtocol {
                 .unwrap_or(false);
 
             // Extract custom TLS config if provided
-            // For now, we'll use default config. In the future, we could support
-            // custom certificates via startup_params
-            let tls_config = None;
+            let tls_config = if let Some(ref params) = ctx.startup_params {
+                let cert_path = params.get_optional_string("cert_path");
+                let key_path = params.get_optional_string("key_path");
+
+                match (cert_path, key_path) {
+                    (Some(cert), Some(key)) => {
+                        // Load custom certificates from files
+                        Some(crate::server::tls_cert_manager::load_tls_config_from_files(
+                            &cert,
+                            &key,
+                        )?)
+                    }
+                    (Some(_), None) | (None, Some(_)) => {
+                        return Err(anyhow::anyhow!(
+                            "Both cert_path and key_path must be provided together"
+                        ));
+                    }
+                    (None, None) => None, // Use default self-signed certificate
+                }
+            } else {
+                None
+            };
 
             use crate::server::tls::TlsServer;
             TlsServer::spawn_with_llm_actions(

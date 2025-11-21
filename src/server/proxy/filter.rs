@@ -643,4 +643,19 @@ impl ProxyFilterConfig {
             }
         }
     }
+
+    /// Check if this HTTP response should be inspected by LLM
+    pub fn should_inspect_response(&self, _request_info: &FullRequestInfo) -> bool {
+        // For now, inspect all responses in MITM mode
+        // TODO: Add response-specific filters based on status code, content-type, etc.
+        match self.response_filter_mode {
+            FilterMode::None => false,
+            FilterMode::All => true,
+            FilterMode::MatchOnly => {
+                // Check if any response filter matches
+                // For now, default to true if filters exist
+                !self.response_filters.is_empty()
+            }
+        }
+    }
 }

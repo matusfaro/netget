@@ -147,6 +147,13 @@ pub use ntp::actions::NtpProtocol;
 #[cfg(feature = "ntp")]
 pub use ntp::NtpServer;
 
+#[cfg(feature = "tftp")]
+pub mod tftp;
+#[cfg(feature = "tftp")]
+pub use tftp::actions::TftpProtocol;
+#[cfg(feature = "tftp")]
+pub use tftp::TftpServer;
+
 #[cfg(feature = "whois")]
 pub mod whois;
 #[cfg(feature = "whois")]
@@ -246,6 +253,13 @@ pub mod mongodb;
 pub use mongodb::actions::MongodbProtocol;
 #[cfg(feature = "mongodb-server")]
 pub use mongodb::MongodbServer;
+
+#[cfg(feature = "mssql")]
+pub mod mssql;
+#[cfg(feature = "mssql")]
+pub use mssql::actions::MssqlProtocol;
+#[cfg(feature = "mssql")]
+pub use mssql::MssqlServer;
 
 #[cfg(feature = "ipp")]
 pub mod ipp;
