@@ -21,15 +21,14 @@ impl DataLinkProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for DataLinkProtocol {
+    fn default_binding(&self) -> Option<crate::protocol::BindingDefaults> {
+        // DataLink uses interface-based binding (loopback by default)
+        Some(crate::protocol::BindingDefaults::interface_based("lo"))
+    }
+
     fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        // Interface is now provided via flexible binding system
         vec![
-                crate::llm::actions::ParameterDefinition {
-                    name: "interface".to_string(),
-                    type_hint: "string".to_string(),
-                    description: "Network interface name to capture packets from (e.g., 'eth0', 'en0', 'wlan0')".to_string(),
-                    required: true,
-                    example: json!("eth0"),
-                },
                 crate::llm::actions::ParameterDefinition {
                     name: "filter".to_string(),
                     type_hint: "string".to_string(),
@@ -101,14 +100,18 @@ impl Server for DataLinkProtocol {
         Box::pin(async move {
             use crate::server::datalink::DataLinkServer;
 
-            // DataLink doesn't use SocketAddr, it uses interface name
-            // Extract interface and filter from startup_params
-            let params = ctx.startup_params.as_ref().ok_or_else(|| {
-                anyhow::anyhow!("DataLink requires startup parameters (interface)")
-            })?;
+            // DataLink uses interface-based binding
+            // Extract interface from context (defaults already applied)
+            let interface = ctx
+                .interface()
+                .context("DataLink requires network interface")?
+                .to_string();
 
-            let interface = params.get_string("interface");
-            let filter = params.get_optional_string("filter");
+            // Extract filter from startup_params (protocol-specific config)
+            let filter = ctx
+                .startup_params
+                .as_ref()
+                .and_then(|p| p.get_optional_string("filter"));
 
             // Spawn the datalink server
             let _interface_name = DataLinkServer::spawn_with_llm(

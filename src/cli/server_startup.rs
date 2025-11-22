@@ -123,8 +123,14 @@ pub async fn start_server_by_id(
     };
 
     // Build spawn context
+    // NOTE: This is the legacy path for unmigrated protocols
+    // Migrated protocols should be started via start_server_from_action
     let spawn_ctx = crate::protocol::SpawnContext {
         listen_addr,
+        mac_address: None,
+        interface: None,
+        host: None,
+        port: None,
         llm_client: llm_client.clone(),
         state: Arc::new(state.clone()),
         status_tx: status_tx.clone(),
@@ -201,7 +207,11 @@ pub async fn start_server_by_id(
 #[allow(clippy::too_many_arguments)]
 pub async fn start_server_from_action(
     state: &AppState,
-    port: u16,
+    // NEW: Flexible binding parameters (all optional)
+    mac_address: Option<String>,
+    interface: Option<String>,
+    host: Option<String>,
+    port: Option<u16>,
     base_stack: &str,
     _send_first: bool,
     initial_memory: Option<String>,
@@ -210,32 +220,104 @@ pub async fn start_server_from_action(
     event_handlers: Option<Vec<serde_json::Value>>,
     scheduled_tasks: Option<Vec<crate::llm::actions::common::ServerTaskDefinition>>,
     feedback_instructions: Option<String>,
+    status_tx: mpsc::UnboundedSender<String>,
 ) -> Result<ServerId> {
     use crate::state::server::ServerStatus;
-
-    // If port is 0, find an available port automatically
-    let actual_port = if port == 0 {
-        use tokio::net::TcpListener;
-        let listener = TcpListener::bind("127.0.0.1:0").await
-            .map_err(|e| anyhow::anyhow!("Failed to find available port: {}", e))?;
-        let found_port = listener.local_addr()
-            .map_err(|e| anyhow::anyhow!("Failed to get local address: {}", e))?
-            .port();
-        drop(listener);
-        found_port
-    } else {
-        port
-    };
-
-    // Get default listen address (always 127.0.0.1 for security)
-    let listen_addr: SocketAddr = format!("127.0.0.1:{}", actual_port)
-        .parse()
-        .map_err(|e| anyhow::anyhow!("Invalid port: {}", e))?;
 
     // Get protocol from registry
     let protocol = crate::protocol::server_registry::registry()
         .get(base_stack)
         .ok_or_else(|| anyhow::anyhow!("Unknown protocol: {}", base_stack))?;
+
+    // === DUAL PATH LOGIC: Migrated vs Unmigrated Protocols ===
+    //
+    // Migrated protocols return Some(...) from default_binding()
+    // Unmigrated protocols return None and use legacy listen_addr
+    //
+    let (final_mac, final_interface, final_host, final_port, use_new_path, listen_addr) =
+        if let Some(defaults) = protocol.default_binding() {
+            // NEW PATH: Protocol has been migrated, use flexible binding
+            let (mac, iface, host_str, port_num) = defaults.apply(
+                mac_address.clone(),
+                interface.clone(),
+                host.clone(),
+                port,
+            );
+
+            // For port-based protocols with port 0, find available port
+            let final_port_num = if let Some(p) = port_num {
+                if p == 0 {
+                    // Find available port
+                    use tokio::net::TcpListener;
+                    let bind_host = host_str.as_deref().unwrap_or("127.0.0.1");
+                    let listener = TcpListener::bind(format!("{}:0", bind_host))
+                        .await
+                        .map_err(|e| anyhow::anyhow!("Failed to find available port: {}", e))?;
+                    let found_port = listener
+                        .local_addr()
+                        .map_err(|e| anyhow::anyhow!("Failed to get local address: {}", e))?
+                        .port();
+                    drop(listener);
+                    Some(found_port)
+                } else {
+                    Some(p)
+                }
+            } else {
+                None
+            };
+
+            // Construct legacy listen_addr for backwards compatibility
+            // (protocols still receive this field, but new protocols should ignore it)
+            let legacy_addr = match (&host_str, final_port_num) {
+                (Some(h), Some(p)) => {
+                    format!("{}:{}", h, p)
+                        .parse()
+                        .unwrap_or_else(|_| "127.0.0.1:0".parse().unwrap())
+                }
+                _ => "127.0.0.1:0".parse().unwrap(),
+            };
+
+            (mac, iface, host_str, final_port_num, true, legacy_addr)
+        } else {
+            // OLD PATH: Protocol hasn't been migrated, use backwards-compatible behavior
+            // Port field is required for unmigrated protocols
+            let port_value = port.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Protocol '{}' requires 'port' parameter (unmigrated protocol)",
+                    base_stack
+                )
+            })?;
+
+            // If port is 0, find an available port automatically
+            let actual_port = if port_value == 0 {
+                use tokio::net::TcpListener;
+                let listener = TcpListener::bind("127.0.0.1:0")
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to find available port: {}", e))?;
+                let found_port = listener
+                    .local_addr()
+                    .map_err(|e| anyhow::anyhow!("Failed to get local address: {}", e))?
+                    .port();
+                drop(listener);
+                found_port
+            } else {
+                port_value
+            };
+
+            // Get default listen address (always 127.0.0.1 for security)
+            let listen_addr: SocketAddr = format!("127.0.0.1:{}", actual_port)
+                .parse()
+                .map_err(|e| anyhow::anyhow!("Invalid port: {}", e))?;
+
+            (
+                None,
+                None,
+                Some("127.0.0.1".to_string()),
+                Some(actual_port),
+                false,
+                listen_addr,
+            )
+        };
 
     // Check privilege requirements
     let metadata = protocol.metadata();
@@ -243,18 +325,21 @@ pub async fn start_server_from_action(
 
     if !metadata.privilege_requirement.is_met_by(&system_caps) {
         let error_msg = format!(
-            "Cannot start {} server on port {}: {}",
+            "Cannot start {} server: {}",
             base_stack,
-            actual_port,
             metadata.privilege_requirement.description()
         );
         return Err(anyhow::anyhow!(error_msg));
     }
 
     // Create server instance
+    // NOTE: For unmigrated protocols, port is always Some(_)
+    // For migrated protocols, port may be None (interface-based protocols like ICMP)
+    let display_port = final_port.unwrap_or(0);
+
     let server = crate::state::server::ServerInstance {
         id: ServerId::new(0), // Will be assigned by add_server
-        port: actual_port,
+        port: display_port,
         protocol_name: base_stack.to_string(),
         instruction: instruction.clone(),
         memory: String::new(),
@@ -352,9 +437,6 @@ pub async fn start_server_from_action(
         None
     };
 
-    // Create a temporary status channel (commands don't use rolling TUI status)
-    let (status_tx, _status_rx) = mpsc::unbounded_channel();
-
     // Build spawn context
     // Use the configured LLM client from state (includes mock config, lock settings, etc.)
     // If not available (shouldn't happen), fall back to creating a new client
@@ -367,9 +449,13 @@ pub async fn start_server_from_action(
 
     let spawn_ctx = crate::protocol::SpawnContext {
         listen_addr,
+        mac_address: final_mac,
+        interface: final_interface,
+        host: final_host,
+        port: final_port,
         llm_client,
         state: Arc::new(state.clone()),
-        status_tx,
+        status_tx: status_tx.clone(),
         server_id,
         startup_params: startup_params_obj,
     };
@@ -377,10 +463,32 @@ pub async fn start_server_from_action(
     // Spawn the server
     match protocol.spawn(spawn_ctx).await {
         Ok(actual_addr) => {
+            // Send startup message with actual address
+            let msg = format!(
+                "[SERVER] Starting server #{} ({}) on {}",
+                server_id.as_u32(),
+                base_stack,
+                actual_addr
+            );
+            let _ = status_tx.send(msg);
+
+            // Update server with actual listen address
             state.update_server_local_addr(server_id, actual_addr).await;
             state
                 .update_server_status(server_id, ServerStatus::Running)
                 .await;
+
+            // Send update message with actual bound address (for tests that use port 0)
+            if final_port.unwrap_or(0) == 0 || final_port.unwrap_or(0) != actual_addr.port() {
+                let update_msg = format!(
+                    "[SERVER] Server #{} ({}) listening on {}",
+                    server_id.as_u32(),
+                    base_stack,
+                    actual_addr
+                );
+                let _ = status_tx.send(update_msg);
+            }
+
             Ok(server_id)
         }
         Err(e) => {

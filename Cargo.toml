@@ -118,6 +118,7 @@ maven = []  # Maven repository server (HTTP-based artifact distribution)
 udp = []
 datalink = []  # DataLink uses only pcap, no extra deps
 arp = ["pnet"]  # ARP (Address Resolution Protocol) uses pnet for packet handling
+icmp = ["pnet", "socket2/all"]  # ICMP (Internet Control Message Protocol) uses pnet for packet handling + raw sockets (requires socket2 'all' feature for Type::RAW)
 dc = ["dep:rustls", "dep:tokio-rustls", "dep:webpki-roots"]  # DC (Direct Connect) - supports TLS (DCCS)
 dns = ["hickory-server", "hickory-proto", "dep:hickory-client"]
 dot = ["dns", "hickory-server/dns-over-rustls", "hickory-proto/dns-over-rustls", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen", "dep:webpki-roots"]  # DNS-over-TLS server
@@ -246,6 +247,7 @@ all-protocols = [
     "udp",
     "datalink",
     "arp",
+    "icmp",
     "dc",
     "dns",
     "dot",

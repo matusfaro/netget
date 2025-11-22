@@ -45,7 +45,7 @@ Requires:
 ```
 User: "Start IS-IS router on lo0 with system-id 0000.0000.0001"
   ↓
-LLM Mock: open_server action with interface/startup_params
+LLM Mock: open_server action with interface (flexible binding) + startup_params (system_id, etc.)
   ↓
 Server: IS-IS server on interface lo0 (would require root to actually start)
 ```

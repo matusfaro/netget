@@ -91,6 +91,13 @@ pub use arp::actions::ArpProtocol;
 #[cfg(feature = "arp")]
 pub use arp::ArpServer;
 
+#[cfg(feature = "icmp")]
+pub mod icmp;
+#[cfg(feature = "icmp")]
+pub use icmp::actions::IcmpProtocol;
+#[cfg(feature = "icmp")]
+pub use icmp::IcmpServer;
+
 #[cfg(feature = "dc")]
 pub mod dc;
 #[cfg(feature = "dc")]

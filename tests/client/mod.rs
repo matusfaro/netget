@@ -10,6 +10,8 @@ pub mod datalink;
 pub mod dc;
 #[cfg(feature = "http")]
 pub mod http;
+#[cfg(feature = "icmp")]
+pub mod icmp;
 #[cfg(feature = "ipp")]
 pub mod ipp;
 #[cfg(feature = "mongodb")]

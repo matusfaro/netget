@@ -2575,6 +2575,9 @@ async fn handle_load(
 
             match common_action {
                 CommonAction::OpenServer {
+                    mac_address,
+                    interface,
+                    host,
                     port,
                     base_stack,
                     send_first,
@@ -2585,9 +2588,16 @@ async fn handle_load(
                     scheduled_tasks,
                     feedback_instructions,
                 } => {
+                    // Create status channel for server startup messages
+                    // Messages will be logged via tracing macros in the spawn method
+                    let (status_tx, _status_rx) = tokio::sync::mpsc::unbounded_channel();
+
                     // Execute open_server action via server startup
                     match server_startup::start_server_from_action(
                         state,
+                        mac_address,
+                        interface.clone(),
+                        host,
                         port,
                         &base_stack,
                         send_first,
@@ -2597,16 +2607,23 @@ async fn handle_load(
                         event_handlers,
                         scheduled_tasks,
                         feedback_instructions,
+                        status_tx,
                     )
                     .await
                     {
                         Ok(server_id) => {
+                            let binding_desc = if let Some(iface) = &interface {
+                                format!("interface {} ({})", iface, base_stack)
+                            } else if let Some(p) = port {
+                                format!("port {} ({})", p, base_stack)
+                            } else {
+                                format!("({})", base_stack)
+                            };
                             print_output_line(
                                 &format!(
-                                    "[LOAD] Opened server #{} on port {} ({})",
+                                    "[LOAD] Opened server #{} on {}",
                                     server_id.as_u32(),
-                                    port,
-                                    base_stack
+                                    binding_desc
                                 ),
                                 footer,
                                 palette,

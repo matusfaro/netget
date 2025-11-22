@@ -282,7 +282,17 @@ pub async fn run_with_actions(
     state.set_llm_client(llm.clone()).await;
 
     // Create status channel
-    let (_status_tx, mut status_rx) = mpsc::unbounded_channel::<String>();
+    let (status_tx, mut status_rx) = mpsc::unbounded_channel::<String>();
+
+    // Spawn background task to print status messages in real-time
+    let status_printer = tokio::spawn(async move {
+        while let Some(msg) = status_rx.recv().await {
+            if !msg.starts_with("__") {
+                // Print status messages immediately for real-time output
+                println!("{}", msg);
+            }
+        }
+    });
 
     println!("Loading {} action(s)...\n", actions.len());
 
@@ -295,6 +305,9 @@ pub async fn run_with_actions(
 
             match common_action {
                 CommonAction::OpenServer {
+                    mac_address,
+                    interface,
+                    host,
                     port,
                     base_stack,
                     send_first,
@@ -308,6 +321,9 @@ pub async fn run_with_actions(
                     // Execute open_server action
                     match server_startup::start_server_from_action(
                         &state,
+                        mac_address,
+                        interface.clone(),
+                        host,
                         port,
                         &base_stack,
                         send_first,
@@ -317,16 +333,23 @@ pub async fn run_with_actions(
                         event_handlers,
                         scheduled_tasks,
                         feedback_instructions,
+                        status_tx.clone(),
                     )
                     .await
                     {
                         Ok(server_id) => {
+                            let binding_desc = if let Some(iface) = &interface {
+                                format!("interface {} ({})", iface, base_stack)
+                            } else if let Some(p) = port {
+                                format!("port {} ({})", p, base_stack)
+                            } else {
+                                format!("({})", base_stack)
+                            };
                             println!(
-                                "[{}] Opened server #{} on port {} ({})",
+                                "[{}] Opened server #{} on {}",
                                 i + 1,
                                 server_id.as_u32(),
-                                port,
-                                base_stack
+                                binding_desc
                             );
                         }
                         Err(e) => {
@@ -385,26 +408,18 @@ pub async fn run_with_actions(
         }
     }
 
-    // Print any status messages that were sent
-    while let Ok(msg) = status_rx.try_recv() {
-        if !msg.starts_with("__") {
-            let clean_msg = msg
-                .strip_prefix("[INFO] ")
-                .unwrap_or(&msg)
-                .strip_prefix("[ERROR] ")
-                .unwrap_or(&msg)
-                .strip_prefix("[WARN] ")
-                .unwrap_or(&msg)
-                .strip_prefix("[DEBUG] ")
-                .unwrap_or(&msg);
-            println!("{clean_msg}");
-        }
-    }
+    // Drop status_tx to close the channel and signal the background task to finish
+    drop(status_tx);
+
+    // Wait for the background task to print all remaining messages
+    let _ = status_printer.await;
 
     println!("\nConfiguration loaded successfully.");
 
     // Check if we're in server mode
     if state.get_mode().await == Mode::Server {
+        // Create a new status channel for run_server
+        let (_status_tx, status_rx) = mpsc::unbounded_channel::<String>();
         // Run the server
         return run_server(&state, llm, status_rx).await;
     }

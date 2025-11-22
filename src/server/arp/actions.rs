@@ -21,16 +21,14 @@ impl ArpProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for ArpProtocol {
+    fn default_binding(&self) -> Option<crate::protocol::BindingDefaults> {
+        // ARP uses interface-based binding (loopback by default)
+        Some(crate::protocol::BindingDefaults::interface_based("lo"))
+    }
+
     fn get_startup_parameters(&self) -> Vec<ParameterDefinition> {
-        vec![ParameterDefinition {
-            name: "interface".to_string(),
-            type_hint: "string".to_string(),
-            description:
-                "Network interface name to capture ARP packets from (e.g., 'eth0', 'en0', 'wlan0')"
-                    .to_string(),
-            required: true,
-            example: json!("eth0"),
-        }]
+        // Interface is now provided via flexible binding system, not startup params
+        vec![]
     }
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
         vec![]
@@ -86,14 +84,12 @@ impl Server for ArpProtocol {
         Box::pin(async move {
             use crate::server::arp::ArpServer;
 
-            // ARP doesn't use SocketAddr, it uses interface name
-            // Extract interface from startup_params
-            let params = ctx
-                .startup_params
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("ARP requires startup parameters (interface)"))?;
-
-            let interface = params.get_string("interface");
+            // ARP uses interface-based binding
+            // Extract interface from context (defaults already applied)
+            let interface = ctx
+                .interface()
+                .context("ARP requires network interface")?
+                .to_string();
 
             // Spawn the ARP server
             let _interface_name = ArpServer::spawn_with_llm(

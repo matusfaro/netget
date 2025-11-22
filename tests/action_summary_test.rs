@@ -23,7 +23,7 @@ fn test_summarize_open_server() {
     });
     assert_eq!(
         summarize_action(&action),
-        "open_server: http:8080 \"Act as REST API server\""
+        "open_server: http port=8080 \"Act as REST API server\""
     );
 }
 

@@ -132,10 +132,16 @@ async fn execute_startup_action(
                 .as_str()
                 .ok_or_else(|| anyhow::anyhow!("Missing 'instruction' field"))?;
 
+            // Create status channel for server startup messages
+            let (status_tx, _status_rx) = tokio::sync::mpsc::unbounded_channel();
+
             // Call server_startup to create the server
             let server_id = crate::cli::server_startup::start_server_from_action(
                 &state,
-                port,
+                None,        // mac_address
+                None,        // interface
+                None,        // host
+                Some(port),  // port
                 protocol,
                 false, // send_first
                 None,  // initial_memory
@@ -144,6 +150,7 @@ async fn execute_startup_action(
                 None, // event_handlers
                 None, // scheduled_tasks
                 None, // feedback_instructions
+                status_tx,
             )
             .await
             .context("Failed to start server")?;

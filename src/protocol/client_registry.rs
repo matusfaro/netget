@@ -232,6 +232,9 @@ impl ClientRegistry {
         #[cfg(feature = "redis")]
         self.register(Arc::new(crate::client::redis::RedisClientProtocol::new()));
 
+        #[cfg(feature = "icmp")]
+        self.register(Arc::new(crate::client::icmp::IcmpClientProtocol::new()));
+
         #[cfg(feature = "couchdb")]
         self.register(Arc::new(crate::client::couchdb::CouchDbClientProtocol::new()));
 

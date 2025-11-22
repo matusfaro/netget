@@ -45,6 +45,7 @@ fn summarize_common_action(action: &CommonAction) -> String {
             format!("show_message: \"{}\"", preview)
         }
         CommonAction::OpenServer {
+            interface,
             port,
             base_stack,
             instruction,
@@ -55,7 +56,14 @@ fn summarize_common_action(action: &CommonAction) -> String {
             } else {
                 instruction.clone()
             };
-            format!("open_server: {}:{} \"{}\"", base_stack, port, instr_preview)
+            let binding = if let Some(iface) = interface {
+                format!("interface={}", iface)
+            } else if let Some(p) = port {
+                format!("port={}", p)
+            } else {
+                "default".to_string()
+            };
+            format!("open_server: {} {} \"{}\"", base_stack, binding, instr_preview)
         }
         CommonAction::CloseServer { server_id } => {
             format!("close_server: #{}", server_id)
