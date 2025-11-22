@@ -26,6 +26,21 @@ pub struct EventType {
     /// This documents what fields should be present in the event data JSON
     /// Uses the same Parameter structure as actions
     pub parameters: Vec<Parameter>,
+
+    /// Typical response example for this event (most common case)
+    /// Used in prompt templates to show the expected action response
+    /// This should use protocol-specific action types
+    pub typical_response_example: Option<JsonValue>,
+
+    /// Mandatory response example (when there's only one correct way)
+    /// Takes precedence over typical_response_example in prompts
+    /// Use this when the protocol requires a specific response format
+    pub mandatory_response_example: Option<JsonValue>,
+
+    /// Optional alternative response examples
+    /// Shows other valid ways to respond to this event
+    /// Displayed after the typical/mandatory example
+    pub optional_response_examples: Vec<JsonValue>,
 }
 
 impl EventType {
@@ -36,6 +51,9 @@ impl EventType {
             description: description.into(),
             actions: Vec::new(),
             parameters: Vec::new(),
+            typical_response_example: None,
+            mandatory_response_example: None,
+            optional_response_examples: Vec::new(),
         }
     }
 
@@ -60,6 +78,59 @@ impl EventType {
     /// Add multiple parameters describing expected event data
     pub fn with_parameters(mut self, parameters: Vec<Parameter>) -> Self {
         self.parameters.extend(parameters);
+        self
+    }
+
+    /// Set the typical response example for this event
+    ///
+    /// This example shows the most common way to respond to this event.
+    /// It should use protocol-specific action types.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// .with_typical_example(json!({
+    ///     "type": "send_tcp_data",
+    ///     "data": "48656c6c6f"
+    /// }))
+    /// ```
+    pub fn with_typical_example(mut self, example: JsonValue) -> Self {
+        self.typical_response_example = Some(example);
+        self
+    }
+
+    /// Set the mandatory response example for this event
+    ///
+    /// This example shows the ONLY correct way to respond to this event.
+    /// Use this when the protocol requires a specific response format.
+    /// Takes precedence over typical_response_example in prompts.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// .with_mandatory_example(json!({
+    ///     "type": "send_dns_a_response",
+    ///     "query_id": 12345,
+    ///     "domain": "example.com",
+    ///     "ip": "93.184.216.34"
+    /// }))
+    /// ```
+    pub fn with_mandatory_example(mut self, example: JsonValue) -> Self {
+        self.mandatory_response_example = Some(example);
+        self
+    }
+
+    /// Add an optional response example for this event
+    ///
+    /// This shows an alternative valid way to respond to this event.
+    /// Multiple optional examples can be added.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// .with_optional_example(json!({
+    ///     "type": "disconnect"
+    /// }))
+    /// ```
+    pub fn with_optional_example(mut self, example: JsonValue) -> Self {
+        self.optional_response_examples.push(example);
         self
     }
 

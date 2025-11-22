@@ -8,6 +8,122 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+/// Flexible deserializers for numeric types that accept both numbers and strings
+mod flexible_deserializers {
+    use serde::{Deserialize, Deserializer};
+
+    /// Deserialize u32 from either a number or a string
+    pub fn deserialize_u32_flexible<'de, D>(deserializer: D) -> Result<u32, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum U32OrString {
+            Number(u32),
+            String(String),
+        }
+
+        match U32OrString::deserialize(deserializer)? {
+            U32OrString::Number(n) => Ok(n),
+            U32OrString::String(s) => s.parse().map_err(serde::de::Error::custom),
+        }
+    }
+
+    /// Deserialize Option<u32> from either a number or a string
+    pub fn deserialize_option_u32_flexible<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum U32OrString {
+            Number(u32),
+            String(String),
+        }
+
+        match Option::<U32OrString>::deserialize(deserializer)? {
+            Some(U32OrString::Number(n)) => Ok(Some(n)),
+            Some(U32OrString::String(s)) => s.parse().map(Some).map_err(serde::de::Error::custom),
+            None => Ok(None),
+        }
+    }
+
+    /// Deserialize u64 from either a number or a string
+    pub fn deserialize_u64_flexible<'de, D>(deserializer: D) -> Result<u64, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum U64OrString {
+            Number(u64),
+            String(String),
+        }
+
+        match U64OrString::deserialize(deserializer)? {
+            U64OrString::Number(n) => Ok(n),
+            U64OrString::String(s) => s.parse().map_err(serde::de::Error::custom),
+        }
+    }
+
+    /// Deserialize Option<u64> from either a number or a string
+    pub fn deserialize_option_u64_flexible<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum U64OrString {
+            Number(u64),
+            String(String),
+        }
+
+        match Option::<U64OrString>::deserialize(deserializer)? {
+            Some(U64OrString::Number(n)) => Ok(Some(n)),
+            Some(U64OrString::String(s)) => s.parse().map(Some).map_err(serde::de::Error::custom),
+            None => Ok(None),
+        }
+    }
+
+    /// Deserialize u16 from either a number or a string
+    pub fn deserialize_u16_flexible<'de, D>(deserializer: D) -> Result<u16, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum U16OrString {
+            Number(u16),
+            String(String),
+        }
+
+        match U16OrString::deserialize(deserializer)? {
+            U16OrString::Number(n) => Ok(n),
+            U16OrString::String(s) => s.parse().map_err(serde::de::Error::custom),
+        }
+    }
+
+    /// Deserialize Option<u16> from either a number or a string
+    pub fn deserialize_option_u16_flexible<'de, D>(deserializer: D) -> Result<Option<u16>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum U16OrString {
+            Number(u16),
+            String(String),
+        }
+
+        match Option::<U16OrString>::deserialize(deserializer)? {
+            Some(U16OrString::Number(n)) => Ok(Some(n)),
+            Some(U16OrString::String(s)) => s.parse().map(Some).map_err(serde::de::Error::custom),
+            None => Ok(None),
+        }
+    }
+}
+
 /// Type alias for protocol groups mapping
 type ProtocolGroups = std::collections::HashMap<
     &'static str,
@@ -19,11 +135,11 @@ type ProtocolGroups = std::collections::HashMap<
 pub struct ServerTaskDefinition {
     pub task_id: String,
     pub recurring: bool,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "flexible_deserializers::deserialize_option_u64_flexible")]
     pub delay_secs: Option<u64>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "flexible_deserializers::deserialize_option_u64_flexible")]
     pub interval_secs: Option<u64>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "flexible_deserializers::deserialize_option_u64_flexible")]
     pub max_executions: Option<u64>,
     pub instruction: String,
     #[serde(default)]
@@ -50,7 +166,7 @@ pub enum CommonAction {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         host: Option<String>,
         /// Port to bind (for socket-based protocols like TCP, HTTP, DNS)
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "flexible_deserializers::deserialize_option_u16_flexible")]
         port: Option<u16>,
 
         base_stack: String,
@@ -73,7 +189,10 @@ pub enum CommonAction {
     },
 
     /// Close a specific server
-    CloseServer { server_id: u32 },
+    CloseServer {
+        #[serde(deserialize_with = "flexible_deserializers::deserialize_u32_flexible")]
+        server_id: u32
+    },
 
     /// Close all servers
     CloseAllServers,
@@ -99,19 +218,32 @@ pub enum CommonAction {
     },
 
     /// Close a specific client
-    CloseClient { client_id: u32 },
+    CloseClient {
+        #[serde(deserialize_with = "flexible_deserializers::deserialize_u32_flexible")]
+        client_id: u32
+    },
 
     /// Close all clients
     CloseAllClients,
 
     /// Close a specific connection by its unified ID
-    CloseConnectionById { connection_id: u32 },
+    CloseConnectionById {
+        #[serde(deserialize_with = "flexible_deserializers::deserialize_u32_flexible")]
+        connection_id: u32
+    },
 
     /// Reconnect a disconnected client
-    ReconnectClient { client_id: u32 },
+    ReconnectClient {
+        #[serde(deserialize_with = "flexible_deserializers::deserialize_u32_flexible")]
+        client_id: u32
+    },
 
     /// Update the client instruction
-    UpdateClientInstruction { client_id: u32, instruction: String },
+    UpdateClientInstruction {
+        #[serde(deserialize_with = "flexible_deserializers::deserialize_u32_flexible")]
+        client_id: u32,
+        instruction: String
+    },
 
     /// Update the server instruction (combines with existing)
     UpdateInstruction { instruction: String },
@@ -135,17 +267,17 @@ pub enum CommonAction {
     ScheduleTask {
         task_id: String,
         recurring: bool,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "flexible_deserializers::deserialize_option_u64_flexible")]
         delay_secs: Option<u64>,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "flexible_deserializers::deserialize_option_u64_flexible")]
         interval_secs: Option<u64>,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "flexible_deserializers::deserialize_option_u64_flexible")]
         max_executions: Option<u64>,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "flexible_deserializers::deserialize_option_u32_flexible")]
         server_id: Option<u32>,
         #[serde(default)]
         connection_id: Option<String>,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "flexible_deserializers::deserialize_option_u32_flexible")]
         client_id: Option<u32>,
         instruction: String,
         #[serde(default)]
@@ -1029,7 +1161,8 @@ pub fn get_all_common_actions(
     is_open_server_enabled: bool,
     is_open_client_enabled: bool,
 ) -> Vec<ActionDefinition> {
-    let actions = vec![
+    #[allow(unused_mut)]
+    let mut actions = vec![
         // === Server Management ===
         open_server_action(selected_mode, env, is_open_server_enabled),
         close_server_action(),

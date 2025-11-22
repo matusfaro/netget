@@ -319,6 +319,56 @@ Example:
 {"type":"append_to_log","output_name":"access_logs","content":"127.0.0.1 - - [29/Oct/2025:12:34:56 +0000] \"GET /index.html HTTP/1.1\" 200 1234"}
 ```
 
+## 18. create_database
+
+Create a new SQLite database (in-memory or file-based). Use this to store protocol state (e.g., NFS file system, DNS cache, user sessions). The database persists for the lifetime of the owning server/client, or forever if global. You can execute DDL to create tables during creation.
+
+Parameters:
+- `name` (string, required): Database name (user-friendly identifier). This will be used to construct the filename as './netget_db_<name>.db' for file-based databases.
+- `is_memory` (boolean): true = in-memory database (fast, data lost on close), false = file-based database (persistent, saved to ./netget_db_<name>.db). Defaults to false (file-based).
+- `owner` (string): Owner scope: 'server-N' (auto-deleted when server closes), 'client-N' (auto-deleted when client disconnects), or 'global' (persists across servers/clients). Omit to default to current context.
+- `schema_ddl` (string): SQL DDL statements to create initial schema (e.g., 'CREATE TABLE files (path TEXT PRIMARY KEY, content BLOB);'). Use semicolons to separate multiple statements.
+
+Example:
+```json
+{"type":"create_database","name":"nfs_storage","is_memory":true,"owner":"server-1","schema_ddl":"CREATE TABLE files (path TEXT PRIMARY KEY, content BLOB, size INTEGER, modified INTEGER);"}
+```
+
+## 19. execute_sql
+
+Execute a SQL query on a database. Supports DDL (CREATE/ALTER/DROP), DML (INSERT/UPDATE/DELETE), and DQL (SELECT). Returns results as JSON with columns and rows for SELECT queries, or affected row count for modifications.
+
+Parameters:
+- `database_id` (number, required): Database ID (from create_database response or list_databases). Format: db-N → use N.
+- `query` (string, required): SQL query to execute. Use standard SQLite syntax. Be careful with semicolons (only one statement per execute_sql).
+
+Example:
+```json
+{"type":"execute_sql","database_id":1,"query":"SELECT * FROM files WHERE path LIKE '/home/%'"}
+```
+
+## 20. list_databases
+
+List all active SQLite databases with their schemas, table information, and row counts. Use this to discover available databases and understand their structure before querying.
+
+
+Example:
+```json
+{"type":"list_databases"}
+```
+
+## 21. delete_database
+
+Delete a database and remove its file (if file-based). This is permanent and cannot be undone. Server/client-owned databases are automatically deleted when the owner closes.
+
+Parameters:
+- `database_id` (number, required): Database ID to delete
+
+Example:
+```json
+{"type":"delete_database","database_id":1}
+```
+
 
 ---
 

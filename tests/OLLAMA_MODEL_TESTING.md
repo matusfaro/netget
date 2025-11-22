@@ -317,11 +317,11 @@ async fn test_model_comparison() -> Result<()> {
 Compare different Ollama models to see which performs better:
 
 ```bash
-# Test model A
-OLLAMA_MODEL=qwen2.5-coder:7b cargo test --test ollama_model_test
-
-# Test model B
+# Test model A (default)
 OLLAMA_MODEL=qwen3-coder:30b cargo test --test ollama_model_test
+
+# Test model B (alternative)
+OLLAMA_MODEL=qwen2.5-coder:7b cargo test --test ollama_model_test
 
 # Compare results
 ```

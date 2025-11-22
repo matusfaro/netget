@@ -154,6 +154,13 @@ pub use ntp::actions::NtpProtocol;
 #[cfg(feature = "ntp")]
 pub use ntp::NtpServer;
 
+#[cfg(feature = "tftp")]
+pub mod tftp;
+#[cfg(feature = "tftp")]
+pub use tftp::actions::TftpProtocol;
+#[cfg(feature = "tftp")]
+pub use tftp::TftpServer;
+
 #[cfg(feature = "whois")]
 pub mod whois;
 #[cfg(feature = "whois")]
@@ -246,6 +253,20 @@ pub mod mysql;
 pub use mysql::actions::MysqlProtocol;
 #[cfg(feature = "mysql")]
 pub use mysql::MysqlServer;
+
+#[cfg(feature = "mongodb-server")]
+pub mod mongodb;
+#[cfg(feature = "mongodb-server")]
+pub use mongodb::actions::MongodbProtocol;
+#[cfg(feature = "mongodb-server")]
+pub use mongodb::MongodbServer;
+
+#[cfg(feature = "mssql")]
+pub mod mssql;
+#[cfg(feature = "mssql")]
+pub use mssql::actions::MssqlProtocol;
+#[cfg(feature = "mssql")]
+pub use mssql::MssqlServer;
 
 #[cfg(feature = "ipp")]
 pub mod ipp;
@@ -346,6 +367,20 @@ pub use turn::actions::TurnProtocol;
 #[cfg(feature = "turn")]
 pub use turn::TurnServer;
 
+#[cfg(feature = "webrtc")]
+pub mod webrtc;
+#[cfg(feature = "webrtc")]
+pub use webrtc::actions::WebRtcProtocol;
+#[cfg(feature = "webrtc")]
+pub use webrtc::{WebRtcServer, WebRtcServerData};
+
+#[cfg(feature = "webrtc")]
+pub mod webrtc_signaling;
+#[cfg(feature = "webrtc")]
+pub use webrtc_signaling::actions::WebRtcSignalingProtocol;
+#[cfg(feature = "webrtc")]
+pub use webrtc_signaling::{WebRtcSignalingServer, WebRtcSignalingServerData};
+
 #[cfg(feature = "sip")]
 pub mod sip;
 #[cfg(feature = "sip")]
@@ -401,6 +436,13 @@ pub mod elasticsearch;
 pub use elasticsearch::actions::ElasticsearchProtocol;
 #[cfg(feature = "elasticsearch")]
 pub use elasticsearch::ElasticsearchServer;
+
+#[cfg(feature = "couchdb")]
+pub mod couchdb;
+#[cfg(feature = "couchdb")]
+pub use couchdb::actions::CouchDbProtocol;
+#[cfg(feature = "couchdb")]
+pub use couchdb::CouchDbServer;
 
 #[cfg(feature = "dynamo")]
 pub mod dynamo;

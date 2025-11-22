@@ -103,6 +103,8 @@ pub struct NetGetConfig {
     pub llm_max_concurrent: Option<usize>,
     /// Mock LLM configuration (for testing without Ollama)
     pub mock_config: Option<MockLlmConfig>,
+    /// Force use of real Ollama (overrides env var/flag)
+    pub force_ollama: bool,
 }
 
 /// Detect if --use-ollama flag is present (from test args or environment)
@@ -129,6 +131,7 @@ impl NetGetConfig {
             ollama_lock: true, // Enable by default for concurrent testing
             llm_max_concurrent: Some(1000), // High concurrency for E2E tests (effectively unlimited)
             mock_config: None,
+            force_ollama: false,
         }
     }
 
@@ -145,6 +148,7 @@ impl NetGetConfig {
             ollama_lock: true,
             llm_max_concurrent: Some(1000), // High concurrency for E2E tests (effectively unlimited)
             mock_config: None,
+            force_ollama: false,
         }
     }
 
@@ -168,6 +172,7 @@ impl NetGetConfig {
             ollama_lock: true,
             llm_max_concurrent: None,
             mock_config: None,
+            force_ollama: false,
         }
     }
 
@@ -243,33 +248,60 @@ impl NetGetConfig {
         self.mock_config = Some(builder_fn(builder).build());
         self
     }
+
+    /// Force use of real Ollama (overrides env var/flag)
+    ///
+    /// Use this when a test explicitly requires real Ollama, regardless of
+    /// environment variables or command-line flags.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let config = NetGetConfig::new("Start TCP server on port 0")
+    ///     .with_ollama();
+    /// ```
+    #[allow(dead_code)]
+    pub fn with_ollama(mut self) -> Self {
+        self.force_ollama = true;
+        self
+    }
 }
 
 /// Start a NetGet instance with the given configuration
 /// Returns instance with 0+ servers and 0+ clients
 pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
-    let use_ollama = should_use_ollama();
+    // Determine mode: force_ollama > env var/flag > default (mock mode)
+    let use_ollama = if config.force_ollama {
+        true
+    } else {
+        should_use_ollama()
+    };
+
     let has_mocks = config.mock_config.is_some();
 
     // Start mock Ollama server (if in mock mode with mocks configured)
     let mock_ollama_server = if use_ollama {
-        // Real mode: Use Ollama
+        // Real Ollama mode
         if has_mocks {
-            println!("⚠️  --use-ollama: Ignoring configured mocks");
+            println!("⚠️  Real Ollama forced: Ignoring configured mocks");
         }
         // Check Ollama availability
         if !check_ollama_available().await {
-            return Err("--use-ollama requires Ollama, but Ollama is not available at http://localhost:11434".into());
+            return Err("Real Ollama required but not available at http://localhost:11434".into());
         }
-        println!("🤖 Using real Ollama");
+        if config.force_ollama {
+            println!("🤖 Using real Ollama (forced by test config)");
+        } else {
+            println!("🤖 Using real Ollama (--use-ollama flag)");
+        }
         None
     } else {
         // Mock mode (default): Use mock Ollama HTTP server
         if !has_mocks {
-            // No mocks explicitly configured - use default empty mock
-            // This allows tests to run without Ollama and see what LLM calls are made
-            println!("🔧 Mock mode: Using default empty mock (returns generic responses)");
-            println!("   → Configure specific mocks with .with_mock() for test assertions");
+            // No mocks explicitly configured - use strict empty mock
+            // LLM calls will fail with 500 error
+            println!("🔧 Strict mock mode: No mocks configured");
+            println!("   → LLM calls will fail if made unexpectedly");
+            println!("   → Configure mocks with .with_mock() or use .with_ollama() for real LLM");
 
             // Create default empty mock config
             let mock_config = MockLlmBuilder::new().build();
@@ -277,7 +309,7 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
             println!("🔧 Mock Ollama server started on {}", server.base_url());
             Some(server)
         } else {
-            println!("🔧 Using configured mock LLM responses");
+            println!("🔧 Using configured mock LLM responses ({} rules)", config.mock_config.as_ref().unwrap().rules.len());
 
             // Start mock Ollama HTTP server with user-configured mocks
             let mock_config = config.mock_config.clone().unwrap();

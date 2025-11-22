@@ -46,6 +46,12 @@ pub mod datalink;
 #[cfg(feature = "datalink")]
 pub use datalink::actions::DataLinkClientProtocol;
 
+// dc client
+#[cfg(feature = "dc")]
+pub mod dc;
+#[cfg(feature = "dc")]
+pub use dc::actions::DcClientProtocol;
+
 // dhcp client
 #[cfg(feature = "dhcp")]
 pub mod dhcp;
@@ -220,6 +226,12 @@ pub mod mysql;
 #[cfg(feature = "mysql")]
 pub use mysql::actions::MysqlClientProtocol;
 
+// mongodb client
+#[cfg(feature = "mongodb")]
+pub mod mongodb;
+#[cfg(feature = "mongodb")]
+pub use mongodb::actions::MongodbClientProtocol;
+
 // nfs client
 #[cfg(feature = "nfs")]
 pub mod nfs;
@@ -268,6 +280,12 @@ pub mod ollama;
 #[cfg(feature = "ollama")]
 pub use ollama::actions::OllamaClientProtocol;
 
+// openapi client
+#[cfg(feature = "openapi")]
+pub mod openapi;
+#[cfg(feature = "openapi")]
+pub use openapi::actions::OpenApiClientProtocol;
+
 // openidconnect client
 #[cfg(feature = "openidconnect")]
 pub mod openidconnect;
@@ -292,6 +310,12 @@ pub mod pypi;
 #[cfg(feature = "pypi")]
 pub use pypi::actions::PypiClientProtocol;
 
+// mssql client
+#[cfg(feature = "mssql")]
+pub mod mssql;
+#[cfg(feature = "mssql")]
+pub use mssql::actions::MssqlClientProtocol;
+
 // redis client
 #[cfg(feature = "redis")]
 pub mod redis;
@@ -303,6 +327,18 @@ pub use redis::actions::RedisClientProtocol;
 pub mod icmp;
 #[cfg(feature = "icmp")]
 pub use icmp::actions::IcmpClientProtocol;
+
+// couchdb client
+#[cfg(feature = "couchdb")]
+pub mod couchdb;
+#[cfg(feature = "couchdb")]
+pub use couchdb::actions::CouchDbClientProtocol;
+
+// tftp client - temporarily disabled (API fixes needed)
+// #[cfg(feature = "tftp")]
+// pub mod tftp;
+// #[cfg(feature = "tftp")]
+// pub use tftp::actions::TftpClientProtocol;
 
 // rss client - temporarily disabled (needs API updates)
 // #[cfg(feature = "rss")]
@@ -411,6 +447,12 @@ pub use tcp::actions::TcpClientProtocol;
 pub mod telnet;
 #[cfg(feature = "telnet")]
 pub use telnet::actions::TelnetClientProtocol;
+
+// tls client
+#[cfg(feature = "tls")]
+pub mod tls;
+#[cfg(feature = "tls")]
+pub use tls::actions::TlsClientProtocol;
 
 // tor client
 #[cfg(feature = "tor")]

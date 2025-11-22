@@ -133,18 +133,8 @@ impl Protocol for TcpClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "tcp_connected".to_string(),
-                description: "Triggered when TCP client connects to server".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "tcp_data_received".to_string(),
-                description: "Triggered when TCP client receives data from server".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("tcp_connected", "Triggered when TCP client connects to server"),
+            EventType::new("tcp_data_received", "Triggered when TCP client receives data from server"),
         ]
     }
     fn stack_name(&self) -> &'static str {

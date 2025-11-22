@@ -78,26 +78,43 @@ impl MockLlmConfig {
         }
     }
 
-    /// Find matching response for the given context
-    pub async fn find_match(&self, context: &LlmContext) -> Option<(usize, MockResponse)> {
+    /// Find matching response for the given context (synchronous version)
+    ///
+    /// This version does NOT record to call_history to avoid holding locks across await points.
+    /// Returns (idx, response, rule_description) if matched.
+    pub fn find_match_sync(&self, context: &LlmContext) -> Option<(usize, MockResponse, String)> {
         for (idx, rule) in self.rules.iter().enumerate() {
             if rule.matches(context) {
                 // Increment call count
                 rule.actual_calls.fetch_add(1, Ordering::SeqCst);
 
-                // Record call
-                let mut history = self.call_history.lock().await;
-                history.push(MockCallRecord {
-                    context: context.clone(),
-                    matched_rule_idx: idx,
-                    rule_description: rule.describe(),
-                });
-
-                return Some((idx, rule.response.clone()));
+                return Some((idx, rule.response.clone(), rule.describe()));
             }
         }
 
         None
+    }
+
+    /// Record a matched call to history (separate method to avoid holding config lock)
+    pub async fn record_call(&self, context: LlmContext, matched_rule_idx: usize, rule_description: String) {
+        let mut history = self.call_history.lock().await;
+        history.push(MockCallRecord {
+            context,
+            matched_rule_idx,
+            rule_description,
+        });
+    }
+
+    /// Find matching response for the given context
+    ///
+    /// DEPRECATED: Use find_match_sync() + record_call() to avoid holding locks across await.
+    pub async fn find_match(&self, context: &LlmContext) -> Option<(usize, MockResponse)> {
+        if let Some((idx, response, description)) = self.find_match_sync(context) {
+            self.record_call(context.clone(), idx, description).await;
+            Some((idx, response))
+        } else {
+            None
+        }
     }
 
     /// Mark as verified
@@ -270,6 +287,18 @@ impl SerializedMatcher {
             }
         }
 
+        // CRITICAL FIX: Instruction-based matching should only match user input, not network events
+        // If this rule uses instruction matching but the context has an event_type,
+        // it means this is a network event (not user input), so skip instruction matching
+        let has_instruction_criteria = !self.instruction_contains.is_empty() || self.instruction_regex.is_some();
+        let is_network_event = context.event_type.is_some();
+
+        if has_instruction_criteria && is_network_event && self.event_type.is_none() {
+            // This rule is instruction-based (meant for user input) but context is a network event
+            // Don't match unless the rule explicitly specifies an event_type
+            return false;
+        }
+
         // Instruction contains (all must match)
         for substring in &self.instruction_contains {
             if !context.instruction.contains(substring) {
@@ -291,7 +320,19 @@ impl SerializedMatcher {
         // Event data contains
         for (key, value) in &self.event_data_contains {
             if let Some(field_value) = context.event_data.get(key) {
-                let field_str = field_value.as_str().unwrap_or("");
+                // Handle both string and numeric values
+                let field_str = if let Some(s) = field_value.as_str() {
+                    s.to_string()
+                } else if let Some(n) = field_value.as_i64() {
+                    n.to_string()
+                } else if let Some(n) = field_value.as_u64() {
+                    n.to_string()
+                } else if let Some(n) = field_value.as_f64() {
+                    n.to_string()
+                } else {
+                    // For other types (bool, null, array, object), use JSON representation
+                    field_value.to_string()
+                };
                 if !field_str.contains(value) {
                     return false;
                 }

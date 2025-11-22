@@ -51,10 +51,25 @@ mod helpers;
 
 use anyhow::Result;
 use serde_json::json;
+use std::sync::Once;
 
 use helpers::ollama_test_builder::OllamaTestBuilder;
 use netget::llm::actions::Parameter;
 use netget::protocol::{Event, EventType};
+use netget::state::ServerId;
+
+// Initialize tracing once for all tests
+static INIT: Once = Once::new();
+
+fn init_tracing() {
+    INIT.call_once(|| {
+        // Initialize tracing subscriber to capture RUST_LOG output
+        tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .with_test_writer()
+            .init();
+    });
+}
 
 // ============================================================================
 // User Input Tests - Testing global action generation
@@ -138,7 +153,8 @@ async fn test_open_client() -> Result<()> {
         .with_user_input("connect to redis server at localhost:6379")
         .expect_action_type("open_client")
         .expect_protocol("redis")
-        .expect_field_contains("remote_addr", "localhost:6379")
+        .expect_field_contains("host", "localhost")
+        .expect_field_exact("port", json!(6379))
         .run()
         .await?
         .assert_success()
@@ -366,7 +382,7 @@ async fn test_http_request_with_instruction() -> Result<()> {
         .with_network_request(
             event,
             "Respond with 'Hello, World!' to all requests",
-            available_actions,
+            ServerId::new(1), // Dummy server ID for testing
         )
         .expect_action_type("send_http_response")
         .expect_field_exact("status", json!(200))
@@ -435,7 +451,7 @@ async fn test_dns_query_response() -> Result<()> {
         .with_network_request(
             event,
             "Respond to queries for example.com with IP 93.184.216.34",
-            available_actions,
+            ServerId::new(1), // Dummy server ID for testing
         )
         .expect_action_type("send_dns_a_response")
         .expect_field_exact("query_id", json!(12345))
@@ -486,7 +502,7 @@ async fn test_tcp_hex_response() -> Result<()> {
         .with_network_request(
             event,
             "Echo back any received data",
-            available_actions,
+            ServerId::new(1), // Dummy server ID for testing
         )
         .expect_action_type("send_tcp_data")
         .expect_field_exact("data_hex", json!("48656c6c6f"))

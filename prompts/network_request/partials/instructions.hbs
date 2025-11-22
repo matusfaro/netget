@@ -16,3 +16,14 @@ You may optionally include `<reasoning>` tags to explain complex decisions (auth
 - Follow the server's instruction field for behavior
 - You can update memory to track state across requests
 - Keep reasoning brief (1-2 sentences) when included
+
+### Response Actions
+
+**CRITICAL**: Always use protocol-specific response actions from the "Available Actions" list. Each protocol has its own specific actions with detailed descriptions and examples.
+
+- Do NOT use generic `send_data` or `show_message` actions for protocol responses
+- Read the action descriptions carefully - they explain when to use each action
+- Follow the examples provided in each action definition
+- The action definitions include all required parameters and their formats
+
+Check the "Available Actions" section below for the complete list of actions for your protocol.

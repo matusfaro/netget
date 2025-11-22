@@ -279,11 +279,11 @@ fn list_connections_action() -> ActionDefinition {
 fn send_tcp_data_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_tcp_data".to_string(),
-        description: "Send data over the current TCP connection".to_string(),
+        description: "IMPORTANT: Use this action to send data over TCP connections. This is the ONLY correct action for TCP responses - do NOT use generic 'send_data' or 'show_message' actions. The 'data' field contains the exact bytes to send to the client (text or hex-encoded binary).".to_string(),
         parameters: vec![Parameter {
             name: "data".to_string(),
             type_hint: "string".to_string(),
-            description: "Data to send".to_string(),
+            description: "Data to send over TCP connection (text string or hex-encoded for binary data)".to_string(),
             required: true,
         }],
         example: json!({
@@ -342,6 +342,10 @@ pub static TCP_CONNECTION_OPENED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         SEND_TCP_DATA_ACTION.clone(),
         CLOSE_THIS_CONNECTION_ACTION.clone(),
     ])
+    .with_typical_example(serde_json::json!({
+        "type": "send_tcp_data",
+        "data": "220 Welcome to server\r\n"
+    }))
 });
 
 /// TCP data received event - triggered when data is received on connection
@@ -358,6 +362,16 @@ pub static TCP_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             WAIT_FOR_MORE_ACTION.clone(),
             CLOSE_THIS_CONNECTION_ACTION.clone(),
         ])
+        .with_typical_example(serde_json::json!({
+            "type": "send_tcp_data",
+            "data": "48656c6c6f"
+        }))
+        .with_optional_example(serde_json::json!({
+            "type": "wait_for_more"
+        }))
+        .with_optional_example(serde_json::json!({
+            "type": "close_connection"
+        }))
 });
 
 /// Get TCP event types

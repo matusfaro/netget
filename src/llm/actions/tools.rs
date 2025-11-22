@@ -1882,6 +1882,36 @@ async fn execute_read_server_documentation(protocol: &str) -> ToolResult {
     result.push_str("  \"instruction\": \"Handle requests according to protocol specification\"\n");
     result.push_str("}\n```\n");
 
+    // Add protocol-specific event examples if available
+    let event_types = server_protocol.get_event_types();
+    if !event_types.is_empty() {
+        result.push_str("\n\n---\n\n");
+        result.push_str("## Protocol-Specific Response Examples\n\n");
+        result.push_str("**IMPORTANT**: Use these protocol-specific action types when responding to events.\n\n");
+
+        for event_type in event_types {
+            if event_type.typical_response_example.is_some() || !event_type.optional_response_examples.is_empty() {
+                result.push_str(&format!("### Event: {}\n\n", event_type.id));
+
+                if let Some(typical) = &event_type.typical_response_example {
+                    result.push_str("**Typical Response:**\n```json\n");
+                    result.push_str(&serde_json::to_string_pretty(typical).unwrap_or_default());
+                    result.push_str("\n```\n\n");
+                }
+
+                if !event_type.optional_response_examples.is_empty() {
+                    result.push_str("**Alternative Responses:**\n");
+                    for example in &event_type.optional_response_examples {
+                        result.push_str("```json\n");
+                        result.push_str(&serde_json::to_string_pretty(example).unwrap_or_default());
+                        result.push_str("\n```\n");
+                    }
+                    result.push_str("\n");
+                }
+            }
+        }
+    }
+
     ToolResult::success("read_server_documentation", protocol.to_string(), result)
 }
 
@@ -1965,6 +1995,36 @@ async fn execute_read_client_documentation(protocol: &str) -> ToolResult {
     result.push_str("  \"remote_addr\": \"example.com:80\",\n");
     result.push_str("  \"instruction\": \"Connect and interact with the remote server\"\n");
     result.push_str("}\n```\n");
+
+    // Add protocol-specific event examples if available
+    let event_types = client_protocol.get_event_types();
+    if !event_types.is_empty() {
+        result.push_str("\n\n---\n\n");
+        result.push_str("## Protocol-Specific Action Examples\n\n");
+        result.push_str("**IMPORTANT**: Use these protocol-specific action types when sending requests.\n\n");
+
+        for event_type in event_types {
+            if event_type.typical_response_example.is_some() || !event_type.optional_response_examples.is_empty() {
+                result.push_str(&format!("### Event: {}\n\n", event_type.id));
+
+                if let Some(typical) = &event_type.typical_response_example {
+                    result.push_str("**Typical Action:**\n```json\n");
+                    result.push_str(&serde_json::to_string_pretty(typical).unwrap_or_default());
+                    result.push_str("\n```\n\n");
+                }
+
+                if !event_type.optional_response_examples.is_empty() {
+                    result.push_str("**Alternative Actions:**\n");
+                    for example in &event_type.optional_response_examples {
+                        result.push_str("```json\n");
+                        result.push_str(&serde_json::to_string_pretty(example).unwrap_or_default());
+                        result.push_str("\n```\n");
+                    }
+                    result.push_str("\n");
+                }
+            }
+        }
+    }
 
     ToolResult::success("read_client_documentation", protocol.to_string(), result)
 }

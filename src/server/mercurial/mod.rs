@@ -391,7 +391,7 @@ Provide standard Mercurial capabilities for this repository."#,
         }
     };
     let llm_response = match llm_client
-        .generate_with_retry(&model_str, &prompt, r#"[{"type": "hg_capabilities", ...}]"#)
+        .generate_with_retry(&model_str, &prompt, r#"[...]"#, 1)
         .await
     {
         Ok(response) => response,
@@ -550,7 +550,7 @@ Provide repository heads."#,
         }
     };
     let llm_response = match llm_client
-        .generate_with_retry(&model_str, &prompt, r#"[{"type": "hg_heads", ...}]"#)
+        .generate_with_retry(&model_str, &prompt, r#"[...]"#, 1)
         .await
     {
         Ok(response) => response,
@@ -695,7 +695,7 @@ Provide branch mappings for this repository."#,
         }
     };
     let llm_response = match llm_client
-        .generate_with_retry(&model_str, &prompt, r#"[{"type": "hg_branchmap", ...}]"#)
+        .generate_with_retry(&model_str, &prompt, r#"[...]"#, 1)
         .await
     {
         Ok(response) => response,
@@ -863,7 +863,7 @@ Provide key-value mappings for this namespace."#,
         }
     };
     let llm_response = match llm_client
-        .generate_with_retry(&model_str, &prompt, r#"[{"type": "hg_listkeys", ...}]"#)
+        .generate_with_retry(&model_str, &prompt, r#"[...]"#, 1)
         .await
     {
         Ok(response) => response,
@@ -1012,7 +1012,7 @@ Generate a bundle response."#,
         }
     };
     let llm_response = match llm_client
-        .generate_with_retry(&model_str, &prompt, r#"[{"type": "hg_send_bundle", ...}]"#)
+        .generate_with_retry(&model_str, &prompt, r#"[...]"#, 1)
         .await
     {
         Ok(response) => response,

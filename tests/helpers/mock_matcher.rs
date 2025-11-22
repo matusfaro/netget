@@ -190,7 +190,19 @@ impl EventDataMatcher {
 impl MockMatcher for EventDataMatcher {
     fn matches(&self, context: &LlmContext) -> bool {
         if let Some(field_value) = context.event_data.get(&self.key) {
-            let field_str = field_value.as_str().unwrap_or("");
+            // Handle both string and numeric values
+            let field_str = if let Some(s) = field_value.as_str() {
+                s.to_string()
+            } else if let Some(n) = field_value.as_i64() {
+                n.to_string()
+            } else if let Some(n) = field_value.as_u64() {
+                n.to_string()
+            } else if let Some(n) = field_value.as_f64() {
+                n.to_string()
+            } else {
+                // For other types (bool, null, array, object), use JSON representation
+                field_value.to_string()
+            };
             field_str.contains(&self.value)
         } else {
             false

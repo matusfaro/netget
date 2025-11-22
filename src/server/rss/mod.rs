@@ -261,8 +261,13 @@ impl RssServer {
         if let Some(language) = data["language"].as_str() {
             channel_builder.language(Some(language.to_string()));
         }
-        if let Some(ttl) = data["ttl"].as_str() {
-            channel_builder.ttl(Some(ttl.to_string()));
+        // Handle ttl as either string or number
+        if let Some(ttl_str) = data["ttl"].as_str() {
+            channel_builder.ttl(Some(ttl_str.to_string()));
+        } else if let Some(ttl_num) = data["ttl"].as_u64() {
+            channel_builder.ttl(Some(ttl_num.to_string()));
+        } else if let Some(ttl_num) = data["ttl"].as_i64() {
+            channel_builder.ttl(Some(ttl_num.to_string()));
         }
         if let Some(last_build_date) = data["last_build_date"].as_str() {
             channel_builder.last_build_date(Some(last_build_date.to_string()));

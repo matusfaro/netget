@@ -161,10 +161,17 @@ impl ActionResponse {
         let json_str = if trimmed.starts_with("```") {
             // Find the first newline after opening fence
             let start = trimmed.find('\n').unwrap_or(3);
-            // Find the closing fence
-            let end = trimmed.rfind("```").unwrap_or(trimmed.len());
-            // Extract content between fences
-            trimmed[start..end].trim()
+            // Find the closing fence (must be after start)
+            let end = trimmed[start..]
+                .rfind("```")
+                .map(|pos| start + pos)
+                .unwrap_or(trimmed.len());
+            // Extract content between fences (ensure valid slice)
+            if start <= end {
+                trimmed[start..end].trim()
+            } else {
+                trimmed
+            }
         } else {
             trimmed
         };
@@ -176,7 +183,7 @@ impl ActionResponse {
 
         serde_json::from_str::<ActionResponse>(clean_json).map_err(|e| {
             anyhow::anyhow!(
-                "Failed to parse action response: {}. Input: {}",
+                "Failed to parse action response: {}\n\n❌ Expected format:\n{{\n  \"actions\": [\n    {{ \"type\": \"...\", ... }}\n  ]\n}}\n\n❌ Actual response:\n{}",
                 e,
                 clean_json
             )

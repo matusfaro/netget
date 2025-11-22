@@ -298,7 +298,7 @@ async fn test_ipp_basic_http() -> E2EResult<()> {
                 .expect_calls(1)
                 .and()
                 // Mock 2: HTTP GET request (not typical IPP but tests HTTP layer)
-                .on_event("http_request_received")
+                .on_event("ipp_request_received")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "http_response",
