@@ -108,42 +108,54 @@ async fn test_doh_server() -> E2EResult<()> {
             .on_event("doh_query")
             .and_event_data_contains("domain", "example.com")
             .and_event_data_contains("method", "GET")
-            .respond_with_actions(serde_json::json!([
-                {
-                    "type": "send_dns_a_response",
-                    "domain": "example.com",
-                    "ip": "93.184.216.34",
-                    "ttl": 300
-                }
-            ]))
+            .respond_with_actions_from_event(|event_data| {
+                let query_id = event_data["query_id"].as_u64().unwrap_or(0);
+                serde_json::json!([
+                    {
+                        "type": "send_dns_a_response",
+                        "query_id": query_id,
+                        "domain": "example.com",
+                        "ip": "93.184.216.34",
+                        "ttl": 300
+                    }
+                ])
+            })
             .expect_calls(1)
             .and()
             // Mock 2: POST query for example.com - MUST BE SECOND (most specific)
             .on_event("doh_query")
             .and_event_data_contains("domain", "example.com")
             .and_event_data_contains("method", "POST")
-            .respond_with_actions(serde_json::json!([
-                {
-                    "type": "send_dns_a_response",
-                    "domain": "example.com",
-                    "ip": "93.184.216.34",
-                    "ttl": 300
-                }
-            ]))
+            .respond_with_actions_from_event(|event_data| {
+                let query_id = event_data["query_id"].as_u64().unwrap_or(0);
+                serde_json::json!([
+                    {
+                        "type": "send_dns_a_response",
+                        "query_id": query_id,
+                        "domain": "example.com",
+                        "ip": "93.184.216.34",
+                        "ttl": 300
+                    }
+                ])
+            })
             .expect_calls(1)
             .and()
             // Mock 3: Second GET query for test.com - MUST BE THIRD (most specific)
             .on_event("doh_query")
             .and_event_data_contains("domain", "test.com")
             .and_event_data_contains("method", "GET")
-            .respond_with_actions(serde_json::json!([
-                {
-                    "type": "send_dns_a_response",
-                    "domain": "test.com",
-                    "ip": "93.184.216.34",
-                    "ttl": 300
-                }
-            ]))
+            .respond_with_actions_from_event(|event_data| {
+                let query_id = event_data["query_id"].as_u64().unwrap_or(0);
+                serde_json::json!([
+                    {
+                        "type": "send_dns_a_response",
+                        "query_id": query_id,
+                        "domain": "test.com",
+                        "ip": "93.184.216.34",
+                        "ttl": 300
+                    }
+                ])
+            })
             .expect_calls(1)
             .and()
             // Mock 4: Server startup - MUST BE LAST (less specific)

@@ -8,6 +8,7 @@ netget.log
 
 # Local temporary directory (used instead of /tmp for project isolation)
 /tmp/
+/test-results/
 
 logs
 *.log

@@ -351,7 +351,57 @@ Example:
 {"type":"append_to_log","output_name":"access_logs","content":"127.0.0.1 - - [29/Oct/2025:12:34:56 +0000] \"GET /index.html HTTP/1.1\" 200 1234"}
 ```
 
-## 18. read_server_documentation
+## 18. create_database
+
+Create a new SQLite database (in-memory or file-based). Use this to store protocol state (e.g., NFS file system, DNS cache, user sessions). The database persists for the lifetime of the owning server/client, or forever if global. You can execute DDL to create tables during creation.
+
+Parameters:
+- `name` (string, required): Database name (user-friendly identifier). This will be used to construct the filename as './netget_db_<name>.db' for file-based databases.
+- `is_memory` (boolean): true = in-memory database (fast, data lost on close), false = file-based database (persistent, saved to ./netget_db_<name>.db). Defaults to false (file-based).
+- `owner` (string): Owner scope: 'server-N' (auto-deleted when server closes), 'client-N' (auto-deleted when client disconnects), or 'global' (persists across servers/clients). Omit to default to current context.
+- `schema_ddl` (string): SQL DDL statements to create initial schema (e.g., 'CREATE TABLE files (path TEXT PRIMARY KEY, content BLOB);'). Use semicolons to separate multiple statements.
+
+Example:
+```json
+{"type":"create_database","name":"nfs_storage","is_memory":true,"owner":"server-1","schema_ddl":"CREATE TABLE files (path TEXT PRIMARY KEY, content BLOB, size INTEGER, modified INTEGER);"}
+```
+
+## 19. execute_sql
+
+Execute a SQL query on a database. Supports DDL (CREATE/ALTER/DROP), DML (INSERT/UPDATE/DELETE), and DQL (SELECT). Returns results as JSON with columns and rows for SELECT queries, or affected row count for modifications.
+
+Parameters:
+- `database_id` (number, required): Database ID (from create_database response or list_databases). Format: db-N → use N.
+- `query` (string, required): SQL query to execute. Use standard SQLite syntax. Be careful with semicolons (only one statement per execute_sql).
+
+Example:
+```json
+{"type":"execute_sql","database_id":1,"query":"SELECT * FROM files WHERE path LIKE '/home/%'"}
+```
+
+## 20. list_databases
+
+List all active SQLite databases with their schemas, table information, and row counts. Use this to discover available databases and understand their structure before querying.
+
+
+Example:
+```json
+{"type":"list_databases"}
+```
+
+## 21. delete_database
+
+Delete a database and remove its file (if file-based). This is permanent and cannot be undone. Server/client-owned databases are automatically deleted when the owner closes.
+
+Parameters:
+- `database_id` (number, required): Database ID to delete
+
+Example:
+```json
+{"type":"delete_database","database_id":1}
+```
+
+## 22. read_server_documentation
 
 Get detailed documentation for a specific server protocol. Returns comprehensive information including description, startup parameters, examples, and keywords. Use this before calling open_server to understand protocol configuration options. Available server protocols: AMQP, ARP, BLUETOOTH_BLE, BLUETOOTH_BLE_BATTERY, BLUETOOTH_BLE_BEACON, BLUETOOTH_BLE_CYCLING, BLUETOOTH_BLE_DATA_STREAM, BLUETOOTH_BLE_ENVIRONMENTAL, BLUETOOTH_BLE_FILE_TRANSFER, BLUETOOTH_BLE_GAMEPAD, BLUETOOTH_BLE_HEART_RATE, BLUETOOTH_BLE_KEYBOARD, BLUETOOTH_BLE_MOUSE, BLUETOOTH_BLE_PRESENTER, BLUETOOTH_BLE_PROXIMITY, BLUETOOTH_BLE_REMOTE, BLUETOOTH_BLE_RUNNING, BLUETOOTH_BLE_THERMOMETER, BLUETOOTH_BLE_WEIGHT_SCALE, BOOTP, Bitcoin P2P, Cassandra, DC, DHCP, DNS, DataLink, DoH, DoT, DynamoDB, Elasticsearch, Git, HTTP, HTTP2, HTTP3, IGMP, IMAP, IPP, IPSec/IKEv2, IRC, ISIS, JSON-RPC, KAFKA, LDAP, MCP, MQTT, Maven, Mercurial, MySQL, NFS, NNTP, NPM, NTP, OAuth2, OSPF, Ollama, OpenAI, OpenAPI, OpenID, OpenVPN, POP3, PostgreSQL, Proxy, PyPI, RIP, RSS, Redis, S3, SIP, SMB, SMTP, SNMP, SOCKET_FILE, SOCKS5, SQS, SSH, SSH Agent, STUN, SVN, SamlIdp, SamlSp, Syslog, TCP, TLS, TURN, Telnet, Tor Directory, Tor Relay, Torrent-DHT, Torrent-Peer, Torrent-Tracker, UDP, USB-Keyboard, USB-MassStorage, USB-Mouse, USB-Serial, VNC, WHOIS, WebDAV, WireGuard, XML-RPC, XMPP, ZooKeeper, etcd, gRPC, mDNS, usb-fido2
 
@@ -363,9 +413,9 @@ Example:
 {"type":"read_server_documentation","protocol":"HTTP"}
 ```
 
-## 19. read_client_documentation
+## 23. read_client_documentation
 
-Get detailed documentation for a specific client protocol. Returns comprehensive information including description, startup parameters, examples, and keywords. Use this before calling open_client to understand protocol configuration options. Available client protocols: AMQP, ARP, BGP, BOOTP, BitTorrent DHT, BitTorrent Peer Wire, BitTorrent Tracker, Bitcoin, Bluetooth (BLE), Cassandra, DHCP, DNS, DNS-over-HTTPS, DataLink, DoT, Elasticsearch, Git, HTTP, HTTP2, HTTP3, IMAP, IPP, IRC, IS-IS, JSON-RPC, Kubernetes, LDAP, MCP, MQTT, Maven, MySQL, NFS, NNTP, NPM, NTP, OAuth2, Ollama, OpenAI, POP3, PostgreSQL, PyPI, RIP, Redis, S3, SIP, SMTP, SNMP, SOCKS5, SQS, SSH, SSH Agent, STUN, SocketFile, Syslog, TCP, TURN, Telnet, Tor, UDP, USB, VNC, WHOIS, WebDAV, WebRTC, XML-RPC, XMPP, ZooKeeper, etcd, gRPC, igmp, mDNS, nfc, ospf, wireguard
+Get detailed documentation for a specific client protocol. Returns comprehensive information including description, startup parameters, examples, and keywords. Use this before calling open_client to understand protocol configuration options. Available client protocols: AMQP, ARP, BGP, BOOTP, BitTorrent DHT, BitTorrent Peer Wire, BitTorrent Tracker, Bitcoin, Bluetooth (BLE), Cassandra, DHCP, DNS, DNS-over-HTTPS, DataLink, DoT, DynamoDB, Elasticsearch, Git, HTTP, HTTP Proxy, HTTP2, HTTP3, IMAP, IPP, IRC, IS-IS, JSON-RPC, Kafka, Kubernetes, LDAP, MCP, MQTT, Maven, MySQL, NFS, NNTP, NPM, NTP, OAuth2, Ollama, OpenAI, OpenIDConnect, POP3, PostgreSQL, PyPI, RIP, Redis, S3, SAML, SIP, SMB, SMTP, SNMP, SOCKS5, SQS, SSH, SSH Agent, STUN, SocketFile, Syslog, TCP, TURN, Telnet, Tor, UDP, USB, VNC, WHOIS, WebDAV, WebRTC, XML-RPC, XMPP, ZooKeeper, etcd, gRPC, igmp, mDNS, nfc, ospf, wireguard
 
 Parameters:
 - `protocol` (string, required): Client protocol name (e.g., 'http', 'ssh', 'tor', 'dns'). Use lowercase.

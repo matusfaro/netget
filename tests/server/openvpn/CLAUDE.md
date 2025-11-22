@@ -54,7 +54,7 @@ Tests will **fail** (not skip) if:
 - Not running with sufficient privileges for tests requiring root (Unix)
 - TUN interface creation fails
 
-**Result**: Tests require proper environment setup. Install openvpn and run handshake test with sudo.
+**Result**: Tests require proper environment setup. Install openvpn and run with sudo for all tests to pass.
 
 ## Client Library
 

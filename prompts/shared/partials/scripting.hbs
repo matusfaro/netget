@@ -58,7 +58,7 @@ Use scripts when responses are **static and deterministic**:
 {"actions": [{"type": "action_name", "param": "value"}]}
 ```
 
-Use the **same action types** available to you as the LLM. **DO NOT** write raw protocol code.
+**CRITICAL**: Use the **same protocol-specific action types** available to you as the LLM. **DO NOT** use generic actions like "send_data" - instead use the actual action types for your protocol (e.g., "send_tcp_data" for TCP, "send_http_response" for HTTP, "send_dns_a_response" for DNS). Check the available actions for each event type.
 
 **Example script handler:**
 ```json
@@ -83,14 +83,19 @@ Use static handlers for completely predefined responses:
 - Fixed banner responses
 - Redirects to specific URLs
 
-**Example static handler:**
+**IMPORTANT**: Use protocol-specific action types, NOT generic "send_data". For example:
+- TCP: `send_tcp_data`
+- HTTP: `send_http_response`
+- DNS: `send_dns_a_response`
+
+**Example static handler (TCP protocol):**
 ```json
 {
   "event_pattern": "*",
   "handler": {
     "type": "static",
     "actions": [
-      {"type": "send_data", "data": "Welcome to the server!\n"}
+      {"type": "send_tcp_data", "data": "220 Welcome to the server!\r\n"}
     ]
   }
 }
@@ -116,16 +121,16 @@ Use LLM handlers (default) for:
 
 ## Configuration Examples
 
-**Mixed handlers (ANY mode):**
+**Mixed handlers (ANY mode) - TCP protocol example:**
 ```json
 "event_handlers": [
   {
-    "event_pattern": "ssh_auth",
-    "handler": {"type": "script", "language": "python", "code": "..."}
+    "event_pattern": "tcp_connection_opened",
+    "handler": {"type": "static", "actions": [{"type": "send_tcp_data", "data": "220 FTP server ready\r\n"}]}
   },
   {
-    "event_pattern": "ssh_banner",
-    "handler": {"type": "static", "actions": [{"type": "send_data", "data": "SSH-2.0-MyServer\n"}]}
+    "event_pattern": "tcp_data_received",
+    "handler": {"type": "script", "language": "python", "code": "..."}
   },
   {
     "event_pattern": "*",
@@ -144,12 +149,12 @@ Use LLM handlers (default) for:
 ]
 ```
 
-**All static (STATIC mode):**
+**All static (STATIC mode) - HTTP protocol example:**
 ```json
 "event_handlers": [
   {
     "event_pattern": "*",
-    "handler": {"type": "static", "actions": [{"type": "send_data", "data": "Response\n"}]}
+    "handler": {"type": "static", "actions": [{"type": "send_http_response", "status": 200, "headers": {"Content-Type": "text/plain"}, "body": "OK"}]}
   }
 ]
 ```

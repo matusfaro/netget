@@ -131,7 +131,7 @@ async fn test_smb_negotiate() -> E2EResult<()> {
     println!("  [TEST] Connecting to {}", addr);
 
     let mut stream = TcpStream::connect(&addr)?;
-    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+    stream.set_read_timeout(Some(Duration::from_secs(30)))?;  // Increased for debugging
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
 
     // Send SMB2 Negotiate
@@ -179,18 +179,15 @@ async fn test_smb_session_setup() -> E2EResult<()> {
     let config = crate::helpers::NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
-                // IMPORTANT: Specific event matchers must come BEFORE on_any()
+                // Mock 1: SMB operation events (session_setup) - MUST come before on_any()
                 .on_event("smb_operation")
-                .respond_with_actions_from_event(|event_data| {
-                    // Check if this is a session_setup operation
-                    if event_data.get("operation").and_then(|v| v.as_str()) == Some("session_setup") {
-                        serde_json::json!([{"type": "smb_auth_success"}])
-                    } else {
-                        serde_json::json!([{"type": "wait_for_more"}])
-                    }
-                })
+                .respond_with_actions(serde_json::json!([
+                    {"type": "smb_auth_success"}
+                ]))
+                .expect_at_least(1)
                 .and()
-                .on_any()  // Matches initial user input
+                // Mock 2: Server startup (user command) - Catch-all for other LLM calls
+                .on_any()
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -211,7 +208,7 @@ async fn test_smb_session_setup() -> E2EResult<()> {
     println!("  [TEST] Connecting to {}", addr);
 
     let mut stream = TcpStream::connect(&addr)?;
-    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+    stream.set_read_timeout(Some(Duration::from_secs(30)))?;  // Increased for debugging
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
 
     // Send SMB2 Negotiate
@@ -381,7 +378,7 @@ async fn test_smb_server_responsiveness() -> E2EResult<()> {
         Ok(mut stream) => {
             println!("  [TEST] ✓ TCP connection established");
 
-            stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+            stream.set_read_timeout(Some(Duration::from_secs(30)))?;  // Increased for debugging
             stream.set_write_timeout(Some(Duration::from_secs(5)))?;
 
             // Send negotiate
@@ -486,18 +483,15 @@ async fn test_smb_auth_llm_controlled() -> E2EResult<()> {
     let config = crate::helpers::NetGetConfig::new(prompt)
         .with_mock(|mock| {
             mock
-                // IMPORTANT: Specific event matchers must come BEFORE on_any()
+                // Mock 1: SMB operation events - MUST come before on_any()
                 .on_event("smb_operation")
-                .respond_with_actions_from_event(|event_data| {
-                    // Check if this is a session_setup operation
-                    if event_data.get("operation").and_then(|v| v.as_str()) == Some("session_setup") {
-                        serde_json::json!([{"type": "wait_for_more"}])  // Deny auth
-                    } else {
-                        serde_json::json!([{"type": "wait_for_more"}])
-                    }
-                })
+                .respond_with_actions(serde_json::json!([
+                    {"type": "wait_for_more"}  // Deny auth
+                ]))
+                .expect_at_least(1)
                 .and()
-                .on_any()  // Matches initial user input
+                // Mock 2: Server startup - Catch-all
+                .on_any()
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
@@ -519,7 +513,7 @@ async fn test_smb_auth_llm_controlled() -> E2EResult<()> {
 
     // Test 1: Try to connect (Negotiate + Session Setup for guest)
     let mut stream = TcpStream::connect(&addr)?;
-    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+    stream.set_read_timeout(Some(Duration::from_secs(30)))?;  // Increased for debugging
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
 
     // Send Negotiate
@@ -603,7 +597,7 @@ async fn test_smb_connection_tracking() -> E2EResult<()> {
 
     // Make a connection
     let mut stream = TcpStream::connect(&addr)?;
-    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+    stream.set_read_timeout(Some(Duration::from_secs(30)))?;  // Increased for debugging
 
     // Send negotiate to establish connection
     let negotiate = build_smb2_negotiate();

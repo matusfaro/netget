@@ -99,18 +99,20 @@ impl SmbServer {
             .context("Failed to bind SMB TCP listener")?;
 
         let actual_addr = listener.local_addr()?;
+
         info!("SMB server listening on {}", actual_addr);
         let _ = status_tx.send(format!("→ SMB server listening on {}", actual_addr));
 
         // Spawn connection acceptor
         tokio::spawn(async move {
             info!("SMB server connection acceptor started");
-            let _ = status_tx.send("[INFO] SMB connection acceptor loop starting".to_string());
 
             loop {
                 trace!("SMB acceptor: waiting for connection");
+
                 match listener.accept().await {
                     Ok((stream, peer_addr)) => {
+                        eprintln!("[SMB] Connection accepted from {}", peer_addr);
                         info!("SMB connection accepted from {}", peer_addr);
                         let _ =
                             status_tx.send(format!("→ SMB connection from {}", peer_addr));
@@ -122,6 +124,7 @@ impl SmbServer {
                         let status_tx = status_tx.clone();
 
                         tokio::spawn(async move {
+                            eprintln!("[SMB] Handler task started for {}", peer_addr);
                             if let Err(e) = Self::handle_connection(
                                 stream,
                                 peer_addr,
@@ -219,8 +222,10 @@ impl SmbServer {
             // SMB2 header is 64 bytes minimum
             let mut header_buf = vec![0u8; 64];
 
+            eprintln!("[SMB] Reading packet from {}", peer_addr);
             match stream.read_exact(&mut header_buf).await {
                 Ok(_) => {
+                    eprintln!("[SMB] Read 64-byte header from {}", peer_addr);
                     // Update connection stats for received data
                     app_state
                         .update_connection_stats(
@@ -246,7 +251,7 @@ impl SmbServer {
                     debug!("SMB2 command 0x{:04x} from {}", command, peer_addr);
 
                     // Handle SMB2 command
-                    let response = Self::handle_smb2_command(
+                    let response = match Self::handle_smb2_command(
                         command,
                         &header_buf,
                         &mut stream,
@@ -258,28 +263,43 @@ impl SmbServer {
                         &state,
                         &status_tx,
                     )
-                    .await?;
+                    .await {
+                        Ok(r) => r,
+                        Err(e) => {
+                            error!("handle_smb2_command error for 0x{:04x}: {}", command, e);
+                            break;
+                        }
+                    };
 
                     // Send response
                     if let Some(response_data) = response {
-                        stream.write_all(&response_data).await?;
-                        trace!(
-                            "SMB2 response sent to {}, {} bytes",
-                            peer_addr,
-                            response_data.len()
-                        );
+                        eprintln!("[SMB] Sending {}-byte response to {}", response_data.len(), peer_addr);
+                        match stream.write_all(&response_data).await {
+                            Ok(_) => {
+                                eprintln!("[SMB] Response sent, looping back to read next packet");
+                                trace!(
+                                    "SMB2 response sent to {}, {} bytes",
+                                    peer_addr,
+                                    response_data.len()
+                                );
 
-                        // Update connection stats for sent data
-                        app_state
-                            .update_connection_stats(
-                                server_id,
-                                connection_id,
-                                None,
-                                Some(response_data.len() as u64),
-                                None,
-                                Some(1),
-                            )
-                            .await;
+                                // Update connection stats for sent data
+                                app_state
+                                    .update_connection_stats(
+                                        server_id,
+                                        connection_id,
+                                        None,
+                                        Some(response_data.len() as u64),
+                                        None,
+                                        Some(1),
+                                    )
+                                    .await;
+                            }
+                            Err(e) => {
+                                error!("Failed to send response for 0x{:04x}: {}", command, e);
+                                break;
+                            }
+                        }
                     }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
@@ -288,7 +308,6 @@ impl SmbServer {
                 }
                 Err(e) => {
                     error!("SMB read error from {}: {}", peer_addr, e);
-                    let _ = status_tx.send(format!("✗ SMB read error from {}: {}", peer_addr, e));
                     break;
                 }
             }
@@ -362,15 +381,8 @@ impl SmbServer {
 
                 // Read SESSION_SETUP request body (exactly 24 bytes for guest auth)
                 let mut body_buf = [0u8; 24];
-                match _stream.read_exact(&mut body_buf).await {
-                    Ok(_) => {
-                        debug!("SESSION_SETUP body: 24 bytes consumed");
-                        let _ = status_tx.send("[DEBUG] SESSION_SETUP body read successfully".to_string());
-                    }
-                    Err(e) => {
-                        warn!("Error reading SESSION_SETUP body: {} - continuing anyway", e);
-                        let _ = status_tx.send(format!("[WARN] SESSION_SETUP body read error: {}", e));
-                    }
+                if let Err(e) = _stream.read_exact(&mut body_buf).await {
+                    warn!("Error reading SESSION_SETUP body: {} - continuing anyway", e);
                 }
                 let bytes_read = body_buf.len();
 
@@ -384,7 +396,7 @@ impl SmbServer {
                 let _ = status_tx.send(format!("[INFO] SMB auth attempt: {}", username));
 
                 // Consult LLM to check if this user should be authenticated
-                let actions = Self::consult_llm(
+                let actions = match Self::consult_llm(
                     _llm_client,
                     _app_state,
                     _server_id,
@@ -396,7 +408,17 @@ impl SmbServer {
                     }),
                     status_tx,
                 )
-                .await?;
+                .await {
+                    Ok(actions) => actions,
+                    Err(e) => {
+                        warn!("LLM error during SMB authentication for user {}: {}", username, e);
+                        let _ = status_tx.send(format!("[WARN] LLM error: {} - denying auth", e));
+
+                        // Send AUTH_DENIED response instead of closing connection
+                        let response = Self::build_auth_denied_response(_header)?;
+                        return Ok(Some(response));
+                    }
+                };
 
                 // Check if LLM allowed the authentication
                 let auth_allowed = actions.iter().any(|a| {

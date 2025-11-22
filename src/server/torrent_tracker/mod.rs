@@ -266,27 +266,38 @@ impl TorrentTrackerServer {
             let query = &path[query_start + 1..];
             for param in query.split('&') {
                 if let Some(eq_pos) = param.find('=') {
-                    let key = urlencoding::decode(&param[..eq_pos])?.into_owned();
-                    let value = urlencoding::decode(&param[eq_pos + 1..])?.into_owned();
+                    // Decode key (always UTF-8)
+                    let key = urlencoding::decode(&param[..eq_pos])
+                        .unwrap_or_else(|_| std::borrow::Cow::Borrowed(&param[..eq_pos]))
+                        .into_owned();
 
-                    // Special handling for binary fields (info_hash, peer_id)
+                    // For binary fields (info_hash, peer_id), manually percent-decode without UTF-8 validation
                     if key == "info_hash" || key == "peer_id" {
-                        params.insert(key, serde_json::json!(hex::encode(value.as_bytes())));
-                    } else if key == "port"
-                        || key == "uploaded"
-                        || key == "downloaded"
-                        || key == "left"
-                        || key == "numwant"
-                        || key == "compact"
-                    {
-                        // Numeric fields
-                        if let Ok(num) = value.parse::<u64>() {
-                            params.insert(key, serde_json::json!(num));
+                        let value_str = &param[eq_pos + 1..];
+                        let bytes = percent_decode_bytes(value_str);
+                        params.insert(key, serde_json::json!(hex::encode(&bytes)));
+                    } else {
+                        // For other fields, decode as UTF-8
+                        let value = urlencoding::decode(&param[eq_pos + 1..])
+                            .unwrap_or_else(|_| std::borrow::Cow::Borrowed(&param[eq_pos + 1..]))
+                            .into_owned();
+
+                        if key == "port"
+                            || key == "uploaded"
+                            || key == "downloaded"
+                            || key == "left"
+                            || key == "numwant"
+                            || key == "compact"
+                        {
+                            // Numeric fields
+                            if let Ok(num) = value.parse::<u64>() {
+                                params.insert(key, serde_json::json!(num));
+                            } else {
+                                params.insert(key, serde_json::json!(value));
+                            }
                         } else {
                             params.insert(key, serde_json::json!(value));
                         }
-                    } else {
-                        params.insert(key, serde_json::json!(value));
                     }
                 }
             }
@@ -294,4 +305,31 @@ impl TorrentTrackerServer {
 
         Ok((request_type.to_string(), params))
     }
+}
+
+/// Percent-decode bytes without UTF-8 validation (for binary fields like info_hash)
+fn percent_decode_bytes(s: &str) -> Vec<u8> {
+    let mut result = Vec::new();
+    let mut chars = s.chars();
+
+    while let Some(ch) = chars.next() {
+        if ch == '%' {
+            // Read next two hex digits
+            let hex: String = chars.by_ref().take(2).collect();
+            if hex.len() == 2 {
+                if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                    result.push(byte);
+                    continue;
+                }
+            }
+            // If parsing failed, just add the '%' and hex chars as-is
+            result.push(b'%');
+            result.extend(hex.bytes());
+        } else {
+            // Non-escaped character
+            result.extend(ch.to_string().bytes());
+        }
+    }
+
+    result
 }

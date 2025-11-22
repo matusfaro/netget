@@ -145,7 +145,20 @@ Respond with appropriate etcd_range_response, etcd_put_response, etc. actions.
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 8: Range query /config/ (returns multiple keys)
+                // Mock 8: GET /config/timeout after delete (returns empty) - MUST BE BEFORE range query
+                .on_event("etcd_range_request")
+                .and_event_data_contains("key", "/config/timeout")
+                .respond_with_actions(json!([
+                    {
+                        "type": "etcd_range_response",
+                        "kvs": [],
+                        "more": false,
+                        "count": 0
+                    }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 9: Range query /config/ (returns multiple keys) - MUST BE AFTER exact key matches
                 .on_event("etcd_range_request")
                 .and_event_data_contains("key", "/config/")
                 .respond_with_actions(json!([
@@ -183,26 +196,13 @@ Respond with appropriate etcd_range_response, etcd_put_response, etc. actions.
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 9: DELETE /config/timeout
+                // Mock 10: DELETE /config/timeout
                 .on_event("etcd_delete_request")
                 .and_event_data_contains("key", "/config/timeout")
                 .respond_with_actions(json!([
                     {
                         "type": "etcd_delete_range_response",
                         "deleted": 1
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 10: GET /config/timeout after delete (returns empty)
-                .on_event("etcd_range_request")
-                .and_event_data_contains("key", "/config/timeout")
-                .respond_with_actions(json!([
-                    {
-                        "type": "etcd_range_response",
-                        "kvs": [],
-                        "more": false,
-                        "count": 0
                     }
                 ]))
                 .expect_calls(1)

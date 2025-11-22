@@ -90,7 +90,7 @@ IMPORTANT: Respond with the generate_rss_feed action containing all the feed dat
     .with_mock(|mock| {
         mock
             // Mock 1: GET /tech-news.xml - MUST BE FIRST (most specific)
-            .on_event("http_request")
+            .on_event("rss_feed_requested")
             .and_event_data_contains("path", "/tech-news.xml")
             .respond_with_actions(serde_json::json!([
                 {
@@ -129,7 +129,7 @@ IMPORTANT: Respond with the generate_rss_feed action containing all the feed dat
             .expect_calls(2)
             .and()
             // Mock 2: GET /sports.xml - MUST BE SECOND (most specific)
-            .on_event("http_request")
+            .on_event("rss_feed_requested")
             .and_event_data_contains("path", "/sports.xml")
             .respond_with_actions(serde_json::json!([
                 {
@@ -158,7 +158,7 @@ IMPORTANT: Respond with the generate_rss_feed action containing all the feed dat
             .expect_calls(1)
             .and()
             // Mock 3: GET /blog.xml - MUST BE THIRD (most specific)
-            .on_event("http_request")
+            .on_event("rss_feed_requested")
             .and_event_data_contains("path", "/blog.xml")
             .respond_with_actions(serde_json::json!([
                 {
@@ -190,7 +190,7 @@ IMPORTANT: Respond with the generate_rss_feed action containing all the feed dat
             .expect_calls(1)
             .and()
             // Mock 4: GET /nonexistent.xml (404) - MUST BE FOURTH (most specific)
-            .on_event("http_request")
+            .on_event("rss_feed_requested")
             .and_event_data_contains("path", "/nonexistent.xml")
             .respond_with_actions(serde_json::json!([
                 {

@@ -242,8 +242,13 @@ impl MockOllamaServer {
                 error_msg.push('\n');
             }
 
-            // Get call history for debugging
-            let history = config.call_history.lock().await;
+            // Get call history for debugging (with timeout to prevent deadlock)
+            let history = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                config.call_history.lock()
+            )
+            .await
+            .map_err(|_| "Timeout acquiring call history lock (deadlock detected)")?;
             if !history.is_empty() {
                 error_msg.push_str("\nAll LLM call history:\n");
                 for (idx, call) in history.iter().enumerate() {
@@ -283,19 +288,26 @@ async fn handle_chat(
     eprintln!("  instruction: {}", &context.instruction[..context.instruction.len().min(200)]);
     eprintln!("  prompt preview: {}", &context.prompt[..context.prompt.len().min(500)]);
 
-    // Get mock response
-    let config = state.config.lock().await;
+    // Get mock response (using synchronous matching to avoid holding lock across await)
+    let match_result = {
+        let config = state.config.lock().await;
 
-    // DEBUG: Log all rules and their match status
-    eprintln!("🔍 Checking {} mock rules:", config.rules.len());
-    for (idx, rule) in config.rules.iter().enumerate() {
-        let matches = rule.matches(&context);
-        eprintln!("  Rule #{}: {} -> {}", idx, rule.describe(), if matches { "✅ MATCH" } else { "❌ no match" });
-    }
+        // DEBUG: Log all rules and their match status
+        eprintln!("🔍 Checking {} mock rules:", config.rules.len());
+        for (idx, rule) in config.rules.iter().enumerate() {
+            let matches = rule.matches(&context);
+            eprintln!("  Rule #{}: {} -> {}", idx, rule.describe(), if matches { "✅ MATCH" } else { "❌ no match" });
+        }
 
-    let mock_response = match config.find_match(&context).await {
-        Some((idx, response)) => {
+        config.find_match_sync(&context)
+    }; // Lock is dropped here!
+
+    // Record call history AFTER releasing config lock
+    let mock_response = match match_result {
+        Some((idx, response, description)) => {
             eprintln!("✅ Using matched rule #{}", idx);
+            // Record call in separate lock acquisition
+            state.config.lock().await.record_call(context.clone(), idx, description).await;
             response
         },
         None => {
@@ -355,19 +367,26 @@ async fn handle_generate(
     let last_500: String = request.prompt.chars().skip(skip_count).collect();
     eprintln!("  prompt last 500 chars: {}", last_500);
 
-    // Get mock response
-    let config = state.config.lock().await;
+    // Get mock response (using synchronous matching to avoid holding lock across await)
+    let match_result = {
+        let config = state.config.lock().await;
 
-    // DEBUG: Log all rules and their match status
-    eprintln!("🔍 Checking {} mock rules:", config.rules.len());
-    for (idx, rule) in config.rules.iter().enumerate() {
-        let matches = rule.matches(&context);
-        eprintln!("  Rule #{}: {} -> {}", idx, rule.describe(), if matches { "✅ MATCH" } else { "❌ no match" });
-    }
+        // DEBUG: Log all rules and their match status
+        eprintln!("🔍 Checking {} mock rules:", config.rules.len());
+        for (idx, rule) in config.rules.iter().enumerate() {
+            let matches = rule.matches(&context);
+            eprintln!("  Rule #{}: {} -> {}", idx, rule.describe(), if matches { "✅ MATCH" } else { "❌ no match" });
+        }
 
-    let mock_response = match config.find_match(&context).await {
-        Some((idx, response)) => {
+        config.find_match_sync(&context)
+    }; // Lock is dropped here!
+
+    // Record call history AFTER releasing config lock
+    let mock_response = match match_result {
+        Some((idx, response, description)) => {
             eprintln!("✅ Using matched rule #{}", idx);
+            // Record call in separate lock acquisition
+            state.config.lock().await.record_call(context.clone(), idx, description).await;
             response
         },
         None => {

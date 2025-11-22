@@ -107,18 +107,15 @@ async fn test_smb_llm_allows_guest_auth() -> E2EResult<()> {
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    // IMPORTANT: Specific event matchers must come BEFORE on_any()
+                    // Mock 1: SMB operations - MUST come before on_any()
                     .on_event("smb_operation")
-                    .respond_with_actions_from_event(|event_data| {
-                        // Check if this is a session_setup operation
-                        if event_data.get("operation").and_then(|v| v.as_str()) == Some("session_setup") {
-                            serde_json::json!([{"type": "smb_auth_success"}])
-                        } else {
-                            serde_json::json!([{"type": "wait_for_more"}])
-                        }
-                    })
+                    .respond_with_actions(serde_json::json!([
+                        {"type": "smb_auth_success"}
+                    ]))
+                    .expect_at_least(1)
                     .and()
-                    .on_any()  // Matches initial user input
+                    // Mock 2: Server startup - Catch-all
+                    .on_any()
                     .respond_with_actions(serde_json::json!([
                         {"type": "open_server", "port": 0, "base_stack": "SMB", "instruction": "Allow all auth"}
                     ]))
@@ -197,18 +194,15 @@ async fn test_smb_llm_denies_user() -> E2EResult<()> {
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    // IMPORTANT: Specific event matchers must come BEFORE on_any()
+                    // Mock 1: SMB operations - MUST come before on_any()
                     .on_event("smb_operation")
-                    .respond_with_actions_from_event(|event_data| {
-                        // Check if this is a session_setup operation
-                        if event_data.get("operation").and_then(|v| v.as_str()) == Some("session_setup") {
-                            serde_json::json!([{"type": "smb_auth_denied", "status": 0xC0000016u32 as i32}])
-                        } else {
-                            serde_json::json!([{"type": "wait_for_more"}])
-                        }
-                    })
+                    .respond_with_actions(serde_json::json!([
+                        {"type": "smb_auth_denied", "status": 0xC0000016u32 as i32}
+                    ]))
+                    .expect_at_least(1)
                     .and()
-                    .on_any()  // Matches initial user input
+                    // Mock 2: Server startup - Catch-all
+                    .on_any()
                     .respond_with_actions(serde_json::json!([
                         {"type": "open_server", "port": 0, "base_stack": "SMB", "instruction": "Allow alice only"}
                     ]))

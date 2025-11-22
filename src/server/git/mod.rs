@@ -342,6 +342,7 @@ Provide references for this repository."#,
             &model_str,
             &prompt,
             r#"[{"type": "git_advertise_refs", ...}]"#,
+            1, // max_retries
         )
         .await
     {
@@ -511,7 +512,7 @@ Generate a pack file response."#,
         }
     };
     let llm_response = match llm_client
-        .generate_with_retry(&model_str, &prompt, r#"[{"type": "git_send_pack", ...}]"#)
+        .generate_with_retry(&model_str, &prompt, r#"[...]"#, 1)
         .await
     {
         Ok(response) => response,

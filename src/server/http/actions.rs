@@ -129,7 +129,7 @@ impl HttpProtocol {
 fn send_http_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_http_response".to_string(),
-        description: "Send an HTTP response to the current request".to_string(),
+        description: "IMPORTANT: Use this action to respond to HTTP requests. This is the ONLY correct action for HTTP responses - do NOT use generic 'send_data' or 'show_message' actions to send HTTP responses. Always specify status code, headers (especially Content-Type), and body content.".to_string(),
         parameters: vec![
             Parameter {
                 name: "status".to_string(),
@@ -140,13 +140,13 @@ fn send_http_response_action() -> ActionDefinition {
             Parameter {
                 name: "headers".to_string(),
                 type_hint: "object".to_string(),
-                description: "Response headers as key-value pairs".to_string(),
+                description: "Response headers as key-value pairs (e.g., {\"Content-Type\": \"text/html\"})".to_string(),
                 required: false,
             },
             Parameter {
                 name: "body".to_string(),
                 type_hint: "string".to_string(),
-                description: "Response body".to_string(),
+                description: "Response body content (HTML, JSON, text, etc.)".to_string(),
                 required: true,
             },
         ],
@@ -202,6 +202,30 @@ pub static HTTP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
             },
         ])
         .with_actions(vec![SEND_HTTP_RESPONSE_ACTION.clone()])
+        .with_typical_example(serde_json::json!({
+            "type": "send_http_response",
+            "status": 200,
+            "headers": {
+                "Content-Type": "text/html"
+            },
+            "body": "<html><body>Hello World</body></html>"
+        }))
+        .with_optional_example(serde_json::json!({
+            "type": "send_http_response",
+            "status": 404,
+            "headers": {
+                "Content-Type": "text/plain"
+            },
+            "body": "Not Found"
+        }))
+        .with_optional_example(serde_json::json!({
+            "type": "send_http_response",
+            "status": 201,
+            "headers": {
+                "Content-Type": "application/json"
+            },
+            "body": "{\"status\": \"created\"}"
+        }))
 });
 
 /// Get HTTP event types
