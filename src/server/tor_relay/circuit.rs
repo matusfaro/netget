@@ -525,6 +525,28 @@ impl CircuitManager {
         circuit.stream_manager.create_stream(stream_id, target)
     }
 
+    /// Create directory stream in circuit (BEGIN_DIR)
+    pub async fn create_directory_stream(
+        &self,
+        circuit_id: CircuitId,
+        stream_id: StreamId,
+    ) -> Result<()> {
+        let mut circuits = self.circuits.lock().await;
+        let circuit = circuits.get_mut(&circuit_id).context("Circuit not found")?;
+
+        // Create stream with "directory" as target
+        circuit.stream_manager.create_stream(stream_id, "directory".to_string())?;
+
+        // Set it as directory stream
+        let stream = circuit
+            .stream_manager
+            .get_mut(stream_id)
+            .context("Stream not found")?;
+        stream.set_directory();
+
+        Ok(())
+    }
+
     /// Set stream as active with TCP connection
     pub async fn set_stream_active(
         &self,
@@ -559,6 +581,59 @@ impl CircuitManager {
             .context("Stream not found")?;
 
         Ok(stream.connection())
+    }
+
+    /// Check if stream is a directory stream (BEGIN_DIR)
+    pub async fn is_directory_stream(
+        &self,
+        circuit_id: CircuitId,
+        stream_id: StreamId,
+    ) -> Result<bool> {
+        let circuits = self.circuits.lock().await;
+        let circuit = circuits.get(&circuit_id).context("Circuit not found")?;
+
+        let stream = circuit
+            .stream_manager
+            .get(stream_id)
+            .context("Stream not found")?;
+
+        Ok(stream.is_directory())
+    }
+
+    /// Append data to directory stream request buffer
+    pub async fn append_directory_data(
+        &self,
+        circuit_id: CircuitId,
+        stream_id: StreamId,
+        data: &[u8],
+    ) -> Result<()> {
+        let mut circuits = self.circuits.lock().await;
+        let circuit = circuits.get_mut(&circuit_id).context("Circuit not found")?;
+
+        let stream = circuit
+            .stream_manager
+            .get_mut(stream_id)
+            .context("Stream not found")?;
+
+        stream.append_request_data(data);
+        Ok(())
+    }
+
+    /// Get accumulated directory request data
+    pub async fn get_directory_request(
+        &self,
+        circuit_id: CircuitId,
+        stream_id: StreamId,
+    ) -> Result<Vec<u8>> {
+        let circuits = self.circuits.lock().await;
+        let circuit = circuits.get(&circuit_id).context("Circuit not found")?;
+
+        let stream = circuit
+            .stream_manager
+            .get(stream_id)
+            .context("Stream not found")?;
+
+        Ok(stream.get_request_data().unwrap_or(&[]).to_vec())
     }
 
     /// Close stream

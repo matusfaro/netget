@@ -32,6 +32,17 @@ pub enum StreamState {
         /// Count of DATA cells received (for SENDME triggering)
         data_cells_received: u16,
     },
+    /// Directory stream (BEGIN_DIR) - serves directory documents over circuit
+    Directory {
+        /// Accumulated HTTP request data
+        request_data: Vec<u8>,
+        /// Package window
+        package_window: u16,
+        /// Deliver window
+        deliver_window: u16,
+        /// Count of DATA cells received
+        data_cells_received: u16,
+    },
     /// Stream is closing
     Closing,
     /// Stream is closed
@@ -74,9 +85,24 @@ impl Stream {
         };
     }
 
+    /// Set stream as directory stream (BEGIN_DIR)
+    pub fn set_directory(&mut self) {
+        self.state = StreamState::Directory {
+            request_data: Vec::new(),
+            package_window: STREAM_WINDOW_START,
+            deliver_window: STREAM_WINDOW_START,
+            data_cells_received: 0,
+        };
+    }
+
     /// Check if stream is active
     pub fn is_active(&self) -> bool {
         matches!(self.state, StreamState::Active { .. })
+    }
+
+    /// Check if stream is directory stream
+    pub fn is_directory(&self) -> bool {
+        matches!(self.state, StreamState::Directory { .. })
     }
 
     /// Get TCP connection if active
@@ -108,50 +134,81 @@ impl Stream {
 
     /// Record DATA cell received - returns true if SENDME should be sent
     pub fn record_data_received(&mut self) -> bool {
-        if let StreamState::Active {
-            deliver_window,
-            data_cells_received,
-            ..
-        } = &mut self.state
-        {
-            *deliver_window = deliver_window.saturating_sub(1);
-            *data_cells_received += 1;
-
-            // Send SENDME every STREAM_WINDOW_INCREMENT cells
-            if *data_cells_received >= STREAM_WINDOW_INCREMENT {
-                *data_cells_received = 0;
-                *deliver_window += STREAM_WINDOW_INCREMENT;
-                return true;
+        match &mut self.state {
+            StreamState::Active {
+                deliver_window,
+                data_cells_received,
+                ..
             }
+            | StreamState::Directory {
+                deliver_window,
+                data_cells_received,
+                ..
+            } => {
+                *deliver_window = deliver_window.saturating_sub(1);
+                *data_cells_received += 1;
+
+                // Send SENDME every STREAM_WINDOW_INCREMENT cells
+                if *data_cells_received >= STREAM_WINDOW_INCREMENT {
+                    *data_cells_received = 0;
+                    *deliver_window += STREAM_WINDOW_INCREMENT;
+                    return true;
+                }
+            }
+            _ => {}
         }
         false
     }
 
     /// Process received SENDME - increment package window
     pub fn process_sendme(&mut self) {
-        if let StreamState::Active { package_window, .. } = &mut self.state {
-            *package_window += STREAM_WINDOW_INCREMENT;
-            trace!(
-                "Stream {} package window increased to {}",
-                self.id.as_u16(),
-                package_window
-            );
+        match &mut self.state {
+            StreamState::Active { package_window, .. }
+            | StreamState::Directory { package_window, .. } => {
+                *package_window += STREAM_WINDOW_INCREMENT;
+                trace!(
+                    "Stream {} package window increased to {}",
+                    self.id.as_u16(),
+                    package_window
+                );
+            }
+            _ => {}
         }
     }
 
     /// Check if we can send DATA (package window > 0)
     pub fn can_send_data(&self) -> bool {
-        if let StreamState::Active { package_window, .. } = &self.state {
-            *package_window > 0
-        } else {
-            false
+        match &self.state {
+            StreamState::Active { package_window, .. }
+            | StreamState::Directory { package_window, .. } => *package_window > 0,
+            _ => false,
         }
     }
 
     /// Decrement package window when sending DATA
     pub fn consume_package_window(&mut self) {
-        if let StreamState::Active { package_window, .. } = &mut self.state {
-            *package_window = package_window.saturating_sub(1);
+        match &mut self.state {
+            StreamState::Active { package_window, .. }
+            | StreamState::Directory { package_window, .. } => {
+                *package_window = package_window.saturating_sub(1);
+            }
+            _ => {}
+        }
+    }
+
+    /// Append HTTP request data for directory stream
+    pub fn append_request_data(&mut self, data: &[u8]) {
+        if let StreamState::Directory { request_data, .. } = &mut self.state {
+            request_data.extend_from_slice(data);
+        }
+    }
+
+    /// Get accumulated HTTP request data for directory stream
+    pub fn get_request_data(&self) -> Option<&[u8]> {
+        if let StreamState::Directory { request_data, .. } = &self.state {
+            Some(request_data)
+        } else {
+            None
         }
     }
 }

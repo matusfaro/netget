@@ -576,6 +576,9 @@ impl TorRelaySession {
             relay_command::BEGIN => {
                 return self.handle_begin_cell(circuit_id, stream_id, data).await;
             }
+            relay_command::BEGIN_DIR => {
+                return self.handle_begin_dir_cell(circuit_id, stream_id).await;
+            }
             relay_command::DATA => {
                 return self.handle_data_cell(circuit_id, stream_id, data).await;
             }
@@ -730,7 +733,47 @@ impl TorRelaySession {
         }
     }
 
-    /// Handle DATA cell - forward data to TCP connection
+    /// Handle BEGIN_DIR cell - create directory stream for serving consensus
+    async fn handle_begin_dir_cell(
+        &mut self,
+        circuit_id: CircuitId,
+        stream_id: StreamId,
+    ) -> Result<Option<Vec<u8>>> {
+        info!(
+            "BEGIN_DIR stream {} on circuit {} (directory request over circuit)",
+            stream_id.as_u16(),
+            circuit_id.as_u32()
+        );
+        let _ = self.status_tx.send(format!(
+            "[INFO] BEGIN_DIR stream {} (directory over circuit)",
+            stream_id.as_u16()
+        ));
+
+        // Create directory stream in circuit manager
+        self.circuit_manager
+            .create_directory_stream(circuit_id, stream_id)
+            .await?;
+
+        info!("Directory stream {} ready on circuit {}", stream_id.as_u16(), circuit_id.as_u32());
+
+        // Build CONNECTED response (same as normal stream)
+        let connected_cell = build_relay_cell(
+            circuit_id.as_u32(),
+            stream_id.as_u16(),
+            relay_command::CONNECTED,
+            &[],
+        );
+
+        // Encrypt response
+        let mut encrypted = connected_cell.clone();
+        self.circuit_manager
+            .encrypt_relay_cell(circuit_id, &mut encrypted[5..514])
+            .await?;
+
+        Ok(Some(encrypted))
+    }
+
+    /// Handle DATA cell - forward data to TCP connection or handle directory request
     async fn handle_data_cell(
         &mut self,
         circuit_id: CircuitId,
@@ -767,6 +810,11 @@ impl TorRelaySession {
                 .await?;
             let _ = self.circuit_manager.record_sent(circuit_id, 509).await;
             let _ = self.outgoing_tx.send(encrypted);
+        }
+
+        // Check if this is a directory stream (BEGIN_DIR)
+        if self.circuit_manager.is_directory_stream(circuit_id, stream_id).await? {
+            return self.handle_directory_data(circuit_id, stream_id, data).await;
         }
 
         // Get TCP connection for this stream
@@ -816,6 +864,105 @@ impl TorRelaySession {
         }
 
         Ok(None)
+    }
+
+    /// Handle directory stream DATA - accumulate HTTP request and respond
+    async fn handle_directory_data(
+        &mut self,
+        circuit_id: CircuitId,
+        stream_id: StreamId,
+        data: &[u8],
+    ) -> Result<Option<Vec<u8>>> {
+        // Append data to directory request buffer
+        self.circuit_manager
+            .append_directory_data(circuit_id, stream_id, data)
+            .await?;
+
+        // Get accumulated request
+        let request_data = self
+            .circuit_manager
+            .get_directory_request(circuit_id, stream_id)
+            .await?;
+
+        // Check if we have a complete HTTP request (ends with \r\n\r\n)
+        if let Some(pos) = request_data.windows(4).position(|w| w == b"\r\n\r\n") {
+            // Extract HTTP request line
+            let request_str = String::from_utf8_lossy(&request_data[..pos]);
+            let first_line = request_str.lines().next().unwrap_or("");
+
+            debug!("Directory request: {}", first_line);
+
+            // Parse HTTP method and path
+            let parts: Vec<&str> = first_line.split_whitespace().collect();
+            let (_method, path) = if parts.len() >= 2 {
+                (parts[0], parts[1])
+            } else {
+                ("GET", "/")
+            };
+
+            // Generate consensus response
+            // TODO: Call LLM to generate dynamic consensus based on path and instruction
+            let consensus = if path.contains("consensus") {
+                Self::generate_test_consensus()
+            } else {
+                b"HTTP/1.0 404 Not Found\r\n\r\n".to_vec()
+            };
+
+            info!("Serving {} response ({} bytes) for directory path: {}",
+                  if path.contains("consensus") { "consensus" } else { "404" },
+                  consensus.len(),
+                  path);
+
+            // Send response as DATA cells
+            self.send_directory_response(circuit_id, stream_id, &consensus)
+                .await?;
+
+            // Close stream after response
+            let end_cell = build_relay_cell(
+                circuit_id.as_u32(),
+                stream_id.as_u16(),
+                relay_command::END,
+                &[end_reason::DONE],
+            );
+
+            let mut encrypted = end_cell.clone();
+            self.circuit_manager
+                .encrypt_relay_cell(circuit_id, &mut encrypted[5..514])
+                .await?;
+
+            return Ok(Some(encrypted));
+        }
+
+        Ok(None)
+    }
+
+    /// Send directory response data as multiple DATA cells
+    async fn send_directory_response(
+        &mut self,
+        circuit_id: CircuitId,
+        stream_id: StreamId,
+        data: &[u8],
+    ) -> Result<()> {
+        const MAX_RELAY_PAYLOAD: usize = 498; // tor-spec: relay cell payload max
+
+        for chunk in data.chunks(MAX_RELAY_PAYLOAD) {
+            let data_cell = build_relay_cell(
+                circuit_id.as_u32(),
+                stream_id.as_u16(),
+                relay_command::DATA,
+                chunk,
+            );
+
+            let mut encrypted = data_cell.clone();
+            self.circuit_manager
+                .encrypt_relay_cell(circuit_id, &mut encrypted[5..514])
+                .await?;
+
+            self.outgoing_tx.send(encrypted)?;
+            let _ = self.circuit_manager.record_sent(circuit_id, 509).await;
+        }
+
+        Ok(())
     }
 
     /// Handle END cell - close stream
@@ -875,6 +1022,87 @@ impl TorRelaySession {
                 .await;
         }
         Ok(None)
+    }
+
+    /// Generate a test consensus document for Arti bootstrap
+    /// Returns HTTP response with minimal but valid consensus
+    fn generate_test_consensus() -> Vec<u8> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        // Get current time for valid-after/until
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let hour = now - (now % 3600); // Round down to hour
+
+        // Format timestamps (RFC 3339 style for Tor)
+        let valid_after = chrono::DateTime::from_timestamp(hour as i64, 0)
+            .unwrap()
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        let fresh_until = chrono::DateTime::from_timestamp((hour + 3600) as i64, 0)
+            .unwrap()
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        let valid_until = chrono::DateTime::from_timestamp((hour + 10800) as i64, 0)
+            .unwrap()
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+
+        let consensus_body = format!(
+            "network-status-version 3\n\
+             vote-status consensus\n\
+             consensus-method 35\n\
+             valid-after {}\n\
+             fresh-until {}\n\
+             valid-until {}\n\
+             voting-delay 300 300\n\
+             client-versions 0.4.7.0-alpha-dev,0.4.8.0\n\
+             server-versions 0.4.7.0-alpha-dev,0.4.8.0\n\
+             known-flags Authority BadExit Exit Fast Guard HSDir NoEdConsensus Running Stable StaleDesc Sybil V2Dir Valid\n\
+             params CircuitPriorityHalflifeMsec=30000 DoSCircuitCreationEnabled=1 DoSConnectionEnabled=1\n\
+             r TestRelay1 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= 127.0.0.1 9001 127.0.0.1 9030\n\
+             s Exit Fast Guard HSDir Running Stable V2Dir Valid\n\
+             v Tor 0.4.8.0\n\
+             w Bandwidth=5000\n\
+             p accept 1-65535\n\
+             r TestRelay2 BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB= 127.0.0.2 9001 127.0.0.2 9030\n\
+             s Exit Fast Guard HSDir Running Stable V2Dir Valid\n\
+             v Tor 0.4.8.0\n\
+             w Bandwidth=5000\n\
+             p accept 1-65535\n\
+             r TestRelay3 CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC= 127.0.0.3 9001 127.0.0.3 9030\n\
+             s Exit Fast Guard HSDir Running Stable V2Dir Valid\n\
+             v Tor 0.4.8.0\n\
+             w Bandwidth=5000\n\
+             p accept 1-65535\n\
+             r TestRelay4 DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD= 127.0.0.4 9001 127.0.0.4 9030\n\
+             s Exit Fast Guard HSDir Running Stable V2Dir Valid\n\
+             v Tor 0.4.8.0\n\
+             w Bandwidth=5000\n\
+             p accept 1-65535\n\
+             directory-footer\n\
+             bandwidth-weights Wbd=0 Wbe=0 Wbg=4096 Wbm=10000 Wdb=10000 Web=10000 Wed=10000 Wee=10000 Weg=10000 Wem=10000 Wgb=10000 Wgd=0 Wgg=5920 Wgm=5920 Wmb=10000 Wmd=0 Wme=0 Wmg=4096 Wmm=10000\n\
+             directory-signature 0000000000000000000000000000000000000000 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n\
+             -----BEGIN SIGNATURE-----\n\
+             AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n\
+             -----END SIGNATURE-----\n",
+            valid_after, fresh_until, valid_until
+        );
+
+        // Build HTTP response
+        let http_response = format!(
+            "HTTP/1.0 200 OK\r\n\
+             Content-Type: text/plain\r\n\
+             Content-Length: {}\r\n\
+             \r\n\
+             {}",
+            consensus_body.len(),
+            consensus_body
+        );
+
+        http_response.into_bytes()
     }
 
     /// Spawn background task to forward data from TCP connection back to Tor client

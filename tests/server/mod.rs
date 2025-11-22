@@ -169,8 +169,6 @@ pub mod telnet;
 #[cfg(feature = "tftp")]
 pub mod tftp;
 #[cfg(feature = "tor")]
-pub mod tor_directory;
-#[cfg(feature = "tor")]
 pub mod tor_integration;
 #[cfg(feature = "tor")]
 pub mod tor_relay;

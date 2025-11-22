@@ -34,6 +34,8 @@ pub mod tcp;
 pub mod telnet;
 #[cfg(feature = "tls")]
 pub mod tls;
+#[cfg(feature = "tor")]
+pub mod tor;
 #[cfg(feature = "webrtc")]
 pub mod webrtc;
 #[cfg(feature = "wireguard")]
