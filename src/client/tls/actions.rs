@@ -183,20 +183,8 @@ impl Protocol for TlsClientProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "tls_client_connected".to_string(),
-                description: "Triggered when TLS client completes handshake with server"
-                    .to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "tls_client_data_received".to_string(),
-                description: "Triggered when TLS client receives decrypted data from server"
-                    .to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("tls_client_connected", "Triggered when TLS client completes handshake with server"),
+            EventType::new("tls_client_data_received", "Triggered when TLS client receives decrypted data from server"),
         ]
     }
 

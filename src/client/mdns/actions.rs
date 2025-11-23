@@ -167,13 +167,7 @@ impl Protocol for MdnsClientProtocol {
         vec![
             EventType::new("mdns_connected", "Triggered when mDNS client is initialized"),
             EventType::new("mdns_service_found", "Triggered when an mDNS service is discovered"),
-            EventType {
-                id: "mdns_service_resolved".to_string(),
-                description: "Triggered when an mDNS service is fully resolved with IP and port"
-                    .to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("mdns_service_resolved", "Triggered when an mDNS service is fully resolved with IP and port"),
         ]
     }
     fn stack_name(&self) -> &'static str {

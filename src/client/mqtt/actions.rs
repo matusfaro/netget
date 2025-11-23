@@ -242,13 +242,7 @@ impl Protocol for MqttClientProtocol {
         vec![
             EventType::new("mqtt_connected", "Triggered when MQTT client connects to broker"),
             EventType::new("mqtt_message_received", "Triggered when MQTT client receives a published message"),
-            EventType {
-                id: "mqtt_subscribed".to_string(),
-                description: "Triggered when MQTT client successfully subscribes to topics"
-                    .to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("mqtt_subscribed", "Triggered when MQTT client successfully subscribes to topics"),
         ]
     }
     fn stack_name(&self) -> &'static str {

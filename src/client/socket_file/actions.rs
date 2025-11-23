@@ -115,21 +115,8 @@ impl Protocol for SocketFileClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "socket_file_connected".to_string(),
-                description: "Triggered when Socket File client connects to Unix domain socket"
-                    .to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "socket_file_data_received".to_string(),
-                description:
-                    "Triggered when Socket File client receives data from Unix domain socket"
-                        .to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("socket_file_connected", "Triggered when Socket File client connects to Unix domain socket"),
+            EventType::new("socket_file_data_received", "Triggered when Socket File client receives data from Unix domain socket"),
         ]
     }
     fn stack_name(&self) -> &'static str {

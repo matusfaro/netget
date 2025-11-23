@@ -260,13 +260,7 @@ impl Protocol for HttpProxyClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "http_proxy_connected".to_string(),
-                description: "Triggered when HTTP proxy client connects to proxy server"
-                    .to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("http_proxy_connected", "Triggered when HTTP proxy client connects to proxy server"),
             EventType::new("http_proxy_tunnel_established", "Triggered when HTTP CONNECT tunnel is established"),
             EventType::new("http_proxy_response_received", "Triggered when data is received via proxy tunnel"),
         ]

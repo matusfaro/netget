@@ -175,13 +175,7 @@ impl Protocol for IppClientProtocol {
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
             EventType::new("ipp_connected", "Triggered when IPP client is initialized"),
-            EventType {
-                id: "ipp_response_received".to_string(),
-                description: "Triggered when IPP client receives a response from the printer"
-                    .to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("ipp_response_received", "Triggered when IPP client receives a response from the printer"),
         ]
     }
     fn stack_name(&self) -> &'static str {

@@ -308,13 +308,7 @@ impl Protocol for UsbClientProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "usb_device_opened".to_string(),
-                description: "Triggered when USB device is opened and interface claimed"
-                    .to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("usb_device_opened", "Triggered when USB device is opened and interface claimed"),
             EventType::new("usb_control_response", "Triggered when USB control transfer completes"),
             EventType::new("usb_bulk_data_received", "Triggered when data is received from bulk endpoint"),
             EventType::new("usb_interrupt_data_received", "Triggered when data is received from interrupt endpoint"),

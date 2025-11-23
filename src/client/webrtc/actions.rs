@@ -281,13 +281,7 @@ impl Protocol for WebRtcClientProtocol {
             EventType::new("webrtc_connected", "Triggered when WebRTC data channel opens (deprecated)"),
             EventType::new("webrtc_channel_opened", "Triggered when a WebRTC data channel opens"),
             EventType::new("webrtc_message_received", "Triggered when a message is received"),
-            EventType {
-                id: "webrtc_signaling_connected".to_string(),
-                description: "Triggered when connected to signaling server (WebSocket mode)"
-                    .to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("webrtc_signaling_connected", "Triggered when connected to signaling server (WebSocket mode)"),
         ]
     }
 

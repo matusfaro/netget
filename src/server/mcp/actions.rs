@@ -474,171 +474,121 @@ fn mcp_error_response_action() -> ActionDefinition {
 
 /// MCP initialize event
 pub static MCP_INITIALIZE_EVENT: std::sync::LazyLock<EventType> =
-    std::sync::LazyLock::new(|| EventType {
-        id: "mcp_initialize".to_string(),
-        description: "Client sends initialize request to negotiate capabilities".to_string(),
-        actions: vec![
-            mcp_initialize_response_action(),
-            mcp_error_response_action(),
-        ],
-        parameters: vec![],
+    std::sync::LazyLock::new(|| {
+        EventType::new("mcp_initialize", "Client sends initialize request to negotiate capabilities")
+            .with_actions(vec![
+                mcp_initialize_response_action(),
+                mcp_error_response_action(),
+            ])
     });
 
 /// MCP resources list event
 pub static MCP_RESOURCES_LIST_EVENT: std::sync::LazyLock<EventType> =
-    std::sync::LazyLock::new(|| EventType {
-        id: "mcp_resources_list".to_string(),
-        description: "Client requests list of available resources".to_string(),
-        actions: vec![
-            mcp_resources_list_response_action(),
-            mcp_error_response_action(),
-        ],
-        parameters: vec![],
+    std::sync::LazyLock::new(|| {
+        EventType::new("mcp_resources_list", "Client requests list of available resources")
+            .with_actions(vec![
+                mcp_resources_list_response_action(),
+                mcp_error_response_action(),
+            ])
     });
 
 /// MCP resources read event
 pub static MCP_RESOURCES_READ_EVENT: std::sync::LazyLock<EventType> =
-    std::sync::LazyLock::new(|| EventType {
-        id: "mcp_resources_read".to_string(),
-        description: "Client requests resource content by URI".to_string(),
-        actions: vec![
-            mcp_resources_read_response_action(),
-            mcp_error_response_action(),
-        ],
-        parameters: vec![],
+    std::sync::LazyLock::new(|| {
+        EventType::new("mcp_resources_read", "Client requests resource content by URI")
+            .with_actions(vec![
+                mcp_resources_read_response_action(),
+                mcp_error_response_action(),
+            ])
     });
 
 /// MCP tools list event
 pub static MCP_TOOLS_LIST_EVENT: std::sync::LazyLock<EventType> =
-    std::sync::LazyLock::new(|| EventType {
-        id: "mcp_tools_list".to_string(),
-        description: "Client requests list of available tools".to_string(),
-        actions: vec![
-            mcp_tools_list_response_action(),
-            mcp_error_response_action(),
-        ],
-        parameters: vec![],
+    std::sync::LazyLock::new(|| {
+        EventType::new("mcp_tools_list", "Client requests list of available tools")
+            .with_actions(vec![
+                mcp_tools_list_response_action(),
+                mcp_error_response_action(),
+            ])
     });
 
 /// MCP tools call event
 pub static MCP_TOOLS_CALL_EVENT: std::sync::LazyLock<EventType> =
-    std::sync::LazyLock::new(|| EventType {
-        id: "mcp_tools_call".to_string(),
-        description: "Client executes a tool with parameters".to_string(),
-        actions: vec![
-            mcp_tools_call_response_action(),
-            mcp_error_response_action(),
-        ],
-        parameters: vec![],
+    std::sync::LazyLock::new(|| {
+        EventType::new("mcp_tools_call", "Client executes a tool with parameters")
+            .with_actions(vec![
+                mcp_tools_call_response_action(),
+                mcp_error_response_action(),
+            ])
     });
 
 /// MCP prompts list event
 pub static MCP_PROMPTS_LIST_EVENT: std::sync::LazyLock<EventType> =
-    std::sync::LazyLock::new(|| EventType {
-        id: "mcp_prompts_list".to_string(),
-        description: "Client requests list of available prompts".to_string(),
-        actions: vec![
-            mcp_prompts_list_response_action(),
-            mcp_error_response_action(),
-        ],
-        parameters: vec![],
+    std::sync::LazyLock::new(|| {
+        EventType::new("mcp_prompts_list", "Client requests list of available prompts")
+            .with_actions(vec![
+                mcp_prompts_list_response_action(),
+                mcp_error_response_action(),
+            ])
     });
 
 /// MCP prompts get event
 pub static MCP_PROMPTS_GET_EVENT: std::sync::LazyLock<EventType> =
-    std::sync::LazyLock::new(|| EventType {
-        id: "mcp_prompts_get".to_string(),
-        description: "Client requests formatted prompt template".to_string(),
-        actions: vec![
-            mcp_prompts_get_response_action(),
-            mcp_error_response_action(),
-        ],
-        parameters: vec![],
+    std::sync::LazyLock::new(|| {
+        EventType::new("mcp_prompts_get", "Client requests formatted prompt template")
+            .with_actions(vec![
+                mcp_prompts_get_response_action(),
+                mcp_error_response_action(),
+            ])
     });
 
 /// Get MCP event types
 fn get_mcp_event_types() -> Vec<EventType> {
     vec![
-        EventType {
-            id: "mcp_initialize".to_string(),
-            description: "Client sends initialize request to negotiate capabilities".to_string(),
-            actions: vec![
+        EventType::new("mcp_initialize", "Client sends initialize request to negotiate capabilities")
+            .with_actions(vec![
                 mcp_initialize_response_action(),
                 mcp_error_response_action(),
-            ],
-            parameters: vec![],
-        },
-        EventType {
-            id: "mcp_resources_list".to_string(),
-            description: "Client requests list of available resources".to_string(),
-            actions: vec![
+            ]),
+        EventType::new("mcp_resources_list", "Client requests list of available resources")
+            .with_actions(vec![
                 mcp_resources_list_response_action(),
                 mcp_error_response_action(),
-            ],
-            parameters: vec![],
-        },
-        EventType {
-            id: "mcp_resources_read".to_string(),
-            description: "Client requests resource content by URI".to_string(),
-            actions: vec![
+            ]),
+        EventType::new("mcp_resources_read", "Client requests resource content by URI")
+            .with_actions(vec![
                 mcp_resources_read_response_action(),
                 mcp_error_response_action(),
-            ],
-            parameters: vec![],
-        },
-        EventType {
-            id: "mcp_resources_subscribe".to_string(),
-            description: "Client subscribes to resource updates".to_string(),
-            actions: vec![
+            ]),
+        EventType::new("mcp_resources_subscribe", "Client subscribes to resource updates")
+            .with_actions(vec![
                 mcp_resources_subscribe_response_action(),
                 mcp_error_response_action(),
-            ],
-            parameters: vec![],
-        },
-        EventType {
-            id: "mcp_tools_list".to_string(),
-            description: "Client requests list of available tools".to_string(),
-            actions: vec![
+            ]),
+        EventType::new("mcp_tools_list", "Client requests list of available tools")
+            .with_actions(vec![
                 mcp_tools_list_response_action(),
                 mcp_error_response_action(),
-            ],
-            parameters: vec![],
-        },
-        EventType {
-            id: "mcp_tools_call".to_string(),
-            description: "Client executes a tool with parameters".to_string(),
-            actions: vec![
+            ]),
+        EventType::new("mcp_tools_call", "Client executes a tool with parameters")
+            .with_actions(vec![
                 mcp_tools_call_response_action(),
                 mcp_error_response_action(),
-            ],
-            parameters: vec![],
-        },
-        EventType {
-            id: "mcp_prompts_list".to_string(),
-            description: "Client requests list of available prompts".to_string(),
-            actions: vec![
+            ]),
+        EventType::new("mcp_prompts_list", "Client requests list of available prompts")
+            .with_actions(vec![
                 mcp_prompts_list_response_action(),
                 mcp_error_response_action(),
-            ],
-            parameters: vec![],
-        },
-        EventType {
-            id: "mcp_prompts_get".to_string(),
-            description: "Client requests formatted prompt template".to_string(),
-            actions: vec![
+            ]),
+        EventType::new("mcp_prompts_get", "Client requests formatted prompt template")
+            .with_actions(vec![
                 mcp_prompts_get_response_action(),
                 mcp_error_response_action(),
-            ],
-            parameters: vec![],
-        },
-        EventType {
-            id: "mcp_completion".to_string(),
-            description: "Client requests text completion suggestions".to_string(),
-            actions: vec![
+            ]),
+        EventType::new("mcp_completion", "Client requests text completion suggestions")
+            .with_actions(vec![
                 mcp_completion_response_action(),
                 mcp_error_response_action(),
-            ],
-            parameters: vec![],
-        },
+            ]),
     ]
 }

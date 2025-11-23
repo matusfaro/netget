@@ -149,20 +149,8 @@ impl Protocol for Socks5ClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "socks5_connected".to_string(),
-                description: "Triggered when SOCKS5 client connects through proxy to target"
-                    .to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "socks5_data_received".to_string(),
-                description: "Triggered when SOCKS5 client receives data from target server"
-                    .to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("socks5_connected", "Triggered when SOCKS5 client connects through proxy to target"),
+            EventType::new("socks5_data_received", "Triggered when SOCKS5 client receives data from target server"),
         ]
     }
     fn stack_name(&self) -> &'static str {
