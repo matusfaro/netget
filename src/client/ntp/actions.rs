@@ -116,18 +116,8 @@ impl Protocol for NtpClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "ntp_connected".to_string(),
-                description: "Triggered when NTP client is ready".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "ntp_response_received".to_string(),
-                description: "Triggered when NTP response is received".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("ntp_connected", "Triggered when NTP client is ready"),
+            EventType::new("ntp_response_received", "Triggered when NTP response is received"),
         ]
     }
     fn stack_name(&self) -> &'static str {

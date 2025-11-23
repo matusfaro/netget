@@ -194,12 +194,7 @@ impl Protocol for TorrentDhtClientProtocol {
         "BitTorrent DHT"
     }
     fn get_event_types(&self) -> Vec<EventType> {
-        vec![EventType {
-            id: "dht_response".to_string(),
-            description: "Received response from DHT node".to_string(),
-            actions: vec![],
-            parameters: vec![],
-        }]
+        vec![EventType::new("dht_response", "Received response from DHT node")]
     }
     fn stack_name(&self) -> &'static str {
         "ETH>IP>UDP>BitTorrent-DHT"

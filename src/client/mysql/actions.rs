@@ -140,18 +140,8 @@ impl Protocol for MysqlClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "mysql_connected".to_string(),
-                description: "Triggered when MySQL client connects to server".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "mysql_result_received".to_string(),
-                description: "Triggered when MySQL client receives a query result".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("mysql_connected", "Triggered when MySQL client connects to server"),
+            EventType::new("mysql_result_received", "Triggered when MySQL client receives a query result"),
         ]
     }
     fn stack_name(&self) -> &'static str {

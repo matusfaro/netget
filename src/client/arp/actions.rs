@@ -240,18 +240,8 @@ impl Protocol for ArpClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "arp_client_started".to_string(),
-                description: "Triggered when ARP client starts capturing".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "arp_response_received".to_string(),
-                description: "Triggered when ARP packet is received".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("arp_client_started", "Triggered when ARP client starts capturing"),
+            EventType::new("arp_response_received", "Triggered when ARP packet is received"),
         ]
     }
     fn stack_name(&self) -> &'static str {

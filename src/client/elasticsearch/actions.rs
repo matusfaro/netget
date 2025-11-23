@@ -293,18 +293,8 @@ impl Protocol for ElasticsearchClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "elasticsearch_connected".to_string(),
-                description: "Triggered when Elasticsearch client is initialized".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "elasticsearch_response_received".to_string(),
-                description: "Triggered when Elasticsearch client receives a response".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("elasticsearch_connected", "Triggered when Elasticsearch client is initialized"),
+            EventType::new("elasticsearch_response_received", "Triggered when Elasticsearch client receives a response"),
         ]
     }
     fn stack_name(&self) -> &'static str {

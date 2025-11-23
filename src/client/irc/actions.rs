@@ -230,18 +230,8 @@ impl Protocol for IrcClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "irc_connected".to_string(),
-                description: "Triggered when IRC client connects and registers".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "irc_message_received".to_string(),
-                description: "Triggered when IRC client receives any message".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("irc_connected", "Triggered when IRC client connects and registers"),
+            EventType::new("irc_message_received", "Triggered when IRC client receives any message"),
         ]
     }
     fn stack_name(&self) -> &'static str {

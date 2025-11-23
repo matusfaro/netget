@@ -315,24 +315,9 @@ impl Protocol for UsbClientProtocol {
                 actions: vec![],
                 parameters: vec![],
             },
-            EventType {
-                id: "usb_control_response".to_string(),
-                description: "Triggered when USB control transfer completes".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "usb_bulk_data_received".to_string(),
-                description: "Triggered when data is received from bulk endpoint".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "usb_interrupt_data_received".to_string(),
-                description: "Triggered when data is received from interrupt endpoint".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("usb_control_response", "Triggered when USB control transfer completes"),
+            EventType::new("usb_bulk_data_received", "Triggered when data is received from bulk endpoint"),
+            EventType::new("usb_interrupt_data_received", "Triggered when data is received from interrupt endpoint"),
         ]
     }
 

@@ -135,18 +135,8 @@ impl crate::llm::actions::protocol_trait::Protocol for StunClientProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "stun_connected".to_string(),
-                description: "Triggered when STUN client is initialized".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "stun_binding_response".to_string(),
-                description: "Triggered when STUN client receives binding response".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("stun_connected", "Triggered when STUN client is initialized"),
+            EventType::new("stun_binding_response", "Triggered when STUN client receives binding response"),
         ]
     }
 

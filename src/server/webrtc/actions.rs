@@ -254,30 +254,10 @@ impl Protocol for WebRtcProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "webrtc_peer_connected".to_string(),
-                description: "Triggered when a WebRTC peer's data channel opens".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "webrtc_message_received".to_string(),
-                description: "Triggered when a message is received from a peer".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "webrtc_offer_received".to_string(),
-                description: "Triggered when an SDP offer is received (manual mode)".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "webrtc_peer_disconnected".to_string(),
-                description: "Triggered when a peer connection closes".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("webrtc_peer_connected", "Triggered when a WebRTC peer's data channel opens"),
+            EventType::new("webrtc_message_received", "Triggered when a message is received from a peer"),
+            EventType::new("webrtc_offer_received", "Triggered when an SDP offer is received (manual mode)"),
+            EventType::new("webrtc_peer_disconnected", "Triggered when a peer connection closes"),
         ]
     }
 

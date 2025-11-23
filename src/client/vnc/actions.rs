@@ -271,24 +271,9 @@ impl Protocol for VncClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "vnc_connected".to_string(),
-                description: "Triggered when VNC client connects and authenticates".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "vnc_framebuffer_update".to_string(),
-                description: "Triggered when framebuffer update is received".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "vnc_server_cut_text".to_string(),
-                description: "Triggered when server sends clipboard text".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("vnc_connected", "Triggered when VNC client connects and authenticates"),
+            EventType::new("vnc_framebuffer_update", "Triggered when framebuffer update is received"),
+            EventType::new("vnc_server_cut_text", "Triggered when server sends clipboard text"),
         ]
     }
     fn stack_name(&self) -> &'static str {

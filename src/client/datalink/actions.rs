@@ -139,18 +139,8 @@ impl Protocol for DataLinkClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "datalink_frame_injected".to_string(),
-                description: "Triggered when frame is successfully injected".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "datalink_frame_captured".to_string(),
-                description: "Triggered when frame is captured in promiscuous mode".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("datalink_frame_injected", "Triggered when frame is successfully injected"),
+            EventType::new("datalink_frame_captured", "Triggered when frame is captured in promiscuous mode"),
         ]
     }
     fn stack_name(&self) -> &'static str {

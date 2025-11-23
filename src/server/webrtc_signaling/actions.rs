@@ -146,12 +146,7 @@ impl Protocol for WebRtcSignalingProtocol {
                 actions: vec![],
                 parameters: vec![],
             },
-            EventType {
-                id: "webrtc_signaling_message_received".to_string(),
-                description: "Triggered when a signaling message is received".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("webrtc_signaling_message_received", "Triggered when a signaling message is received"),
         ]
     }
 

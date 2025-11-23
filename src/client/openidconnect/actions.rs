@@ -309,24 +309,9 @@ impl Protocol for OpenIdConnectClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "oidc_discovered".to_string(),
-                description: "Triggered when OIDC provider configuration is discovered".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "oidc_token_received".to_string(),
-                description: "Triggered when OAuth/OIDC tokens are received".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "oidc_userinfo_received".to_string(),
-                description: "Triggered when UserInfo data is received".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("oidc_discovered", "Triggered when OIDC provider configuration is discovered"),
+            EventType::new("oidc_token_received", "Triggered when OAuth/OIDC tokens are received"),
+            EventType::new("oidc_userinfo_received", "Triggered when UserInfo data is received"),
         ]
     }
     fn stack_name(&self) -> &'static str {

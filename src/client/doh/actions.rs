@@ -161,18 +161,8 @@ impl Protocol for DohClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "doh_connected".to_string(),
-                description: "Triggered when DoH client connects to server".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "doh_response_received".to_string(),
-                description: "Triggered when DoH client receives a DNS response".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("doh_connected", "Triggered when DoH client connects to server"),
+            EventType::new("doh_response_received", "Triggered when DoH client receives a DNS response"),
         ]
     }
     fn stack_name(&self) -> &'static str {

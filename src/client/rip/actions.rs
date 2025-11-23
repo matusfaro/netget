@@ -131,12 +131,7 @@ impl Protocol for RipClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "rip_connected".to_string(),
-                description: "Triggered when RIP client connects to router".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("rip_connected", "Triggered when RIP client connects to router"),
             EventType {
                 id: "rip_response_received".to_string(),
                 description: "Triggered when RIP client receives routing table response"

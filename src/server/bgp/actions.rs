@@ -253,33 +253,13 @@ impl BgpProtocol {
 }
 
 // Event types for BGP
-pub static BGP_OPEN_EVENT: LazyLock<EventType> = LazyLock::new(|| EventType {
-    id: "bgp_open".to_string(),
-    description: "BGP OPEN message received from peer".to_string(),
-    actions: vec![],
-    parameters: vec![],
-});
+pub static BGP_OPEN_EVENT: LazyLock<EventType> = LazyLock::new(|| EventType::new("bgp_open", "BGP OPEN message received from peer"));
 
-pub static BGP_UPDATE_EVENT: LazyLock<EventType> = LazyLock::new(|| EventType {
-    id: "bgp_update".to_string(),
-    description: "BGP UPDATE message received (route announcement or withdrawal)".to_string(),
-    actions: vec![],
-    parameters: vec![],
-});
+pub static BGP_UPDATE_EVENT: LazyLock<EventType> = LazyLock::new(|| EventType::new("bgp_update", "BGP UPDATE message received (route announcement or withdrawal)"));
 
-pub static BGP_KEEPALIVE_EVENT: LazyLock<EventType> = LazyLock::new(|| EventType {
-    id: "bgp_keepalive".to_string(),
-    description: "BGP KEEPALIVE message received".to_string(),
-    actions: vec![],
-    parameters: vec![],
-});
+pub static BGP_KEEPALIVE_EVENT: LazyLock<EventType> = LazyLock::new(|| EventType::new("bgp_keepalive", "BGP KEEPALIVE message received"));
 
-pub static BGP_NOTIFICATION_EVENT: LazyLock<EventType> = LazyLock::new(|| EventType {
-    id: "bgp_notification".to_string(),
-    description: "BGP NOTIFICATION message received (error)".to_string(),
-    actions: vec![],
-    parameters: vec![],
-});
+pub static BGP_NOTIFICATION_EVENT: LazyLock<EventType> = LazyLock::new(|| EventType::new("bgp_notification", "BGP NOTIFICATION message received (error)"));
 
 // Implement Protocol trait (common functionality)
 impl Protocol for BgpProtocol {

@@ -267,18 +267,8 @@ impl Protocol for NfsClientProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "nfs_connected".to_string(),
-                description: "Triggered when NFS client mounts export".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "nfs_operation_result".to_string(),
-                description: "Triggered when NFS operation completes".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("nfs_connected", "Triggered when NFS client mounts export"),
+            EventType::new("nfs_operation_result", "Triggered when NFS operation completes"),
         ]
     }
 

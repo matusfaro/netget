@@ -238,36 +238,11 @@ impl Protocol for TurnClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "turn_connected".to_string(),
-                description: "Triggered when TURN client connects to server".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "turn_allocated".to_string(),
-                description: "Triggered when relay address is allocated".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "turn_data_received".to_string(),
-                description: "Triggered when data is received from peer via relay".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "turn_permission_created".to_string(),
-                description: "Triggered when permission is created for a peer".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "turn_refreshed".to_string(),
-                description: "Triggered when allocation is refreshed".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("turn_connected", "Triggered when TURN client connects to server"),
+            EventType::new("turn_allocated", "Triggered when relay address is allocated"),
+            EventType::new("turn_data_received", "Triggered when data is received from peer via relay"),
+            EventType::new("turn_permission_created", "Triggered when permission is created for a peer"),
+            EventType::new("turn_refreshed", "Triggered when allocation is refreshed"),
         ]
     }
     fn stack_name(&self) -> &'static str {

@@ -287,18 +287,8 @@ impl Protocol for OpenApiClientProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "openapi_client_connected".to_string(),
-                description: "Triggered when OpenAPI client is initialized with spec".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "openapi_operation_response".to_string(),
-                description: "Triggered when OpenAPI operation response is received".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("openapi_client_connected", "Triggered when OpenAPI client is initialized with spec"),
+            EventType::new("openapi_operation_response", "Triggered when OpenAPI operation response is received"),
         ]
     }
 

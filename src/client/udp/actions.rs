@@ -167,18 +167,8 @@ impl Protocol for UdpClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "udp_connected".to_string(),
-                description: "Triggered when UDP client socket is bound and ready".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "udp_datagram_received".to_string(),
-                description: "Triggered when UDP client receives a datagram".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("udp_connected", "Triggered when UDP client socket is bound and ready"),
+            EventType::new("udp_datagram_received", "Triggered when UDP client receives a datagram"),
         ]
     }
     fn stack_name(&self) -> &'static str {

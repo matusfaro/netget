@@ -102,18 +102,8 @@ impl Protocol for WhoisClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "whois_connected".to_string(),
-                description: "Triggered when WHOIS client connects to server".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "whois_response_received".to_string(),
-                description: "Triggered when WHOIS client receives a response".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("whois_connected", "Triggered when WHOIS client connects to server"),
+            EventType::new("whois_response_received", "Triggered when WHOIS client receives a response"),
         ]
     }
     fn stack_name(&self) -> &'static str {

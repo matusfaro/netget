@@ -129,18 +129,8 @@ impl Protocol for SshClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "ssh_connected".to_string(),
-                description: "Triggered when SSH client authenticates successfully".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "ssh_output_received".to_string(),
-                description: "Triggered when SSH command output is received".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("ssh_connected", "Triggered when SSH client authenticates successfully"),
+            EventType::new("ssh_output_received", "Triggered when SSH command output is received"),
         ]
     }
     fn stack_name(&self) -> &'static str {

@@ -235,24 +235,9 @@ impl Protocol for SqsClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "sqs_connected".to_string(),
-                description: "Triggered when SQS client connects to queue".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "sqs_message_received".to_string(),
-                description: "Triggered when messages are received from queue".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "sqs_message_sent".to_string(),
-                description: "Triggered when message is successfully sent".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("sqs_connected", "Triggered when SQS client connects to queue"),
+            EventType::new("sqs_message_received", "Triggered when messages are received from queue"),
+            EventType::new("sqs_message_sent", "Triggered when message is successfully sent"),
         ]
     }
     fn stack_name(&self) -> &'static str {

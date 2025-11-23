@@ -204,14 +204,8 @@ impl Protocol for TorClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new(
-                "tor_connected",
-                "Triggered when Tor client connects through Tor network"
-            ),
-            EventType::new(
-                "tor_data_received",
-                "Triggered when Tor client receives data from destination"
-            ),
+            EventType::new("tor_connected", "Triggered when Tor client connects through Tor network"),
+            EventType::new("tor_data_received", "Triggered when Tor client receives data from destination"),
         ]
     }
     fn stack_name(&self) -> &'static str {

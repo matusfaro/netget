@@ -139,24 +139,9 @@ impl Protocol for MssqlClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "mssql_connected".to_string(),
-                description: "Triggered when MSSQL client connects to server".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "mssql_query_result".to_string(),
-                description: "Triggered when MSSQL client receives query result".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "mssql_error".to_string(),
-                description: "Triggered when MSSQL client receives error".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("mssql_connected", "Triggered when MSSQL client connects to server"),
+            EventType::new("mssql_query_result", "Triggered when MSSQL client receives query result"),
+            EventType::new("mssql_error", "Triggered when MSSQL client receives error"),
         ]
     }
     fn stack_name(&self) -> &'static str {

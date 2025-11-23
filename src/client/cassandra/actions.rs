@@ -141,18 +141,8 @@ impl Protocol for CassandraClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "cassandra_connected".to_string(),
-                description: "Triggered when Cassandra client connects to server".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "cassandra_result_received".to_string(),
-                description: "Triggered when Cassandra client receives query results".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("cassandra_connected", "Triggered when Cassandra client connects to server"),
+            EventType::new("cassandra_result_received", "Triggered when Cassandra client receives query results"),
         ]
     }
     fn stack_name(&self) -> &'static str {

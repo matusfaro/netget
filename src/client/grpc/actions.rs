@@ -223,24 +223,9 @@ impl Protocol for GrpcClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "grpc_connected".to_string(),
-                description: "Triggered when gRPC client connects to server".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "grpc_response_received".to_string(),
-                description: "Triggered when gRPC client receives a response".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "grpc_error".to_string(),
-                description: "Triggered when gRPC client receives an error".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("grpc_connected", "Triggered when gRPC client connects to server"),
+            EventType::new("grpc_response_received", "Triggered when gRPC client receives a response"),
+            EventType::new("grpc_error", "Triggered when gRPC client receives an error"),
         ]
     }
     fn stack_name(&self) -> &'static str {

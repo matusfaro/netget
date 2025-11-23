@@ -198,24 +198,9 @@ impl Protocol for ZookeeperClientProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "zookeeper_connected".to_string(),
-                description: "Triggered when ZooKeeper client connects".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "zookeeper_data_received".to_string(),
-                description: "Triggered when ZooKeeper client receives data".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "zookeeper_children_received".to_string(),
-                description: "Triggered when ZooKeeper client receives children list".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("zookeeper_connected", "Triggered when ZooKeeper client connects"),
+            EventType::new("zookeeper_data_received", "Triggered when ZooKeeper client receives data"),
+            EventType::new("zookeeper_children_received", "Triggered when ZooKeeper client receives children list"),
         ]
     }
 

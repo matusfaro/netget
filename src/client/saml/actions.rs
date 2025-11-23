@@ -166,12 +166,7 @@ impl Protocol for SamlClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "saml_connected".to_string(),
-                description: "Triggered when SAML client is initialized".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("saml_connected", "Triggered when SAML client is initialized"),
             EventType {
                 id: "saml_response_received".to_string(),
                 description: "Triggered when SAML client receives an authentication response"

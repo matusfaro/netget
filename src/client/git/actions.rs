@@ -366,24 +366,9 @@ impl Protocol for GitClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "git_connected".to_string(),
-                description: "Triggered when Git client is initialized".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "git_operation_completed".to_string(),
-                description: "Triggered when a Git operation completes successfully".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "git_operation_error".to_string(),
-                description: "Triggered when a Git operation fails".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("git_connected", "Triggered when Git client is initialized"),
+            EventType::new("git_operation_completed", "Triggered when a Git operation completes successfully"),
+            EventType::new("git_operation_error", "Triggered when a Git operation fails"),
         ]
     }
     fn stack_name(&self) -> &'static str {

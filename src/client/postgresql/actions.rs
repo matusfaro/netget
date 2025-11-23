@@ -151,18 +151,8 @@ impl Protocol for PostgresqlClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "postgresql_connected".to_string(),
-                description: "Triggered when PostgreSQL client connects to server".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "postgresql_query_result".to_string(),
-                description: "Triggered when PostgreSQL client receives query results".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("postgresql_connected", "Triggered when PostgreSQL client connects to server"),
+            EventType::new("postgresql_query_result", "Triggered when PostgreSQL client receives query results"),
         ]
     }
     fn stack_name(&self) -> &'static str {

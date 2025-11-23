@@ -138,12 +138,7 @@ impl Protocol for Pop3ClientProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "pop3_connected".to_string(),
-                description: "Triggered when POP3 client connects to server".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("pop3_connected", "Triggered when POP3 client connects to server"),
             EventType {
                 id: "pop3_response_received".to_string(),
                 description: "Triggered when POP3 client receives a response from server"

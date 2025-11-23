@@ -267,18 +267,8 @@ impl Protocol for HttpProxyClientProtocol {
                 actions: vec![],
                 parameters: vec![],
             },
-            EventType {
-                id: "http_proxy_tunnel_established".to_string(),
-                description: "Triggered when HTTP CONNECT tunnel is established".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "http_proxy_response_received".to_string(),
-                description: "Triggered when data is received via proxy tunnel".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("http_proxy_tunnel_established", "Triggered when HTTP CONNECT tunnel is established"),
+            EventType::new("http_proxy_response_received", "Triggered when data is received via proxy tunnel"),
         ]
     }
     fn stack_name(&self) -> &'static str {

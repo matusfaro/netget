@@ -162,18 +162,8 @@ impl Protocol for TorrentTrackerClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "tracker_announce_response".to_string(),
-                description: "Received announce response from tracker".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "tracker_scrape_response".to_string(),
-                description: "Received scrape response from tracker".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("tracker_announce_response", "Received announce response from tracker"),
+            EventType::new("tracker_scrape_response", "Received scrape response from tracker"),
         ]
     }
     fn stack_name(&self) -> &'static str {

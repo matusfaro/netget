@@ -149,18 +149,8 @@ impl Protocol for SyslogClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "syslog_connected".to_string(),
-                description: "Triggered when syslog client connects to server".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "syslog_message_sent".to_string(),
-                description: "Triggered when syslog message is sent".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("syslog_connected", "Triggered when syslog client connects to server"),
+            EventType::new("syslog_message_sent", "Triggered when syslog message is sent"),
         ]
     }
     fn stack_name(&self) -> &'static str {

@@ -320,30 +320,10 @@ impl Protocol for OAuth2ClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "oauth2_connected".to_string(),
-                description: "Triggered when OAuth2 client is initialized".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "oauth2_token_obtained".to_string(),
-                description: "Triggered when access token is obtained".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "oauth2_device_code_started".to_string(),
-                description: "Triggered when device code flow is initiated".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "oauth2_error".to_string(),
-                description: "Triggered when OAuth2 error occurs".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("oauth2_connected", "Triggered when OAuth2 client is initialized"),
+            EventType::new("oauth2_token_obtained", "Triggered when access token is obtained"),
+            EventType::new("oauth2_device_code_started", "Triggered when device code flow is initiated"),
+            EventType::new("oauth2_error", "Triggered when OAuth2 error occurs"),
         ]
     }
     fn stack_name(&self) -> &'static str {

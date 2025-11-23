@@ -433,12 +433,7 @@ impl Protocol for Pop3Protocol {
     }
 
     fn get_event_types(&self) -> Vec<EventType> {
-        vec![EventType {
-            id: "pop3_command".to_string(),
-            description: "Triggered when POP3 command is received from client".to_string(),
-            actions: vec![],
-            parameters: vec![],
-        }]
+        vec![EventType::new("pop3_command", "Triggered when POP3 command is received from client")]
     }
 
     fn stack_name(&self) -> &'static str {

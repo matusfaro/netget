@@ -304,18 +304,8 @@ impl Protocol for BitcoinClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "bitcoin_connected".to_string(),
-                description: "Triggered when Bitcoin RPC client is initialized".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "bitcoin_response_received".to_string(),
-                description: "Triggered when Bitcoin RPC client receives a response".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("bitcoin_connected", "Triggered when Bitcoin RPC client is initialized"),
+            EventType::new("bitcoin_response_received", "Triggered when Bitcoin RPC client receives a response"),
         ]
     }
     fn stack_name(&self) -> &'static str {

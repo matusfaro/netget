@@ -329,42 +329,12 @@ impl Protocol for BluetoothClientProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "bluetooth_scan_complete".to_string(),
-                description: "Triggered when BLE scan completes".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "bluetooth_connected".to_string(),
-                description: "Triggered when connected to BLE device".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "bluetooth_services_discovered".to_string(),
-                description: "Triggered when GATT services are discovered".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "bluetooth_data_read".to_string(),
-                description: "Triggered when data is read from characteristic".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "bluetooth_notification_received".to_string(),
-                description: "Triggered when notification is received".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "bluetooth_disconnected".to_string(),
-                description: "Triggered when disconnected from device".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("bluetooth_scan_complete", "Triggered when BLE scan completes"),
+            EventType::new("bluetooth_connected", "Triggered when connected to BLE device"),
+            EventType::new("bluetooth_services_discovered", "Triggered when GATT services are discovered"),
+            EventType::new("bluetooth_data_read", "Triggered when data is read from characteristic"),
+            EventType::new("bluetooth_notification_received", "Triggered when notification is received"),
+            EventType::new("bluetooth_disconnected", "Triggered when disconnected from device"),
         ]
     }
 

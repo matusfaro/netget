@@ -327,30 +327,10 @@ impl Protocol for MavenClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "maven_connected".to_string(),
-                description: "Triggered when Maven client connects to repository".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "maven_artifact_downloaded".to_string(),
-                description: "Triggered when Maven artifact is successfully downloaded".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "maven_pom_received".to_string(),
-                description: "Triggered when POM file is downloaded and received".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "maven_metadata_received".to_string(),
-                description: "Triggered when Maven metadata is received".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("maven_connected", "Triggered when Maven client connects to repository"),
+            EventType::new("maven_artifact_downloaded", "Triggered when Maven artifact is successfully downloaded"),
+            EventType::new("maven_pom_received", "Triggered when POM file is downloaded and received"),
+            EventType::new("maven_metadata_received", "Triggered when Maven metadata is received"),
         ]
     }
     fn stack_name(&self) -> &'static str {

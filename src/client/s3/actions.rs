@@ -362,18 +362,8 @@ impl crate::llm::actions::protocol_trait::Protocol for S3ClientProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "s3_connected".to_string(),
-                description: "Triggered when S3 client is initialized".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "s3_response_received".to_string(),
-                description: "Triggered when S3 client receives a response".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("s3_connected", "Triggered when S3 client is initialized"),
+            EventType::new("s3_response_received", "Triggered when S3 client receives a response"),
         ]
     }
 

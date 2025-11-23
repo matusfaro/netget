@@ -232,30 +232,10 @@ impl Protocol for PypiClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "pypi_connected".to_string(),
-                description: "Triggered when PyPI client is initialized".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "pypi_package_info_received".to_string(),
-                description: "Triggered when package info is received".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "pypi_search_results_received".to_string(),
-                description: "Triggered when search results are received".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "pypi_file_downloaded".to_string(),
-                description: "Triggered when a file is downloaded".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("pypi_connected", "Triggered when PyPI client is initialized"),
+            EventType::new("pypi_package_info_received", "Triggered when package info is received"),
+            EventType::new("pypi_search_results_received", "Triggered when search results are received"),
+            EventType::new("pypi_file_downloaded", "Triggered when a file is downloaded"),
         ]
     }
     fn stack_name(&self) -> &'static str {

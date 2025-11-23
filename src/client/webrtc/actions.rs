@@ -278,24 +278,9 @@ impl Protocol for WebRtcClientProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "webrtc_connected".to_string(),
-                description: "Triggered when WebRTC data channel opens (deprecated)".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "webrtc_channel_opened".to_string(),
-                description: "Triggered when a WebRTC data channel opens".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "webrtc_message_received".to_string(),
-                description: "Triggered when a message is received".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("webrtc_connected", "Triggered when WebRTC data channel opens (deprecated)"),
+            EventType::new("webrtc_channel_opened", "Triggered when a WebRTC data channel opens"),
+            EventType::new("webrtc_message_received", "Triggered when a message is received"),
             EventType {
                 id: "webrtc_signaling_connected".to_string(),
                 description: "Triggered when connected to signaling server (WebSocket mode)"

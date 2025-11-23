@@ -169,24 +169,9 @@ impl Protocol for TelnetClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "telnet_connected".to_string(),
-                description: "Triggered when Telnet client connects to server".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "telnet_data_received".to_string(),
-                description: "Triggered when Telnet client receives data from server".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "telnet_option_negotiated".to_string(),
-                description: "Triggered when Telnet option negotiation occurs".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("telnet_connected", "Triggered when Telnet client connects to server"),
+            EventType::new("telnet_data_received", "Triggered when Telnet client receives data from server"),
+            EventType::new("telnet_option_negotiated", "Triggered when Telnet option negotiation occurs"),
         ]
     }
     fn stack_name(&self) -> &'static str {

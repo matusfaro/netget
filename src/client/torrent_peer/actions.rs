@@ -197,18 +197,8 @@ impl Protocol for TorrentPeerClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "peer_handshake".to_string(),
-                description: "Received handshake from peer".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "peer_message".to_string(),
-                description: "Received message from peer".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("peer_handshake", "Received handshake from peer"),
+            EventType::new("peer_message", "Received message from peer"),
         ]
     }
     fn stack_name(&self) -> &'static str {

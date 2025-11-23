@@ -305,18 +305,8 @@ impl Protocol for KubernetesClientProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "k8s_connected".to_string(),
-                description: "Triggered when Kubernetes client connects to cluster".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "k8s_resource_received".to_string(),
-                description: "Triggered when Kubernetes operation completes".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("k8s_connected", "Triggered when Kubernetes client connects to cluster"),
+            EventType::new("k8s_resource_received", "Triggered when Kubernetes operation completes"),
         ]
     }
 

@@ -300,36 +300,11 @@ impl Protocol for SmbClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "smb_connected".to_string(),
-                description: "Triggered when SMB client connects to server".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "smb_dir_listed".to_string(),
-                description: "Triggered when directory listing is received".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "smb_file_read".to_string(),
-                description: "Triggered when file content is read".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "smb_file_written".to_string(),
-                description: "Triggered when file is written".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "smb_error".to_string(),
-                description: "Triggered when an SMB operation fails".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("smb_connected", "Triggered when SMB client connects to server"),
+            EventType::new("smb_dir_listed", "Triggered when directory listing is received"),
+            EventType::new("smb_file_read", "Triggered when file content is read"),
+            EventType::new("smb_file_written", "Triggered when file is written"),
+            EventType::new("smb_error", "Triggered when an SMB operation fails"),
         ]
     }
     fn stack_name(&self) -> &'static str {

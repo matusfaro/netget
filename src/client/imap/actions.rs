@@ -268,30 +268,10 @@ impl Protocol for ImapClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "imap_connected".to_string(),
-                description: "Triggered when IMAP client connects and authenticates".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "imap_mailbox_selected".to_string(),
-                description: "Triggered when a mailbox is selected".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "imap_search_results".to_string(),
-                description: "Triggered when search results are received".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "imap_message_fetched".to_string(),
-                description: "Triggered when a message is fetched".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("imap_connected", "Triggered when IMAP client connects and authenticates"),
+            EventType::new("imap_mailbox_selected", "Triggered when a mailbox is selected"),
+            EventType::new("imap_search_results", "Triggered when search results are received"),
+            EventType::new("imap_message_fetched", "Triggered when a message is fetched"),
         ]
     }
     fn stack_name(&self) -> &'static str {

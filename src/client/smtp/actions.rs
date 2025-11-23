@@ -198,18 +198,8 @@ impl Protocol for SmtpClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "smtp_connected".to_string(),
-                description: "Triggered when SMTP client connects to server".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "smtp_email_sent".to_string(),
-                description: "Triggered when email is successfully sent".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("smtp_connected", "Triggered when SMTP client connects to server"),
+            EventType::new("smtp_email_sent", "Triggered when email is successfully sent"),
         ]
     }
     fn stack_name(&self) -> &'static str {

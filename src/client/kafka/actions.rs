@@ -261,24 +261,9 @@ impl Protocol for KafkaClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "kafka_connected".to_string(),
-                description: "Triggered when Kafka client connects to broker cluster".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "kafka_message_received".to_string(),
-                description: "Triggered when Kafka consumer receives a message".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "kafka_message_delivered".to_string(),
-                description: "Triggered when Kafka producer delivers a message".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("kafka_connected", "Triggered when Kafka client connects to broker cluster"),
+            EventType::new("kafka_message_received", "Triggered when Kafka consumer receives a message"),
+            EventType::new("kafka_message_delivered", "Triggered when Kafka producer delivers a message"),
         ]
     }
     fn stack_name(&self) -> &'static str {

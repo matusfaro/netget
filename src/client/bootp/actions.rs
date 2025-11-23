@@ -143,18 +143,8 @@ impl Protocol for BootpClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "bootp_connected".to_string(),
-                description: "Triggered when BOOTP client is ready".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "bootp_reply_received".to_string(),
-                description: "Triggered when BOOTP reply is received from server".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("bootp_connected", "Triggered when BOOTP client is ready"),
+            EventType::new("bootp_reply_received", "Triggered when BOOTP reply is received from server"),
         ]
     }
     fn stack_name(&self) -> &'static str {

@@ -266,30 +266,10 @@ impl Protocol for LdapClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "ldap_connected".to_string(),
-                description: "Triggered when LDAP client connects to server".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "ldap_bind_response".to_string(),
-                description: "Triggered when LDAP bind response is received".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "ldap_search_results".to_string(),
-                description: "Triggered when LDAP search results are received".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "ldap_modify_response".to_string(),
-                description: "Triggered when LDAP modify response is received".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("ldap_connected", "Triggered when LDAP client connects to server"),
+            EventType::new("ldap_bind_response", "Triggered when LDAP bind response is received"),
+            EventType::new("ldap_search_results", "Triggered when LDAP search results are received"),
+            EventType::new("ldap_modify_response", "Triggered when LDAP modify response is received"),
         ]
     }
     fn stack_name(&self) -> &'static str {

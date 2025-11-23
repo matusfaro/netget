@@ -248,24 +248,9 @@ impl Protocol for NpmClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "npm_connected".to_string(),
-                description: "Triggered when NPM Registry client is initialized".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "npm_package_info_received".to_string(),
-                description: "Triggered when package information is received".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "npm_search_results_received".to_string(),
-                description: "Triggered when search results are received".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("npm_connected", "Triggered when NPM Registry client is initialized"),
+            EventType::new("npm_package_info_received", "Triggered when package information is received"),
+            EventType::new("npm_search_results_received", "Triggered when search results are received"),
         ]
     }
     fn stack_name(&self) -> &'static str {

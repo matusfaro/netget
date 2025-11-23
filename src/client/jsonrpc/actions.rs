@@ -172,18 +172,8 @@ impl Protocol for JsonRpcClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "jsonrpc_connected".to_string(),
-                description: "Triggered when JSON-RPC client is initialized".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "jsonrpc_response_received".to_string(),
-                description: "Triggered when JSON-RPC client receives a response".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("jsonrpc_connected", "Triggered when JSON-RPC client is initialized"),
+            EventType::new("jsonrpc_response_received", "Triggered when JSON-RPC client receives a response"),
         ]
     }
     fn stack_name(&self) -> &'static str {

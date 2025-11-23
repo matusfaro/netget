@@ -221,24 +221,9 @@ impl Protocol for XmppClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "xmpp_connected".to_string(),
-                description: "Triggered when XMPP client connects and authenticates".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "xmpp_message_received".to_string(),
-                description: "Triggered when XMPP message is received".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "xmpp_presence_received".to_string(),
-                description: "Triggered when presence update is received".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("xmpp_connected", "Triggered when XMPP client connects and authenticates"),
+            EventType::new("xmpp_message_received", "Triggered when XMPP message is received"),
+            EventType::new("xmpp_presence_received", "Triggered when presence update is received"),
         ]
     }
     fn stack_name(&self) -> &'static str {

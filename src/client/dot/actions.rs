@@ -185,18 +185,8 @@ impl Protocol for DotClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType {
-                id: "dot_connected".to_string(),
-                description: "Triggered when DoT client connects to server".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
-            EventType {
-                id: "dot_response_received".to_string(),
-                description: "Triggered when DoT client receives a DNS response".to_string(),
-                actions: vec![],
-                parameters: vec![],
-            },
+            EventType::new("dot_connected", "Triggered when DoT client connects to server"),
+            EventType::new("dot_response_received", "Triggered when DoT client receives a DNS response"),
         ]
     }
     fn stack_name(&self) -> &'static str {
