@@ -4,44 +4,77 @@
 
 **Current handler mode:** {{event_handler_mode}}
 
-## Handler Modes
+{{#if (eq event_handler_mode "any")}}
+## Choosing the Right Handler Mode
 
-The handler mode controls how you should configure event handlers:
+When configuring event handlers, you have three powerful options at your disposal. Choose wisely based on the nature of your response:
 
-- **ANY** (default): You choose the most appropriate handler type (script, static, or llm) for each event based on the task requirements
-- **SCRIPT**: You must configure all events with script handlers (inline code)
-- **STATIC**: You must configure all events with static response handlers (predefined actions)
-- **LLM**: You must configure all events to be handled by LLM (dynamic processing)
+### 🔒 Static Mode - For Unchanging Responses
+**Use when:** The response is completely fixed and will never vary.
+**Perfect for:**
+- Welcome banners that are always identical
+- Fixed error messages
+- Constant redirects to specific URLs
+- Hardcoded status responses
 
-**Current mode is {{event_handler_mode}}** - configure event handlers accordingly when opening servers/clients.
+**Think:** "Would this exact response work forever, regardless of context, time, or user?"
+
+### ⚙️ Script Mode - For Deterministic Logic
+**Use when:** The response varies based on input, but the logic is deterministic and can be expressed in code.
+**Perfect for:**
+- Authentication rules (if username == "admin" then allow)
+- Routing based on paths or headers
+- Simple protocol state machines
+- Conditional responses based on predictable patterns
+- Data transformations and formatting
+
+**Think:** "Can I write an if/else statement or function that perfectly captures this logic?"
+
+**Key distinction from LLM:** Scripts execute deterministic code - given the same input, they ALWAYS produce the same output. No creativity, no interpretation, just pure logic.
+
+### 🧠 LLM Mode - For Intelligence and Adaptation
+**Use when:** The response requires understanding, reasoning, creativity, or context awareness.
+**Perfect for:**
+- Natural language conversations
+- Context-dependent decisions
+- Interpreting user intent
+- Creative or varied responses
+- Complex reasoning that's hard to codify
+- Adaptive behavior based on conversation history
+
+**Think:** "Does this need understanding, interpretation, or creativity that code alone can't provide?"
+
+**Key distinction from Script:** LLMs can understand nuance, context, and meaning. They don't just match patterns - they reason about intent.
+
+---
 
 ## Event Handlers System
 
 When opening servers or clients, you can configure how different events are handled by providing an `event_handlers` array. Each handler specifies:
 
 1. **event_pattern**: Event ID to match (e.g., "tcp_data_received") or "*" for all events
-2. **handler**: Configuration object with:
-   - **type**: "script", "static", or "llm"
-   - **Additional fields based on type:**
-     - Script: `language` (python/javascript/go/perl), `code` (inline script)
-     - Static: `actions` (array of action objects)
-     - LLM: no additional fields
+2. **handler**: Configuration object (see sections below for each type)
 
 Handlers are matched in order - the first matching pattern wins.
 
-## Handler Types
+---
 
-### Script Handlers
+## Handler Type: Script
 
-Use scripts when responses are **static and deterministic**:
-- Fixed file serving, simple routing with predefined rules
-- Complex authentication logic with well-defined conditions
-- Repetitive tasks that don't require reasoning
+Use scripts when responses are **deterministic and rule-based**. Scripts receive event data as JSON, execute code logic, and output actions.
 
-**DO NOT use scripts for:**
-- Creative or dynamic responses requiring natural language
-- Situations requiring reasoning, interpretation, or decision-making
-- When responses should vary based on context
+**When to use:**
+- Authentication with predefined user lists or password rules
+- Routing requests based on paths, headers, or patterns
+- Protocol state machines with clear state transitions
+- Data validation with specific criteria
+- Simple calculations or transformations
+
+**When NOT to use:**
+- Responses requiring natural language understanding
+- Creative or varied output
+- Context-dependent reasoning
+- Interpretation of user intent
 
 **Script Input (JSON via stdin):**
 ```json
@@ -72,16 +105,23 @@ Use scripts when responses are **static and deterministic**:
 }
 ```
 
-**Scripts constraints:**
+**Script constraints:**
 - Must complete within 5 seconds or terminated
 - Can return `{"fallback_to_llm": true}` to delegate complex cases back to LLM
+- Supported languages: python, javascript, go, perl
 
-### Static Handlers
+---
 
-Use static handlers for completely predefined responses:
-- Welcome messages
-- Fixed banner responses
-- Redirects to specific URLs
+## Handler Type: Static
+
+Use static handlers for completely **fixed, unchanging responses**. No code, no logic - just predefined actions that never vary.
+
+**When to use:**
+- Welcome messages that are always identical
+- Fixed banners or MOTD
+- Constant redirects
+- Hardcoded status responses
+- Error messages that never change
 
 **IMPORTANT**: Use protocol-specific action types, NOT generic "send_data". For example:
 - TCP: `send_tcp_data`
@@ -101,13 +141,32 @@ Use static handlers for completely predefined responses:
 }
 ```
 
-### LLM Handlers
+**Example static handler (HTTP protocol):**
+```json
+{
+  "event_pattern": "http_request",
+  "handler": {
+    "type": "static",
+    "actions": [
+      {"type": "send_http_response", "status": 200, "headers": {"Content-Type": "text/plain"}, "body": "OK"}
+    ]
+  }
+}
+```
 
-Use LLM handlers (default) for:
-- Natural language processing
-- Context-aware responses
-- Decision-making requiring reasoning
-- Creative or adaptive behavior
+---
+
+## Handler Type: LLM
+
+Use LLM handlers (default) for **intelligent, context-aware, and adaptive responses**. The LLM receives the event and uses its instruction, memory, and reasoning to generate appropriate actions.
+
+**When to use:**
+- Natural language processing and conversation
+- Context-aware decision making
+- Interpreting user intent
+- Creative or varied responses
+- Complex reasoning that's hard to codify
+- Adaptive behavior based on history
 
 **Example LLM handler:**
 ```json
@@ -119,9 +178,11 @@ Use LLM handlers (default) for:
 }
 ```
 
+---
+
 ## Configuration Examples
 
-**Mixed handlers (ANY mode) - TCP protocol example:**
+**Mixed handlers - TCP protocol example:**
 ```json
 "event_handlers": [
   {
@@ -139,7 +200,7 @@ Use LLM handlers (default) for:
 ]
 ```
 
-**All scripts (SCRIPT mode):**
+**All scripts:**
 ```json
 "event_handlers": [
   {
@@ -149,7 +210,7 @@ Use LLM handlers (default) for:
 ]
 ```
 
-**All static (STATIC mode) - HTTP protocol example:**
+**All static - HTTP protocol example:**
 ```json
 "event_handlers": [
   {
@@ -158,3 +219,700 @@ Use LLM handlers (default) for:
   }
 ]
 ```
+
+**All LLM:**
+```json
+"event_handlers": [
+  {
+    "event_pattern": "*",
+    "handler": {"type": "llm"}
+  }
+]
+```
+
+{{else if (eq event_handler_mode "static")}}
+## Handler Mode: Static Only
+
+You must configure all event handlers with **static responses**. Static handlers provide completely fixed, unchanging responses - no code execution, no reasoning, just predefined actions.
+
+### When Static Handlers Shine
+
+Static mode is perfect when you know exactly what response you want for every situation, and that response will never need to vary:
+
+- **Welcome banners**: "220 FTP Server Ready\r\n" - always the same
+- **Fixed redirects**: Always redirect to https://example.com
+- **Constant status responses**: Always return HTTP 200 OK
+- **Hardcoded error messages**: "401 Unauthorized" - never changes
+- **Protocol handshakes**: Fixed initial responses
+
+**Key principle:** If you can write down the exact response once and never need to change it, use static mode.
+
+---
+
+## Event Handlers System
+
+When opening servers or clients, you must configure event handlers by providing an `event_handlers` array. Each handler specifies:
+
+1. **event_pattern**: Event ID to match (e.g., "tcp_data_received") or "*" for all events
+2. **handler**: Configuration object with:
+   - **type**: "static" (required)
+   - **actions**: Array of action objects (the predefined response)
+
+Handlers are matched in order - the first matching pattern wins.
+
+---
+
+## Configuring Static Handlers
+
+**Structure:**
+```json
+{
+  "event_pattern": "event_id_or_wildcard",
+  "handler": {
+    "type": "static",
+    "actions": [
+      {"type": "protocol_specific_action", "param": "value"}
+    ]
+  }
+}
+```
+
+**IMPORTANT**: Use protocol-specific action types, NOT generic "send_data". For example:
+- TCP: `send_tcp_data`
+- HTTP: `send_http_response`
+- DNS: `send_dns_a_response`, `send_dns_aaaa_response`, `send_dns_mx_response`
+- SMTP: `send_smtp_response`
+- SSH: `ssh_auth_decision`, `send_ssh_data`
+
+Check the available actions for your specific protocol.
+
+---
+
+## Examples
+
+**TCP Welcome Banner:**
+```json
+"event_handlers": [
+  {
+    "event_pattern": "tcp_connection_opened",
+    "handler": {
+      "type": "static",
+      "actions": [
+        {"type": "send_tcp_data", "data": "220 Welcome to the server!\r\n"}
+      ]
+    }
+  },
+  {
+    "event_pattern": "*",
+    "handler": {
+      "type": "static",
+      "actions": [
+        {"type": "send_tcp_data", "data": "500 Command not recognized\r\n"}
+      ]
+    }
+  }
+]
+```
+
+**HTTP Fixed Response:**
+```json
+"event_handlers": [
+  {
+    "event_pattern": "http_request",
+    "handler": {
+      "type": "static",
+      "actions": [
+        {
+          "type": "send_http_response",
+          "status": 200,
+          "headers": {"Content-Type": "text/html"},
+          "body": "<html><body><h1>Server Maintenance</h1><p>We'll be back soon!</p></body></html>"
+        }
+      ]
+    }
+  }
+]
+```
+
+**DNS Fixed A Record:**
+```json
+"event_handlers": [
+  {
+    "event_pattern": "dns_query",
+    "handler": {
+      "type": "static",
+      "actions": [
+        {
+          "type": "send_dns_a_response",
+          "query_id": 1234,
+          "domain": "example.com",
+          "ip": "93.184.216.34"
+        }
+      ]
+    }
+  }
+]
+```
+
+**SMTP Rejection:**
+```json
+"event_handlers": [
+  {
+    "event_pattern": "*",
+    "handler": {
+      "type": "static",
+      "actions": [
+        {"type": "send_smtp_response", "code": 550, "message": "Mail not accepted"}
+      ]
+    }
+  }
+]
+```
+
+---
+
+## Multiple Actions in One Handler
+
+You can specify multiple actions in a single static handler. They will be executed in order:
+
+```json
+{
+  "event_pattern": "http_request",
+  "handler": {
+    "type": "static",
+    "actions": [
+      {"type": "log_event", "message": "Request received"},
+      {"type": "send_http_response", "status": 301, "headers": {"Location": "https://example.com"}},
+      {"type": "close_connection"}
+    ]
+  }
+}
+```
+
+---
+
+## Pattern Matching
+
+Use specific event patterns or wildcards:
+
+- **Specific event**: `"tcp_connection_opened"` - matches only that event
+- **Wildcard**: `"*"` - matches all events
+- **Order matters**: First matching handler wins
+
+**Example with multiple patterns:**
+```json
+"event_handlers": [
+  {
+    "event_pattern": "tcp_connection_opened",
+    "handler": {"type": "static", "actions": [{"type": "send_tcp_data", "data": "220 Ready\r\n"}]}
+  },
+  {
+    "event_pattern": "tcp_connection_closed",
+    "handler": {"type": "static", "actions": [{"type": "send_tcp_data", "data": "221 Goodbye\r\n"}]}
+  },
+  {
+    "event_pattern": "*",
+    "handler": {"type": "static", "actions": [{"type": "send_tcp_data", "data": "500 Unknown\r\n"}]}
+  }
+]
+```
+
+{{else if (eq event_handler_mode "script")}}
+## Handler Mode: Script Only
+
+You must configure all event handlers with **script handlers**. Scripts execute deterministic code logic to process events and generate responses.
+
+### When Script Handlers Excel
+
+Script mode is perfect when your response logic can be expressed as code - deterministic rules, conditions, and transformations:
+
+- **Authentication logic**: Check username/password against rules
+- **Request routing**: Route based on paths, headers, or patterns
+- **Protocol state machines**: Track connection state and respond accordingly
+- **Data validation**: Validate input against criteria
+- **Transformations**: Format, parse, or convert data
+- **Conditional responses**: If/else logic based on event data
+
+**Key principle:** If you can write code that, given the same input, always produces the same output, use script mode. Scripts are deterministic - no creativity, just pure logic.
+
+---
+
+## Event Handlers System
+
+When opening servers or clients, you must configure event handlers by providing an `event_handlers` array. Each handler specifies:
+
+1. **event_pattern**: Event ID to match (e.g., "tcp_data_received") or "*" for all events
+2. **handler**: Configuration object with:
+   - **type**: "script" (required)
+   - **language**: "python", "javascript", "go", or "perl"
+   - **code**: Inline script code (as a string)
+
+Handlers are matched in order - the first matching pattern wins.
+
+---
+
+## How Scripts Work
+
+**Input (JSON via stdin):**
+Your script receives a JSON object on stdin with:
+- `event_type_id`: The event that triggered this handler
+- `server`: Server metadata (id, port, stack, memory, instruction)
+- `connection`: Connection metadata (id, remote_addr, bytes_sent, bytes_received)
+- `event`: Event-specific data (varies by event type)
+
+**Example input:**
+```json
+{
+  "event_type_id": "ssh_auth",
+  "server": {
+    "id": 1,
+    "port": 2222,
+    "stack": "ETH>IP>TCP>SSH",
+    "memory": "",
+    "instruction": "Allow alice and bob"
+  },
+  "connection": {
+    "id": "conn_123",
+    "remote_addr": "127.0.0.1:54321",
+    "bytes_sent": 0,
+    "bytes_received": 0
+  },
+  "event": {
+    "username": "alice",
+    "auth_type": "password"
+  }
+}
+```
+
+**Output (JSON to stdout):**
+Your script must output a JSON object with an `actions` array:
+```json
+{"actions": [{"type": "action_name", "param": "value"}]}
+```
+
+**CRITICAL**: Use the **same protocol-specific action types** available to the LLM. **DO NOT** use generic actions like "send_data" - instead use the actual action types for your protocol:
+- TCP: `send_tcp_data`
+- HTTP: `send_http_response`
+- DNS: `send_dns_a_response`, `send_dns_aaaa_response`
+- SSH: `ssh_auth_decision`, `send_ssh_data`
+- SMTP: `send_smtp_response`
+
+Check the available actions for each event type.
+
+---
+
+## Script Constraints
+
+- **Timeout**: 5 seconds maximum execution time (script will be terminated)
+- **Fallback**: Can return `{"fallback_to_llm": true}` to delegate complex cases back to LLM (if LLM mode is available)
+- **Output format**: Must output valid JSON with `actions` array
+- **Supported languages**: python, javascript, go, perl
+
+---
+
+## Examples
+
+### Python: SSH Authentication
+
+```json
+{
+  "event_pattern": "ssh_auth",
+  "handler": {
+    "type": "script",
+    "language": "python",
+    "code": "import json,sys\ndata=json.load(sys.stdin)\nallowed=data['event']['username'] in ['alice','bob']\nprint(json.dumps({'actions':[{'type':'ssh_auth_decision','allowed':allowed}]}))"
+  }
+}
+```
+
+### Python: HTTP Routing
+
+```json
+{
+  "event_pattern": "http_request",
+  "handler": {
+    "type": "script",
+    "language": "python",
+    "code": "import json,sys\ndata=json.load(sys.stdin)\npath=data['event']['path']\nif path=='/admin':\n  response={'status':403,'body':'Forbidden'}\nelif path=='/':\n  response={'status':200,'body':'Welcome'}\nelse:\n  response={'status':404,'body':'Not Found'}\nprint(json.dumps({'actions':[{'type':'send_http_response',**response}]}))"
+  }
+}
+```
+
+### JavaScript: DNS Response
+
+```json
+{
+  "event_pattern": "dns_query",
+  "handler": {
+    "type": "script",
+    "language": "javascript",
+    "code": "const data=JSON.parse(require('fs').readFileSync(0,'utf-8'));const domain=data.event.domain;const ip=domain==='example.com'?'93.184.216.34':'127.0.0.1';console.log(JSON.stringify({actions:[{type:'send_dns_a_response',query_id:data.event.query_id,domain:domain,ip:ip}]}))"
+  }
+}
+```
+
+### Python: TCP Echo Server
+
+```json
+{
+  "event_pattern": "tcp_data_received",
+  "handler": {
+    "type": "script",
+    "language": "python",
+    "code": "import json,sys\ndata=json.load(sys.stdin)\nreceived=data['event']['data']\nprint(json.dumps({'actions':[{'type':'send_tcp_data','data':'ECHO: '+received}]}))"
+  }
+}
+```
+
+### Go: SMTP Validation
+
+```json
+{
+  "event_pattern": "smtp_mail_from",
+  "handler": {
+    "type": "script",
+    "language": "go",
+    "code": "package main\nimport(\"encoding/json\"\n\"fmt\"\n\"os\"\n\"strings\")\nfunc main(){\nvar data map[string]interface{}\njson.NewDecoder(os.Stdin).Decode(&data)\nevent:=data[\"event\"].(map[string]interface{})\nemail:=event[\"from\"].(string)\nallowed:=strings.HasSuffix(email,\"@example.com\")\nactions:=[]map[string]interface{}{{\"type\":\"send_smtp_response\",\"code\":250,\"message\":\"OK\"}}\nif !allowed{actions[0][\"code\"]=550;actions[0][\"message\"]=\"Rejected\"}\njson.NewEncoder(os.Stdout).Encode(map[string]interface{}{\"actions\":actions})}"
+  }
+}
+```
+
+### Perl: Pattern Matching
+
+```json
+{
+  "event_pattern": "tcp_data_received",
+  "handler": {
+    "type": "script",
+    "language": "perl",
+    "code": "use JSON;my $data=decode_json(<STDIN>);my $msg=$data->{event}{data};my $response=$msg=~/^PING/?'PONG':'UNKNOWN';print encode_json({actions=>[{type=>'send_tcp_data',data=>$response}]})"
+  }
+}
+```
+
+---
+
+## Advanced: Fallback to LLM
+
+If your script encounters a situation it can't handle deterministically, it can return `{"fallback_to_llm": true}` to delegate to the LLM:
+
+```python
+import json, sys
+data = json.load(sys.stdin)
+command = data['event']['command']
+
+# Handle simple commands with script
+if command == 'HELP':
+    print(json.dumps({'actions': [{'type': 'send_tcp_data', 'data': 'Commands: HELP, QUIT\n'}]}))
+elif command == 'QUIT':
+    print(json.dumps({'actions': [{'type': 'close_connection'}]}))
+else:
+    # Complex command - let LLM handle it
+    print(json.dumps({'fallback_to_llm': true}))
+```
+
+---
+
+## Multiple Event Patterns
+
+You can configure different scripts for different events:
+
+```json
+"event_handlers": [
+  {
+    "event_pattern": "tcp_connection_opened",
+    "handler": {
+      "type": "script",
+      "language": "python",
+      "code": "import json;print(json.dumps({'actions':[{'type':'send_tcp_data','data':'220 Ready\\r\\n'}]}))"
+    }
+  },
+  {
+    "event_pattern": "tcp_data_received",
+    "handler": {
+      "type": "script",
+      "language": "python",
+      "code": "import json,sys;data=json.load(sys.stdin);print(json.dumps({'actions':[{'type':'send_tcp_data','data':'ECHO: '+data['event']['data']}]}))"
+    }
+  },
+  {
+    "event_pattern": "*",
+    "handler": {
+      "type": "script",
+      "language": "python",
+      "code": "import json;print(json.dumps({'actions':[{'type':'send_tcp_data','data':'500 Unknown\\r\\n'}]}))"
+    }
+  }
+]
+```
+
+{{else if (eq event_handler_mode "llm")}}
+## Handler Mode: LLM Only
+
+You must configure all event handlers to use **LLM processing**. The LLM will receive events, reason about them using its instruction and memory, and generate appropriate responses.
+
+### When LLM Handlers Shine
+
+LLM mode is perfect when responses require intelligence, understanding, creativity, or context awareness:
+
+- **Natural language conversations**: Understanding user intent and responding appropriately
+- **Context-dependent decisions**: Considering conversation history and server memory
+- **Creative responses**: Generating varied, contextual replies
+- **Complex reasoning**: Making decisions that require interpretation and judgment
+- **Adaptive behavior**: Learning from interactions and adjusting responses
+- **Intent interpretation**: Understanding what users mean, not just what they say
+
+**Key principle:** If the response requires understanding nuance, context, or meaning - if it needs to "think" - use LLM mode.
+
+---
+
+## Event Handlers System
+
+When opening servers or clients, you must configure event handlers by providing an `event_handlers` array. Each handler specifies:
+
+1. **event_pattern**: Event ID to match (e.g., "http_request") or "*" for all events
+2. **handler**: Configuration object with:
+   - **type**: "llm" (required)
+
+Handlers are matched in order - the first matching pattern wins.
+
+---
+
+## How LLM Handlers Work
+
+When an event occurs:
+
+1. **Event received**: The event data is passed to the LLM along with:
+   - Server instruction (your primary directive)
+   - Server memory (accumulated context from previous interactions)
+   - Connection metadata
+   - Available actions for this event
+
+2. **LLM processes**: The LLM reasons about:
+   - What the event means in context
+   - What the appropriate response should be
+   - Whether to update server memory
+   - Which actions to execute
+
+3. **Actions generated**: The LLM returns:
+   - An array of actions to execute
+   - Optional memory updates to maintain context
+   - Optional modifications to the server instruction
+
+**Available actions**: The LLM has access to protocol-specific actions. These vary by protocol but follow the pattern:
+- TCP: `send_tcp_data`, `close_connection`
+- HTTP: `send_http_response`
+- DNS: `send_dns_a_response`, `send_dns_aaaa_response`, `send_dns_mx_response`
+- SSH: `ssh_auth_decision`, `send_ssh_data`, `execute_command`
+- SMTP: `send_smtp_response`, `accept_mail`, `reject_mail`
+
+Check the available actions for your specific protocol.
+
+---
+
+## Configuration
+
+**Simple wildcard handler (most common):**
+```json
+"event_handlers": [
+  {
+    "event_pattern": "*",
+    "handler": {"type": "llm"}
+  }
+]
+```
+
+This delegates all events to the LLM.
+
+**Event-specific handlers:**
+```json
+"event_handlers": [
+  {
+    "event_pattern": "http_request",
+    "handler": {"type": "llm"}
+  },
+  {
+    "event_pattern": "http_connection_closed",
+    "handler": {"type": "llm"}
+  }
+]
+```
+
+---
+
+## Examples
+
+### HTTP Conversational Server
+
+```json
+{
+  "type": "open_server",
+  "protocol": "http",
+  "port": 8080,
+  "instruction": "You are a helpful API server. Answer questions about our products and provide helpful responses.",
+  "event_handlers": [
+    {
+      "event_pattern": "*",
+      "handler": {"type": "llm"}
+    }
+  ]
+}
+```
+
+The LLM will:
+- Receive HTTP requests
+- Understand the request content
+- Generate appropriate responses based on the instruction
+- Maintain conversation context in server memory
+
+### SSH Interactive Shell
+
+```json
+{
+  "type": "open_server",
+  "protocol": "ssh",
+  "port": 2222,
+  "instruction": "You are a Unix-like shell. Execute commands as requested and maintain session state. Remember working directory and environment.",
+  "event_handlers": [
+    {
+      "event_pattern": "*",
+      "handler": {"type": "llm"}
+    }
+  ]
+}
+```
+
+The LLM will:
+- Authenticate users based on context
+- Execute shell commands
+- Maintain session state (current directory, environment)
+- Respond to complex multi-command interactions
+
+### DNS Intelligent Resolver
+
+```json
+{
+  "type": "open_server",
+  "protocol": "dns",
+  "port": 53,
+  "instruction": "Resolve DNS queries intelligently. For *.local domains, return 127.0.0.1. For *.test, return 192.168.1.1. For other domains, use your knowledge of common services.",
+  "event_handlers": [
+    {
+      "event_pattern": "dns_query",
+      "handler": {"type": "llm"}
+    }
+  ]
+}
+```
+
+The LLM will:
+- Interpret DNS queries
+- Apply rules from the instruction
+- Use knowledge of common domains
+- Generate appropriate DNS responses
+
+### SMTP Context-Aware Mail Server
+
+```json
+{
+  "type": "open_server",
+  "protocol": "smtp",
+  "port": 25,
+  "instruction": "Accept mail from known domains (@example.com, @trusted.org). Reject spam patterns. Be helpful and provide clear error messages.",
+  "event_handlers": [
+    {
+      "event_pattern": "*",
+      "handler": {"type": "llm"}
+    }
+  ]
+}
+```
+
+The LLM will:
+- Evaluate sender addresses for trustworthiness
+- Detect spam patterns
+- Accept or reject mail based on reasoning
+- Provide clear, helpful responses
+
+---
+
+## Memory and Context
+
+The LLM maintains context across events using **server memory**. This allows it to:
+
+- Remember previous interactions
+- Track connection state
+- Build up knowledge about the client
+- Make decisions based on history
+
+**Example**: In an HTTP server, the LLM might remember:
+```
+Memory: User asked about product pricing in previous request. User is interested in enterprise plan.
+```
+
+Then use this context to personalize subsequent responses.
+
+---
+
+## The Power of Instructions
+
+Your **instruction** is the LLM's primary directive. Make it:
+
+- **Clear**: Be explicit about behavior expectations
+- **Specific**: Provide concrete rules and examples
+- **Contextual**: Explain the server's purpose and role
+- **Adaptive**: Allow for flexibility where appropriate
+
+**Good instruction examples:**
+
+```
+"You are a customer support chatbot for AcmeCorp. Be friendly, helpful, and professional.
+Answer questions about products, pricing, and shipping. If you don't know something,
+admit it and offer to escalate to a human."
+```
+
+```
+"Act as an FTP server. Maintain a virtual filesystem in memory. Support standard FTP
+commands (USER, PASS, CWD, LIST, RETR, STOR). Start in /home directory. Allow any username
+with password 'welcome'."
+```
+
+```
+"You are a DNS server for a local network. Resolve *.home to 192.168.1.x where x is based
+on the subdomain (router.home -> 192.168.1.1). Resolve *.lan to 10.0.0.x. For unknown
+domains, return NXDOMAIN."
+```
+
+---
+
+## Pattern Matching
+
+While LLM mode typically uses a wildcard pattern to handle all events, you can still be selective:
+
+```json
+"event_handlers": [
+  {
+    "event_pattern": "http_request",
+    "handler": {"type": "llm"}
+  },
+  {
+    "event_pattern": "websocket_message",
+    "handler": {"type": "llm"}
+  }
+]
+```
+
+Most commonly, you'll use:
+
+```json
+"event_handlers": [
+  {
+    "event_pattern": "*",
+    "handler": {"type": "llm"}
+  }
+]
+```
+
+This delegates all event handling to the LLM, allowing it to respond appropriately to any situation based on its instruction and accumulated context.
+
+{{/if}}

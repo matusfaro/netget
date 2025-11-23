@@ -5,10 +5,24 @@
 # a comprehensive comparison report.
 #
 # Usage:
-#   ./test-models.sh [model1] [model2] [model3] ...
+#   ./test-models.sh [OPTIONS] [model1] [model2] [model3] ...
 #
-# Example:
+# Options:
+#   -t, --test TEST_NAME    Run specific test(s) only (can be used multiple times)
+#                          If not specified, runs all discovered tests
+#
+# Examples:
+#   # Run all tests with default models
+#   ./test-models.sh
+#
+#   # Run all tests with specific models
 #   ./test-models.sh qwen2.5-coder:7b qwen3-coder:30b llama3:8b
+#
+#   # Run specific test with default models
+#   ./test-models.sh --test test_basic_prompt
+#
+#   # Run multiple specific tests with custom models
+#   ./test-models.sh -t test_basic_prompt -t test_json_mode qwen2.5-coder:7b
 #
 # Output:
 #   - Individual test results saved to ./test-results/<model>.log
@@ -25,12 +39,37 @@ DEFAULT_MODELS=(
     "llama3:8b"
 )
 
-# Get models from args or use defaults
-if [ $# -eq 0 ]; then
+# Parse options
+SPECIFIED_TESTS=()
+MODELS=()
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -t|--test)
+            if [ $# -lt 2 ]; then
+                echo "Error: --test requires a test name argument"
+                exit 1
+            fi
+            SPECIFIED_TESTS+=("$2")
+            shift 2
+            ;;
+        -h|--help)
+            # Print usage and exit
+            head -n 30 "$0" | grep "^#" | sed 's/^# \?//'
+            exit 0
+            ;;
+        *)
+            # Assume remaining args are models
+            MODELS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# Use default models if none specified
+if [ ${#MODELS[@]} -eq 0 ]; then
     MODELS=("${DEFAULT_MODELS[@]}")
     echo "ℹ️  No models specified, using defaults: ${MODELS[*]}"
-else
-    MODELS=("$@")
 fi
 
 # Create results directory
@@ -51,6 +90,10 @@ for model in "${MODELS[@]}"; do
     echo "   • $model"
 done
 echo ""
+if [ ${#SPECIFIED_TESTS[@]} -gt 0 ]; then
+    echo "🎯 Will run ${#SPECIFIED_TESTS[@]} specific test(s) (after compilation)"
+    echo ""
+fi
 
 # Use ALL features to test against the full netget system
 # This ensures we test with ALL protocols and ALL actions (not mocked)
@@ -119,15 +162,54 @@ echo ""
 # Discover tests using the compiled binary
 echo "Discovering tests..."
 TEST_LIST_OUTPUT=$("$TEST_BINARY" --list 2>/dev/null)
-TEST_NAMES=()
+ALL_TEST_NAMES=()
 while IFS= read -r line; do
     if [[ "$line" =~ ^([a-zA-Z0-9_]+):\ test$ ]]; then
         test_name="${BASH_REMATCH[1]}"
-        TEST_NAMES+=("$test_name")
+        ALL_TEST_NAMES+=("$test_name")
     fi
 done <<< "$TEST_LIST_OUTPUT"
 
-echo "Found ${#TEST_NAMES[@]} tests"
+echo "Found ${#ALL_TEST_NAMES[@]} tests"
+
+# Filter tests if specific tests were requested
+if [ ${#SPECIFIED_TESTS[@]} -gt 0 ]; then
+    TEST_NAMES=()
+    for specified_test in "${SPECIFIED_TESTS[@]}"; do
+        # Check if specified test exists in discovered tests
+        found=false
+        for discovered_test in "${ALL_TEST_NAMES[@]}"; do
+            if [ "$discovered_test" = "$specified_test" ]; then
+                TEST_NAMES+=("$specified_test")
+                found=true
+                break
+            fi
+        done
+
+        if [ "$found" = false ]; then
+            echo "⚠️  Warning: Test '$specified_test' not found in discovered tests"
+        fi
+    done
+
+    if [ ${#TEST_NAMES[@]} -eq 0 ]; then
+        echo "❌ Error: None of the specified tests were found"
+        echo ""
+        echo "Available tests:"
+        for test in "${ALL_TEST_NAMES[@]}"; do
+            echo "  - $test"
+        done
+        exit 1
+    fi
+
+    echo "ℹ️  Running ${#TEST_NAMES[@]} specified test(s):"
+    for test in "${TEST_NAMES[@]}"; do
+        echo "   • $test"
+    done
+else
+    TEST_NAMES=("${ALL_TEST_NAMES[@]}")
+    echo "ℹ️  Running all ${#TEST_NAMES[@]} tests"
+fi
+
 echo ""
 echo "Running tests sequentially for accurate benchmarking..."
 echo "Testing same test across all models for direct comparison"
