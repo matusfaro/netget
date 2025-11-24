@@ -439,12 +439,24 @@ Your response must be **pure JSON** only:
             .build();
 
         // Render template
-        TEMPLATE_ENGINE
+        let result = TEMPLATE_ENGINE
             .render_json(template_name, &data)
             .unwrap_or_else(|e| {
                 tracing::error!("Failed to render template {}: {}", template_name, e);
                 format!("# Error\n\nFailed to render prompt template: {}", e)
-            })
+            });
+
+        // Debug: log template rendering result
+        tracing::debug!(
+            "Rendered template '{}': {} chars",
+            template_name,
+            result.len()
+        );
+        if result.is_empty() {
+            tracing::warn!("Template '{}' rendered to empty string!", template_name);
+        }
+
+        result
     }
 
     /// Build system prompt for user input using new action system
@@ -462,10 +474,25 @@ Your response must be **pure JSON** only:
     ) -> String {
         let selected_mode = state.get_selected_scripting_mode().await;
         let scripting_env = state.get_scripting_env().await;
-        // Enable open_server and open_client by default
-        // LLM can still use read_server_documentation/read_client_documentation tools for detailed protocol info
+
+        // Check if documentation has been fetched
+        // Track this to customize the prompt guidance, but always enable actions
+        let has_documentation = conversation_history.as_ref()
+            .map(|history| {
+                history.contains("read_server_documentation") ||
+                history.contains("read_client_documentation") ||
+                history.contains("Server Protocol:") ||
+                history.contains("Client Protocol:")
+            })
+            .unwrap_or(false);
+
+        let has_running_servers = !state.get_all_servers().await.is_empty();
+
+        // Always enable open_server and open_client
+        // The prompt will guide usage based on whether docs have been fetched
         let is_open_server_enabled = true;
         let is_open_client_enabled = true;
+
         let mut actions = get_user_input_common_actions(
             selected_mode,
             &scripting_env,
@@ -504,12 +531,16 @@ Understand what the user wants and respond with the appropriate actions to make 
             tool_examples
         );
 
+        // Build prompt with conditional base stack docs
+        // Only show full base stack docs after documentation has been fetched
+        let include_base_stacks = has_documentation || has_running_servers;
+
         Self::build_action_prompt(
             state,
             None,
             &instructions,
             actions,
-            true,
+            include_base_stacks,
             conversation_history,
         )
         .await

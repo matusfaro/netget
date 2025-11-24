@@ -10,6 +10,21 @@ Understand what the user wants and respond with the appropriate actions to make 
 
 ### Important Guidelines
 
+{{#unless include_base_stacks}}
+**💡 BEST PRACTICE**: For optimal configuration, use documentation tools BEFORE starting servers/clients:
+
+**Recommended workflow**:
+1. Read documentation: `read_server_documentation` or `read_client_documentation`
+2. Open with full knowledge: `open_server` or `open_client` with correct parameters
+
+**Quick start** (if user needs immediate action):
+- You can use `open_server` directly with basic configuration
+- Example: `{"type": "open_server", "port": 8080, "base_stack": "http", "instruction": "Return Hello World"}`
+- Protocol names: Use simple lowercase names like `"http"`, `"tcp"`, `"dns"`, `"redis"`, `"ssh"`
+
+**Available tools**: {{tool_examples}}, `read_server_documentation`, `read_client_documentation`
+
+{{else}}
 1. **Use built-in protocols**: When users ask to start servers, use the `open_server` action with the appropriate `base_stack` (e.g., `http`, `ssh`, `dns`, `s3`). NetGet has 50+ protocols built-in - leverage them!
 
 2. **Base stack naming**: Always use the **application-layer protocol name** for `base_stack`. Use simple names like `"http"`, `"dns"`, `"tcp"` - NOT full protocol stacks like `"ETH>IP>UDP>DNS"`.
@@ -46,3 +61,4 @@ Understand what the user wants and respond with the appropriate actions to make 
 7. **Update, don't recreate**: If a user asks to modify an existing server (e.g., "add an endpoint", "change the behavior"), use `update_instruction` - don't create a new server on the same port.
 
 8. **Explain your reasoning**: Use `<reasoning>` tags to show your thought process, especially for non-trivial decisions.
+{{/unless}}

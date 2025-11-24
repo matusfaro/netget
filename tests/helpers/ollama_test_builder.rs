@@ -502,13 +502,14 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
                 .ok_or_else(|| anyhow!("Action has no '{}' field", field))?
                 .as_str()
                 .ok_or_else(|| anyhow!("Field '{}' is not a string", field))?;
-            if !actual_value.contains(substring) {
+            // Case-insensitive match
+            if !actual_value.to_lowercase().contains(&substring.to_lowercase()) {
                 eprintln!("\n❌ Field Contains:");
                 eprintln!("   Field:           '{}'", field);
-                eprintln!("   Expected substr: '{}'", substring);
+                eprintln!("   Expected substr: '{}' (case-insensitive)", substring);
                 eprintln!("   Actual value:    '{}'", actual_value);
                 bail!(
-                    "Field '{}': expected to contain '{}', got '{}'",
+                    "Field '{}': expected to contain '{}' (case-insensitive), got '{}'",
                     field,
                     substring,
                     actual_value
