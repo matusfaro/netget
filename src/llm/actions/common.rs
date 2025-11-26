@@ -405,7 +405,25 @@ pub fn open_server_action(
     is_enabled: bool,
 ) -> ActionDefinition {
     let name = "open_server".to_string();
-    let mut description = "Start a new server.".to_string();
+    let mut description = "Start a new server.\n\n\
+        PARAMETER USAGE RULES:\n\
+        1. ONLY use parameters that are explicitly documented below\n\
+        2. DO NOT invent new parameters, even if they seem logical\n\
+        3. For custom requirements (timeouts, special behavior, etc.):\n\
+           - Put them in the 'instruction' field as natural language\n\n\
+        EXAMPLE - User says 'open HTTP server with 30 second timeout':\n\
+        ❌ WRONG: {\"type\": \"open_server\", \"base_stack\": \"http\", \"timeout\": 30}\n\
+        ✅ RIGHT: {\"type\": \"open_server\", \"base_stack\": \"http\", \"instruction\": \"HTTP server with 30 second timeout\"}\n\n\
+        TASK SCHEDULING RULES:\n\
+        FOR PERIODIC TASKS (heartbeat, every X seconds/minutes):\n\
+        - Use 'scheduled_tasks' parameter with interval_secs\n\
+        - DO NOT use event_handlers for time-based tasks\n\n\
+        EXAMPLE - User says 'send heartbeat every 10 seconds':\n\
+        ❌ WRONG: {\"event_handlers\": [{\"event_pattern\": \"*\", \"handler\": {...}}]}\n\
+        ✅ RIGHT: {\"scheduled_tasks\": [{\"task_id\": \"heartbeat\", \"recurring\": true, \"interval_secs\": 10, \"instruction\": \"Send heartbeat log\"}]}\n\n\
+        FOR NETWORK EVENTS (data received, connection made):\n\
+        - Use 'event_handlers' parameter\n\
+        - Only for responding to actual network events".to_string();
 
     if !is_enabled {
         description.push_str(" ⚠️ DISABLED: You must first read protocol documentation using the read_server_documentation tool (for server protocols) or read_client_documentation tool (for client protocols). These tools list all available protocols and provide detailed configuration information.");
@@ -445,7 +463,15 @@ pub fn open_server_action(
             Parameter {
                 name: "base_stack".to_string(),
                 type_hint: "string".to_string(),
-                description: format!("Protocol stack to use. Choose the best stack for the task. Available: {}", all_base_stacks(false).join(", ")),
+                description: format!(
+                    "Protocol stack to use. ALWAYS prefer high-level protocol stacks when user keywords match: \
+                    if user says 'dns' or 'dns server' → use 'dns' (NOT 'udp'), \
+                    if user says 'http' or 'web server' → use 'http' (NOT 'tcp'), \
+                    if user says 'smtp' or 'mail server' → use 'smtp' (NOT 'tcp'). \
+                    Only use low-level stacks (tcp, udp) for custom protocols without a specific high-level match. \
+                    Available: {}",
+                    all_base_stacks(false).join(", ")
+                ),
                 required: true,
             },
             Parameter {
@@ -463,7 +489,9 @@ pub fn open_server_action(
             Parameter {
                 name: "instruction".to_string(),
                 type_hint: "string".to_string(),
-                description: "Detailed instructions for handling network events".to_string(),
+                description: "Detailed instructions for handling network events. \
+                    Use this field for custom requirements that don't have dedicated parameters \
+                    (e.g., 'with 30 second timeout', 'log all requests to file', 'rate limit to 10 requests per second', etc.)".to_string(),
                 required: true,
             },
             Parameter {
@@ -475,7 +503,18 @@ pub fn open_server_action(
             Parameter {
                 name: "scheduled_tasks".to_string(),
                 type_hint: "array".to_string(),
-                description: "Optional: Array of scheduled tasks to create with this server. Each task will be attached to the server and execute at specified intervals or delays. Tasks are automatically cleaned up when the server stops. Each task has: task_id, recurring (boolean), delay_secs (for one-shot or initial delay), interval_secs (for recurring), max_executions (optional), instruction, context (optional).".to_string(),
+                description: "Optional: Array of TIME-BASED tasks that execute periodically or after a delay. \
+                    \
+                    USE WHEN: User says 'every X seconds/minutes', 'heartbeat', 'periodic', 'scheduled', or describes time-based automation. \
+                    \
+                    EXAMPLES: \
+                    - 'send heartbeat every 10 seconds' → scheduled_tasks with interval_secs: 10 \
+                    - 'check status every minute' → scheduled_tasks with interval_secs: 60 \
+                    - 'cleanup after 30 seconds' → scheduled_tasks with delay_secs: 30 \
+                    \
+                    DO NOT use event_handlers for periodic tasks - event_handlers respond to network events, NOT time-based triggers! \
+                    \
+                    Each task has: task_id (string), recurring (boolean), interval_secs (for periodic) OR delay_secs (for one-shot), max_executions (optional), instruction (what to do), context (optional).".to_string(),
                 required: false,
             },
         ];
@@ -485,7 +524,77 @@ pub fn open_server_action(
 
     let available_runtimes = env.format_available();
     let event_handlers_description = format!(
-        "Optional: Array of event handlers to configure how events are processed. {}\\n\\nEach handler has:\\n- event_pattern: Event ID to match (e.g., \\\"tcp_data_received\\\") or \\\"*\\\" for all events\\n- handler: Object with:\\n  - type: \\\"script\\\" (inline code), \\\"static\\\" (predefined actions), or \\\"llm\\\" (dynamic processing)\\n  - For script: language ({}), code (inline script)\\n  - For static: actions (array of action objects)\\n\\nExample script handler: {{\\\"event_pattern\\\": \\\"ssh_auth\\\", \\\"handler\\\": {{\\\"type\\\": \\\"script\\\", \\\"language\\\": \\\"python\\\", \\\"code\\\": \\\"import json,sys;data=json.load(sys.stdin);print(json.dumps({{'actions':[{{'type':'send_data','data':'OK'}}]}}))\\\"}}}}\\n\\nExample static handler: {{\\\"event_pattern\\\": \\\"*\\\", \\\"handler\\\": {{\\\"type\\\": \\\"static\\\", \\\"actions\\\": [{{\\\"type\\\": \\\"send_data\\\", \\\"data\\\": \\\"Welcome\\\"}}]}}}}\\n\\nExample LLM handler: {{\\\"event_pattern\\\": \\\"http_request\\\", \\\"handler\\\": {{\\\"type\\\": \\\"llm\\\"}}}}",
+        "Optional: Array of event handlers to configure how events are processed. {}\\n\\n\
+Each handler has:\\n\
+- event_pattern: Event ID to match (e.g., \\\"tcp_data_received\\\") or \\\"*\\\" for all events\\n\
+- handler: Object with:\\n\
+  - type: \\\"script\\\" (inline code), \\\"static\\\" (predefined actions), or \\\"llm\\\" (dynamic processing)\\n\
+  - For script: language ({}), code (inline script)\\n\
+  - For static: actions (array of action objects)\\n\\n\
+SCRIPT EVENT DATA STRUCTURE:\\n\
+Scripts receive JSON via stdin with this structure:\\n\
+{{\\n\
+  \\\"event_type_id\\\": \\\"http_request\\\",  // Event type identifier\\n\
+  \\\"server\\\": {{\\\"id\\\": 1, \\\"port\\\": 8080, \\\"stack\\\": \\\"HTTP\\\", \\\"memory\\\": \\\"\\\", \\\"instruction\\\": \\\"...\\\"}},\\n\
+  \\\"connection\\\": {{\\\"id\\\": \\\"1\\\", \\\"remote_addr\\\": \\\"127.0.0.1:12345\\\"}},  // Optional\\n\
+  \\\"event\\\": {{\\n\
+    // Protocol-specific event data (fields vary by event type)\\n\
+    // For HTTP: method, path, query_string, query, headers, body\\n\
+    // For TCP: data (hex-encoded bytes)\\n\
+    // For DNS: query_id, domain, query_type\\n\
+  }}\\n\
+}}\\n\\n\
+IMPORTANT: Event data is directly under data['event'], NOT data['event']['data']!\\n\
+Access pattern: data['event']['field_name'] (e.g., data['event']['method'])\\n\\n\
+CRITICAL - COMMON MISTAKES TO AVOID:\\n\
+❌ WRONG: data['event']['request']['query_string']      # NO 'request' wrapper!\\n\
+❌ WRONG: data['event']['http_request']['query_string'] # NO 'http_request' wrapper!\\n\
+❌ WRONG: data['event']['data']['method']               # NO 'data' wrapper!\\n\
+✅ RIGHT: data['event']['query_string']                 # Direct access\\n\
+✅ RIGHT: data['event']['method']                       # Direct access\\n\\n\
+The event_type_id tells you WHAT event occurred, but data fields are DIRECTLY under data['event'].\\n\\n\
+Example HTTP script (sum query parameters x and y):\\n\
+{{\\\"event_pattern\\\": \\\"http_request\\\", \\\"handler\\\": {{\\\"type\\\": \\\"script\\\", \\\"language\\\": \\\"python\\\", \\\"code\\\": \\\"<http_sum_script>\\\"}}}}\\n\\n\
+<http_sum_script>\\n\
+import json\\n\
+import sys\\n\
+\\n\
+data = json.load(sys.stdin)\\n\
+# Access event data: data['event']['field_name']\\n\
+query_params = data['event']['query']  # Pre-parsed query parameters object\\n\
+x = float(query_params['x'])\\n\
+y = float(query_params['y'])\\n\
+result = x + y\\n\
+\\n\
+print(json.dumps({{\\n\
+  'actions': [{{\\n\
+    'type': 'send_http_response',\\n\
+    'status': 200,\\n\
+    'body': str(result)\\n\
+  }}]\\n\
+}}))\\n\
+</http_sum_script>\\n\\n\
+Example TCP script (echo received data):\\n\
+{{\\\"event_pattern\\\": \\\"tcp_data_received\\\", \\\"handler\\\": {{\\\"type\\\": \\\"script\\\", \\\"language\\\": \\\"python\\\", \\\"code\\\": \\\"<tcp_echo_script>\\\"}}}}\\n\\n\
+<tcp_echo_script>\\n\
+import json\\n\
+import sys\\n\
+\\n\
+data = json.load(sys.stdin)\\n\
+# TCP data is hex-encoded in data['event']['data']\\n\
+received_hex = data['event']['data']\\n\
+\\n\
+print(json.dumps({{\\n\
+  'actions': [{{\\n\
+    'type': 'send_tcp_data',\\n\
+    'data': received_hex  # Echo back the same hex data\\n\
+  }}]\\n\
+}}))\\n\
+</tcp_echo_script>\\n\\n\
+Example static handler:\\n\
+{{\\\"event_pattern\\\": \\\"*\\\", \\\"handler\\\": {{\\\"type\\\": \\\"static\\\", \\\"actions\\\": [{{\\\"type\\\": \\\"send_data\\\", \\\"data\\\": \\\"Welcome\\\"}}]}}}}\\n\\n\
+Example LLM handler:\\n\
+{{\\\"event_pattern\\\": \\\"http_request\\\", \\\"handler\\\": {{\\\"type\\\": \\\"llm\\\"}}}}",
         handler_mode_guidance,
         available_runtimes
     );
@@ -614,7 +723,17 @@ pub fn open_client_action(
 
     let available_runtimes = env.format_available();
     let event_handlers_description = format!(
-        "Optional: Array of event handlers to configure how client events are processed. {}\\n\\nEach handler has:\\n- event_pattern: Event ID to match (e.g., \\\"http_response_received\\\") or \\\"*\\\" for all events\\n- handler: Object with:\\n  - type: \\\"script\\\" (inline code), \\\"static\\\" (predefined actions), or \\\"llm\\\" (dynamic processing)\\n  - For script: language ({}), code (inline script)\\n  - For static: actions (array of action objects)\\n\\nExample script handler: {{\\\"event_pattern\\\": \\\"redis_response_received\\\", \\\"handler\\\": {{\\\"type\\\": \\\"script\\\", \\\"language\\\": \\\"python\\\", \\\"code\\\": \\\"import json,sys;data=json.load(sys.stdin);print(json.dumps({{'actions':[{{'type':'execute_redis_command','command':'PING'}}]}}))\\\"}}}}\\n\\nExample static handler: {{\\\"event_pattern\\\": \\\"*\\\", \\\"handler\\\": {{\\\"type\\\": \\\"static\\\", \\\"actions\\\": [{{\\\"type\\\": \\\"send_http_request\\\", \\\"method\\\": \\\"GET\\\", \\\"path\\\": \\\"/\\\"}}]}}}}",
+        "Optional: Array of event handlers to configure how client events are processed. {}\\n\\n\
+Each handler has:\\n\
+- event_pattern: Event ID to match (e.g., \\\"http_response_received\\\") or \\\"*\\\" for all events\\n\
+- handler: Object with:\\n\
+  - type: \\\"script\\\" (inline code), \\\"static\\\" (predefined actions), or \\\"llm\\\" (dynamic processing)\\n\
+  - For script: language ({}), code (inline script)\\n\
+  - For static: actions (array of action objects)\\n\\n\
+Note: Client scripts use the same event data structure as server scripts (see open_server documentation for details).\\n\
+Access pattern: data['event']['field_name'] (e.g., data['event']['status_code'] for HTTP responses)\\n\\n\
+Example script handler: {{\\\"event_pattern\\\": \\\"redis_response_received\\\", \\\"handler\\\": {{\\\"type\\\": \\\"script\\\", \\\"language\\\": \\\"python\\\", \\\"code\\\": \\\"import json,sys;data=json.load(sys.stdin);print(json.dumps({{'actions':[{{'type':'execute_redis_command','command':'PING'}}]}}))\\\"}}}}\\n\\n\
+Example static handler: {{\\\"event_pattern\\\": \\\"*\\\", \\\"handler\\\": {{\\\"type\\\": \\\"static\\\", \\\"actions\\\": [{{\\\"type\\\": \\\"send_http_request\\\", \\\"method\\\": \\\"GET\\\", \\\"path\\\": \\\"/\\\"}}]}}}}",
         handler_mode_guidance,
         available_runtimes
     );

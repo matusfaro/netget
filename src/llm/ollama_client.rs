@@ -13,6 +13,28 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace, warn};
 
+/// Strip markdown code fences (```json ... ``` or ``` ... ```) from text
+/// This helps handle cases where the LLM wraps JSON responses in markdown formatting
+/// Handles multiple trailing backticks (e.g., ```\n```)
+fn strip_markdown_fences(text: &str) -> String {
+    let mut result = text.trim();
+
+    // Remove opening fence (```json or ```)
+    result = result
+        .strip_prefix("```json")
+        .or_else(|| result.strip_prefix("```"))
+        .unwrap_or(result)
+        .trim();
+
+    // Remove ALL trailing backticks (loop until no more)
+    // Handles cases like: {...}\n```\n```
+    while let Some(stripped) = result.strip_suffix("```") {
+        result = stripped.trim();
+    }
+
+    result.to_string()
+}
+
 /// Message in a conversation with role (system/user/assistant/tool)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
@@ -561,8 +583,17 @@ impl OllamaClient {
             // Generate response
             let generate_response = self.generate(model, &current_prompt).await?;
 
-            // Try to parse as ActionResponse to check format
-            match ActionResponse::from_str(&generate_response.text) {
+            // Extract XML references BEFORE validating JSON format
+            // This allows LLM to use <script001> tags without causing "trailing characters" errors
+            let (json_only, _refs) = crate::llm::reference_parser::extract_references(&generate_response.text)
+                .unwrap_or_else(|_| (generate_response.text.clone(), std::collections::HashMap::new()));
+
+            // Strip markdown code fences if present (```json ... ``` or ``` ... ```)
+            // LLMs sometimes wrap JSON in markdown formatting which causes parse errors
+            let json_cleaned = strip_markdown_fences(&json_only);
+
+            // Try to parse cleaned JSON as ActionResponse to check format
+            match ActionResponse::from_str(&json_cleaned) {
                 Ok(_) => {
                     // Valid format!
                     if attempt > 1 {
@@ -576,11 +607,11 @@ impl OllamaClient {
                         // We have retries left
                         warn!("Parse error on attempt {}: {}", attempt, e);
                         warn!(
-                            "Malformed response: {}",
-                            if generate_response.text.len() > 500 {
-                                format!("{}...", &generate_response.text[..500])
+                            "Malformed response (after XML extraction and markdown stripping): {}",
+                            if json_cleaned.len() > 500 {
+                                format!("{}...", &json_cleaned[..500])
                             } else {
-                                generate_response.text.clone()
+                                json_cleaned.to_string()
                             }
                         );
                         trace!("Will retry with corrective feedback (attempt {}/{})", attempt, max_retries + 1);

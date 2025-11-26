@@ -12,6 +12,7 @@ pub mod event_handler_executor; // Event handler execution (script/static/llm)
 pub mod event_instructions; // Event-specific instructions
 pub mod model_selection;
 pub mod rate_limiter; // Rate limiting for LLM calls (concurrency + token throttling)
+pub mod reference_parser; // XML reference parser for large content blocks
 pub mod template_engine; // Handlebars template engine // Model selection utilities
 pub mod ollama_client;
 pub mod prompt;

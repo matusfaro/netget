@@ -92,16 +92,104 @@ Use scripts when responses are **deterministic and rule-based**. Scripts receive
 
 **CRITICAL**: Use the **same protocol-specific action types** available to you as the LLM. **DO NOT** use generic actions like "send_data" - instead use the actual action types for your protocol (e.g., "send_tcp_data" for TCP, "send_http_response" for HTTP, "send_dns_a_response" for DNS). Check the available actions for each event type.
 
-**Example script handler:**
+---
+
+## 📝 Using XML References for Code (NO JSON ESCAPING!)
+
+**ALWAYS use XML references for code** - even simple scripts benefit from this format!
+
+Instead of JSON-escaping your code (painful and error-prone), use simple XML-style tags:
+
+**Format:**
+```json
+{
+  "event_pattern": "event_name",
+  "handler": {
+    "type": "script",
+    "language": "python",
+    "code": "<script001>"
+  }
+}
+
+<script001>
+import json
+import sys
+
+# No escaping needed! Write code naturally.
+data = json.load(sys.stdin)
+result = {"actions": [{"type": "action_name"}]}
+print(json.dumps(result))
+</script001>
+```
+
+**Tag naming:** Use simple names like `<script001>`, `<script002>`, `<auth>`, `<handler>`, etc.
+**Placement:** Tags can appear before or after your JSON response.
+**Closing:** Use `</tagname>` or just `<tagname>` to close (both work).
+
+**Why use references?**
+- ✅ No JSON string escaping (no `\n`, `\"`, `\\`)
+- ✅ Write code naturally with proper formatting
+- ✅ Much easier to read and debug
+- ✅ Fewer token errors from malformed escape sequences
+
+**Example with reference:**
 ```json
 {
   "event_pattern": "ssh_auth",
   "handler": {
     "type": "script",
     "language": "python",
-    "code": "import json,sys\ndata=json.load(sys.stdin)\nallowed=data['event']['username']=='alice'\nprint(json.dumps({'actions':[{'type':'ssh_auth_decision','allowed':allowed}]}))"
+    "code": "<auth_handler>"
   }
 }
+
+<auth_handler>
+import json
+import sys
+
+data = json.load(sys.stdin)
+username = data['event']['username']
+allowed = username == 'alice'
+
+result = {
+    "actions": [{
+        "type": "ssh_auth_decision",
+        "allowed": allowed
+    }]
+}
+
+print(json.dumps(result))
+</auth_handler>
+```
+
+**Multiple scripts example:**
+```json
+{
+  "event_handlers": [
+    {
+      "event_pattern": "http_request",
+      "handler": {"type": "script", "language": "python", "code": "<http_handler>"}
+    },
+    {
+      "event_pattern": "tcp_data_received",
+      "handler": {"type": "script", "language": "python", "code": "<tcp_handler>"}
+    }
+  ]
+}
+
+<http_handler>
+import json, sys
+data = json.load(sys.stdin)
+# HTTP handling logic
+print(json.dumps({"actions": [...]}))
+</http_handler>
+
+<tcp_handler>
+import json, sys
+data = json.load(sys.stdin)
+# TCP handling logic
+print(json.dumps({"actions": [...]}))
+</tcp_handler>
 ```
 
 **Script constraints:**
@@ -151,6 +239,30 @@ Use static handlers for completely **fixed, unchanging responses**. No code, no 
     ]
   }
 }
+```
+
+**For large static content (HTML pages, configs, etc.), use XML references:**
+```json
+{
+  "event_pattern": "http_request",
+  "handler": {
+    "type": "static",
+    "actions": [
+      {"type": "send_http_response", "status": 200, "headers": {"Content-Type": "text/html"}, "body": "<html_page>"}
+    ]
+  }
+}
+
+<html_page>
+<!DOCTYPE html>
+<html>
+<head><title>Welcome</title></head>
+<body>
+  <h1>Welcome to our server!</h1>
+  <p>No JSON escaping needed for large content!</p>
+</body>
+</html>
+</html_page>
 ```
 
 ---

@@ -183,10 +183,22 @@ pub static HTTP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
                 required: true,
             },
             Parameter {
-                name: "uri".to_string(),
+                name: "path".to_string(),
                 type_hint: "string".to_string(),
-                description: "Request URI".to_string(),
+                description: "Request path without query string (e.g., '/api/users')".to_string(),
                 required: true,
+            },
+            Parameter {
+                name: "query_string".to_string(),
+                type_hint: "string".to_string(),
+                description: "Raw query string if present (e.g., 'x=5&y=3')".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "query".to_string(),
+                type_hint: "object".to_string(),
+                description: "Parsed query parameters as key-value pairs (e.g., {\"x\": \"5\", \"y\": \"3\"})".to_string(),
+                required: false,
             },
             Parameter {
                 name: "headers".to_string(),

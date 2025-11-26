@@ -23,7 +23,9 @@ pub use easy_trait::Easy;
 pub use protocol_trait::{Protocol, Server};
 // Export the Protocol and Server traits
 pub use summary::{summarize_action, summarize_actions};
-pub use tools::{execute_tool, get_all_tool_actions, ToolAction, ToolResult};
+pub use tools::{
+    execute_tool, get_all_tool_actions, get_network_event_tool_actions, ToolAction, ToolResult,
+};
 
 use serde::{Deserialize, Serialize};
 

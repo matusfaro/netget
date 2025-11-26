@@ -1516,6 +1516,38 @@ pub fn get_all_tool_actions(
     actions
 }
 
+/// Get tool actions suitable for network event handlers
+///
+/// Network events should not have access to server/client documentation tools
+/// since those are only relevant for opening new servers/clients (user input context).
+/// Network events are for handling requests on already-running servers.
+pub fn get_network_event_tool_actions(
+    web_search_mode: crate::state::app_state::WebSearchMode,
+) -> Vec<ActionDefinition> {
+    use crate::state::app_state::WebSearchMode;
+
+    let mut actions = vec![
+        generate_random_action(), // Put first - LLMs need this for mock data
+        read_file_action(),
+        // Explicitly exclude read_server_documentation_action() and read_client_documentation_action()
+        // These mention open_server/open_client in their descriptions and confuse the LLM
+        list_network_interfaces_action(),
+        list_models_action(),
+    ];
+
+    // Include web search tool for both ON and ASK modes (not for OFF)
+    match web_search_mode {
+        WebSearchMode::On | WebSearchMode::Ask => {
+            actions.push(web_search_action());
+        }
+        WebSearchMode::Off => {
+            // Don't include web search tool
+        }
+    }
+
+    actions
+}
+
 /// Execute list_network_interfaces tool
 async fn execute_list_network_interfaces() -> ToolResult {
     use tracing::info;

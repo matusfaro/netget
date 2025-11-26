@@ -66,10 +66,27 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# Use default models if none specified
+# Require explicit model selection
 if [ ${#MODELS[@]} -eq 0 ]; then
-    MODELS=("${DEFAULT_MODELS[@]}")
-    echo "ℹ️  No models specified, using defaults: ${MODELS[*]}"
+    echo "❌ Error: No models specified"
+    echo ""
+    echo "You must explicitly specify which model(s) to test."
+    echo ""
+    echo "Available models (commonly used):"
+    echo "  • qwen2.5-coder:7b"
+    echo "  • qwen3-coder:30b"
+    echo "  • llama3:8b"
+    echo ""
+    echo "Usage:"
+    echo "  $0 <model1> [model2] [model3] ..."
+    echo ""
+    echo "Examples:"
+    echo "  $0 qwen3-coder:30b"
+    echo "  $0 qwen2.5-coder:7b qwen3-coder:30b"
+    echo ""
+    echo "To see all available models on your system:"
+    echo "  ollama list"
+    exit 1
 fi
 
 # Create results directory
