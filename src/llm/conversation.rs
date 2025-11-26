@@ -391,9 +391,44 @@ impl ConversationHandler {
             self.messages
                 .push(Message::assistant(original_response.clone()));
 
-            // Parse as action response (using cleaned response without reasoning tags)
-            let action_response = ActionResponse::from_str(&cleaned_response)
+            // Extract XML references from response (scripts, configs, large content)
+            let (json_only, references) = crate::llm::reference_parser::extract_references(&cleaned_response)
+                .context("Failed to extract XML references from response")?;
+
+            if !references.is_empty() {
+                debug!("Extracted {} XML references from LLM response", references.len());
+                for (tag_name, content) in &references {
+                    trace!("  Reference <{}>: {} chars", tag_name, content.len());
+                }
+            }
+
+            // Parse as action response (using JSON-only portion)
+            let action_response = ActionResponse::from_str(&json_only)
                 .context("Failed to parse action response (should not happen after retry)")?;
+
+            // Resolve references in actions (replace <tagname> placeholders with actual content)
+            let actions_with_refs: Vec<_> = action_response
+                .actions
+                .into_iter()
+                .map(|action| {
+                    let mut resolved_action = action;
+                    // Convert to JSON string, resolve references, parse back
+                    if let Ok(action_json) = serde_json::to_string(&resolved_action) {
+                        if crate::llm::reference_parser::contains_references(&action_json) {
+                            let resolved_json = crate::llm::reference_parser::resolve_references(&action_json, &references);
+                            if let Ok(new_action) = serde_json::from_str(&resolved_json) {
+                                resolved_action = new_action;
+                            }
+                        }
+                    }
+                    resolved_action
+                })
+                .collect();
+
+            // Create new action response with resolved references
+            let action_response = ActionResponse {
+                actions: actions_with_refs,
+            };
 
             // Separate tool calls from regular actions
             let (tools, regular): (Vec<_>, Vec<_>) = action_response

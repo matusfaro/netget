@@ -51,7 +51,7 @@ When configuring event handlers, you have three powerful options at your disposa
 
 When opening servers or clients, you can configure how different events are handled by providing an `event_handlers` array. Each handler specifies:
 
-1. **event_pattern**: Event ID to match (e.g., "tcp_data_received") or "*" for all events
+1. **event_pattern**: Event ID to match (from your protocol's documentation) or "*" for all events
 2. **handler**: Configuration object (see sections below for each type)
 
 Handlers are matched in order - the first matching pattern wins.
@@ -78,10 +78,10 @@ Use scripts when responses are **deterministic and rule-based**. Scripts receive
 **Script Input (JSON via stdin):**
 ```json
 {
-  "event_type_id": "ssh_auth",
-  "server": {"id": 1, "port": 2222, "stack": "ETH>IP>TCP>SSH", "memory": "", "instruction": "..."},
+  "event_type_id": "<event_type_from_protocol>",
+  "server": {"id": 1, "port": 9000, "stack": "<protocol_stack>", "memory": "", "instruction": "..."},
   "connection": {"id": "conn_123", "remote_addr": "127.0.0.1:54321", "bytes_sent": 0, "bytes_received": 0},
-  "event": {"username": "alice", "auth_type": "password"}
+  "event": {"<event_field>": "<event_value>"}
 }
 ```
 
@@ -90,18 +90,106 @@ Use scripts when responses are **deterministic and rule-based**. Scripts receive
 {"actions": [{"type": "action_name", "param": "value"}]}
 ```
 
-**CRITICAL**: Use the **same protocol-specific action types** available to you as the LLM. **DO NOT** use generic actions like "send_data" - instead use the actual action types for your protocol (e.g., "send_tcp_data" for TCP, "send_http_response" for HTTP, "send_dns_a_response" for DNS). Check the available actions for each event type.
+**CRITICAL**: Use the **protocol-specific action types** from your protocol's documentation. **DO NOT** use generic actions like "send_data" - instead use the actual action types available for your protocol. Check the protocol documentation (via `read_server_documentation` or `read_client_documentation`) to see the exact action types and their parameters for your protocol.
 
-**Example script handler:**
+---
+
+## 📝 Using XML References for Code (NO JSON ESCAPING!)
+
+**ALWAYS use XML references for code** - even simple scripts benefit from this format!
+
+Instead of JSON-escaping your code (painful and error-prone), use simple XML-style tags:
+
+**Format:**
 ```json
 {
-  "event_pattern": "ssh_auth",
+  "event_pattern": "event_name",
   "handler": {
     "type": "script",
     "language": "python",
-    "code": "import json,sys\ndata=json.load(sys.stdin)\nallowed=data['event']['username']=='alice'\nprint(json.dumps({'actions':[{'type':'ssh_auth_decision','allowed':allowed}]}))"
+    "code": "<script001>"
   }
 }
+
+<script001>
+import json
+import sys
+
+# No escaping needed! Write code naturally.
+data = json.load(sys.stdin)
+result = {"actions": [{"type": "action_name"}]}
+print(json.dumps(result))
+</script001>
+```
+
+**Tag naming:** Use simple names like `<script001>`, `<script002>`, `<auth>`, `<handler>`, etc.
+**Placement:** Tags can appear before or after your JSON response.
+**Closing:** Use `</tagname>` or just `<tagname>` to close (both work).
+
+**Why use references?**
+- ✅ No JSON string escaping (no `\n`, `\"`, `\\`)
+- ✅ Write code naturally with proper formatting
+- ✅ Much easier to read and debug
+- ✅ Fewer token errors from malformed escape sequences
+
+**Example with reference:**
+```json
+{
+  "event_pattern": "<event_id>",
+  "handler": {
+    "type": "script",
+    "language": "python",
+    "code": "<event_handler>"
+  }
+}
+
+<event_handler>
+import json
+import sys
+
+data = json.load(sys.stdin)
+event = data['event']
+
+# Process event data and decide response
+result = {
+    "actions": [{
+        "type": "<protocol_action>",
+        "<param>": "<value>"
+    }]
+}
+
+print(json.dumps(result))
+</event_handler>
+```
+
+**Multiple scripts example (different handlers for different events):**
+```json
+{
+  "event_handlers": [
+    {
+      "event_pattern": "<event_type_1>",
+      "handler": {"type": "script", "language": "python", "code": "<handler1>"}
+    },
+    {
+      "event_pattern": "<event_type_2>",
+      "handler": {"type": "script", "language": "python", "code": "<handler2>"}
+    }
+  ]
+}
+
+<handler1>
+import json, sys
+data = json.load(sys.stdin)
+# Handle event type 1
+print(json.dumps({"actions": [{"type": "<protocol_action>", ...}]}))
+</handler1>
+
+<handler2>
+import json, sys
+data = json.load(sys.stdin)
+# Handle event type 2
+print(json.dumps({"actions": [{"type": "<protocol_action>", ...}]}))
+</handler2>
 ```
 
 **Script constraints:**
@@ -122,36 +210,45 @@ Use static handlers for completely **fixed, unchanging responses**. No code, no 
 - Hardcoded status responses
 - Error messages that never change
 
-**IMPORTANT**: Use protocol-specific action types, NOT generic "send_data". For example:
-- TCP: `send_tcp_data`
-- HTTP: `send_http_response`
-- DNS: `send_dns_a_response`
+**IMPORTANT**: Use protocol-specific action types from your protocol's documentation. Each protocol has its own specific action types. Do NOT use generic "send_data" - check your protocol's documentation to see the available action types and their parameters.
 
-**Example static handler (TCP protocol):**
+**Example static handler pattern:**
 ```json
 {
-  "event_pattern": "*",
+  "event_pattern": "<event_id>",
   "handler": {
     "type": "static",
     "actions": [
-      {"type": "send_tcp_data", "data": "220 Welcome to the server!\r\n"}
+      {"type": "<protocol_specific_action>", ...protocol_params...}
     ]
   }
 }
 ```
 
-**Example static handler (HTTP protocol):**
+**Key points:**
+- Replace `<event_id>` with the actual event ID for your protocol (from documentation)
+- Replace `<protocol_specific_action>` with your protocol's action type (from documentation)
+- Use `*` as event_pattern to match all events
+
+**For large static content (HTML, configs, etc.), use XML references:**
 ```json
 {
-  "event_pattern": "http_request",
+  "event_pattern": "<event_id>",
   "handler": {
     "type": "static",
     "actions": [
-      {"type": "send_http_response", "status": 200, "headers": {"Content-Type": "text/plain"}, "body": "OK"}
+      {"type": "<protocol_action>", "body": "<content_ref>", ...other_params...}
     ]
   }
 }
+
+<content_ref>
+Large content goes here without JSON escaping.
+Multiple lines, special characters, all preserved.
+</content_ref>
 ```
+
+The XML reference `<content_ref>` is replaced with the actual content between `<content_ref>` and `</content_ref>` tags.
 
 ---
 
@@ -170,27 +267,29 @@ Use LLM handlers (default) for **intelligent, context-aware, and adaptive respon
 **Example LLM handler:**
 ```json
 {
-  "event_pattern": "http_request",
+  "event_pattern": "<event_id>",
   "handler": {
     "type": "llm"
   }
 }
 ```
 
+Use `*` as event_pattern to route all events to the LLM.
+
 ---
 
 ## Configuration Examples
 
-**Mixed handlers - TCP protocol example:**
+**Mixed handlers - Pattern (use different handlers for different events):**
 ```json
 "event_handlers": [
   {
-    "event_pattern": "tcp_connection_opened",
-    "handler": {"type": "static", "actions": [{"type": "send_tcp_data", "data": "220 FTP server ready\r\n"}]}
+    "event_pattern": "<connection_event>",
+    "handler": {"type": "static", "actions": [{"type": "<protocol_action>", ...}]}
   },
   {
-    "event_pattern": "tcp_data_received",
-    "handler": {"type": "script", "language": "python", "code": "..."}
+    "event_pattern": "<data_event>",
+    "handler": {"type": "script", "language": "python", "code": "<handler>"}
   },
   {
     "event_pattern": "*",
@@ -199,27 +298,27 @@ Use LLM handlers (default) for **intelligent, context-aware, and adaptive respon
 ]
 ```
 
-**All scripts:**
+**All scripts (deterministic handling for all events):**
 ```json
 "event_handlers": [
   {
     "event_pattern": "*",
-    "handler": {"type": "script", "language": "python", "code": "..."}
+    "handler": {"type": "script", "language": "python", "code": "<handler>"}
   }
 ]
 ```
 
-**All static - HTTP protocol example:**
+**All static (fixed response for all events):**
 ```json
 "event_handlers": [
   {
     "event_pattern": "*",
-    "handler": {"type": "static", "actions": [{"type": "send_http_response", "status": 200, "headers": {"Content-Type": "text/plain"}, "body": "OK"}]}
+    "handler": {"type": "static", "actions": [{"type": "<protocol_action>", ...}]}
   }
 ]
 ```
 
-**All LLM:**
+**All LLM (intelligent handling - default):**
 ```json
 "event_handlers": [
   {
@@ -228,5 +327,7 @@ Use LLM handlers (default) for **intelligent, context-aware, and adaptive respon
   }
 ]
 ```
+
+**Note:** Replace `<protocol_action>`, `<connection_event>`, `<data_event>` with actual values from your protocol's documentation. Use `read_server_documentation` or `read_client_documentation` to get protocol-specific event IDs and action types.
 
 

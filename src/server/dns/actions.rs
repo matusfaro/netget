@@ -81,6 +81,54 @@ impl Protocol for DnsProtocol {
     fn group_name(&self) -> &'static str {
         "Core"
     }
+
+    fn get_startup_examples(&self) -> Option<crate::llm::actions::StartupExamples> {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        Some(StartupExamples::new(
+            // LLM mode: LLM handles all DNS responses intelligently
+            json!({
+                "type": "open_server",
+                "port": 53,
+                "base_stack": "dns",
+                "instruction": "DNS server that resolves queries based on domain patterns"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_server",
+                "port": 53,
+                "base_stack": "dns",
+                "event_handlers": [{
+                    "event_pattern": "dns_query",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<dns_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_server",
+                "port": 53,
+                "base_stack": "dns",
+                "event_handlers": [{
+                    "event_pattern": "dns_query",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_dns_a_response",
+                            "query_id": 0,
+                            "domain": "any",
+                            "ip": "93.184.216.34",
+                            "ttl": 300
+                        }]
+                    }
+                }]
+            }),
+        ))
+    }
 }
 
 // Implement Server trait (server-specific functionality)
@@ -665,56 +713,59 @@ fn ignore_query_action() -> ActionDefinition {
 
 /// DNS query event - triggered when DNS client sends a query
 pub static DNS_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("dns_query", "DNS client sent a query for domain resolution")
-        .with_parameters(vec![
-            Parameter {
-                name: "query_id".to_string(),
-                type_hint: "number".to_string(),
-                description: "DNS query ID from the request packet".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "domain".to_string(),
-                type_hint: "string".to_string(),
-                description: "Domain name being queried".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "query_type".to_string(),
-                type_hint: "string".to_string(),
-                description: "DNS query type (A, AAAA, MX, TXT, CNAME, etc.)".to_string(),
-                required: true,
-            },
-        ])
-        .with_actions(vec![
-            send_dns_a_response_action(),
-            send_dns_aaaa_response_action(),
-            send_dns_cname_response_action(),
-            send_dns_mx_response_action(),
-            send_dns_txt_response_action(),
-            send_dns_nxdomain_action(),
-            send_dns_response_action(),
-            ignore_query_action(),
-        ])
-        .with_typical_example(serde_json::json!({
+    EventType::new(
+        "dns_query",
+        "DNS client sent a query for domain resolution",
+        serde_json::json!({
             "type": "send_dns_a_response",
             "query_id": 12345,
             "domain": "example.com",
             "ip": "93.184.216.34",
             "ttl": 300
-        }))
-        .with_optional_example(serde_json::json!({
-            "type": "send_dns_nxdomain",
-            "query_id": 12345,
-            "domain": "unknown.example.com"
-        }))
-        .with_optional_example(serde_json::json!({
-            "type": "send_dns_aaaa_response",
-            "query_id": 12345,
-            "domain": "example.com",
-            "ip": "2606:2800:220:1:248:1893:25c8:1946",
-            "ttl": 300
-        }))
+        }),
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "query_id".to_string(),
+            type_hint: "number".to_string(),
+            description: "DNS query ID from the request packet".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "domain".to_string(),
+            type_hint: "string".to_string(),
+            description: "Domain name being queried".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "query_type".to_string(),
+            type_hint: "string".to_string(),
+            description: "DNS query type (A, AAAA, MX, TXT, CNAME, etc.)".to_string(),
+            required: true,
+        },
+    ])
+    .with_actions(vec![
+        send_dns_a_response_action(),
+        send_dns_aaaa_response_action(),
+        send_dns_cname_response_action(),
+        send_dns_mx_response_action(),
+        send_dns_txt_response_action(),
+        send_dns_nxdomain_action(),
+        send_dns_response_action(),
+        ignore_query_action(),
+    ])
+    .with_alternative_example(serde_json::json!({
+        "type": "send_dns_nxdomain",
+        "query_id": 12345,
+        "domain": "unknown.example.com"
+    }))
+    .with_alternative_example(serde_json::json!({
+        "type": "send_dns_aaaa_response",
+        "query_id": 12345,
+        "domain": "example.com",
+        "ip": "2606:2800:220:1:248:1893:25c8:1946",
+        "ttl": 300
+    }))
 });
 
 /// Get DNS event types

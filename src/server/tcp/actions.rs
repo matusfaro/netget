@@ -125,6 +125,63 @@ impl Protocol for TcpProtocol {
     fn group_name(&self) -> &'static str {
         "Core"
     }
+
+    fn get_startup_examples(&self) -> Option<crate::llm::actions::StartupExamples> {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        Some(StartupExamples::new(
+            // LLM mode: LLM handles all TCP responses intelligently
+            json!({
+                "type": "open_server",
+                "port": 9000,
+                "base_stack": "tcp",
+                "instruction": "Echo server that responds to TCP data"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_server",
+                "port": 9000,
+                "base_stack": "tcp",
+                "event_handlers": [{
+                    "event_pattern": "tcp_data_received",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<tcp_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_server",
+                "port": 9000,
+                "base_stack": "tcp",
+                "event_handlers": [
+                    {
+                        "event_pattern": "tcp_connection_opened",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_tcp_data",
+                                "data": "220 Welcome\r\n"
+                            }]
+                        }
+                    },
+                    {
+                        "event_pattern": "tcp_data_received",
+                        "handler": {
+                            "type": "static",
+                            "actions": [{
+                                "type": "send_tcp_data",
+                                "data": "OK\r\n"
+                            }]
+                        }
+                    }
+                ]
+            }),
+        ))
+    }
 }
 
 // Implement Server trait (server-specific functionality)
@@ -336,42 +393,45 @@ pub static TCP_CONNECTION_OPENED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "tcp_connection_opened",
         "New TCP connection established (send initial greeting/banner if needed)",
+        serde_json::json!({
+            "type": "send_tcp_data",
+            "data": "220 Welcome to server\r\n"
+        }),
     )
     // No parameters - just connection opened notification
     .with_actions(vec![
         SEND_TCP_DATA_ACTION.clone(),
         CLOSE_THIS_CONNECTION_ACTION.clone(),
     ])
-    .with_typical_example(serde_json::json!({
-        "type": "send_tcp_data",
-        "data": "220 Welcome to server\r\n"
-    }))
 });
 
 /// TCP data received event - triggered when data is received on connection
 pub static TCP_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("tcp_data_received", "Data received on TCP connection")
-        .with_parameters(vec![Parameter {
-            name: "data".to_string(),
-            type_hint: "string".to_string(),
-            description: "The data received (as hex string or UTF-8 if printable)".to_string(),
-            required: true,
-        }])
-        .with_actions(vec![
-            SEND_TCP_DATA_ACTION.clone(),
-            WAIT_FOR_MORE_ACTION.clone(),
-            CLOSE_THIS_CONNECTION_ACTION.clone(),
-        ])
-        .with_typical_example(serde_json::json!({
+    EventType::new(
+        "tcp_data_received",
+        "Data received on TCP connection",
+        serde_json::json!({
             "type": "send_tcp_data",
             "data": "48656c6c6f"
-        }))
-        .with_optional_example(serde_json::json!({
-            "type": "wait_for_more"
-        }))
-        .with_optional_example(serde_json::json!({
-            "type": "close_connection"
-        }))
+        }),
+    )
+    .with_parameters(vec![Parameter {
+        name: "data".to_string(),
+        type_hint: "string".to_string(),
+        description: "The data received (as hex string or UTF-8 if printable)".to_string(),
+        required: true,
+    }])
+    .with_actions(vec![
+        SEND_TCP_DATA_ACTION.clone(),
+        WAIT_FOR_MORE_ACTION.clone(),
+        CLOSE_THIS_CONNECTION_ACTION.clone(),
+    ])
+    .with_alternative_example(serde_json::json!({
+        "type": "wait_for_more"
+    }))
+    .with_alternative_example(serde_json::json!({
+        "type": "close_connection"
+    }))
 });
 
 /// Get TCP event types

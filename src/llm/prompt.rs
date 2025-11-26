@@ -5,8 +5,8 @@
 //! 2. Network event handler - handles incoming network events based on instructions
 
 use crate::llm::actions::{
-    generate_base_stack_documentation, get_all_tool_actions, get_user_input_common_actions,
-    ActionDefinition,
+    generate_base_stack_documentation, get_all_tool_actions, get_network_event_tool_actions,
+    get_user_input_common_actions, ActionDefinition,
 };
 use crate::llm::ollama_client::Message;
 use crate::llm::template_engine::{TemplateDataBuilder, TEMPLATE_ENGINE};
@@ -736,9 +736,9 @@ Understand what the user wants and respond with the appropriate actions to make 
         server_id: ServerId,
         mut all_actions: Vec<ActionDefinition>,
     ) -> String {
-        // Add tool actions to network events
+        // Add tool actions to network events (excluding documentation tools)
         let web_search_mode = state.get_web_search_mode().await;
-        all_actions.extend(get_all_tool_actions(web_search_mode));
+        all_actions.extend(get_network_event_tool_actions(web_search_mode));
 
         // Note: all_actions already contains common + protocol + custom actions
         // They are pre-assembled by the action_helper, so we don't add common actions here
@@ -884,9 +884,9 @@ Return: [{{"type": "show_message", "message": "Task '{}' cancelled - server no l
                 let mut actions = get_network_event_common_actions();
                 actions.extend(protocol_actions);
 
-                // Add tool actions
+                // Add tool actions (excluding documentation tools for network events)
                 let web_search_mode = state.get_web_search_mode().await;
-                actions.extend(get_all_tool_actions(web_search_mode));
+                actions.extend(get_network_event_tool_actions(web_search_mode));
 
                 let trigger = format!(
                     "Scheduled task '{}' triggered on server #{} (created {} ago)",
@@ -941,9 +941,9 @@ Return: [{{"type": "show_message", "message": "Task '{}' cancelled - connection 
                 let mut actions = get_network_event_common_actions();
                 actions.extend(protocol_actions);
 
-                // Add tool actions
+                // Add tool actions (excluding documentation tools for network events)
                 let web_search_mode = state.get_web_search_mode().await;
-                actions.extend(get_all_tool_actions(web_search_mode));
+                actions.extend(get_network_event_tool_actions(web_search_mode));
 
                 // Get connection info for context
                 let conn_info = server_instance.connections.get(cid).unwrap();
@@ -1003,9 +1003,9 @@ Return: [{{"type": "show_message", "message": "Task '{}' cancelled - client no l
                 let mut actions = get_network_event_common_actions();
                 actions.extend(protocol_actions);
 
-                // Add tool actions
+                // Add tool actions (excluding documentation tools for network events)
                 let web_search_mode = state.get_web_search_mode().await;
-                actions.extend(get_all_tool_actions(web_search_mode));
+                actions.extend(get_network_event_tool_actions(web_search_mode));
 
                 let trigger = format!(
                     "Scheduled task '{}' triggered for client #{} (created {} ago)\n\

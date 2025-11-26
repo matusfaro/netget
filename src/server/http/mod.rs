@@ -337,17 +337,52 @@ async fn handle_http_request_with_llm_actions(
     let request_data =
         crate::server::http_common::handler::extract_request_data(req, "HTTP", &status_tx).await;
 
-    // Create HTTP request event (no version field for HTTP/1.1)
+    // Parse URI into path and query components
+    let (path, query_string) = if let Some(pos) = request_data.uri.find('?') {
+        (
+            request_data.uri[..pos].to_string(),
+            Some(request_data.uri[pos + 1..].to_string()),
+        )
+    } else {
+        (request_data.uri.clone(), None)
+    };
+
+    // Parse query parameters into structured object
+    let query = if let Some(ref qs) = query_string {
+        let mut params = serde_json::Map::new();
+        for pair in qs.split('&') {
+            if let Some((key, value)) = pair.split_once('=') {
+                // URL decode the key and value
+                let decoded_key = urlencoding::decode(key).unwrap_or(std::borrow::Cow::Borrowed(key));
+                let decoded_value = urlencoding::decode(value).unwrap_or(std::borrow::Cow::Borrowed(value));
+                params.insert(decoded_key.to_string(), serde_json::Value::String(decoded_value.to_string()));
+            } else {
+                // Handle keys without values
+                let decoded_key = urlencoding::decode(pair).unwrap_or(std::borrow::Cow::Borrowed(pair));
+                params.insert(decoded_key.to_string(), serde_json::Value::String(String::new()));
+            }
+        }
+        serde_json::Value::Object(params)
+    } else {
+        serde_json::Value::Object(serde_json::Map::new())
+    };
+
+    // Create HTTP request event with path, query_string, and parsed query
     let body_text = String::from_utf8_lossy(&request_data.body_bytes);
-    let event = Event::new(
-        &HTTP_REQUEST_EVENT,
-        serde_json::json!({
-            "method": request_data.method,
-            "uri": request_data.uri,
-            "headers": request_data.headers,
-            "body": if body_text.is_empty() { "" } else { body_text.as_ref() }
-        }),
-    );
+    let mut event_data = serde_json::json!({
+        "method": request_data.method,
+        "path": path,
+        "query": query,
+        "headers": request_data.headers,
+        "body": if body_text.is_empty() { "" } else { body_text.as_ref() }
+    });
+
+    // Add query_string field if present
+    if let Some(qs) = query_string {
+        event_data["query_string"] = serde_json::Value::String(qs);
+    }
+
+    let event = Event::new(&HTTP_REQUEST_EVENT, event_data);
 
     // Call LLM to generate HTTP response
     match call_llm(

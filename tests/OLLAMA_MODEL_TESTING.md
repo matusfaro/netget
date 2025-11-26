@@ -37,7 +37,6 @@ cargo test --test ollama_model_test -- --nocapture
 
 - **`OLLAMA_MODEL`** - Override default model (default: `qwen2.5-coder:7b`)
 - **`OLLAMA_BASE_URL`** - Ollama API endpoint (default: `http://localhost:11434`)
-- **`OLLAMA_ALT_MODEL`** - Alternative model for comparison tests (optional)
 
 ## Builder Pattern API
 
@@ -276,39 +275,6 @@ async fn test_http_script_sum_query_params() -> Result<()> {
 - Validates that scripts **produce correct output**
 - Tests **actual code execution**, not just structure
 - Catches bugs in LLM-generated logic
-
-### Model Comparison Tests
-
-```rust
-#[tokio::test]
-async fn test_model_comparison() -> Result<()> {
-    let prompt = "open http server";
-
-    // Test with default model
-    let result1 = OllamaTestBuilder::new()
-        .with_user_input(prompt)
-        .expect_action_type("open_server")
-        .expect_protocol("http")
-        .run()
-        .await?;
-
-    // Test with alternative model
-    if let Ok(alt_model) = std::env::var("OLLAMA_ALT_MODEL") {
-        let result2 = OllamaTestBuilder::new()
-            .with_model(&alt_model)
-            .with_user_input(prompt)
-            .expect_action_type("open_server")
-            .expect_protocol("http")
-            .run()
-            .await?;
-
-        println!("Model 1: {} - {:?}", result1.model, result1.passed);
-        println!("Model 2: {} - {:?}", result2.model, result2.passed);
-    }
-
-    Ok(())
-}
-```
 
 ## Use Cases
 

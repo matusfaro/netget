@@ -50,12 +50,10 @@ for arg in "$@"; do
             echo ""
             echo "Available snapshot test types:"
             echo "  prompt           Prompt generation snapshots"
-            echo "  docs_output      Output documentation snapshots"
             echo ""
             echo "Examples:"
             echo "  $0                       # Run all snapshot tests"
             echo "  $0 prompt                # Run only prompt snapshots"
-            echo "  $0 prompt docs_output    # Run multiple snapshot types"
             echo "  $0 --auto-accept         # Accept all changes automatically"
             exit 0
             ;;
@@ -72,7 +70,7 @@ done
 
 # If no snapshot types specified, run all
 if [ ${#SNAPSHOT_TYPES[@]} -eq 0 ]; then
-    SNAPSHOT_TYPES=("prompt" "docs_output")
+    SNAPSHOT_TYPES=("prompt")
 fi
 
 echo -e "${BLUE}========================================${NC}"
@@ -81,7 +79,7 @@ echo -e "${BLUE}========================================${NC}"
 echo ""
 
 # Validate requested snapshot types
-VALID_TYPES=("prompt" "docs_output")
+VALID_TYPES=("prompt")
 INVALID_TYPES=()
 for type in "${SNAPSHOT_TYPES[@]}"; do
     if [[ ! " ${VALID_TYPES[@]} " =~ " ${type} " ]]; then
@@ -112,10 +110,7 @@ for snapshot_type in "${SNAPSHOT_TYPES[@]}"; do
     # Map snapshot type names to test target names
     case "$snapshot_type" in
         prompt)
-            test_target="prompt"
-            ;;
-        docs_output)
-            test_target="docs_output_test"
+            test_target="prompt_snapshots"
             ;;
     esac
 
@@ -136,10 +131,7 @@ for snapshot_type in "${SNAPSHOT_TYPES[@]}"; do
     # Find .actual.snap.md files
     case "$snapshot_type" in
         prompt)
-            SNAPSHOTS_DIR="$PROJECT_ROOT/tests/prompt/snapshots"
-            ;;
-        docs_output)
-            SNAPSHOTS_DIR="$PROJECT_ROOT/tests/docs_output"
+            SNAPSHOTS_DIR="$PROJECT_ROOT/tests/prompt_snapshots/snapshots"
             ;;
     esac
 
