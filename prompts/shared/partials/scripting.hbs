@@ -78,10 +78,10 @@ Use scripts when responses are **deterministic and rule-based**. Scripts receive
 **Script Input (JSON via stdin):**
 ```json
 {
-  "event_type_id": "ssh_auth",
-  "server": {"id": 1, "port": 2222, "stack": "ETH>IP>TCP>SSH", "memory": "", "instruction": "..."},
+  "event_type_id": "<event_type_from_protocol>",
+  "server": {"id": 1, "port": 9000, "stack": "<protocol_stack>", "memory": "", "instruction": "..."},
   "connection": {"id": "conn_123", "remote_addr": "127.0.0.1:54321", "bytes_sent": 0, "bytes_received": 0},
-  "event": {"username": "alice", "auth_type": "password"}
+  "event": {"<event_field>": "<event_value>"}
 }
 ```
 
@@ -135,31 +135,31 @@ print(json.dumps(result))
 **Example with reference:**
 ```json
 {
-  "event_pattern": "ssh_auth",
+  "event_pattern": "<event_id>",
   "handler": {
     "type": "script",
     "language": "python",
-    "code": "<auth_handler>"
+    "code": "<event_handler>"
   }
 }
 
-<auth_handler>
+<event_handler>
 import json
 import sys
 
 data = json.load(sys.stdin)
-username = data['event']['username']
-allowed = username == 'alice'
+event = data['event']
 
+# Process event data and decide response
 result = {
     "actions": [{
-        "type": "ssh_auth_decision",
-        "allowed": allowed
+        "type": "<protocol_action>",
+        "<param>": "<value>"
     }]
 }
 
 print(json.dumps(result))
-</auth_handler>
+</event_handler>
 ```
 
 **Multiple scripts example (different handlers for different events):**
