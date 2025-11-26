@@ -182,6 +182,54 @@ impl Protocol for FtpProtocol {
     fn group_name(&self) -> &'static str {
         "Application"
     }
+
+    fn get_startup_examples(&self) -> Option<crate::llm::actions::StartupExamples> {
+        use crate::llm::actions::StartupExamples;
+
+        Some(StartupExamples::new(
+            // LLM mode: LLM handles all FTP responses intelligently
+            json!({
+                "type": "open_server",
+                "port": 21,
+                "base_stack": "ftp",
+                "send_first": true,
+                "instruction": "FTP server that allows anonymous login and responds to FTP commands"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_server",
+                "port": 21,
+                "base_stack": "ftp",
+                "send_first": true,
+                "event_handlers": [{
+                    "event_pattern": "ftp_command",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<ftp_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_server",
+                "port": 21,
+                "base_stack": "ftp",
+                "send_first": true,
+                "event_handlers": [{
+                    "event_pattern": "ftp_command",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_ftp_response",
+                            "code": 500,
+                            "message": "Command not recognized"
+                        }]
+                    }
+                }]
+            }),
+        ))
+    }
 }
 
 // Implement Server trait (server-specific functionality)
