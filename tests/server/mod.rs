@@ -148,6 +148,8 @@ pub mod s3;
 pub mod smb;
 #[cfg(feature = "smtp")]
 pub mod smtp;
+#[cfg(feature = "ftp")]
+pub mod ftp;
 #[cfg(feature = "snmp")]
 pub mod snmp;
 #[cfg(all(feature = "socket_file", unix))]

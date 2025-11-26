@@ -240,6 +240,13 @@ pub use smtp::actions::SmtpProtocol;
 #[cfg(feature = "smtp")]
 pub use smtp::SmtpServer;
 
+#[cfg(feature = "ftp")]
+pub mod ftp;
+#[cfg(feature = "ftp")]
+pub use ftp::actions::FtpProtocol;
+#[cfg(feature = "ftp")]
+pub use ftp::FtpServer;
+
 #[cfg(feature = "mdns")]
 pub mod mdns;
 #[cfg(feature = "mdns")]

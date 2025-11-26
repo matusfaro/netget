@@ -382,6 +382,12 @@ pub mod smtp;
 #[cfg(feature = "smtp")]
 pub use smtp::actions::SmtpClientProtocol;
 
+// ftp client
+#[cfg(feature = "ftp")]
+pub mod ftp;
+#[cfg(feature = "ftp")]
+pub use ftp::actions::FtpClientProtocol;
+
 // pop3 client
 #[cfg(feature = "pop3")]
 pub mod pop3;

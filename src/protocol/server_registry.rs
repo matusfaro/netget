@@ -136,6 +136,9 @@ impl ServerRegistry {
         #[cfg(feature = "smtp")]
         self.register(Arc::new(crate::server::SmtpProtocol::new()));
 
+        #[cfg(feature = "ftp")]
+        self.register(Arc::new(crate::server::FtpProtocol::new()));
+
         #[cfg(feature = "imap")]
         self.register(Arc::new(crate::server::ImapProtocol::new()));
 
