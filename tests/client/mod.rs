@@ -8,6 +8,8 @@ pub mod couchdb;
 pub mod datalink;
 #[cfg(feature = "dc")]
 pub mod dc;
+#[cfg(feature = "ftp")]
+pub mod ftp;
 #[cfg(feature = "http")]
 pub mod http;
 #[cfg(feature = "icmp")]

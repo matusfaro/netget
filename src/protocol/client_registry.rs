@@ -264,6 +264,9 @@ impl ClientRegistry {
         #[cfg(feature = "smtp")]
         self.register(Arc::new(crate::client::smtp::SmtpClientProtocol::new()));
 
+        #[cfg(feature = "ftp")]
+        self.register(Arc::new(crate::client::ftp::FtpClientProtocol::new()));
+
         #[cfg(feature = "pop3")]
         self.register(Arc::new(crate::client::pop3::Pop3ClientProtocol::new()));
 
