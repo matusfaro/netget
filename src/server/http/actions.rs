@@ -68,6 +68,53 @@ impl Protocol for HttpProtocol {
     fn group_name(&self) -> &'static str {
         "Core"
     }
+
+    fn get_startup_examples(&self) -> Option<crate::llm::actions::StartupExamples> {
+        use crate::llm::actions::StartupExamples;
+        use serde_json::json;
+
+        Some(StartupExamples::new(
+            // LLM mode: LLM handles all HTTP responses intelligently
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "http",
+                "instruction": "HTTP server serving a simple API"
+            }),
+            // Script mode: Code-based deterministic responses
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "http",
+                "event_handlers": [{
+                    "event_pattern": "http_request",
+                    "handler": {
+                        "type": "script",
+                        "language": "python",
+                        "code": "<http_handler>"
+                    }
+                }]
+            }),
+            // Static mode: Fixed responses
+            json!({
+                "type": "open_server",
+                "port": 8080,
+                "base_stack": "http",
+                "event_handlers": [{
+                    "event_pattern": "http_request",
+                    "handler": {
+                        "type": "static",
+                        "actions": [{
+                            "type": "send_http_response",
+                            "status": 200,
+                            "headers": {"Content-Type": "text/plain"},
+                            "body": "Hello World"
+                        }]
+                    }
+                }]
+            }),
+        ))
+    }
 }
 
 // Implement Server trait (server-specific functionality)
@@ -174,70 +221,73 @@ pub static SEND_HTTP_RESPONSE_ACTION: LazyLock<ActionDefinition> =
 
 /// HTTP request event - triggered when client sends an HTTP request
 pub static HTTP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("http_request", "HTTP request received from client")
-        .with_parameters(vec![
-            Parameter {
-                name: "method".to_string(),
-                type_hint: "string".to_string(),
-                description: "HTTP method (GET, POST, etc.)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "path".to_string(),
-                type_hint: "string".to_string(),
-                description: "Request path without query string (e.g., '/api/users')".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "query_string".to_string(),
-                type_hint: "string".to_string(),
-                description: "Raw query string if present (e.g., 'x=5&y=3')".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "query".to_string(),
-                type_hint: "object".to_string(),
-                description: "Parsed query parameters as key-value pairs (e.g., {\"x\": \"5\", \"y\": \"3\"})".to_string(),
-                required: false,
-            },
-            Parameter {
-                name: "headers".to_string(),
-                type_hint: "object".to_string(),
-                description: "Request headers as key-value pairs".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "body".to_string(),
-                type_hint: "string".to_string(),
-                description: "Request body".to_string(),
-                required: false,
-            },
-        ])
-        .with_actions(vec![SEND_HTTP_RESPONSE_ACTION.clone()])
-        .with_typical_example(serde_json::json!({
+    EventType::new(
+        "http_request",
+        "HTTP request received from client",
+        serde_json::json!({
             "type": "send_http_response",
             "status": 200,
             "headers": {
                 "Content-Type": "text/html"
             },
             "body": "<html><body>Hello World</body></html>"
-        }))
-        .with_optional_example(serde_json::json!({
-            "type": "send_http_response",
-            "status": 404,
-            "headers": {
-                "Content-Type": "text/plain"
-            },
-            "body": "Not Found"
-        }))
-        .with_optional_example(serde_json::json!({
-            "type": "send_http_response",
-            "status": 201,
-            "headers": {
-                "Content-Type": "application/json"
-            },
-            "body": "{\"status\": \"created\"}"
-        }))
+        }),
+    )
+    .with_parameters(vec![
+        Parameter {
+            name: "method".to_string(),
+            type_hint: "string".to_string(),
+            description: "HTTP method (GET, POST, etc.)".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "path".to_string(),
+            type_hint: "string".to_string(),
+            description: "Request path without query string (e.g., '/api/users')".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "query_string".to_string(),
+            type_hint: "string".to_string(),
+            description: "Raw query string if present (e.g., 'x=5&y=3')".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "query".to_string(),
+            type_hint: "object".to_string(),
+            description: "Parsed query parameters as key-value pairs (e.g., {\"x\": \"5\", \"y\": \"3\"})".to_string(),
+            required: false,
+        },
+        Parameter {
+            name: "headers".to_string(),
+            type_hint: "object".to_string(),
+            description: "Request headers as key-value pairs".to_string(),
+            required: true,
+        },
+        Parameter {
+            name: "body".to_string(),
+            type_hint: "string".to_string(),
+            description: "Request body".to_string(),
+            required: false,
+        },
+    ])
+    .with_actions(vec![SEND_HTTP_RESPONSE_ACTION.clone()])
+    .with_alternative_example(serde_json::json!({
+        "type": "send_http_response",
+        "status": 404,
+        "headers": {
+            "Content-Type": "text/plain"
+        },
+        "body": "Not Found"
+    }))
+    .with_alternative_example(serde_json::json!({
+        "type": "send_http_response",
+        "status": 201,
+        "headers": {
+            "Content-Type": "application/json"
+        },
+        "body": "{\"status\": \"created\"}"
+    }))
 });
 
 /// Get HTTP event types

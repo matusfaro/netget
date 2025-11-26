@@ -3,7 +3,7 @@
 //! This module defines the core Protocol trait that both Server and Client traits extend.
 //! It contains common functionality shared across all protocol implementations.
 
-use super::{ActionDefinition, ParameterDefinition};
+use super::{ActionDefinition, ParameterDefinition, StartupExamples};
 use crate::protocol::dependencies::ProtocolDependency;
 use crate::state::app_state::AppState;
 
@@ -124,6 +124,30 @@ pub trait Protocol: Send + Sync {
     /// - HTTP client: "Connect to http://example.com:8080 and fetch /api/status every 10 seconds"
     /// - SSH server: "Pretend to be a shell via SSH on port 2222"
     fn example_prompt(&self) -> &'static str;
+
+    /// Get startup examples for this protocol with different handler modes
+    ///
+    /// Returns examples showing how to start this protocol with:
+    /// - LLM mode: LLM handles all responses intelligently
+    /// - Script mode: Code-based deterministic responses
+    /// - Static mode: Fixed, unchanging responses
+    ///
+    /// These examples are used in:
+    /// - Protocol documentation (shown when user requests docs)
+    /// - Prompt templates to guide LLM in creating servers
+    ///
+    /// All examples must be valid `open_server` or `open_client` actions
+    /// that can be directly executed. They are validated by parameterized tests.
+    ///
+    /// # Returns
+    /// - `Some(StartupExamples)` - Examples for this protocol
+    /// - `None` - Protocol has not yet provided startup examples
+    ///
+    /// Default implementation returns `None`. Protocols should override this
+    /// to provide protocol-specific examples.
+    fn get_startup_examples(&self) -> Option<StartupExamples> {
+        None
+    }
 
     /// Get the group name for categorizing this protocol
     ///
