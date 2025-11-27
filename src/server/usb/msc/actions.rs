@@ -28,6 +28,9 @@ pub static USB_MSC_ATTACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "usb_msc_attached",
         "Host attached to USB mass storage device",
+        json!({
+            "type": "wait_for_more"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -56,6 +59,9 @@ pub static USB_MSC_DETACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "usb_msc_detached",
         "Host detached from USB mass storage device",
+        json!({
+            "type": "eject_disk"
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "connection_id".to_string(),
@@ -70,6 +76,9 @@ pub static USB_MSC_READ_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "usb_msc_read",
         "Host read sectors from the mass storage device",
+        json!({
+            "type": "wait_for_more"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -104,6 +113,9 @@ pub static USB_MSC_WRITE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "usb_msc_write",
         "Host wrote sectors to the mass storage device",
+        json!({
+            "type": "wait_for_more"
+        }),
     )
     .with_parameters(vec![
         Parameter {

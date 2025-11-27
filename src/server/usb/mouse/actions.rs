@@ -25,7 +25,7 @@ use tokio::sync::Mutex;
 // Event type definitions (static for efficient reuse)
 #[cfg(feature = "usb-mouse")]
 pub static USB_MOUSE_ATTACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("usb_mouse_attached", "Host attached to USB mouse device").with_parameters(vec![
+    EventType::new("usb_mouse_attached", "Host attached to USB mouse device", json!({"type": "placeholder", "event_id": "usb_mouse_attached"})).with_parameters(vec![
         Parameter {
             name: "connection_id".to_string(),
             type_hint: "string".to_string(),
@@ -37,7 +37,7 @@ pub static USB_MOUSE_ATTACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 #[cfg(feature = "usb-mouse")]
 pub static USB_MOUSE_DETACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("usb_mouse_detached", "Host detached from USB mouse device").with_parameters(
+    EventType::new("usb_mouse_detached", "Host detached from USB mouse device", json!({"type": "placeholder", "event_id": "usb_mouse_detached"})).with_parameters(
         vec![Parameter {
             name: "connection_id".to_string(),
             type_hint: "string".to_string(),

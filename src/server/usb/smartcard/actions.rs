@@ -27,6 +27,10 @@ pub static SMARTCARD_INSERTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "smartcard_inserted",
         "Smart card inserted into virtual reader",
+        json!({
+            "type": "list_files",
+            "connection_id": "conn_1"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -55,6 +59,10 @@ pub static SMARTCARD_REMOVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "smartcard_removed",
         "Smart card removed from virtual reader",
+        json!({
+            "type": "remove_card",
+            "connection_id": "conn_1"
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "connection_id".to_string(),
@@ -69,6 +77,11 @@ pub static SMARTCARD_PIN_REQUESTED_EVENT: LazyLock<EventType> = LazyLock::new(||
     EventType::new(
         "smartcard_pin_requested",
         "Application requested PIN verification",
+        json!({
+            "type": "verify_pin",
+            "connection_id": "conn_1",
+            "pin": "123456"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -97,6 +110,10 @@ pub static SMARTCARD_APDU_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(||
     EventType::new(
         "smartcard_apdu_received",
         "Application sent APDU command to card",
+        json!({
+            "type": "list_files",
+            "connection_id": "conn_1"
+        }),
     )
     .with_parameters(vec![
         Parameter {

@@ -282,7 +282,7 @@ pub fn list_rpc_methods_action() -> ActionDefinition {
 
 /// JSON-RPC method call event - triggered when client sends a JSON-RPC request
 pub static JSONRPC_METHOD_CALL_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("jsonrpc_method_call", "JSON-RPC 2.0 method call received")
+    EventType::new("jsonrpc_method_call", "JSON-RPC 2.0 method call received", json!({"type": "placeholder", "event_id": "jsonrpc_method_call"}))
         .with_parameters(vec![
             Parameter {
                 name: "method".to_string(),

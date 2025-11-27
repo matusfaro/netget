@@ -265,7 +265,7 @@ pub static PUSH_RESOURCE_ACTION: LazyLock<ActionDefinition> =
 
 /// HTTP/2 request event - triggered when client sends an HTTP/2 request
 pub static HTTP2_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("http2_request", "HTTP/2 request received from client")
+    EventType::new("http2_request", "HTTP/2 request received from client", json!({"type": "placeholder", "event_id": "http2_request"}))
         .with_parameters(vec![
             Parameter {
                 name: "method".to_string(),

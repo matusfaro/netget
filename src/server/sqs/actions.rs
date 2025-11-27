@@ -25,7 +25,7 @@ impl SqsProtocol {
 
 /// SQS request event - triggered when an SQS API request is received
 pub static SQS_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("sqs_request", "SQS API request received")
+    EventType::new("sqs_request", "SQS API request received", json!({"type": "placeholder", "event_id": "sqs_request"}))
         .with_parameters(vec![
             Parameter {
                 name: "operation".to_string(),

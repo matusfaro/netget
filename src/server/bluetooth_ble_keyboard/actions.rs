@@ -15,6 +15,10 @@ pub static KEYBOARD_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(
     EventType::new(
         "keyboard_client_connected",
         "A device connected to the BLE keyboard",
+        json!({
+            "type": "type_text",
+            "text": "Hello, World!"
+        })
     )
     .with_parameters(vec![Parameter {
         name: "client_id".to_string(),
@@ -29,6 +33,9 @@ pub static KEYBOARD_CLIENT_DISCONNECTED_EVENT: LazyLock<EventType> = LazyLock::n
     EventType::new(
         "keyboard_client_disconnected",
         "A device disconnected from the BLE keyboard",
+        json!({
+            "type": "list_clients"
+        })
     )
     .with_parameters(vec![Parameter {
         name: "client_id".to_string(),

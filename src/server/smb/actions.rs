@@ -114,6 +114,11 @@ pub static SMB_OPERATION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "smb_operation",
         "SMB client requested a filesystem operation",
+        json!({
+            "type": "smb_read_file",
+            "path": "/documents/file.txt",
+            "content": "Sample file content"
+        })
     )
     .with_parameters(vec![
         Parameter {

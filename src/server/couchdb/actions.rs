@@ -26,6 +26,10 @@ pub static COUCHDB_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "couchdb_request",
         "CouchDB API request received",
+        json!({
+            "type": "send_server_info",
+            "version": "3.5.1"
+        })
     )
     .with_parameters(vec![
         Parameter {

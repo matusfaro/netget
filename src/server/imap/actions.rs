@@ -972,6 +972,11 @@ pub static IMAP_CONNECTION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "imap_connection",
         "Initial IMAP connection established - send greeting",
+        json!({
+            "type": "send_imap_greeting",
+            "hostname": "mail.example.com",
+            "capabilities": ["IMAP4rev1", "IDLE", "NAMESPACE"]
+        }),
     )
     .with_parameters(vec![])
     .with_actions(vec![send_imap_greeting_action()])
@@ -981,6 +986,12 @@ pub static IMAP_AUTH_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "imap_auth",
         "IMAP LOGIN command received - authenticate user",
+        json!({
+            "type": "send_imap_response",
+            "tag": "A001",
+            "status": "OK",
+            "message": "LOGIN completed"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -1006,7 +1017,7 @@ pub static IMAP_AUTH_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 });
 
 pub static IMAP_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("imap_command", "IMAP command received from client")
+    EventType::new("imap_command", "IMAP command received from client", json!({"type": "placeholder", "event_id": "imap_command"}))
         .with_parameters(vec![
             Parameter {
                 name: "tag".to_string(),

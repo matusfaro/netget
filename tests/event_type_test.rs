@@ -10,7 +10,7 @@ fn test_event_type_creation() {
         example: serde_json::json!({"type": "test_action"}),
     };
 
-    let event = EventType::new("test_event", "Test event description").with_action(action);
+    let event = EventType::new("test_event", "Test event description", json!({"type": "placeholder", "event_id": "test_event"})).with_action(action);
 
     assert_eq!(event.id, "test_event");
     assert_eq!(event.description, "Test event description");
@@ -27,7 +27,7 @@ fn test_format_event_types() {
         example: serde_json::json!({"type": "respond"}),
     };
 
-    let events = vec![EventType::new("request", "Client request received").with_action(action)];
+    let events = vec![EventType::new("request", "Client request received", json!({"type": "placeholder", "event_id": "request"})).with_action(action)];
 
     let formatted = format_event_types_for_prompt(&events);
     assert!(formatted.contains("request"));

@@ -16,6 +16,10 @@ pub static REDIS_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| 
     EventType::new(
         "redis_connected",
         "Redis client successfully connected to server",
+        json!({
+            "type": "execute_redis_command",
+            "command": "GET mykey"
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "remote_addr".to_string(),
@@ -30,6 +34,10 @@ pub static REDIS_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock:
     EventType::new(
         "redis_response_received",
         "Response received from Redis server",
+        json!({
+            "type": "execute_redis_command",
+            "command": "SET result OK"
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "response".to_string(),
@@ -97,8 +105,8 @@ impl Protocol for RedisClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("redis_connected", "Triggered when Redis client connects to server"),
-            EventType::new("redis_response_received", "Triggered when Redis client receives a response"),
+            EventType::new("redis_connected", "Triggered when Redis client connects to server", json!({"type": "placeholder", "event_id": "redis_connected"})),
+            EventType::new("redis_response_received", "Triggered when Redis client receives a response", json!({"type": "placeholder", "event_id": "redis_response_received"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

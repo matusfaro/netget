@@ -466,7 +466,7 @@ pub static MYSQL_CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> =
 
 /// MySQL query event - triggered when client sends a query
 pub static MYSQL_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("mysql_query", "MySQL query received from client")
+    EventType::new("mysql_query", "MySQL query received from client", json!({"type": "placeholder", "event_id": "mysql_query"}))
         .with_parameters(vec![Parameter {
             name: "query".to_string(),
             type_hint: "string".to_string(),

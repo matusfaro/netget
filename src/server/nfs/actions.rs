@@ -657,10 +657,7 @@ fn nfs_setattr_response_action() -> ActionDefinition {
 
 /// NFS operation event - triggered when NFS client requests a filesystem operation
 pub static NFS_OPERATION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "nfs_operation",
-        "NFS client requested a filesystem operation"
-    )
+    EventType::new("nfs_operation", "NFS client requested a filesystem operation", json!({"type": "placeholder", "event_id": "nfs_operation"}))
     .with_parameters(vec![
         Parameter {
             name: "operation".to_string(),

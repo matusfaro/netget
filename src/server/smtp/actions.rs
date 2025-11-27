@@ -497,10 +497,7 @@ pub static CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> =
 
 /// SMTP command event - triggered when client sends an SMTP command
 pub static SMTP_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "smtp_command",
-        "SMTP command received from client"
-    )
+    EventType::new("smtp_command", "SMTP command received from client", json!({"type": "placeholder", "event_id": "smtp_command"}))
     .with_parameters(vec![
         Parameter {
             name: "command".to_string(),

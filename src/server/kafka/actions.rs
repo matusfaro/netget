@@ -16,6 +16,13 @@ pub static PRODUCE_REQUEST_EVENT: Lazy<EventType> = Lazy::new(|| {
     EventType::new(
         "kafka_produce_request",
         "Triggered when a Kafka producer sends records to a topic",
+        json!({
+            "type": "produce_response",
+            "topic": "orders",
+            "partition": 0,
+            "offset": 42,
+            "error_code": 0
+        }),
     )
     .with_actions(vec![produce_response_action(), error_response_action()])
     .with_parameters(vec![
@@ -57,6 +64,15 @@ pub static FETCH_REQUEST_EVENT: Lazy<EventType> = Lazy::new(|| {
     EventType::new(
         "kafka_fetch_request",
         "Triggered when a Kafka consumer requests records from a topic",
+        json!({
+            "type": "fetch_response",
+            "topic": "orders",
+            "partition": 0,
+            "records": [
+                {"offset": 40, "key": "order123", "value": "{\"item\": \"laptop\"}"},
+                {"offset": 41, "key": "order124", "value": "{\"item\": \"mouse\"}"}
+            ]
+        }),
     )
     .with_actions(vec![fetch_response_action(), error_response_action()])
     .with_parameters(vec![
@@ -92,6 +108,16 @@ pub static METADATA_REQUEST_EVENT: Lazy<EventType> = Lazy::new(|| {
     EventType::new(
         "kafka_metadata_request",
         "Triggered when a client requests cluster/topic metadata",
+        json!({
+            "type": "metadata_response",
+            "brokers": [{"id": 0, "host": "localhost", "port": 9092}],
+            "topics": [
+                {
+                    "name": "orders",
+                    "partitions": [{"partition": 0, "leader": 0, "replicas": [0]}]
+                }
+            ]
+        }),
     )
     .with_actions(vec![metadata_response_action(), error_response_action()])
     .with_parameters(vec![Parameter {
@@ -107,6 +133,12 @@ pub static OFFSET_COMMIT_REQUEST_EVENT: Lazy<EventType> = Lazy::new(|| {
     EventType::new(
         "kafka_offset_commit_request",
         "Triggered when a consumer commits offsets for a topic partition",
+        json!({
+            "type": "offset_commit_response",
+            "topic": "orders",
+            "partition": 0,
+            "error_code": 0
+        }),
     )
     .with_actions(vec![
         offset_commit_response_action(),

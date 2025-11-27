@@ -16,6 +16,7 @@ pub static BGP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "bgp_connected",
         "BGP client successfully connected to BGP peer and completed OPEN handshake",
+        json!({"type": "wait_for_more"}),
     )
     .with_parameters(vec![
         Parameter {
@@ -50,6 +51,7 @@ pub static BGP_CLIENT_UPDATE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new
     EventType::new(
         "bgp_update_received",
         "BGP UPDATE message received from peer (route announcement or withdrawal)",
+        json!({"type": "send_keepalive"}),
     )
     .with_parameters(vec![
         Parameter {
@@ -72,6 +74,7 @@ pub static BGP_CLIENT_NOTIFICATION_RECEIVED_EVENT: LazyLock<EventType> = LazyLoc
     EventType::new(
         "bgp_notification_received",
         "BGP NOTIFICATION message received from peer (error, connection will close)",
+        json!({"type": "wait_for_more"}),
     )
     .with_parameters(vec![
         Parameter {

@@ -642,7 +642,7 @@ fn close_stream_action() -> ActionDefinition {
 
 // Event types
 pub static XMPP_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("xmpp_data_received", "XML data received from XMPP client")
+    EventType::new("xmpp_data_received", "XML data received from XMPP client", json!({"type": "placeholder", "event_id": "xmpp_data_received"}))
         .with_parameters(vec![Parameter {
             name: "xml_data".to_string(),
             type_hint: "string".to_string(),

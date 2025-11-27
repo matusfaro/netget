@@ -7,16 +7,13 @@ use crate::llm::actions::{
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{anyhow, Result};
-use serde_json::Value as JsonValue;
+use serde_json::{json, Value as JsonValue};
 use std::sync::LazyLock;
 use tracing::{debug, error, warn};
 
 /// OpenAPI request event - triggered when client sends an HTTP request to OpenAPI server
 pub static OPENAPI_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "openapi_request",
-        "HTTP request received by OpenAPI server"
-    )
+    EventType::new("openapi_request", "HTTP request received by OpenAPI server", json!({"type": "placeholder", "event_id": "openapi_request"}))
     .with_parameters(vec![
         Parameter {
             name: "method".to_string(),

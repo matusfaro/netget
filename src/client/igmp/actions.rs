@@ -17,6 +17,11 @@ pub static IGMP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "igmp_connected",
         "IGMP client initialized and ready to join multicast groups",
+        json!({
+            "type": "join_multicast_group",
+            "multicast_addr": "239.1.2.3",
+            "interface_addr": "0.0.0.0"
+        })
     )
     .with_parameters(vec![Parameter {
         name: "local_addr".to_string(),
@@ -28,7 +33,14 @@ pub static IGMP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// IGMP client data received event
 pub static IGMP_CLIENT_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("igmp_data_received", "Multicast data received from group").with_parameters(
+    EventType::new(
+        "igmp_data_received",
+        "Multicast data received from group",
+        json!({
+            "type": "wait_for_more"
+        })
+    )
+    .with_parameters(
         vec![
             Parameter {
                 name: "data_hex".to_string(),

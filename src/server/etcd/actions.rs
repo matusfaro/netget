@@ -24,6 +24,14 @@ pub static ETCD_RANGE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "etcd_range_request",
         "Triggered when a client sends a Range (get) request to query keys",
+        json!({
+            "type": "etcd_range_response",
+            "kvs": [
+                {"key": "foo", "value": "bar", "create_revision": 1, "mod_revision": 1, "version": 1, "lease": 0}
+            ],
+            "more": false,
+            "count": 1
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -52,6 +60,12 @@ pub static ETCD_PUT_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "etcd_put_request",
         "Triggered when a client sends a Put request to store a key-value pair",
+        json!({
+            "type": "etcd_range_response",
+            "kvs": [],
+            "more": false,
+            "count": 0
+        }),
     )
 });
 
@@ -59,6 +73,12 @@ pub static ETCD_DELETE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "etcd_delete_request",
         "Triggered when a client sends a DeleteRange request",
+        json!({
+            "type": "etcd_range_response",
+            "kvs": [],
+            "more": false,
+            "count": 0
+        }),
     )
 });
 
@@ -66,6 +86,12 @@ pub static ETCD_TXN_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "etcd_txn_request",
         "Triggered when a client sends a transaction request",
+        json!({
+            "type": "etcd_range_response",
+            "kvs": [],
+            "more": false,
+            "count": 0
+        }),
     )
 });
 

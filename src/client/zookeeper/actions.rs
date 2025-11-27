@@ -16,6 +16,9 @@ pub static ZOOKEEPER_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new
     EventType::new(
         "zookeeper_connected",
         "ZooKeeper client connected to server",
+        json!({
+            "type": "wait_for_more"
+        }),
     )
 });
 
@@ -23,6 +26,9 @@ pub static ZOOKEEPER_CLIENT_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock:
     EventType::new(
         "zookeeper_data_received",
         "ZooKeeper client received data from server",
+        json!({
+            "type": "wait_for_more"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -50,6 +56,9 @@ pub static ZOOKEEPER_CLIENT_CHILDREN_RECEIVED_EVENT: LazyLock<EventType> = LazyL
     EventType::new(
         "zookeeper_children_received",
         "ZooKeeper client received children list",
+        json!({
+            "type": "disconnect"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -198,9 +207,9 @@ impl Protocol for ZookeeperClientProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("zookeeper_connected", "Triggered when ZooKeeper client connects"),
-            EventType::new("zookeeper_data_received", "Triggered when ZooKeeper client receives data"),
-            EventType::new("zookeeper_children_received", "Triggered when ZooKeeper client receives children list"),
+            EventType::new("zookeeper_connected", "Triggered when ZooKeeper client connects", json!({"type": "placeholder", "event_id": "zookeeper_connected"})),
+            EventType::new("zookeeper_data_received", "Triggered when ZooKeeper client receives data", json!({"type": "placeholder", "event_id": "zookeeper_data_received"})),
+            EventType::new("zookeeper_children_received", "Triggered when ZooKeeper client receives children list", json!({"type": "placeholder", "event_id": "zookeeper_children_received"})),
         ]
     }
 

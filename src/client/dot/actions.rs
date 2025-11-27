@@ -16,6 +16,7 @@ pub static DOT_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "dot_connected",
         "DoT client connected to DNS-over-TLS server",
+        json!({"type": "send_dns_query", "domain": "example.com", "query_type": "A"}),
     )
     .with_parameters(vec![Parameter {
         name: "remote_addr".to_string(),
@@ -30,6 +31,7 @@ pub static DOT_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::n
     EventType::new(
         "dot_response_received",
         "DNS response received from DoT server",
+        json!({"type": "send_dns_query", "domain": "mail.example.com", "query_type": "MX"}),
     )
     .with_parameters(vec![
         Parameter {
@@ -185,8 +187,8 @@ impl Protocol for DotClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("dot_connected", "Triggered when DoT client connects to server"),
-            EventType::new("dot_response_received", "Triggered when DoT client receives a DNS response"),
+            EventType::new("dot_connected", "Triggered when DoT client connects to server", json!({"type": "placeholder", "event_id": "dot_connected"})),
+            EventType::new("dot_response_received", "Triggered when DoT client receives a DNS response", json!({"type": "placeholder", "event_id": "dot_response_received"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

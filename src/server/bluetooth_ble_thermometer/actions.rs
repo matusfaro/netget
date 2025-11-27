@@ -10,7 +10,7 @@ use serde_json::json;
 use std::sync::LazyLock;
 
 pub static TEMPERATURE_UPDATED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("temperature_updated", "Temperature was updated").with_parameters(vec![
+    EventType::new("temperature_updated", "Temperature was updated", json!({"type": "placeholder", "event_id": "temperature_updated"})).with_parameters(vec![
         Parameter {
             name: "celsius".to_string(),
             type_hint: "number".to_string(),

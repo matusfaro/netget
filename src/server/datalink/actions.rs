@@ -185,6 +185,10 @@ pub static DATALINK_PACKET_CAPTURED_EVENT: LazyLock<EventType> = LazyLock::new(|
     EventType::new(
         "datalink_packet_captured",
         "Layer 2 Ethernet packet captured from network interface",
+        json!({
+            "type": "show_message",
+            "message": "ARP request detected"
+        })
     )
     .with_parameters(vec![
         Parameter {

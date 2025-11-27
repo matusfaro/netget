@@ -393,6 +393,12 @@ pub static ISIS_HELLO_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "isis_hello",
         "IS-IS Hello PDU received (neighbor discovery)",
+        json!({
+            "type": "send_isis_hello",
+            "pdu_type": "lan_hello_l2",
+            "system_id": "0000.0000.0001",
+            "area_id": "49.0001"
+        }),
     )
 });
 

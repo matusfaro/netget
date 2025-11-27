@@ -16,6 +16,9 @@ pub static TRACKER_ANNOUNCE_RESPONSE_EVENT: LazyLock<EventType> = LazyLock::new(
     EventType::new(
         "tracker_announce_response",
         "Received announce response from BitTorrent tracker",
+        json!({
+            "type": "disconnect"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -50,6 +53,9 @@ pub static TRACKER_SCRAPE_RESPONSE_EVENT: LazyLock<EventType> = LazyLock::new(||
     EventType::new(
         "tracker_scrape_response",
         "Received scrape response from BitTorrent tracker",
+        json!({
+            "type": "disconnect"
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "files".to_string(),
@@ -162,8 +168,8 @@ impl Protocol for TorrentTrackerClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("tracker_announce_response", "Received announce response from tracker"),
-            EventType::new("tracker_scrape_response", "Received scrape response from tracker"),
+            EventType::new("tracker_announce_response", "Received announce response from tracker", json!({"type": "placeholder", "event_id": "tracker_announce_response"})),
+            EventType::new("tracker_scrape_response", "Received scrape response from tracker", json!({"type": "placeholder", "event_id": "tracker_scrape_response"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

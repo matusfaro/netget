@@ -16,6 +16,10 @@ pub static SSH_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "ssh_connected",
         "SSH client successfully authenticated to server",
+        json!({
+            "type": "execute_command",
+            "command": "pwd"
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -38,6 +42,10 @@ pub static SSH_CLIENT_OUTPUT_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new
     EventType::new(
         "ssh_output_received",
         "Command output received from SSH server",
+        json!({
+            "type": "execute_command",
+            "command": "pwd"
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -129,8 +137,8 @@ impl Protocol for SshClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("ssh_connected", "Triggered when SSH client authenticates successfully"),
-            EventType::new("ssh_output_received", "Triggered when SSH command output is received"),
+            EventType::new("ssh_connected", "Triggered when SSH client authenticates successfully", json!({"type": "placeholder", "event_id": "ssh_connected"})),
+            EventType::new("ssh_output_received", "Triggered when SSH command output is received", json!({"type": "placeholder", "event_id": "ssh_output_received"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

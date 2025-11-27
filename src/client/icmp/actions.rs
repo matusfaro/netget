@@ -274,7 +274,18 @@ fn disconnect_action() -> ActionDefinition {
 // ============================================================================
 
 pub static ICMP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("icmp_connected", "ICMP client socket created").with_parameters(vec![
+    EventType::new(
+        "icmp_connected",
+        "ICMP client socket created",
+        json!({
+            "type": "send_echo_request",
+            "destination_ip": "8.8.8.8",
+            "identifier": 1234,
+            "sequence": 1,
+            "ttl": 64
+        })
+    )
+    .with_parameters(vec![
         Parameter {
             name: "local_addr".to_string(),
             type_hint: "string".to_string(),
@@ -294,6 +305,13 @@ pub static ICMP_ECHO_REPLY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "icmp_echo_reply",
         "ICMP Echo Reply (ping response) received",
+        json!({
+            "type": "send_echo_request",
+            "destination_ip": "8.8.8.8",
+            "identifier": 1234,
+            "sequence": 2,
+            "ttl": 64
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -341,7 +359,18 @@ pub static ICMP_ECHO_REPLY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 });
 
 pub static ICMP_TIMEOUT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("icmp_timeout", "ICMP request timed out without reply").with_parameters(vec![
+    EventType::new(
+        "icmp_timeout",
+        "ICMP request timed out without reply",
+        json!({
+            "type": "send_echo_request",
+            "destination_ip": "8.8.8.8",
+            "identifier": 1234,
+            "sequence": 2,
+            "ttl": 64
+        })
+    )
+    .with_parameters(vec![
         Parameter {
             name: "destination_ip".to_string(),
             type_hint: "string".to_string(),
@@ -367,6 +396,9 @@ pub static ICMP_DEST_UNREACHABLE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "icmp_destination_unreachable",
         "ICMP Destination Unreachable received",
+        json!({
+            "type": "wait_for_more"
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -388,6 +420,13 @@ pub static ICMP_TIME_EXCEEDED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "icmp_time_exceeded",
         "ICMP Time Exceeded (TTL=0) received - used in traceroute",
+        json!({
+            "type": "send_echo_request",
+            "destination_ip": "8.8.8.8",
+            "identifier": 1234,
+            "sequence": 1,
+            "ttl": 2
+        })
     )
     .with_parameters(vec![
         Parameter {

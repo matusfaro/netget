@@ -17,6 +17,12 @@ pub static SYSLOG_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(||
     EventType::new(
         "syslog_connected",
         "Syslog client successfully connected to server",
+        json!({
+            "type": "send_syslog_message",
+            "facility": "user",
+            "severity": "info",
+            "message": "Connection established"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -39,6 +45,9 @@ pub static SYSLOG_MESSAGE_SENT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "syslog_message_sent",
         "Syslog message successfully sent to server",
+        json!({
+            "type": "disconnect"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -149,8 +158,8 @@ impl Protocol for SyslogClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("syslog_connected", "Triggered when syslog client connects to server"),
-            EventType::new("syslog_message_sent", "Triggered when syslog message is sent"),
+            EventType::new("syslog_connected", "Triggered when syslog client connects to server", json!({"type": "placeholder", "event_id": "syslog_connected"})),
+            EventType::new("syslog_message_sent", "Triggered when syslog message is sent", json!({"type": "placeholder", "event_id": "syslog_message_sent"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

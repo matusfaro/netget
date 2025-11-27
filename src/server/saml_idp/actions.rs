@@ -303,6 +303,11 @@ pub static SAML_IDP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "saml_idp_request",
         "Received SAML authentication request or metadata request",
+        json!({
+            "type": "send_saml_response",
+            "assertion_xml": "<saml:Assertion>...</saml:Assertion>",
+            "relay_state": "original-sp-url"
+        }),
     )
     .with_parameters(vec![
         Parameter {

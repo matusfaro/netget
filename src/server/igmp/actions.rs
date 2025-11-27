@@ -330,8 +330,15 @@ fn ignore_message_action() -> ActionDefinition {
 // ============================================================================
 
 pub static IGMP_QUERY_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("igmp_query_received", "IGMP Membership Query received")
-        .with_parameters(vec![
+    EventType::new(
+        "igmp_query_received",
+        "IGMP Membership Query received",
+        json!({
+            "type": "send_membership_report",
+            "group_address": "239.255.255.250"
+        }),
+    )
+    .with_parameters(vec![
             Parameter {
                 name: "query_type".to_string(),
                 type_hint: "string".to_string(),
@@ -361,6 +368,9 @@ pub static IGMP_REPORT_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "igmp_report_received",
         "IGMP Membership Report received from another host",
+        json!({
+            "type": "ignore_message"
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "group_address".to_string(),
@@ -372,8 +382,14 @@ pub static IGMP_REPORT_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 });
 
 pub static IGMP_LEAVE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("igmp_leave_received", "IGMP Leave Group message received")
-        .with_parameters(vec![Parameter {
+    EventType::new(
+        "igmp_leave_received",
+        "IGMP Leave Group message received",
+        json!({
+            "type": "ignore_message"
+        }),
+    )
+    .with_parameters(vec![Parameter {
             name: "group_address".to_string(),
             type_hint: "string".to_string(),
             description: "Multicast group address being left".to_string(),

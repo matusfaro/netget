@@ -401,6 +401,11 @@ pub static SVN_GREETING_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "svn_greeting",
         "SVN client connected, send protocol greeting",
+        json!({
+            "type": "send_svn_greeting",
+            "min_version": 2,
+            "max_version": 2
+        })
     )
     .with_parameters(vec![])
     .with_actions(vec![send_greeting_action(), close_connection_action()])
@@ -408,7 +413,7 @@ pub static SVN_GREETING_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// SVN command event - triggered when client sends a command
 pub static SVN_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("svn_command", "SVN client sent a protocol command")
+    EventType::new("svn_command", "SVN client sent a protocol command", json!({"type": "placeholder", "event_id": "svn_command"}))
         .with_parameters(vec![
             Parameter {
                 name: "command_line".to_string(),

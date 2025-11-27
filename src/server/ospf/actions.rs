@@ -470,15 +470,15 @@ impl OspfProtocol {
 }
 
 // Event types for OSPF
-pub static OSPF_HELLO_EVENT: LazyLock<EventType> = LazyLock::new(|| EventType::new("ospf_hello", "OSPF Hello packet received from neighbor"));
+pub static OSPF_HELLO_EVENT: LazyLock<EventType> = LazyLock::new(|| EventType::new("ospf_hello", "OSPF Hello packet received from neighbor", json!({"type": "placeholder", "event_id": "ospf_hello"})));
 
-pub static OSPF_DATABASE_DESCRIPTION_EVENT: LazyLock<EventType> = LazyLock::new(|| EventType::new("ospf_database_description", "OSPF Database Description packet received"));
+pub static OSPF_DATABASE_DESCRIPTION_EVENT: LazyLock<EventType> = LazyLock::new(|| EventType::new("ospf_database_description", "OSPF Database Description packet received", json!({"type": "placeholder", "event_id": "ospf_database_description"})));
 
-pub static OSPF_LINK_STATE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| EventType::new("ospf_link_state_request", "OSPF Link State Request packet received"));
+pub static OSPF_LINK_STATE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| EventType::new("ospf_link_state_request", "OSPF Link State Request packet received", json!({"type": "placeholder", "event_id": "ospf_link_state_request"})));
 
-pub static OSPF_LINK_STATE_UPDATE_EVENT: LazyLock<EventType> = LazyLock::new(|| EventType::new("ospf_link_state_update", "OSPF Link State Update packet received"));
+pub static OSPF_LINK_STATE_UPDATE_EVENT: LazyLock<EventType> = LazyLock::new(|| EventType::new("ospf_link_state_update", "OSPF Link State Update packet received", json!({"type": "placeholder", "event_id": "ospf_link_state_update"})));
 
-pub static OSPF_LINK_STATE_ACK_EVENT: LazyLock<EventType> = LazyLock::new(|| EventType::new("ospf_link_state_ack", "OSPF Link State Acknowledgment packet received"));
+pub static OSPF_LINK_STATE_ACK_EVENT: LazyLock<EventType> = LazyLock::new(|| EventType::new("ospf_link_state_ack", "OSPF Link State Acknowledgment packet received", json!({"type": "placeholder", "event_id": "ospf_link_state_ack"})));
 
 // Implement Protocol trait (common functionality)
 impl Protocol for OspfProtocol {

@@ -16,6 +16,7 @@ pub static OPENAPI_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|
     EventType::new(
         "openapi_client_connected",
         "OpenAPI client initialized with specification loaded",
+        json!({"type": "execute_operation", "operation_id": "listUsers", "path_params": {}, "query_params": {}}),
     )
     .with_parameters(vec![
         Parameter {
@@ -56,6 +57,7 @@ pub static OPENAPI_OPERATION_RESPONSE_EVENT: LazyLock<EventType> = LazyLock::new
     EventType::new(
         "openapi_operation_response",
         "Response received from executing an OpenAPI operation",
+        json!({"type": "execute_operation", "operation_id": "getUser", "path_params": {"id": "123"}, "query_params": {}}),
     )
     .with_parameters(vec![
         Parameter {
@@ -287,8 +289,8 @@ impl Protocol for OpenApiClientProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("openapi_client_connected", "Triggered when OpenAPI client is initialized with spec"),
-            EventType::new("openapi_operation_response", "Triggered when OpenAPI operation response is received"),
+            EventType::new("openapi_client_connected", "Triggered when OpenAPI client is initialized with spec", json!({"type": "placeholder", "event_id": "openapi_client_connected"})),
+            EventType::new("openapi_operation_response", "Triggered when OpenAPI operation response is received", json!({"type": "placeholder", "event_id": "openapi_operation_response"})),
         ]
     }
 

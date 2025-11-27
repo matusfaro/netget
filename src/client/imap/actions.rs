@@ -16,6 +16,10 @@ pub static IMAP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "imap_connected",
         "IMAP client successfully connected and authenticated",
+        json!({
+            "type": "select_mailbox",
+            "mailbox": "INBOX"
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -35,7 +39,15 @@ pub static IMAP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// IMAP client mailbox selected event
 pub static IMAP_CLIENT_MAILBOX_SELECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("imap_mailbox_selected", "Mailbox successfully selected").with_parameters(vec![
+    EventType::new(
+        "imap_mailbox_selected",
+        "Mailbox successfully selected",
+        json!({
+            "type": "search_messages",
+            "criteria": "UNSEEN"
+        })
+    )
+    .with_parameters(vec![
         Parameter {
             name: "mailbox".to_string(),
             type_hint: "string".to_string(),
@@ -62,6 +74,10 @@ pub static IMAP_CLIENT_SEARCH_RESULTS_EVENT: LazyLock<EventType> = LazyLock::new
     EventType::new(
         "imap_search_results",
         "Search results received from IMAP server",
+        json!({
+            "type": "fetch_message",
+            "message_id": "1"
+        })
     )
     .with_parameters(vec![Parameter {
         name: "message_ids".to_string(),
@@ -73,7 +89,14 @@ pub static IMAP_CLIENT_SEARCH_RESULTS_EVENT: LazyLock<EventType> = LazyLock::new
 
 /// IMAP client message fetched event
 pub static IMAP_CLIENT_MESSAGE_FETCHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("imap_message_fetched", "Message fetched from IMAP server").with_parameters(
+    EventType::new(
+        "imap_message_fetched",
+        "Message fetched from IMAP server",
+        json!({
+            "type": "wait_for_more"
+        })
+    )
+    .with_parameters(
         vec![
             Parameter {
                 name: "message_id".to_string(),
@@ -268,10 +291,10 @@ impl Protocol for ImapClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("imap_connected", "Triggered when IMAP client connects and authenticates"),
-            EventType::new("imap_mailbox_selected", "Triggered when a mailbox is selected"),
-            EventType::new("imap_search_results", "Triggered when search results are received"),
-            EventType::new("imap_message_fetched", "Triggered when a message is fetched"),
+            EventType::new("imap_connected", "Triggered when IMAP client connects and authenticates", json!({"type": "placeholder", "event_id": "imap_connected"})),
+            EventType::new("imap_mailbox_selected", "Triggered when a mailbox is selected", json!({"type": "placeholder", "event_id": "imap_mailbox_selected"})),
+            EventType::new("imap_search_results", "Triggered when search results are received", json!({"type": "placeholder", "event_id": "imap_search_results"})),
+            EventType::new("imap_message_fetched", "Triggered when a message is fetched", json!({"type": "placeholder", "event_id": "imap_message_fetched"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

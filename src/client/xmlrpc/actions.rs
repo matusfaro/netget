@@ -16,6 +16,11 @@ pub static XMLRPC_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(||
     EventType::new(
         "xmlrpc_connected",
         "XML-RPC client initialized and ready to call methods",
+        json!({
+            "type": "call_xmlrpc_method",
+            "method_name": "system.listMethods",
+            "params": []
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "server_url".to_string(),
@@ -30,6 +35,11 @@ pub static XMLRPC_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock
     EventType::new(
         "xmlrpc_response_received",
         "XML-RPC response received from server",
+        json!({
+            "type": "call_xmlrpc_method",
+            "method_name": "system.listMethods",
+            "params": []
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -139,8 +149,8 @@ impl Protocol for XmlRpcClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("xmlrpc_connected", "Triggered when XML-RPC client is initialized"),
-            EventType::new("xmlrpc_response_received", "Triggered when XML-RPC client receives a response"),
+            EventType::new("xmlrpc_connected", "Triggered when XML-RPC client is initialized", json!({"type": "placeholder", "event_id": "xmlrpc_connected"})),
+            EventType::new("xmlrpc_response_received", "Triggered when XML-RPC client receives a response", json!({"type": "placeholder", "event_id": "xmlrpc_response_received"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

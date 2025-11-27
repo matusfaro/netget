@@ -16,6 +16,11 @@ pub static DNS_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "dns_connected",
         "DNS client successfully connected to DNS server",
+        serde_json::json!({
+            "type": "send_dns_query",
+            "domain": "example.com",
+            "query_type": "A"
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "remote_addr".to_string(),
@@ -27,7 +32,7 @@ pub static DNS_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// DNS client response received event
 pub static DNS_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("dns_response_received", "DNS response received from server").with_parameters(
+    EventType::new("dns_response_received", "DNS response received from server", json!({"type": "placeholder", "event_id": "dns_response_received"})).with_parameters(
         vec![
             Parameter {
                 name: "query_id".to_string(),
@@ -170,8 +175,8 @@ impl Protocol for DnsClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("dns_connected", "Triggered when DNS client connects to server"),
-            EventType::new("dns_response_received", "Triggered when DNS client receives a response"),
+            EventType::new("dns_connected", "Triggered when DNS client connects to server", json!({"type": "placeholder", "event_id": "dns_connected"})),
+            EventType::new("dns_response_received", "Triggered when DNS client receives a response", json!({"type": "placeholder", "event_id": "dns_response_received"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

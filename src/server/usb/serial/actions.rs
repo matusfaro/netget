@@ -21,7 +21,7 @@ use tokio::sync::Mutex;
 
 #[cfg(feature = "usb-serial")]
 pub static USB_SERIAL_ATTACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("usb_serial_attached", "Host attached to USB serial port").with_parameters(vec![
+    EventType::new("usb_serial_attached", "Host attached to USB serial port", json!({"type": "placeholder", "event_id": "usb_serial_attached"})).with_parameters(vec![
         Parameter {
             name: "connection_id".to_string(),
             type_hint: "string".to_string(),
@@ -33,7 +33,7 @@ pub static USB_SERIAL_ATTACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 #[cfg(feature = "usb-serial")]
 pub static USB_SERIAL_DETACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("usb_serial_detached", "Host detached from USB serial port").with_parameters(
+    EventType::new("usb_serial_detached", "Host detached from USB serial port", json!({"type": "placeholder", "event_id": "usb_serial_detached"})).with_parameters(
         vec![Parameter {
             name: "connection_id".to_string(),
             type_hint: "string".to_string(),
@@ -45,7 +45,7 @@ pub static USB_SERIAL_DETACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 #[cfg(feature = "usb-serial")]
 pub static USB_SERIAL_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("usb_serial_data_received", "Data received from host").with_parameters(vec![
+    EventType::new("usb_serial_data_received", "Data received from host", json!({"type": "placeholder", "event_id": "usb_serial_data_received"})).with_parameters(vec![
         Parameter {
             name: "connection_id".to_string(),
             type_hint: "string".to_string(),

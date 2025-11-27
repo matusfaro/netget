@@ -16,6 +16,10 @@ pub static TCP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "tcp_connected",
         "TCP client successfully connected to server",
+        serde_json::json!({
+            "type": "send_tcp_data",
+            "data": "48656c6c6f"
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "remote_addr".to_string(),
@@ -27,7 +31,7 @@ pub static TCP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// TCP client data received event
 pub static TCP_CLIENT_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("tcp_data_received", "Data received from TCP server").with_parameters(vec![
+    EventType::new("tcp_data_received", "Data received from TCP server", json!({"type": "placeholder", "event_id": "tcp_data_received"})).with_parameters(vec![
         Parameter {
             name: "data_hex".to_string(),
             type_hint: "string".to_string(),
@@ -133,8 +137,8 @@ impl Protocol for TcpClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("tcp_connected", "Triggered when TCP client connects to server"),
-            EventType::new("tcp_data_received", "Triggered when TCP client receives data from server"),
+            EventType::new("tcp_connected", "Triggered when TCP client connects to server", json!({"type": "placeholder", "event_id": "tcp_connected"})),
+            EventType::new("tcp_data_received", "Triggered when TCP client receives data from server", json!({"type": "placeholder", "event_id": "tcp_data_received"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

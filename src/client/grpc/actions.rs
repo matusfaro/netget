@@ -16,6 +16,12 @@ pub static GRPC_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "grpc_connected",
         "gRPC client initialized and ready to call RPC methods",
+        json!({
+            "type": "call_grpc_method",
+            "service": "calculator.Calculator",
+            "method": "Add",
+            "request": {"a": 5, "b": 3}
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -38,6 +44,12 @@ pub static GRPC_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::
     EventType::new(
         "grpc_response_received",
         "gRPC response received from server",
+        json!({
+            "type": "call_grpc_method",
+            "service": "calculator.Calculator",
+            "method": "Multiply",
+            "request": {"a": 2, "b": 3}
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -63,7 +75,14 @@ pub static GRPC_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::
 
 /// gRPC client error event
 pub static GRPC_CLIENT_ERROR_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("grpc_error", "gRPC error received from server").with_parameters(vec![
+    EventType::new(
+        "grpc_error",
+        "gRPC error received from server",
+        json!({
+            "type": "wait_for_more"
+        })
+    )
+    .with_parameters(vec![
         Parameter {
             name: "service".to_string(),
             type_hint: "string".to_string(),
@@ -223,9 +242,9 @@ impl Protocol for GrpcClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("grpc_connected", "Triggered when gRPC client connects to server"),
-            EventType::new("grpc_response_received", "Triggered when gRPC client receives a response"),
-            EventType::new("grpc_error", "Triggered when gRPC client receives an error"),
+            EventType::new("grpc_connected", "Triggered when gRPC client connects to server", json!({"type": "placeholder", "event_id": "grpc_connected"})),
+            EventType::new("grpc_response_received", "Triggered when gRPC client receives a response", json!({"type": "placeholder", "event_id": "grpc_response_received"})),
+            EventType::new("grpc_error", "Triggered when gRPC client receives an error", json!({"type": "placeholder", "event_id": "grpc_error"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

@@ -16,6 +16,10 @@ pub static UDP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "udp_connected",
         "UDP client socket bound and ready to send/receive",
+        json!({
+            "type": "send_udp_datagram",
+            "data_hex": "48656c6c6f"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -35,7 +39,7 @@ pub static UDP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// UDP client datagram received event
 pub static UDP_CLIENT_DATAGRAM_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("udp_datagram_received", "Datagram received from UDP server").with_parameters(
+    EventType::new("udp_datagram_received", "Datagram received from UDP server", json!({"type": "placeholder", "event_id": "udp_datagram_received"})).with_parameters(
         vec![
             Parameter {
                 name: "data_hex".to_string(),
@@ -167,8 +171,8 @@ impl Protocol for UdpClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("udp_connected", "Triggered when UDP client socket is bound and ready"),
-            EventType::new("udp_datagram_received", "Triggered when UDP client receives a datagram"),
+            EventType::new("udp_connected", "Triggered when UDP client socket is bound and ready", json!({"type": "placeholder", "event_id": "udp_connected"})),
+            EventType::new("udp_datagram_received", "Triggered when UDP client receives a datagram", json!({"type": "placeholder", "event_id": "udp_datagram_received"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

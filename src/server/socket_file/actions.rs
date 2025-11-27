@@ -362,6 +362,10 @@ pub static SOCKET_FILE_CONNECTION_OPENED_EVENT: LazyLock<EventType> = LazyLock::
     EventType::new(
         "socket_file_connection_opened",
         "New Unix domain socket connection established (send initial greeting/banner if needed)",
+        json!({
+            "type": "send_socket_data",
+            "data": "READY\n"
+        })
     )
     .with_parameters(vec![])
     .with_actions(vec![
@@ -375,6 +379,10 @@ pub static SOCKET_FILE_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(
     EventType::new(
         "socket_file_data_received",
         "Data received on Unix domain socket connection",
+        json!({
+            "type": "send_socket_data",
+            "data": "ACK\n"
+        })
     )
     .with_parameters(vec![Parameter {
         name: "data".to_string(),

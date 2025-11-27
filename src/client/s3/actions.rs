@@ -15,6 +15,13 @@ pub static S3_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "s3_connected",
         "S3 client initialized and ready to access buckets",
+        json!({
+            "type": "put_object",
+            "bucket": "my-bucket",
+            "key": "data/file.txt",
+            "body": "Hello, S3!",
+            "content_type": "text/plain"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -37,6 +44,12 @@ pub static S3_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::ne
     EventType::new(
         "s3_response_received",
         "S3 operation completed with response",
+        json!({
+            "type": "put_object",
+            "bucket": "my-bucket",
+            "key": "result.json",
+            "body": "{\"status\": \"processed\"}"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -362,8 +375,8 @@ impl crate::llm::actions::protocol_trait::Protocol for S3ClientProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("s3_connected", "Triggered when S3 client is initialized"),
-            EventType::new("s3_response_received", "Triggered when S3 client receives a response"),
+            EventType::new("s3_connected", "Triggered when S3 client is initialized", json!({"type": "placeholder", "event_id": "s3_connected"})),
+            EventType::new("s3_response_received", "Triggered when S3 client receives a response", json!({"type": "placeholder", "event_id": "s3_response_received"})),
         ]
     }
 

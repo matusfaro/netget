@@ -11,7 +11,7 @@ use std::sync::LazyLock;
 
 /// Event: POP3 client connected to server
 pub static POP3_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("pop3_connected", "POP3 client connected to server")
+    EventType::new("pop3_connected", "POP3 client connected to server", json!({"type": "placeholder", "event_id": "pop3_connected"}))
         .with_parameters(vec![Parameter {
             name: "pop3_server".to_string(),
             type_hint: "string".to_string(),
@@ -25,6 +25,10 @@ pub static POP3_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::
     EventType::new(
         "pop3_response_received",
         "POP3 response received from server",
+        json!({
+            "type": "send_pop3_command",
+            "command": "USER alice"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -138,8 +142,8 @@ impl Protocol for Pop3ClientProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("pop3_connected", "Triggered when POP3 client connects to server"),
-            EventType::new("pop3_response_received", "Triggered when POP3 client receives a response from server"),
+            EventType::new("pop3_connected", "Triggered when POP3 client connects to server", json!({"type": "placeholder", "event_id": "pop3_connected"})),
+            EventType::new("pop3_response_received", "Triggered when POP3 client receives a response from server", json!({"type": "placeholder", "event_id": "pop3_response_received"})),
         ]
     }
 

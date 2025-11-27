@@ -13,7 +13,7 @@ use tracing::debug;
 
 /// OpenAI request event (for /v1/models, /v1/chat/completions, etc.)
 pub static OPENAI_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("openai_request", "OpenAI API request received").with_parameters(vec![
+    EventType::new("openai_request", "OpenAI API request received", json!({"type": "placeholder", "event_id": "openai_request"})).with_parameters(vec![
         Parameter {
             name: "method".to_string(),
             type_hint: "string".to_string(),

@@ -16,6 +16,9 @@ pub static OIDC_CLIENT_DISCOVERED_EVENT: LazyLock<EventType> = LazyLock::new(|| 
     EventType::new(
         "oidc_discovered",
         "OpenID Connect provider configuration discovered",
+        json!({
+            "type": "fetch_userinfo"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -56,6 +59,9 @@ pub static OIDC_CLIENT_TOKEN_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new
     EventType::new(
         "oidc_token_received",
         "OAuth/OIDC tokens received from provider",
+        json!({
+            "type": "fetch_userinfo"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -96,6 +102,9 @@ pub static OIDC_CLIENT_USERINFO_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::
     EventType::new(
         "oidc_userinfo_received",
         "UserInfo data received from OpenID Connect provider",
+        json!({
+            "type": "refresh_token"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -309,9 +318,9 @@ impl Protocol for OpenIdConnectClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("oidc_discovered", "Triggered when OIDC provider configuration is discovered"),
-            EventType::new("oidc_token_received", "Triggered when OAuth/OIDC tokens are received"),
-            EventType::new("oidc_userinfo_received", "Triggered when UserInfo data is received"),
+            EventType::new("oidc_discovered", "Triggered when OIDC provider configuration is discovered", json!({"type": "placeholder", "event_id": "oidc_discovered"})),
+            EventType::new("oidc_token_received", "Triggered when OAuth/OIDC tokens are received", json!({"type": "placeholder", "event_id": "oidc_token_received"})),
+            EventType::new("oidc_userinfo_received", "Triggered when UserInfo data is received", json!({"type": "placeholder", "event_id": "oidc_userinfo_received"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

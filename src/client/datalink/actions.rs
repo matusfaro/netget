@@ -16,6 +16,7 @@ pub static DATALINK_CLIENT_FRAME_INJECTED_EVENT: LazyLock<EventType> = LazyLock:
     EventType::new(
         "datalink_frame_injected",
         "Raw Ethernet frame successfully injected",
+        json!({"type": "wait_for_more"}),
     )
     .with_parameters(vec![Parameter {
         name: "frame_length".to_string(),
@@ -30,6 +31,7 @@ pub static DATALINK_CLIENT_FRAME_CAPTURED_EVENT: LazyLock<EventType> = LazyLock:
     EventType::new(
         "datalink_frame_captured",
         "Raw Ethernet frame captured on interface",
+        json!({"type": "inject_frame", "frame_hex": "ffffffffffff001122334455080600010800060400010011223344550a0000010000000000000a000002"}),
     )
     .with_parameters(vec![
         Parameter {
@@ -139,8 +141,8 @@ impl Protocol for DataLinkClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("datalink_frame_injected", "Triggered when frame is successfully injected"),
-            EventType::new("datalink_frame_captured", "Triggered when frame is captured in promiscuous mode"),
+            EventType::new("datalink_frame_injected", "Triggered when frame is successfully injected", json!({"type": "wait_for_more"})),
+            EventType::new("datalink_frame_captured", "Triggered when frame is captured in promiscuous mode", json!({"type": "inject_frame", "frame_hex": "ffffffffffff001122334455080600010800060400010011223344550a0000010000000000000a000002"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

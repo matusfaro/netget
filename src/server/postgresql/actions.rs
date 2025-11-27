@@ -443,7 +443,7 @@ pub static POSTGRESQL_CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> =
 
 /// PostgreSQL query event - triggered when client sends a query
 pub static POSTGRESQL_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("postgresql_query", "PostgreSQL query received from client")
+    EventType::new("postgresql_query", "PostgreSQL query received from client", json!({"type": "placeholder", "event_id": "postgresql_query"}))
         .with_parameters(vec![Parameter {
             name: "query".to_string(),
             type_hint: "string".to_string(),

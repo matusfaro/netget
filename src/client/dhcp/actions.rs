@@ -16,6 +16,7 @@ pub static DHCP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "dhcp_connected",
         "DHCP client initialized and ready to send requests",
+        json!({"type": "wait_for_more"}),
     )
     .with_parameters(vec![
         Parameter {
@@ -35,10 +36,7 @@ pub static DHCP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// DHCP client response received event
 pub static DHCP_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "dhcp_response_received",
-        "DHCP response received from server"
-    )
+    EventType::new("dhcp_response_received", "DHCP response received from server", json!({"type": "placeholder", "event_id": "dhcp_response_received"}))
     .with_parameters(vec![
         Parameter {
             name: "message_type".to_string(),

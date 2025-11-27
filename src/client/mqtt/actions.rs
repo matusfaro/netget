@@ -16,6 +16,7 @@ pub static MQTT_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "mqtt_connected",
         "MQTT client successfully connected to broker",
+        json!({"type": "subscribe", "topics": ["sensors/#"], "qos": 1}),
     )
     .with_parameters(vec![
         Parameter {
@@ -35,7 +36,7 @@ pub static MQTT_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// MQTT message received event
 pub static MQTT_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("mqtt_message_received", "Message received from MQTT broker").with_parameters(
+    EventType::new("mqtt_message_received", "Message received from MQTT broker", json!({"type": "placeholder", "event_id": "mqtt_message_received"})).with_parameters(
         vec![
             Parameter {
                 name: "topic".to_string(),
@@ -70,6 +71,11 @@ pub static MQTT_SUBSCRIBED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "mqtt_subscribed",
         "Successfully subscribed to MQTT topic(s)",
+        json!({
+            "type": "publish",
+            "topic": "sensors/response",
+            "payload": "subscription confirmed"
+        })
     )
     .with_parameters(vec![Parameter {
         name: "topics".to_string(),
@@ -240,9 +246,9 @@ impl Protocol for MqttClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("mqtt_connected", "Triggered when MQTT client connects to broker"),
-            EventType::new("mqtt_message_received", "Triggered when MQTT client receives a published message"),
-            EventType::new("mqtt_subscribed", "Triggered when MQTT client successfully subscribes to topics"),
+            EventType::new("mqtt_connected", "Triggered when MQTT client connects to broker", json!({"type": "placeholder", "event_id": "mqtt_connected"})),
+            EventType::new("mqtt_message_received", "Triggered when MQTT client receives a published message", json!({"type": "placeholder", "event_id": "mqtt_message_received"})),
+            EventType::new("mqtt_subscribed", "Triggered when MQTT client successfully subscribes to topics", json!({"type": "placeholder", "event_id": "mqtt_subscribed"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

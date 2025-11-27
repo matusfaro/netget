@@ -516,13 +516,18 @@ pub static BITCOIN_CONNECTION_OPENED_EVENT: LazyLock<EventType> = LazyLock::new(
     EventType::new(
         "bitcoin_connection_opened",
         "New Bitcoin P2P connection established (decide whether to send version or wait)",
+        json!({
+            "type": "send_version",
+            "network": "mainnet",
+            "version": 70015
+        })
     )
     .with_actions(vec![send_version_action(), close_this_connection_action()])
 });
 
 /// Bitcoin message received event
 pub static BITCOIN_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("bitcoin_message_received", "Bitcoin P2P message received")
+    EventType::new("bitcoin_message_received", "Bitcoin P2P message received", json!({"type": "placeholder", "event_id": "bitcoin_message_received"}))
         .with_parameters(vec![
             Parameter {
                 name: "message_type".to_string(),

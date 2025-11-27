@@ -16,6 +16,7 @@ pub static ARP_CLIENT_STARTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "arp_client_started",
         "ARP client successfully started on network interface",
+        json!({"type": "wait_for_more"}),
     )
     .with_parameters(vec![Parameter {
         name: "interface".to_string(),
@@ -30,6 +31,7 @@ pub static ARP_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::n
     EventType::new(
         "arp_response_received",
         "ARP response received from network",
+        json!({"type": "send_arp_reply", "sender_mac": "aa:bb:cc:dd:ee:ff", "sender_ip": "192.168.1.100", "target_mac": "11:22:33:44:55:66", "target_ip": "192.168.1.1"}),
     )
     .with_parameters(vec![
         Parameter {
@@ -240,8 +242,8 @@ impl Protocol for ArpClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("arp_client_started", "Triggered when ARP client starts capturing"),
-            EventType::new("arp_response_received", "Triggered when ARP packet is received"),
+            EventType::new("arp_client_started", "Triggered when ARP client starts capturing", json!({"type": "wait_for_more"})),
+            EventType::new("arp_response_received", "Triggered when ARP packet is received", json!({"type": "send_arp_reply", "sender_mac": "aa:bb:cc:dd:ee:ff", "sender_ip": "192.168.1.100", "target_mac": "11:22:33:44:55:66", "target_ip": "192.168.1.1"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

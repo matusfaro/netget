@@ -19,6 +19,7 @@ pub static SSH_AGENT_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new
     EventType::new(
         "ssh_agent_client_connected",
         "SSH Agent client connected to agent socket",
+        json!({"type": "request_identities"})
     )
     .with_parameter(Parameter {
         name: "socket_path".to_string(),
@@ -32,6 +33,7 @@ pub static SSH_AGENT_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyL
     EventType::new(
         "ssh_agent_client_response_received",
         "SSH Agent client received response from agent",
+        json!({"type": "sign_request", "public_key_blob_hex": "...", "data_hex": "...", "flags": 0})
     )
     .with_parameters(vec![
         Parameter {

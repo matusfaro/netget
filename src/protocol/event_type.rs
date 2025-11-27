@@ -27,33 +27,51 @@ pub struct EventType {
     /// Uses the same Parameter structure as actions
     pub parameters: Vec<Parameter>,
 
-    /// Typical response example for this event (most common case)
+    /// Required response example for this event
     /// Used in prompt templates to show the expected action response
-    /// This should use protocol-specific action types
-    pub typical_response_example: Option<JsonValue>,
-
-    /// Mandatory response example (when there's only one correct way)
-    /// Takes precedence over typical_response_example in prompts
-    /// Use this when the protocol requires a specific response format
-    pub mandatory_response_example: Option<JsonValue>,
+    /// This MUST use protocol-specific action types (e.g., send_dns_a_response, not send_data)
+    ///
+    /// This field is required - every event type must have at least one valid response example.
+    /// This ensures prompts always show relevant, protocol-specific examples.
+    pub response_example: JsonValue,
 
     /// Optional alternative response examples
     /// Shows other valid ways to respond to this event
-    /// Displayed after the typical/mandatory example
-    pub optional_response_examples: Vec<JsonValue>,
+    /// Displayed after the primary response_example
+    pub alternative_examples: Vec<JsonValue>,
 }
 
 impl EventType {
-    /// Create a new event type
-    pub fn new(id: impl Into<String>, description: impl Into<String>) -> Self {
+    /// Create a new event type with a required response example
+    ///
+    /// # Arguments
+    /// * `id` - Unique identifier for this event type (e.g., "http_request", "dns_query")
+    /// * `description` - Human-readable description of when this event occurs
+    /// * `response_example` - Required example showing how to respond to this event
+    ///
+    /// The response_example MUST use protocol-specific action types (e.g., send_dns_a_response)
+    /// not generic actions like send_data. This ensures prompts show relevant examples.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// EventType::new(
+    ///     "dns_query",
+    ///     "DNS query received from client",
+    ///     json!({"type": "send_dns_a_response", "query_id": 0, "domain": "example.com", "ip": "1.2.3.4"})
+    /// )
+    /// ```
+    pub fn new(
+        id: impl Into<String>,
+        description: impl Into<String>,
+        response_example: JsonValue,
+    ) -> Self {
         Self {
             id: id.into(),
             description: description.into(),
             actions: Vec::new(),
             parameters: Vec::new(),
-            typical_response_example: None,
-            mandatory_response_example: None,
-            optional_response_examples: Vec::new(),
+            response_example,
+            alternative_examples: Vec::new(),
         }
     }
 
@@ -81,56 +99,20 @@ impl EventType {
         self
     }
 
-    /// Set the typical response example for this event
+    /// Add an alternative response example for this event
     ///
-    /// This example shows the most common way to respond to this event.
-    /// It should use protocol-specific action types.
-    ///
-    /// # Example
-    /// ```rust,ignore
-    /// .with_typical_example(json!({
-    ///     "type": "send_tcp_data",
-    ///     "data": "48656c6c6f"
-    /// }))
-    /// ```
-    pub fn with_typical_example(mut self, example: JsonValue) -> Self {
-        self.typical_response_example = Some(example);
-        self
-    }
-
-    /// Set the mandatory response example for this event
-    ///
-    /// This example shows the ONLY correct way to respond to this event.
-    /// Use this when the protocol requires a specific response format.
-    /// Takes precedence over typical_response_example in prompts.
+    /// This shows another valid way to respond to this event.
+    /// The primary response_example is set in the constructor;
+    /// use this method to add additional alternatives.
     ///
     /// # Example
     /// ```rust,ignore
-    /// .with_mandatory_example(json!({
-    ///     "type": "send_dns_a_response",
-    ///     "query_id": 12345,
-    ///     "domain": "example.com",
-    ///     "ip": "93.184.216.34"
-    /// }))
-    /// ```
-    pub fn with_mandatory_example(mut self, example: JsonValue) -> Self {
-        self.mandatory_response_example = Some(example);
-        self
-    }
-
-    /// Add an optional response example for this event
-    ///
-    /// This shows an alternative valid way to respond to this event.
-    /// Multiple optional examples can be added.
-    ///
-    /// # Example
-    /// ```rust,ignore
-    /// .with_optional_example(json!({
+    /// .with_alternative_example(json!({
     ///     "type": "disconnect"
     /// }))
     /// ```
-    pub fn with_optional_example(mut self, example: JsonValue) -> Self {
-        self.optional_response_examples.push(example);
+    pub fn with_alternative_example(mut self, example: JsonValue) -> Self {
+        self.alternative_examples.push(example);
         self
     }
 

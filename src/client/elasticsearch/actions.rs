@@ -16,6 +16,11 @@ pub static ELASTICSEARCH_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock:
     EventType::new(
         "elasticsearch_connected",
         "Elasticsearch client initialized and ready to execute operations",
+        json!({
+            "type": "search",
+            "index": "users",
+            "query": {"match_all": {}}
+        })
     )
     .with_parameters(vec![Parameter {
         name: "cluster_url".to_string(),
@@ -31,6 +36,11 @@ pub static ELASTICSEARCH_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> =
         EventType::new(
             "elasticsearch_response_received",
             "Elasticsearch response received from cluster",
+            json!({
+                "type": "index_document",
+                "index": "logs",
+                "document": {"level": "info", "message": "Search executed"}
+            })
         )
         .with_parameters(vec![
             Parameter {
@@ -293,8 +303,8 @@ impl Protocol for ElasticsearchClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("elasticsearch_connected", "Triggered when Elasticsearch client is initialized"),
-            EventType::new("elasticsearch_response_received", "Triggered when Elasticsearch client receives a response"),
+            EventType::new("elasticsearch_connected", "Triggered when Elasticsearch client is initialized", json!({"type": "placeholder", "event_id": "elasticsearch_connected"})),
+            EventType::new("elasticsearch_response_received", "Triggered when Elasticsearch client receives a response", json!({"type": "placeholder", "event_id": "elasticsearch_response_received"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

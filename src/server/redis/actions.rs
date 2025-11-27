@@ -417,7 +417,7 @@ pub static REDIS_CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> =
 
 /// Redis command event - triggered when client sends a command
 pub static REDIS_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("redis_command", "Redis command received from client")
+    EventType::new("redis_command", "Redis command received from client", json!({"type": "placeholder", "event_id": "redis_command"}))
         .with_parameters(vec![Parameter {
             name: "command".to_string(),
             type_hint: "string".to_string(),

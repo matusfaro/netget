@@ -16,6 +16,11 @@ pub static MONGODB_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|
     EventType::new(
         "mongodb_connected",
         "MongoDB client successfully connected to server",
+        json!({
+            "type": "find_documents",
+            "collection": "users",
+            "filter": {}
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -38,6 +43,9 @@ pub static MONGODB_CLIENT_RESULT_RECEIVED_EVENT: LazyLock<EventType> = LazyLock:
     EventType::new(
         "mongodb_result_received",
         "Query result received from MongoDB server",
+        json!({
+            "type": "wait_for_more"
+        })
     )
     .with_parameters(vec![
         Parameter {

@@ -268,7 +268,7 @@ async fn test_http_script_sum_query_params() -> Result<()> {
     // Create test event (HTTP request with query params)
     let test_event = Event::new(
         Box::leak(Box::new(
-            EventType::new("http_request", "HTTP request received")
+            EventType::new("http_request", "HTTP request received", json!({"type": "placeholder", "event_id": "http_request"}))
                 .with_parameters(vec![
                     Parameter {
                         name: "method".to_string(),
@@ -338,7 +338,7 @@ async fn test_tcp_echo_script() -> Result<()> {
     // Create test event (TCP data received)
     let test_event = Event::new(
         Box::leak(Box::new(
-            EventType::new("tcp_data_received", "TCP data received")
+            EventType::new("tcp_data_received", "TCP data received", json!({"type": "placeholder", "event_id": "tcp_data_received"}))
                 .with_parameters(vec![
                     Parameter {
                         name: "data".to_string(),
@@ -380,7 +380,7 @@ async fn test_http_conditional_script() -> Result<()> {
     // Create test event (GET request)
     let test_event_get = Event::new(
         Box::leak(Box::new(
-            EventType::new("http_request", "HTTP request received")
+            EventType::new("http_request", "HTTP request received", json!({"type": "placeholder", "event_id": "http_request"}))
                 .with_parameters(vec![
                     Parameter {
                         name: "method".to_string(),
@@ -438,7 +438,7 @@ async fn test_http_conditional_script() -> Result<()> {
 async fn test_http_request_with_instruction() -> Result<()> {
     let event = Event::new(
         Box::leak(Box::new(
-            EventType::new("http_request", "HTTP request received")
+            EventType::new("http_request", "HTTP request received", json!({"type": "placeholder", "event_id": "http_request"}))
                 .with_parameters(vec![
                     Parameter {
                         name: "method".to_string(),
@@ -497,7 +497,7 @@ async fn test_http_request_with_instruction() -> Result<()> {
 async fn test_dns_query_response() -> Result<()> {
     let event = Event::new(
         Box::leak(Box::new(
-            EventType::new("dns_query", "DNS query received")
+            EventType::new("dns_query", "DNS query received", json!({"type": "placeholder", "event_id": "dns_query"}))
                 .with_parameters(vec![
                     Parameter {
                         name: "query_id".to_string(),
@@ -567,7 +567,7 @@ async fn test_dns_query_response() -> Result<()> {
 async fn test_tcp_hex_response() -> Result<()> {
     let event = Event::new(
         Box::leak(Box::new(
-            EventType::new("tcp_data_received", "TCP data received")
+            EventType::new("tcp_data_received", "TCP data received", json!({"type": "placeholder", "event_id": "tcp_data_received"}))
                 .with_parameters(vec![
                     Parameter {
                         name: "data".to_string(),
@@ -772,7 +772,7 @@ async fn test_dhcp_request_with_sqlite_query() -> Result<()> {
     // Create DHCP request event
     let dhcp_event = Event::new(
         Box::leak(Box::new(
-            EventType::new("dhcp_discover", "DHCP DISCOVER received from client")
+            EventType::new("dhcp_discover", "DHCP DISCOVER received from client", json!({"type": "placeholder", "event_id": "dhcp_discover"}))
                 .with_parameters(vec![
                     Parameter {
                         name: "mac_address".to_string(),

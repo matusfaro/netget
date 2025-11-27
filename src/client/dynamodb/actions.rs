@@ -16,6 +16,7 @@ pub static DYNAMODB_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(
     EventType::new(
         "dynamodb_connected",
         "DynamoDB client initialized and ready to send requests",
+        json!({"type": "put_item", "table_name": "Users", "item": {"id": {"S": "user456"}, "name": {"S": "Bob"}}}),
     )
     .with_parameters(vec![
         Parameter {
@@ -38,6 +39,7 @@ pub static DYNAMODB_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLo
     EventType::new(
         "dynamodb_response_received",
         "DynamoDB response received from server",
+        json!({"type": "query", "table_name": "Users", "key_condition_expression": "id = :id"}),
     )
     .with_parameters(vec![
         Parameter {
@@ -365,8 +367,8 @@ impl Protocol for DynamoDbClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("dynamodb_connected", "Triggered when DynamoDB client is initialized"),
-            EventType::new("dynamodb_response_received", "Triggered when DynamoDB client receives a response"),
+            EventType::new("dynamodb_connected", "Triggered when DynamoDB client is initialized", json!({"type": "put_item", "table_name": "Users", "item": {"id": {"S": "user456"}, "name": {"S": "Bob"}}})),
+            EventType::new("dynamodb_response_received", "Triggered when DynamoDB client receives a response", json!({"type": "query", "table_name": "Users", "key_condition_expression": "id = :id"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

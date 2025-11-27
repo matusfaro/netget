@@ -16,6 +16,7 @@ pub static BLUETOOTH_SCAN_COMPLETE_EVENT: LazyLock<EventType> = LazyLock::new(||
     EventType::new(
         "bluetooth_scan_complete",
         "BLE device scan completed with list of discovered devices",
+        json!({"type": "read_characteristic", "service_uuid": "0000180f-0000-1000-8000-00805f9b34fb", "characteristic_uuid": "00002a19-0000-1000-8000-00805f9b34fb"}),
     )
     .with_parameters(vec![Parameter {
         name: "devices".to_string(),
@@ -30,6 +31,7 @@ pub static BLUETOOTH_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "bluetooth_connected",
         "Successfully connected to BLE device",
+        json!({"type": "read_characteristic", "service_uuid": "0000180f-0000-1000-8000-00805f9b34fb", "characteristic_uuid": "00002a19-0000-1000-8000-00805f9b34fb"}),
     )
     .with_parameters(vec![
         Parameter {
@@ -52,6 +54,7 @@ pub static BLUETOOTH_SERVICES_DISCOVERED_EVENT: LazyLock<EventType> = LazyLock::
     EventType::new(
         "bluetooth_services_discovered",
         "GATT services and characteristics discovered",
+        json!({"type": "read_characteristic", "service_uuid": "0000180f-0000-1000-8000-00805f9b34fb", "characteristic_uuid": "00002a19-0000-1000-8000-00805f9b34fb"}),
     )
     .with_parameters(vec![Parameter {
         name: "services".to_string(),
@@ -63,7 +66,7 @@ pub static BLUETOOTH_SERVICES_DISCOVERED_EVENT: LazyLock<EventType> = LazyLock::
 
 /// Bluetooth client data read event
 pub static BLUETOOTH_DATA_READ_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("bluetooth_data_read", "Data read from BLE characteristic").with_parameters(
+    EventType::new("bluetooth_data_read", "Data read from BLE characteristic", json!({"type": "placeholder", "event_id": "bluetooth_data_read"})).with_parameters(
         vec![
             Parameter {
                 name: "service_uuid".to_string(),
@@ -98,6 +101,7 @@ pub static BLUETOOTH_NOTIFICATION_RECEIVED_EVENT: LazyLock<EventType> = LazyLock
     EventType::new(
         "bluetooth_notification_received",
         "Notification received from subscribed BLE characteristic",
+        json!({"type": "write_characteristic", "service_uuid": "0000180f-0000-1000-8000-00805f9b34fb", "characteristic_uuid": "00002a19-0000-1000-8000-00805f9b34fb", "value_hex": "01", "with_response": true}),
     )
     .with_parameters(vec![
         Parameter {
@@ -129,7 +133,7 @@ pub static BLUETOOTH_NOTIFICATION_RECEIVED_EVENT: LazyLock<EventType> = LazyLock
 
 /// Bluetooth client disconnected event
 pub static BLUETOOTH_DISCONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("bluetooth_disconnected", "Disconnected from BLE device").with_parameters(vec![
+    EventType::new("bluetooth_disconnected", "Disconnected from BLE device", json!({"type": "placeholder", "event_id": "bluetooth_disconnected"})).with_parameters(vec![
         Parameter {
             name: "device_address".to_string(),
             type_hint: "string".to_string(),
@@ -329,12 +333,12 @@ impl Protocol for BluetoothClientProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("bluetooth_scan_complete", "Triggered when BLE scan completes"),
-            EventType::new("bluetooth_connected", "Triggered when connected to BLE device"),
-            EventType::new("bluetooth_services_discovered", "Triggered when GATT services are discovered"),
-            EventType::new("bluetooth_data_read", "Triggered when data is read from characteristic"),
-            EventType::new("bluetooth_notification_received", "Triggered when notification is received"),
-            EventType::new("bluetooth_disconnected", "Triggered when disconnected from device"),
+            EventType::new("bluetooth_scan_complete", "Triggered when BLE scan completes", json!({"type": "read_characteristic", "service_uuid": "0000180f-0000-1000-8000-00805f9b34fb", "characteristic_uuid": "00002a19-0000-1000-8000-00805f9b34fb"})),
+            EventType::new("bluetooth_connected", "Triggered when connected to BLE device", json!({"type": "read_characteristic", "service_uuid": "0000180f-0000-1000-8000-00805f9b34fb", "characteristic_uuid": "00002a19-0000-1000-8000-00805f9b34fb"})),
+            EventType::new("bluetooth_services_discovered", "Triggered when GATT services are discovered", json!({"type": "read_characteristic", "service_uuid": "0000180f-0000-1000-8000-00805f9b34fb", "characteristic_uuid": "00002a19-0000-1000-8000-00805f9b34fb"})),
+            EventType::new("bluetooth_data_read", "Triggered when data is read from characteristic", json!({"type": "write_characteristic", "service_uuid": "0000180f-0000-1000-8000-00805f9b34fb", "characteristic_uuid": "00002a19-0000-1000-8000-00805f9b34fb", "value_hex": "01", "with_response": true})),
+            EventType::new("bluetooth_notification_received", "Triggered when notification is received", json!({"type": "write_characteristic", "service_uuid": "0000180f-0000-1000-8000-00805f9b34fb", "characteristic_uuid": "00002a19-0000-1000-8000-00805f9b34fb", "value_hex": "01", "with_response": true})),
+            EventType::new("bluetooth_disconnected", "Triggered when disconnected from device", json!({"type": "read_characteristic", "service_uuid": "0000180f-0000-1000-8000-00805f9b34fb", "characteristic_uuid": "00002a19-0000-1000-8000-00805f9b34fb"})),
         ]
     }
 

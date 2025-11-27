@@ -13,7 +13,7 @@ use std::sync::LazyLock;
 
 /// RSS feed requested event - fired when a client requests a feed
 pub static RSS_FEED_REQUESTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("rss_feed_requested", "RSS feed requested by client").with_parameters(vec![
+    EventType::new("rss_feed_requested", "RSS feed requested by client", json!({"type": "placeholder", "event_id": "rss_feed_requested"})).with_parameters(vec![
         Parameter {
             name: "path".to_string(),
             type_hint: "string".to_string(),

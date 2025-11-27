@@ -21,6 +21,15 @@ pub static NFC_READERS_LISTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "nfc_readers_listed",
         "Available NFC/smart card readers enumerated via PC/SC",
+        json!({
+            "type": "send_apdu",
+            "cla": "00",
+            "ins": "A4",
+            "p1": "04",
+            "p2": "00",
+            "data": "D2760000850101",
+            "le": "00"
+        })
     )
     .with_parameters(vec![Parameter {
         name: "readers".to_string(),
@@ -35,6 +44,9 @@ pub static NFC_CARD_DETECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "nfc_card_detected",
         "NFC card/tag detected in reader",
+        json!({
+            "type": "read_ndef"
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -57,6 +69,10 @@ pub static NFC_APDU_RESPONSE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "nfc_apdu_response",
         "APDU response received from card/tag",
+        json!({
+            "type": "send_apdu_raw",
+            "apdu_hex": "00B0000010"
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -91,6 +107,16 @@ pub static NFC_NDEF_READ_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "nfc_ndef_read",
         "NDEF message read from NFC tag",
+        json!({
+            "type": "write_ndef",
+            "records": [
+                {
+                    "type": "text",
+                    "language": "en",
+                    "text": "Response message"
+                }
+            ]
+        })
     )
     .with_parameters(vec![Parameter {
         name: "records".to_string(),
@@ -105,6 +131,9 @@ pub static NFC_CARD_DISCONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "nfc_card_disconnected",
         "NFC card/tag disconnected from reader",
+        json!({
+            "type": "wait_for_more"
+        })
     )
 });
 

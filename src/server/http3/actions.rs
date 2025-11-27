@@ -352,6 +352,7 @@ pub static HTTP3_CONNECTION_OPENED_EVENT: LazyLock<EventType> = LazyLock::new(||
     EventType::new(
         "http3_connection_opened",
         "New HTTP3 connection established with TLS 1.3 encryption",
+        json!({"type": "placeholder", "event_id": "http3_connection_opened"}),
     )
     // No parameters - just connection opened notification
     .with_actions(vec![])
@@ -362,6 +363,7 @@ pub static HTTP3_STREAM_OPENED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "http3_stream_opened",
         "New bidirectional stream opened by client",
+        json!({"type": "send_http3_data", "data": "Hello HTTP/3"}),
     )
     .with_parameters(vec![Parameter {
         name: "stream_id".to_string(),
@@ -377,7 +379,7 @@ pub static HTTP3_STREAM_OPENED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// HTTP3 data received event - triggered when data is received on a stream
 pub static HTTP3_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("http3_data_received", "Data received on HTTP3 stream")
+    EventType::new("http3_data_received", "Data received on HTTP3 stream", json!({"type": "placeholder", "event_id": "http3_data_received"}))
         .with_parameters(vec![
             Parameter {
                 name: "stream_id".to_string(),

@@ -13,7 +13,7 @@ use std::sync::LazyLock;
 
 /// DHT response event
 pub static DHT_RESPONSE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("dht_response", "Received response from DHT node").with_parameters(vec![
+    EventType::new("dht_response", "Received response from DHT node", json!({"type": "placeholder", "event_id": "dht_response"})).with_parameters(vec![
         Parameter {
             name: "message_type".to_string(),
             type_hint: "string".to_string(),
@@ -194,7 +194,7 @@ impl Protocol for TorrentDhtClientProtocol {
         "BitTorrent DHT"
     }
     fn get_event_types(&self) -> Vec<EventType> {
-        vec![EventType::new("dht_response", "Received response from DHT node")]
+        vec![EventType::new("dht_response", "Received response from DHT node", json!({"type": "placeholder", "event_id": "dht_response"}))]
     }
     fn stack_name(&self) -> &'static str {
         "ETH>IP>UDP>BitTorrent-DHT"

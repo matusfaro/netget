@@ -16,6 +16,10 @@ pub static ETCD_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "etcd_connected",
         "etcd client successfully connected to server",
+        json!({
+            "type": "etcd_get",
+            "key": "/config/database"
+        })
     )
     .with_parameters(vec![Parameter {
         name: "remote_addr".to_string(),
@@ -30,6 +34,11 @@ pub static ETCD_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::
     EventType::new(
         "etcd_response_received",
         "Response received from etcd server",
+        json!({
+            "type": "etcd_put",
+            "key": "/config/database",
+            "value": "postgresql://localhost:5432/mydb"
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -167,8 +176,8 @@ impl Protocol for EtcdClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("etcd_connected", "Triggered when etcd client connects to server"),
-            EventType::new("etcd_response_received", "Triggered when etcd client receives a response"),
+            EventType::new("etcd_connected", "Triggered when etcd client connects to server", json!({"type": "placeholder", "event_id": "etcd_connected"})),
+            EventType::new("etcd_response_received", "Triggered when etcd client receives a response", json!({"type": "placeholder", "event_id": "etcd_response_received"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

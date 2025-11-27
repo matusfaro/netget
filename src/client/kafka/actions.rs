@@ -16,6 +16,7 @@ pub static KAFKA_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| 
     EventType::new(
         "kafka_connected",
         "Kafka client successfully connected to broker cluster",
+        json!({"type": "produce_message", "topic": "events", "payload": "Hello Kafka"}),
     )
     .with_parameters(vec![
         Parameter {
@@ -38,6 +39,7 @@ pub static KAFKA_CLIENT_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::
     EventType::new(
         "kafka_message_received",
         "Message received from Kafka topic",
+        json!({"type": "commit_offset"}),
     )
     .with_parameters(vec![
         Parameter {
@@ -84,6 +86,7 @@ pub static KAFKA_CLIENT_MESSAGE_DELIVERED_EVENT: LazyLock<EventType> = LazyLock:
     EventType::new(
         "kafka_message_delivered",
         "Message successfully delivered to Kafka topic",
+        json!({"type": "produce_message", "topic": "response-topic", "payload": "Processed data"}),
     )
     .with_parameters(vec![
         Parameter {
@@ -261,9 +264,9 @@ impl Protocol for KafkaClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("kafka_connected", "Triggered when Kafka client connects to broker cluster"),
-            EventType::new("kafka_message_received", "Triggered when Kafka consumer receives a message"),
-            EventType::new("kafka_message_delivered", "Triggered when Kafka producer delivers a message"),
+            EventType::new("kafka_connected", "Triggered when Kafka client connects to broker cluster", json!({"type": "produce_message", "topic": "events", "payload": "Hello Kafka"})),
+            EventType::new("kafka_message_received", "Triggered when Kafka consumer receives a message", json!({"type": "commit_offset"})),
+            EventType::new("kafka_message_delivered", "Triggered when Kafka producer delivers a message", json!({"type": "produce_message", "topic": "response-topic", "payload": "Processed data"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

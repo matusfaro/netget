@@ -16,6 +16,11 @@ pub static HTTP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "http_connected",
         "HTTP client initialized and ready to send requests",
+        serde_json::json!({
+            "type": "send_http_request",
+            "method": "GET",
+            "path": "/"
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "base_url".to_string(),
@@ -30,6 +35,11 @@ pub static HTTP_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::
     EventType::new(
         "http_response_received",
         "HTTP response received from server",
+        serde_json::json!({
+            "type": "send_http_request",
+            "method": "GET",
+            "path": "/api/next"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -175,8 +185,8 @@ impl Protocol for HttpClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("http_connected", "Triggered when HTTP client is initialized"),
-            EventType::new("http_response_received", "Triggered when HTTP client receives a response"),
+            EventType::new("http_connected", "Triggered when HTTP client is initialized", json!({"type": "placeholder", "event_id": "http_connected"})),
+            EventType::new("http_response_received", "Triggered when HTTP client receives a response", json!({"type": "placeholder", "event_id": "http_response_received"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

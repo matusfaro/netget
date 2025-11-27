@@ -16,6 +16,10 @@ pub static VNC_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "vnc_connected",
         "VNC client successfully connected and authenticated",
+        json!({
+            "type": "request_framebuffer_update",
+            "incremental": true
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -50,6 +54,12 @@ pub static VNC_CLIENT_FRAMEBUFFER_UPDATE_EVENT: LazyLock<EventType> = LazyLock::
     EventType::new(
         "vnc_framebuffer_update",
         "Framebuffer update received from VNC server",
+        json!({
+            "type": "send_pointer_event",
+            "x": 100,
+            "y": 200,
+            "button_mask": 1
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -69,7 +79,7 @@ pub static VNC_CLIENT_FRAMEBUFFER_UPDATE_EVENT: LazyLock<EventType> = LazyLock::
 
 /// VNC server clipboard text event
 pub static VNC_CLIENT_SERVER_CUT_TEXT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("vnc_server_cut_text", "Server sent clipboard text").with_parameters(vec![
+    EventType::new("vnc_server_cut_text", "Server sent clipboard text", json!({"type": "placeholder", "event_id": "vnc_server_cut_text"})).with_parameters(vec![
         Parameter {
             name: "text".to_string(),
             type_hint: "string".to_string(),
@@ -271,9 +281,9 @@ impl Protocol for VncClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("vnc_connected", "Triggered when VNC client connects and authenticates"),
-            EventType::new("vnc_framebuffer_update", "Triggered when framebuffer update is received"),
-            EventType::new("vnc_server_cut_text", "Triggered when server sends clipboard text"),
+            EventType::new("vnc_connected", "Triggered when VNC client connects and authenticates", json!({"type": "placeholder", "event_id": "vnc_connected"})),
+            EventType::new("vnc_framebuffer_update", "Triggered when framebuffer update is received", json!({"type": "placeholder", "event_id": "vnc_framebuffer_update"})),
+            EventType::new("vnc_server_cut_text", "Triggered when server sends clipboard text", json!({"type": "placeholder", "event_id": "vnc_server_cut_text"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

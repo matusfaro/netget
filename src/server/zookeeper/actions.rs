@@ -15,6 +15,13 @@ pub static ZOOKEEPER_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "zookeeper_request",
         "ZooKeeper client sent a request (create, delete, getData, setData, etc.)",
+        json!({
+            "type": "zookeeper_response",
+            "xid": 1,
+            "zxid": 100,
+            "error_code": 0,
+            "data_hex": "0000000000000064"
+        }),
     )
     .with_parameters(vec![
         Parameter {

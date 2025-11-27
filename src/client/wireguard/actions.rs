@@ -18,6 +18,7 @@ pub static WIREGUARD_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new
     EventType::new(
         "wireguard_connected",
         "WireGuard client successfully connected to VPN server",
+        json!({}),
     )
     .with_parameters(vec![
         Parameter {
@@ -46,6 +47,7 @@ pub static WIREGUARD_CLIENT_DISCONNECTED_EVENT: LazyLock<EventType> = LazyLock::
     EventType::new(
         "wireguard_disconnected",
         "WireGuard client disconnected from VPN server",
+        json!({}),
     )
     .with_parameters(vec![Parameter {
         name: "reason".to_string(),

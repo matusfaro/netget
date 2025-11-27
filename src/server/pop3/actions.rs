@@ -14,6 +14,7 @@ pub static POP3_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "pop3_command",
         "POP3 command received from client (USER, PASS, STAT, LIST, RETR, DELE, QUIT, etc.)",
+        json!({"type": "send_pop3_ok", "message": "command processed"}),
     )
     .with_parameters(vec![
         Parameter {
@@ -433,7 +434,7 @@ impl Protocol for Pop3Protocol {
     }
 
     fn get_event_types(&self) -> Vec<EventType> {
-        vec![EventType::new("pop3_command", "Triggered when POP3 command is received from client")]
+        vec![EventType::new("pop3_command", "Triggered when POP3 command is received from client", json!({"type": "placeholder", "event_id": "pop3_command"}))]
     }
 
     fn stack_name(&self) -> &'static str {

@@ -10,7 +10,7 @@ use serde_json::json;
 use std::sync::LazyLock;
 
 pub static RUNNING_MEASUREMENT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("running_measurement", "Running speed/cadence updated").with_parameters(vec![
+    EventType::new("running_measurement", "Running speed/cadence updated", json!({"type": "placeholder", "event_id": "running_measurement"})).with_parameters(vec![
         Parameter {
             name: "pace_min_km".to_string(),
             type_hint: "number".to_string(),

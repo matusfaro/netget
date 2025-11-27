@@ -914,7 +914,7 @@ fn handle_https_connection_block_action() -> ActionDefinition {
 
 /// HTTP request event - triggered when proxy receives HTTP request
 pub static PROXY_HTTP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("proxy_http_request", "HTTP request intercepted by proxy")
+    EventType::new("proxy_http_request", "HTTP request intercepted by proxy", json!({"type": "placeholder", "event_id": "proxy_http_request"}))
         .with_parameters(vec![
             Parameter {
                 name: "method".to_string(),
@@ -959,7 +959,7 @@ pub static PROXY_HTTP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// HTTP response event - triggered when proxy receives HTTP response from upstream server
 pub static PROXY_HTTP_RESPONSE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("proxy_http_response", "HTTP response received from upstream server")
+    EventType::new("proxy_http_response", "HTTP response received from upstream server", json!({"type": "placeholder", "event_id": "proxy_http_response"}))
         .with_parameters(vec![
             Parameter {
                 name: "status_code".to_string(),
@@ -1051,6 +1051,7 @@ pub static PROXY_HTTPS_CONNECT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "proxy_https_connect",
         "HTTPS CONNECT request intercepted by proxy (pass-through mode)",
+        json!({"type": "handle_https_connection_allow"}),
     )
     .with_parameters(vec![
         Parameter {

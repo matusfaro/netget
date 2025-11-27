@@ -16,6 +16,9 @@ pub static SSH_AGENT_CONNECTION_OPENED_EVENT: LazyLock<EventType> = LazyLock::ne
     EventType::new(
         "ssh_agent_connection_opened",
         "SSH Agent connection opened (client connected to agent socket)",
+        json!({
+            "type": "send_success"
+        })
     )
     .with_parameter(Parameter {
         name: "connection_id".to_string(),
@@ -29,6 +32,10 @@ pub static SSH_AGENT_REQUEST_IDENTITIES_EVENT: LazyLock<EventType> = LazyLock::n
     EventType::new(
         "ssh_agent_request_identities",
         "Client requested list of available SSH keys",
+        json!({
+            "type": "send_identities_list",
+            "identities": []
+        })
     )
     .with_parameter(Parameter {
         name: "connection_id".to_string(),
@@ -42,6 +49,10 @@ pub static SSH_AGENT_SIGN_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| 
     EventType::new(
         "ssh_agent_sign_request",
         "Client requested to sign data with a key",
+        json!({
+            "type": "send_sign_response",
+            "signature_hex": "0000000b7373682d656432353531390000004000..."
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -75,6 +86,9 @@ pub static SSH_AGENT_ADD_IDENTITY_EVENT: LazyLock<EventType> = LazyLock::new(|| 
     EventType::new(
         "ssh_agent_add_identity",
         "Client requested to add a key to the agent",
+        json!({
+            "type": "send_success"
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -114,6 +128,9 @@ pub static SSH_AGENT_REMOVE_IDENTITY_EVENT: LazyLock<EventType> = LazyLock::new(
     EventType::new(
         "ssh_agent_remove_identity",
         "Client requested to remove a key from the agent",
+        json!({
+            "type": "send_success"
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -135,6 +152,9 @@ pub static SSH_AGENT_REMOVE_ALL_IDENTITIES_EVENT: LazyLock<EventType> = LazyLock
     EventType::new(
         "ssh_agent_remove_all_identities",
         "Client requested to remove all keys from the agent",
+        json!({
+            "type": "send_success"
+        })
     )
     .with_parameter(Parameter {
         name: "connection_id".to_string(),
@@ -148,6 +168,9 @@ pub static SSH_AGENT_LOCK_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "ssh_agent_lock",
         "Client requested to lock the agent with a passphrase",
+        json!({
+            "type": "send_success"
+        })
     )
     .with_parameter(Parameter {
         name: "connection_id".to_string(),
@@ -161,6 +184,9 @@ pub static SSH_AGENT_UNLOCK_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "ssh_agent_unlock",
         "Client requested to unlock the agent with a passphrase",
+        json!({
+            "type": "send_success"
+        })
     )
     .with_parameter(Parameter {
         name: "connection_id".to_string(),

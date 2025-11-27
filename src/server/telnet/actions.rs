@@ -248,6 +248,10 @@ pub static TELNET_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(||
     EventType::new(
         "telnet_message_received",
         "Telnet message received from a client",
+        json!({
+            "type": "send_telnet_line",
+            "line": "Command received. Processing..."
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "message".to_string(),

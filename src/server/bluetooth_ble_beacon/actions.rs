@@ -12,7 +12,7 @@ use std::sync::LazyLock;
 
 /// Beacon started event
 pub static BEACON_STARTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("beacon_started", "BLE beacon advertising started").with_parameters(vec![
+    EventType::new("beacon_started", "BLE beacon advertising started", json!({"type": "placeholder", "event_id": "beacon_started"})).with_parameters(vec![
         Parameter {
             name: "beacon_type".to_string(),
             type_hint: "string".to_string(),
@@ -25,7 +25,7 @@ pub static BEACON_STARTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// Beacon stopped event
 pub static BEACON_STOPPED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("beacon_stopped", "BLE beacon advertising stopped").with_parameters(vec![])
+    EventType::new("beacon_stopped", "BLE beacon advertising stopped", json!({"type": "placeholder", "event_id": "beacon_stopped"})).with_parameters(vec![])
 });
 
 /// BLE Beacon protocol handler

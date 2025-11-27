@@ -382,6 +382,10 @@ pub static TOR_RELAY_CELL_DETECTED_EVENT: LazyLock<EventType> = LazyLock::new(||
     EventType::new(
         "tor_relay_cell_detected",
         "Tor OR protocol cell detected from client",
+        json!({
+            "type": "detect_relay_cell",
+            "message": "RELAY cell detected from circuit 0x12345"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -416,6 +420,10 @@ pub static TOR_RELAY_CIRCUIT_CREATED_EVENT: LazyLock<EventType> = LazyLock::new(
     EventType::new(
         "tor_relay_circuit_created",
         "Tor circuit successfully created via ntor handshake",
+        json!({
+            "type": "detect_relay_cell",
+            "message": "Circuit created successfully"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -438,6 +446,10 @@ pub static TOR_RELAY_RELAY_CELL_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "tor_relay_relay_cell",
         "Tor RELAY cell received and decrypted",
+        json!({
+            "type": "detect_relay_cell",
+            "message": "RELAY_BEGIN cell for stream 1"
+        }),
     )
     .with_parameters(vec![
         Parameter {

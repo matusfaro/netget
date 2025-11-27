@@ -16,6 +16,12 @@ pub static HTTP3_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| 
     EventType::new(
         "http3_connected",
         "HTTP/3 client connected via QUIC and ready to send requests",
+        json!({
+            "type": "send_http3_request",
+            "method": "GET",
+            "path": "/api/status",
+            "priority": 5
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -38,6 +44,13 @@ pub static HTTP3_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock:
     EventType::new(
         "http3_response_received",
         "HTTP/3 response received from server",
+        json!({
+            "type": "send_http3_request",
+            "method": "POST",
+            "path": "/api/data",
+            "body": "{\"key\": \"value\"}",
+            "priority": 3
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -207,8 +220,8 @@ impl Protocol for Http3ClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("http3_connected", "Triggered when HTTP/3 client is connected via QUIC"),
-            EventType::new("http3_response_received", "Triggered when HTTP/3 client receives a response"),
+            EventType::new("http3_connected", "Triggered when HTTP/3 client is connected via QUIC", json!({"type": "placeholder", "event_id": "http3_connected"})),
+            EventType::new("http3_response_received", "Triggered when HTTP/3 client receives a response", json!({"type": "placeholder", "event_id": "http3_response_received"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

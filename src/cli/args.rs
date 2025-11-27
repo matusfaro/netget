@@ -195,6 +195,21 @@ pub struct Args {
     )]
     pub mock_config_file: Option<std::path::PathBuf>,
 
+    /// Start a simple protocol (simplified LLM interface for "dumb" models)
+    #[clap(
+        long = "simple",
+        value_name = "PROTOCOL",
+        help = "Start a simple protocol server (e.g., http). Use --simple-list to see available protocols."
+    )]
+    pub simple_protocol: Option<String>,
+
+    /// List available simple protocols
+    #[clap(
+        long = "simple-list",
+        help = "List available simple protocols that can be started with --simple"
+    )]
+    pub simple_list: bool,
+
     /// Prompt/command to execute (can be specified after --, or as trailing args, or via stdin)
     #[clap(value_name = "PROMPT", num_args = 0..)]
     pub prompt: Vec<String>,

@@ -15,6 +15,9 @@ pub static REMOTE_BUTTON_PRESSED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "remote_button_pressed",
         "A remote control button was pressed",
+        json!({
+            "type": "play_pause"
+        })
     )
     .with_parameters(vec![Parameter {
         name: "button".to_string(),

@@ -716,6 +716,12 @@ pub static TURN_ALLOCATE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "turn_allocate_request",
         "TURN allocate request received from client",
+        json!({
+            "type": "send_turn_allocate_response",
+            "relay_address": "203.0.113.100:55000",
+            "transaction_id": "0123456789abcdef01234567",
+            "lifetime_seconds": 600
+        }),
     )
 });
 
@@ -723,6 +729,11 @@ pub static TURN_REFRESH_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "turn_refresh_request",
         "TURN refresh request received from client",
+        json!({
+            "type": "send_turn_refresh_response",
+            "transaction_id": "0123456789abcdef01234567",
+            "lifetime_seconds": 600
+        }),
     )
 });
 
@@ -730,6 +741,10 @@ pub static TURN_CREATE_PERMISSION_REQUEST_EVENT: LazyLock<EventType> = LazyLock:
     EventType::new(
         "turn_create_permission_request",
         "TURN create permission request received from client",
+        json!({
+            "type": "send_turn_create_permission_response",
+            "transaction_id": "0123456789abcdef01234567"
+        }),
     )
 });
 
@@ -737,6 +752,11 @@ pub static TURN_SEND_INDICATION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "turn_send_indication",
         "TURN send indication received from client",
+        json!({
+            "type": "relay_data_to_peer",
+            "peer_address": "203.0.113.50:12345",
+            "data": "SGVsbG8gV29ybGQ="
+        }),
     )
 });
 

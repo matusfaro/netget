@@ -10,6 +10,7 @@ use crate::protocol::EventType;
 use crate::server::dns::actions::DnsProtocol;
 use crate::state::app_state::AppState;
 use anyhow::Result;
+use serde_json::json;
 use std::sync::LazyLock;
 
 /// Event type constant for DoH queries
@@ -19,7 +20,7 @@ pub static DOH_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     let dns_protocol = DnsProtocol::new();
     let dns_actions = dns_protocol.get_sync_actions();
 
-    EventType::new("doh_query", "Client sent DNS query over HTTPS")
+    EventType::new("doh_query", "Client sent DNS query over HTTPS", json!({"type": "placeholder", "event_id": "doh_query"}))
         .with_parameters(vec![
             Parameter {
                 name: "query_id".to_string(),

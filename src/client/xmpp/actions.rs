@@ -16,6 +16,11 @@ pub static XMPP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "xmpp_connected",
         "XMPP client successfully connected and authenticated",
+        json!({
+            "type": "send_message",
+            "to": "friend@example.com",
+            "body": "Hello!"
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "jid".to_string(),
@@ -30,6 +35,11 @@ pub static XMPP_CLIENT_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::n
     EventType::new(
         "xmpp_message_received",
         "XMPP message received from another user",
+        json!({
+            "type": "send_message",
+            "to": "friend@example.com",
+            "body": "Thanks for your message!"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -64,6 +74,9 @@ pub static XMPP_CLIENT_PRESENCE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::
     EventType::new(
         "xmpp_presence_received",
         "XMPP presence update received from a contact",
+        json!({
+            "type": "wait_for_more"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -221,9 +234,9 @@ impl Protocol for XmppClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("xmpp_connected", "Triggered when XMPP client connects and authenticates"),
-            EventType::new("xmpp_message_received", "Triggered when XMPP message is received"),
-            EventType::new("xmpp_presence_received", "Triggered when presence update is received"),
+            EventType::new("xmpp_connected", "Triggered when XMPP client connects and authenticates", json!({"type": "placeholder", "event_id": "xmpp_connected"})),
+            EventType::new("xmpp_message_received", "Triggered when XMPP message is received", json!({"type": "placeholder", "event_id": "xmpp_message_received"})),
+            EventType::new("xmpp_presence_received", "Triggered when presence update is received", json!({"type": "placeholder", "event_id": "xmpp_presence_received"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

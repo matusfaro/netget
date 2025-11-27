@@ -16,6 +16,11 @@ pub static HTTP_PROXY_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::ne
     EventType::new(
         "http_proxy_connected",
         "HTTP proxy client connected to proxy server",
+        json!({
+            "type": "establish_tunnel",
+            "target_host": "example.com",
+            "target_port": 443
+        })
     )
     .with_parameters(vec![Parameter {
         name: "proxy_addr".to_string(),
@@ -30,6 +35,12 @@ pub static HTTP_PROXY_TUNNEL_ESTABLISHED_EVENT: LazyLock<EventType> = LazyLock::
     EventType::new(
         "http_proxy_tunnel_established",
         "HTTP CONNECT tunnel successfully established",
+        json!({
+            "type": "send_http_request",
+            "method": "GET",
+            "path": "/",
+            "headers": {"Host": "example.com"}
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -58,6 +69,10 @@ pub static HTTP_PROXY_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::n
     EventType::new(
         "http_proxy_response_received",
         "HTTP response received via proxy tunnel",
+        json!({
+            "type": "send_data",
+            "data_hex": "48656c6c6f"
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -260,9 +275,9 @@ impl Protocol for HttpProxyClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("http_proxy_connected", "Triggered when HTTP proxy client connects to proxy server"),
-            EventType::new("http_proxy_tunnel_established", "Triggered when HTTP CONNECT tunnel is established"),
-            EventType::new("http_proxy_response_received", "Triggered when data is received via proxy tunnel"),
+            EventType::new("http_proxy_connected", "Triggered when HTTP proxy client connects to proxy server", json!({"type": "placeholder", "event_id": "http_proxy_connected"})),
+            EventType::new("http_proxy_tunnel_established", "Triggered when HTTP CONNECT tunnel is established", json!({"type": "placeholder", "event_id": "http_proxy_tunnel_established"})),
+            EventType::new("http_proxy_response_received", "Triggered when data is received via proxy tunnel", json!({"type": "placeholder", "event_id": "http_proxy_response_received"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

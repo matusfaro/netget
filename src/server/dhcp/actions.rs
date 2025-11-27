@@ -557,6 +557,14 @@ pub static DHCP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "dhcp_request",
         "DHCP client sent a request (DISCOVER, REQUEST, INFORM, etc.)",
+        json!({
+            "type": "send_dhcp_offer",
+            "offered_ip": "192.168.1.100",
+            "subnet_mask": "255.255.255.0",
+            "router": "192.168.1.1",
+            "dns_servers": ["8.8.8.8", "8.8.4.4"],
+            "lease_time": 86400
+        }),
     )
     .with_parameters(vec![
         Parameter {

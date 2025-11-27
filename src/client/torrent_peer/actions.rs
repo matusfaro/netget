@@ -13,7 +13,7 @@ use std::sync::LazyLock;
 
 /// Peer handshake event
 pub static PEER_HANDSHAKE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("peer_handshake", "Received handshake from BitTorrent peer").with_parameters(
+    EventType::new("peer_handshake", "Received handshake from BitTorrent peer", json!({"type": "placeholder", "event_id": "peer_handshake"})).with_parameters(
         vec![
             Parameter {
                 name: "info_hash".to_string(),
@@ -39,10 +39,7 @@ pub static PEER_HANDSHAKE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// Peer message event
 pub static PEER_MESSAGE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "peer_message",
-        "Received message from BitTorrent peer"
-    )
+    EventType::new("peer_message", "Received message from BitTorrent peer", json!({"type": "placeholder", "event_id": "peer_message"}))
     .with_parameters(vec![
         Parameter {
             name: "message_type".to_string(),
@@ -197,8 +194,8 @@ impl Protocol for TorrentPeerClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("peer_handshake", "Received handshake from peer"),
-            EventType::new("peer_message", "Received message from peer"),
+            EventType::new("peer_handshake", "Received handshake from peer", json!({"type": "placeholder", "event_id": "peer_handshake"})),
+            EventType::new("peer_message", "Received message from peer", json!({"type": "placeholder", "event_id": "peer_message"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

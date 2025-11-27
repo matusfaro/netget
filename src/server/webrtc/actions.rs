@@ -15,6 +15,10 @@ pub static WEBRTC_PEER_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "webrtc_peer_connected",
         "WebRTC data channel opened and ready to send messages",
+        json!({
+            "type": "send_message",
+            "message": "Welcome to NetGet WebRTC server!"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -37,6 +41,10 @@ pub static WEBRTC_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(||
     EventType::new(
         "webrtc_message_received",
         "Message received from WebRTC peer",
+        json!({
+            "type": "send_message",
+            "message": "Message received"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -65,6 +73,9 @@ pub static WEBRTC_OFFER_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "webrtc_offer_received",
         "SDP offer received from peer (manual signaling)",
+        json!({
+            "type": "wait_for_more"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -87,6 +98,9 @@ pub static WEBRTC_PEER_DISCONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|
     EventType::new(
         "webrtc_peer_disconnected",
         "WebRTC peer connection closed",
+        json!({
+            "type": "no_action"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -254,10 +268,10 @@ impl Protocol for WebRtcProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("webrtc_peer_connected", "Triggered when a WebRTC peer's data channel opens"),
-            EventType::new("webrtc_message_received", "Triggered when a message is received from a peer"),
-            EventType::new("webrtc_offer_received", "Triggered when an SDP offer is received (manual mode)"),
-            EventType::new("webrtc_peer_disconnected", "Triggered when a peer connection closes"),
+            EventType::new("webrtc_peer_connected", "Triggered when a WebRTC peer's data channel opens", json!({"type": "placeholder", "event_id": "webrtc_peer_connected"})),
+            EventType::new("webrtc_message_received", "Triggered when a message is received from a peer", json!({"type": "placeholder", "event_id": "webrtc_message_received"})),
+            EventType::new("webrtc_offer_received", "Triggered when an SDP offer is received (manual mode)", json!({"type": "placeholder", "event_id": "webrtc_offer_received"})),
+            EventType::new("webrtc_peer_disconnected", "Triggered when a peer connection closes", json!({"type": "placeholder", "event_id": "webrtc_peer_disconnected"})),
         ]
     }
 

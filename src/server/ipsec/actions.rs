@@ -17,11 +17,11 @@ use std::sync::LazyLock;
 
 /// IPSec/IKEv2 handshake initiation event
 pub static IPSEC_HANDSHAKE_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("ipsec_handshake", "IPSec/IKEv2 client initiated handshake"));
+    LazyLock::new(|| EventType::new("ipsec_handshake", "IPSec/IKEv2 client initiated handshake", json!({"type": "placeholder", "event_id": "ipsec_handshake"})));
 
 /// IPSec/IKEv2 data packet event
 pub static IPSEC_DATA_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("ipsec_data", "IPSec encrypted data packet received"));
+    LazyLock::new(|| EventType::new("ipsec_data", "IPSec encrypted data packet received", json!({"type": "placeholder", "event_id": "ipsec_data"})));
 
 /// Get all IPSec event types
 pub fn get_ipsec_event_types() -> Vec<EventType> {

@@ -222,6 +222,12 @@ pub static RIP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "rip_request",
         "Triggered when a RIP message (request or response) is received",
+        json!({
+            "type": "send_rip_response",
+            "routes": [
+                {"ip_address": "192.168.1.0", "subnet_mask": "255.255.255.0", "next_hop": "0.0.0.0", "metric": 1}
+            ]
+        }),
     )
     .with_parameters(vec![
         Parameter {

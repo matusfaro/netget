@@ -186,10 +186,7 @@ pub static SEND_PYPI_RESPONSE_ACTION: LazyLock<ActionDefinition> =
 
 /// PyPI request event - triggered when client sends a PyPI HTTP request
 pub static PYPI_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "pypi_request",
-        "PyPI HTTP request received from client (pip, twine, etc.)"
-    )
+    EventType::new("pypi_request", "PyPI HTTP request received from client (pip, twine, etc.)", json!({"type": "placeholder", "event_id": "pypi_request"}))
     .with_parameters(vec![
         Parameter {
             name: "method".to_string(),

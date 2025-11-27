@@ -365,7 +365,7 @@ impl Server for DcProtocol {
 
 /// Event type ID for DC command received
 pub static DC_COMMAND_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("dc_command_received", "DC command received from a client").with_parameters(
+    EventType::new("dc_command_received", "DC command received from a client", json!({"type": "placeholder", "event_id": "dc_command_received"})).with_parameters(
         vec![
             Parameter {
                 name: "command".to_string(),

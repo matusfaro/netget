@@ -16,6 +16,7 @@ pub static WHOIS_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| 
     EventType::new(
         "whois_connected",
         "WHOIS client successfully connected to server",
+        json!({}),
     )
     .with_parameters(vec![Parameter {
         name: "remote_addr".to_string(),
@@ -30,6 +31,7 @@ pub static WHOIS_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock:
     EventType::new(
         "whois_response_received",
         "Response received from WHOIS server",
+        json!({}),
     )
     .with_parameters(vec![
         Parameter {
@@ -102,8 +104,8 @@ impl Protocol for WhoisClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("whois_connected", "Triggered when WHOIS client connects to server"),
-            EventType::new("whois_response_received", "Triggered when WHOIS client receives a response"),
+            EventType::new("whois_connected", "Triggered when WHOIS client connects to server", json!({"type": "placeholder", "event_id": "whois_connected"})),
+            EventType::new("whois_response_received", "Triggered when WHOIS client receives a response", json!({"type": "placeholder", "event_id": "whois_response_received"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

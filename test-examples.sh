@@ -9,16 +9,14 @@ echo "║         StartupExamples Validation Tests                       ║"
 echo "╚════════════════════════════════════════════════════════════════╝"
 echo
 
-# Use minimal features for faster compilation
-FEATURES="tcp,http,dns"
-
-echo "Building with features: $FEATURES"
+# Use all features to test ALL protocols
+echo "Building with --all-features"
 echo
 
 # Run the validation tests
 echo "Running startup_examples_validation_test..."
 echo "─────────────────────────────────────────────────────────────────"
-./cargo-isolated.sh test --no-default-features --features "$FEATURES" --test startup_examples_validation_test -- --test-threads=100 --nocapture
+./cargo-isolated.sh test --all-features --test startup_examples_validation_test -- --test-threads=100 --nocapture
 
 echo
 echo "╔════════════════════════════════════════════════════════════════╗"

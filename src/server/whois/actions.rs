@@ -263,7 +263,7 @@ fn close_connection_action() -> ActionDefinition {
 
 /// WHOIS query event - triggered when client sends a query
 pub static WHOIS_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("whois_query", "Client sent a WHOIS domain lookup query")
+    EventType::new("whois_query", "Client sent a WHOIS domain lookup query", json!({"type": "placeholder", "event_id": "whois_query"}))
         .with_parameters(vec![Parameter {
             name: "query".to_string(),
             type_hint: "string".to_string(),

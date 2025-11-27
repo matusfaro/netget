@@ -11,7 +11,7 @@ use serde_json::json;
 use std::sync::LazyLock;
 
 pub static HEART_RATE_UPDATED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("heart_rate_updated", "Heart rate BPM was updated").with_parameters(vec![
+    EventType::new("heart_rate_updated", "Heart rate BPM was updated", json!({"type": "placeholder", "event_id": "heart_rate_updated"})).with_parameters(vec![
         Parameter {
             name: "bpm".to_string(),
             type_hint: "number".to_string(),

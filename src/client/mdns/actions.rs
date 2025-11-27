@@ -16,6 +16,7 @@ pub static MDNS_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "mdns_connected",
         "mDNS client initialized and ready for service discovery",
+        json!({"type": "browse_service", "service_type": "_http._tcp.local"}),
     )
     .with_parameters(vec![
         Parameter {
@@ -38,6 +39,7 @@ pub static MDNS_CLIENT_SERVICE_FOUND_EVENT: LazyLock<EventType> = LazyLock::new(
     EventType::new(
         "mdns_service_found",
         "mDNS service instance discovered on the local network",
+        json!({"type": "wait_for_more"}),
     )
     .with_parameters(vec![
         Parameter {
@@ -60,6 +62,7 @@ pub static MDNS_CLIENT_SERVICE_RESOLVED_EVENT: LazyLock<EventType> = LazyLock::n
     EventType::new(
         "mdns_service_resolved",
         "mDNS service fully resolved with IP addresses and port",
+        json!({"type": "wait_for_more"}),
     )
     .with_parameters(vec![
         Parameter {
@@ -165,9 +168,9 @@ impl Protocol for MdnsClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("mdns_connected", "Triggered when mDNS client is initialized"),
-            EventType::new("mdns_service_found", "Triggered when an mDNS service is discovered"),
-            EventType::new("mdns_service_resolved", "Triggered when an mDNS service is fully resolved with IP and port"),
+            EventType::new("mdns_connected", "Triggered when mDNS client is initialized", json!({"type": "wait_for_more"})),
+            EventType::new("mdns_service_found", "Triggered when an mDNS service is discovered", json!({"type": "wait_for_more"})),
+            EventType::new("mdns_service_resolved", "Triggered when an mDNS service is fully resolved with IP and port", json!({"type": "wait_for_more"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

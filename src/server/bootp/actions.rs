@@ -305,6 +305,12 @@ pub static BOOTP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "bootp_request",
         "BOOTP client sent a BOOTREQUEST (requesting IP and boot configuration)",
+        json!({
+            "type": "send_bootp_reply",
+            "assigned_ip": "192.168.1.100",
+            "server_ip": "192.168.1.1",
+            "boot_file": "boot/pxeboot.n12"
+        })
     )
     .with_parameters(vec![
         Parameter {

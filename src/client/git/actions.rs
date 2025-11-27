@@ -16,6 +16,9 @@ pub static GIT_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "git_connected",
         "Git client initialized and ready for operations",
+        json!({
+            "type": "git_status"
+        })
     )
     .with_parameters(vec![Parameter {
         name: "repository_path".to_string(),
@@ -30,6 +33,10 @@ pub static GIT_OPERATION_COMPLETED_EVENT: LazyLock<EventType> = LazyLock::new(||
     EventType::new(
         "git_operation_completed",
         "Git operation completed successfully",
+        json!({
+            "type": "git_log",
+            "max_count": 5
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -49,7 +56,14 @@ pub static GIT_OPERATION_COMPLETED_EVENT: LazyLock<EventType> = LazyLock::new(||
 
 /// Git operation error event
 pub static GIT_OPERATION_ERROR_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("git_operation_error", "Git operation encountered an error").with_parameters(
+    EventType::new(
+        "git_operation_error",
+        "Git operation encountered an error",
+        json!({
+            "type": "git_status"
+        })
+    )
+    .with_parameters(
         vec![
             Parameter {
                 name: "operation".to_string(),
@@ -366,9 +380,9 @@ impl Protocol for GitClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("git_connected", "Triggered when Git client is initialized"),
-            EventType::new("git_operation_completed", "Triggered when a Git operation completes successfully"),
-            EventType::new("git_operation_error", "Triggered when a Git operation fails"),
+            EventType::new("git_connected", "Triggered when Git client is initialized", json!({"type": "placeholder", "event_id": "git_connected"})),
+            EventType::new("git_operation_completed", "Triggered when a Git operation completes successfully", json!({"type": "placeholder", "event_id": "git_operation_completed"})),
+            EventType::new("git_operation_error", "Triggered when a Git operation fails", json!({"type": "placeholder", "event_id": "git_operation_error"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

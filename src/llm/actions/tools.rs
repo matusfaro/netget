@@ -1922,24 +1922,21 @@ async fn execute_read_server_documentation(protocol: &str) -> ToolResult {
         result.push_str("**IMPORTANT**: Use these protocol-specific action types when responding to events.\n\n");
 
         for event_type in event_types {
-            if event_type.typical_response_example.is_some() || !event_type.optional_response_examples.is_empty() {
-                result.push_str(&format!("### Event: {}\n\n", event_type.id));
+            result.push_str(&format!("### Event: {}\n\n", event_type.id));
 
-                if let Some(typical) = &event_type.typical_response_example {
-                    result.push_str("**Typical Response:**\n```json\n");
-                    result.push_str(&serde_json::to_string_pretty(typical).unwrap_or_default());
-                    result.push_str("\n```\n\n");
-                }
+            // Response example is always present (required field)
+            result.push_str("**Response Example:**\n```json\n");
+            result.push_str(&serde_json::to_string_pretty(&event_type.response_example).unwrap_or_default());
+            result.push_str("\n```\n\n");
 
-                if !event_type.optional_response_examples.is_empty() {
-                    result.push_str("**Alternative Responses:**\n");
-                    for example in &event_type.optional_response_examples {
-                        result.push_str("```json\n");
-                        result.push_str(&serde_json::to_string_pretty(example).unwrap_or_default());
-                        result.push_str("\n```\n");
-                    }
-                    result.push_str("\n");
+            if !event_type.alternative_examples.is_empty() {
+                result.push_str("**Alternative Responses:**\n");
+                for example in &event_type.alternative_examples {
+                    result.push_str("```json\n");
+                    result.push_str(&serde_json::to_string_pretty(example).unwrap_or_default());
+                    result.push_str("\n```\n");
                 }
+                result.push_str("\n");
             }
         }
     }
@@ -2036,24 +2033,21 @@ async fn execute_read_client_documentation(protocol: &str) -> ToolResult {
         result.push_str("**IMPORTANT**: Use these protocol-specific action types when sending requests.\n\n");
 
         for event_type in event_types {
-            if event_type.typical_response_example.is_some() || !event_type.optional_response_examples.is_empty() {
-                result.push_str(&format!("### Event: {}\n\n", event_type.id));
+            result.push_str(&format!("### Event: {}\n\n", event_type.id));
 
-                if let Some(typical) = &event_type.typical_response_example {
-                    result.push_str("**Typical Action:**\n```json\n");
-                    result.push_str(&serde_json::to_string_pretty(typical).unwrap_or_default());
-                    result.push_str("\n```\n\n");
-                }
+            // Response example is always present (required field)
+            result.push_str("**Action Example:**\n```json\n");
+            result.push_str(&serde_json::to_string_pretty(&event_type.response_example).unwrap_or_default());
+            result.push_str("\n```\n\n");
 
-                if !event_type.optional_response_examples.is_empty() {
-                    result.push_str("**Alternative Actions:**\n");
-                    for example in &event_type.optional_response_examples {
-                        result.push_str("```json\n");
-                        result.push_str(&serde_json::to_string_pretty(example).unwrap_or_default());
-                        result.push_str("\n```\n");
-                    }
-                    result.push_str("\n");
+            if !event_type.alternative_examples.is_empty() {
+                result.push_str("**Alternative Actions:**\n");
+                for example in &event_type.alternative_examples {
+                    result.push_str("```json\n");
+                    result.push_str(&serde_json::to_string_pretty(example).unwrap_or_default());
+                    result.push_str("\n```\n");
                 }
+                result.push_str("\n");
             }
         }
     }

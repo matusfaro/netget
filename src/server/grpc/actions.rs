@@ -341,6 +341,14 @@ pub static GRPC_UNARY_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "grpc_unary_request",
         "gRPC unary RPC request received from client",
+        json!({
+            "type": "grpc_unary_response",
+            "message": {
+                "id": 123,
+                "name": "Alice",
+                "email": "alice@example.com"
+            }
+        }),
     )
     .with_parameters(vec![
         Parameter {

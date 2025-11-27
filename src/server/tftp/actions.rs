@@ -20,7 +20,7 @@ impl TftpProtocol {
 
 // Event type constants
 pub static TFTP_READ_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("tftp_read_request", "Client requests to read a file")
+    EventType::new("tftp_read_request", "Client requests to read a file", json!({"type": "placeholder", "event_id": "tftp_read_request"}))
         .with_parameters(vec![
             Parameter {
                 name: "filename".to_string(),
@@ -44,7 +44,7 @@ pub static TFTP_READ_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 });
 
 pub static TFTP_WRITE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("tftp_write_request", "Client requests to write a file")
+    EventType::new("tftp_write_request", "Client requests to write a file", json!({"type": "placeholder", "event_id": "tftp_write_request"}))
         .with_parameters(vec![
             Parameter {
                 name: "filename".to_string(),
@@ -68,7 +68,7 @@ pub static TFTP_WRITE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 });
 
 pub static TFTP_DATA_BLOCK_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("tftp_data_block", "Received data block from client (write operation)")
+    EventType::new("tftp_data_block", "Received data block from client (write operation)", json!({"type": "placeholder", "event_id": "tftp_data_block"}))
         .with_parameters(vec![
             Parameter {
                 name: "block_number".to_string(),
@@ -98,7 +98,7 @@ pub static TFTP_DATA_BLOCK_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 });
 
 pub static TFTP_ACK_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("tftp_ack_received", "Client acknowledged data block (read operation)")
+    EventType::new("tftp_ack_received", "Client acknowledged data block (read operation)", json!({"type": "placeholder", "event_id": "tftp_ack_received"}))
         .with_parameters(vec![
             Parameter {
                 name: "block_number".to_string(),

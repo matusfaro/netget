@@ -19,6 +19,11 @@ pub static RSS_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "rss_connected",
         "RSS client initialized and ready to fetch feeds",
+        json!({
+            "type": "fetch_rss_feed",
+            "url": "http://example.com/tech-news.xml",
+            "if_modified_since": "Mon, 09 Nov 2025 12:00:00 GMT"
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "base_url".to_string(),
@@ -30,7 +35,7 @@ pub static RSS_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// RSS client feed fetched event
 pub static RSS_CLIENT_FEED_FETCHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("rss_feed_fetched", "RSS feed fetched and parsed").with_parameters(vec![
+    EventType::new("rss_feed_fetched", "RSS feed fetched and parsed", json!({"type": "placeholder", "event_id": "rss_feed_fetched"})).with_parameters(vec![
         Parameter {
             name: "url".to_string(),
             type_hint: "string".to_string(),

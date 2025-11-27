@@ -15,6 +15,9 @@ pub static STUN_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "stun_connected",
         "STUN client initialized and ready to query external address",
+        json!({
+            "type": "send_binding_request"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -37,6 +40,9 @@ pub static STUN_CLIENT_BINDING_RESPONSE_EVENT: LazyLock<EventType> = LazyLock::n
     EventType::new(
         "stun_binding_response",
         "STUN binding response received with external address information",
+        json!({
+            "type": "wait_for_more"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -135,8 +141,8 @@ impl crate::llm::actions::protocol_trait::Protocol for StunClientProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("stun_connected", "Triggered when STUN client is initialized"),
-            EventType::new("stun_binding_response", "Triggered when STUN client receives binding response"),
+            EventType::new("stun_connected", "Triggered when STUN client is initialized", json!({"type": "placeholder", "event_id": "stun_connected"})),
+            EventType::new("stun_binding_response", "Triggered when STUN client receives binding response", json!({"type": "placeholder", "event_id": "stun_binding_response"})),
         ]
     }
 

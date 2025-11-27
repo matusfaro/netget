@@ -17,6 +17,10 @@ pub static OPENVPN_PEER_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| 
     EventType::new(
         "openvpn_peer_connected",
         "OpenVPN peer successfully connected and authenticated",
+        json!({
+            "type": "inspect_traffic",
+            "inspect": true
+        }),
     )
 });
 
@@ -25,6 +29,11 @@ pub static OPENVPN_PEER_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "openvpn_peer_request",
         "OpenVPN peer requesting connection authorization",
+        json!({
+            "type": "authorize_peer",
+            "peer_addr": "203.0.113.45:1194",
+            "vpn_ip": "10.8.0.5"
+        }),
     )
 });
 

@@ -15,6 +15,9 @@ pub static WEBRTC_SIGNALING_PEER_CONNECTED_EVENT: LazyLock<EventType> = LazyLock
     EventType::new(
         "webrtc_signaling_peer_connected",
         "WebRTC signaling peer registered with peer ID",
+        json!({
+            "type": "no_action"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -37,6 +40,9 @@ pub static WEBRTC_SIGNALING_PEER_DISCONNECTED_EVENT: LazyLock<EventType> = LazyL
     EventType::new(
         "webrtc_signaling_peer_disconnected",
         "WebRTC signaling peer disconnected",
+        json!({
+            "type": "no_action"
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "peer_id".to_string(),
@@ -51,6 +57,9 @@ pub static WEBRTC_SIGNALING_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLo
     EventType::new(
         "webrtc_signaling_message_received",
         "Signaling message received from peer",
+        json!({
+            "type": "no_action"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -132,9 +141,9 @@ impl Protocol for WebRtcSignalingProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("webrtc_signaling_peer_connected", "Triggered when a peer registers with the signaling server"),
-            EventType::new("webrtc_signaling_peer_disconnected", "Triggered when a peer disconnects from the signaling server"),
-            EventType::new("webrtc_signaling_message_received", "Triggered when a signaling message is received"),
+            EventType::new("webrtc_signaling_peer_connected", "Triggered when a peer registers with the signaling server", json!({"type": "placeholder", "event_id": "webrtc_signaling_peer_connected"})),
+            EventType::new("webrtc_signaling_peer_disconnected", "Triggered when a peer disconnects from the signaling server", json!({"type": "placeholder", "event_id": "webrtc_signaling_peer_disconnected"})),
+            EventType::new("webrtc_signaling_message_received", "Triggered when a signaling message is received", json!({"type": "placeholder", "event_id": "webrtc_signaling_message_received"})),
         ]
     }
 

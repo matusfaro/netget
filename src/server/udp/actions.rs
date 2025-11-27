@@ -215,7 +215,7 @@ fn ignore_datagram_action() -> ActionDefinition {
 // ============================================================================
 
 pub static UDP_DATAGRAM_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("udp_datagram_received", "UDP datagram received from a peer")
+    EventType::new("udp_datagram_received", "UDP datagram received from a peer", json!({"type": "placeholder", "event_id": "udp_datagram_received"}))
         .with_parameters(vec![
             Parameter {
                 name: "peer_address".to_string(),

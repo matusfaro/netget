@@ -435,7 +435,7 @@ pub static MSSQL_CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> = LazyLock:
 
 /// MSSQL query event - triggered when client sends a query
 pub static MSSQL_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("mssql_query", "MSSQL query received from client")
+    EventType::new("mssql_query", "MSSQL query received from client", json!({"type": "placeholder", "event_id": "mssql_query"}))
         .with_parameters(vec![Parameter {
             name: "query".to_string(),
             type_hint: "string".to_string(),

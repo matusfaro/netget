@@ -348,6 +348,9 @@ pub static SOCKS5_AUTH_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "socks5_auth_request",
         "SOCKS5 client authentication request (username/password)",
+        json!({
+            "type": "allow_socks5_auth"
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -370,6 +373,10 @@ pub static SOCKS5_CONNECT_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| 
     EventType::new(
         "socks5_connect_request",
         "SOCKS5 CONNECT request to target address",
+        json!({
+            "type": "allow_socks5_connect",
+            "mitm": false
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -395,6 +402,9 @@ pub static SOCKS5_DATA_TO_TARGET_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "socks5_data_to_target",
         "Data from client to target (MITM inspection mode)",
+        json!({
+            "type": "forward_socks5_data"
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -427,6 +437,9 @@ pub static SOCKS5_DATA_FROM_TARGET_EVENT: LazyLock<EventType> = LazyLock::new(||
     EventType::new(
         "socks5_data_from_target",
         "Data from target to client (MITM inspection mode)",
+        json!({
+            "type": "forward_socks5_data"
+        })
     )
     .with_parameters(vec![
         Parameter {

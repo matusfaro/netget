@@ -199,10 +199,7 @@ fn ignore_syslog_message_action() -> ActionDefinition {
 // ============================================================================
 
 pub static SYSLOG_MESSAGE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "syslog_message",
-        "Syslog client sent a log message"
-    )
+    EventType::new("syslog_message", "Syslog client sent a log message", json!({"type": "placeholder", "event_id": "syslog_message"}))
     .with_parameters(vec![
         Parameter {
             name: "facility".to_string(),

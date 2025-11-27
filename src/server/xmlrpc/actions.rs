@@ -399,6 +399,11 @@ pub static XMLRPC_METHOD_CALL_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "xmlrpc_method_call",
         "XML-RPC method call received from client",
+        json!({
+            "type": "xmlrpc_success_response",
+            "value_type": "int",
+            "value": 42
+        }),
     )
     .with_parameters(vec![
         Parameter {

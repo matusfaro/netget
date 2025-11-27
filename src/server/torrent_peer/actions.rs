@@ -204,16 +204,16 @@ impl TorrentPeerProtocol {
 }
 
 pub static PEER_HANDSHAKE_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("peer_handshake", "BitTorrent peer handshake received"));
+    LazyLock::new(|| EventType::new("peer_handshake", "BitTorrent peer handshake received", json!({"type": "placeholder", "event_id": "peer_handshake"})));
 
 pub static PEER_CHOKE_MESSAGE_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("peer_choke_message", "Peer choke message"));
+    LazyLock::new(|| EventType::new("peer_choke_message", "Peer choke message", json!({"type": "placeholder", "event_id": "peer_choke_message"})));
 
 pub static PEER_REQUEST_MESSAGE_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("peer_request_message", "Peer piece request"));
+    LazyLock::new(|| EventType::new("peer_request_message", "Peer piece request", json!({"type": "placeholder", "event_id": "peer_request_message"})));
 
 pub static PEER_BITFIELD_MESSAGE_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("peer_bitfield_message", "Peer bitfield message"));
+    LazyLock::new(|| EventType::new("peer_bitfield_message", "Peer bitfield message", json!({"type": "placeholder", "event_id": "peer_bitfield_message"})));
 
 pub static SEND_HANDSHAKE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| ActionDefinition {
     name: "send_handshake".to_string(),

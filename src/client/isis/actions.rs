@@ -16,6 +16,7 @@ pub static ISIS_PDU_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "isis_pdu_received",
         "IS-IS PDU captured from network interface",
+        json!({"type": "wait_for_more"}),
     )
     .with_parameters(vec![
         Parameter {
@@ -102,7 +103,7 @@ impl Protocol for IsisClientProtocol {
         "IS-IS"
     }
     fn get_event_types(&self) -> Vec<EventType> {
-        vec![EventType::new("isis_pdu_received", "Triggered when an IS-IS PDU is captured from the network")]
+        vec![EventType::new("isis_pdu_received", "Triggered when an IS-IS PDU is captured from the network", json!({"type": "wait_for_more"}))]
     }
     fn stack_name(&self) -> &'static str {
         "ETH>LLC/SNAP>IS-IS"

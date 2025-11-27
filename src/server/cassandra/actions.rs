@@ -446,6 +446,9 @@ pub static CASSANDRA_STARTUP_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "cassandra_startup",
         "Client sends STARTUP frame with protocol version and options",
+        json!({
+            "type": "cassandra_ready"
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -468,12 +471,19 @@ pub static CASSANDRA_OPTIONS_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "cassandra_options",
         "Client requests supported protocol options",
+        json!({
+            "type": "cassandra_supported",
+            "options": {
+                "CQL_VERSION": ["3.0.0"],
+                "COMPRESSION": []
+            }
+        })
     )
     .with_actions(vec![cassandra_supported_action(), cassandra_error_action()])
 });
 
 pub static CASSANDRA_QUERY_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("cassandra_query", "Client sends CQL query to execute")
+    EventType::new("cassandra_query", "Client sends CQL query to execute", json!({"type": "placeholder", "event_id": "cassandra_query"}))
         .with_parameters(vec![
             Parameter {
                 name: "query".to_string(),
@@ -499,6 +509,14 @@ pub static CASSANDRA_PREPARE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "cassandra_prepare",
         "Client sends PREPARE frame to prepare a parameterized query",
+        json!({
+            "type": "cassandra_prepared",
+            "columns": [
+                {"name": "id", "type": "int"},
+                {"name": "name", "type": "varchar"}
+            ],
+            "params": [{"type": "int"}]
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -527,6 +545,14 @@ pub static CASSANDRA_EXECUTE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "cassandra_execute",
         "Client sends EXECUTE frame to execute a prepared statement with parameters",
+        json!({
+            "type": "cassandra_result_rows",
+            "columns": [
+                {"name": "id", "type": "int"},
+                {"name": "name", "type": "varchar"}
+            ],
+            "rows": [[1, "Alice"], [2, "Bob"]]
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -558,6 +584,9 @@ pub static CASSANDRA_AUTH_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "cassandra_auth",
         "Client sends AUTH_RESPONSE with credentials (SASL PLAIN)",
+        json!({
+            "type": "cassandra_auth_success"
+        })
     )
     .with_parameters(vec![
         Parameter {

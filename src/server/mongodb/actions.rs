@@ -41,7 +41,7 @@ impl MongodbProtocol {
 
 // Event type definitions
 pub static MONGODB_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("mongodb_command", "MongoDB command received from client")
+    EventType::new("mongodb_command", "MongoDB command received from client", json!({"type": "placeholder", "event_id": "mongodb_command"}))
         .with_parameters(vec![
             Parameter {
                 name: "command".to_string(),
@@ -77,7 +77,7 @@ pub static MONGODB_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 });
 
 pub static MONGODB_DISCONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("mongodb_disconnected", "MongoDB client disconnected")
+    EventType::new("mongodb_disconnected", "MongoDB client disconnected", json!({"type": "placeholder", "event_id": "mongodb_disconnected"}))
         .with_parameters(vec![Parameter {
             name: "reason".to_string(),
             type_hint: "string".to_string(),

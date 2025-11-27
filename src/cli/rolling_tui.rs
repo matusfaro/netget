@@ -1621,6 +1621,18 @@ async fn handle_key_event(
                         handle_sqlite(db_id, query, state, footer, &palette).await?;
                         footer.render(&mut stdout())?;
                     }
+                    UserCommand::ListSimple => {
+                        // List available simple protocols
+                        handle_list_simple(footer, &palette)?;
+                        footer.render(&mut stdout())?;
+                    }
+                    UserCommand::StartSimple { protocol } => {
+                        // Start a simple protocol server
+                        let llm = event_handler.get_llm_client();
+                        handle_start_simple(&protocol, state, footer, &palette, &llm, status_tx.clone()).await?;
+                        update_ui_from_state(app, state, footer).await;
+                        footer.render(&mut stdout())?;
+                    }
                     UserCommand::Quit => {
                         return Ok(true);
                     }
@@ -2833,6 +2845,94 @@ async fn handle_sqlite(
             } else {
                 print_output_line("[ERROR] No databases found", footer, palette)?;
             }
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle /simple command - list available simple protocols
+fn handle_list_simple(footer: &mut StickyFooter, palette: &ColorPalette) -> Result<()> {
+    use crate::protocol::EASY_REGISTRY;
+
+    print_output_line("Available simple protocols:", footer, palette)?;
+    print_output_line("", footer, palette)?;
+
+    let protocols = EASY_REGISTRY.get_all_names();
+    if protocols.is_empty() {
+        print_output_line(
+            "  No simple protocols available (check compiled features)",
+            footer,
+            palette,
+        )?;
+    } else {
+        for name in protocols {
+            print_output_line(&format!("  - {}", name), footer, palette)?;
+        }
+    }
+
+    print_output_line("", footer, palette)?;
+    print_output_line("Usage: /simple <protocol>", footer, palette)?;
+    print_output_line("Example: /simple http", footer, palette)?;
+
+    Ok(())
+}
+
+/// Handle /simple <protocol> command - start a simple protocol server
+async fn handle_start_simple(
+    protocol: &str,
+    state: &AppState,
+    footer: &mut StickyFooter,
+    palette: &ColorPalette,
+    llm: &crate::llm::OllamaClient,
+    _status_tx: tokio::sync::mpsc::UnboundedSender<String>,
+) -> Result<()> {
+    use crate::protocol::EASY_REGISTRY;
+
+    // Check if protocol exists
+    if EASY_REGISTRY.get_by_name(protocol).is_none() {
+        print_output_line(
+            &format!("[ERROR] Unknown simple protocol: {}", protocol),
+            footer,
+            palette,
+        )?;
+        print_output_line("Use /simple to list available protocols", footer, palette)?;
+        return Ok(());
+    }
+
+    print_output_line(
+        &format!("[SIMPLE] Starting simple protocol: {}", protocol),
+        footer,
+        palette,
+    )?;
+
+    // Start the easy protocol
+    match crate::cli::easy_startup::start_easy_protocol(
+        protocol,
+        None, // user_instruction - could be extended later
+        None, // port - could be extended later
+        std::sync::Arc::new(state.clone()),
+        std::sync::Arc::new(llm.clone()),
+    )
+    .await
+    {
+        Ok(easy_id) => {
+            print_output_line(
+                &format!(
+                    "[SIMPLE] Started {} (easy instance #{})",
+                    protocol,
+                    easy_id.as_u32()
+                ),
+                footer,
+                palette,
+            )?;
+        }
+        Err(e) => {
+            print_output_line(
+                &format!("[ERROR] Failed to start {}: {}", protocol, e),
+                footer,
+                palette,
+            )?;
         }
     }
 

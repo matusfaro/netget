@@ -16,6 +16,13 @@ pub static SMTP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "smtp_connected",
         "SMTP client connected to server and ready to send emails",
+        json!({
+            "type": "send_email",
+            "from": "sender@example.com",
+            "to": ["recipient@example.com"],
+            "subject": "Follow-up Email",
+            "body": "This is a follow-up email."
+        })
     )
     .with_parameters(vec![Parameter {
         name: "smtp_server".to_string(),
@@ -27,7 +34,7 @@ pub static SMTP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// SMTP email sent event
 pub static SMTP_CLIENT_EMAIL_SENT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("smtp_email_sent", "Email successfully sent via SMTP").with_parameters(vec![
+    EventType::new("smtp_email_sent", "Email successfully sent via SMTP", json!({"type": "placeholder", "event_id": "smtp_email_sent"})).with_parameters(vec![
         Parameter {
             name: "to".to_string(),
             type_hint: "array".to_string(),
@@ -198,8 +205,8 @@ impl Protocol for SmtpClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("smtp_connected", "Triggered when SMTP client connects to server"),
-            EventType::new("smtp_email_sent", "Triggered when email is successfully sent"),
+            EventType::new("smtp_connected", "Triggered when SMTP client connects to server", json!({"type": "placeholder", "event_id": "smtp_connected"})),
+            EventType::new("smtp_email_sent", "Triggered when email is successfully sent", json!({"type": "placeholder", "event_id": "smtp_email_sent"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

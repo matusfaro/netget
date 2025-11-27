@@ -16,6 +16,9 @@ pub static OAUTH2_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(||
     EventType::new(
         "oauth2_connected",
         "OAuth2 client initialized and ready to authenticate",
+        json!({
+            "type": "refresh_token"
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -38,6 +41,9 @@ pub static OAUTH2_TOKEN_OBTAINED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "oauth2_token_obtained",
         "OAuth2 access token successfully obtained",
+        json!({
+            "type": "refresh_token"
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -78,6 +84,9 @@ pub static OAUTH2_DEVICE_CODE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "oauth2_device_code_started",
         "Device code flow initiated, user needs to visit URL",
+        json!({
+            "type": "refresh_token"
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -109,7 +118,7 @@ pub static OAUTH2_DEVICE_CODE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// OAuth2 token error event
 pub static OAUTH2_ERROR_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("oauth2_error", "OAuth2 authentication error occurred").with_parameters(vec![
+    EventType::new("oauth2_error", "OAuth2 authentication error occurred", json!({"type": "placeholder", "event_id": "oauth2_error"})).with_parameters(vec![
         Parameter {
             name: "error".to_string(),
             type_hint: "string".to_string(),
@@ -320,10 +329,10 @@ impl Protocol for OAuth2ClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("oauth2_connected", "Triggered when OAuth2 client is initialized"),
-            EventType::new("oauth2_token_obtained", "Triggered when access token is obtained"),
-            EventType::new("oauth2_device_code_started", "Triggered when device code flow is initiated"),
-            EventType::new("oauth2_error", "Triggered when OAuth2 error occurs"),
+            EventType::new("oauth2_connected", "Triggered when OAuth2 client is initialized", json!({"type": "placeholder", "event_id": "oauth2_connected"})),
+            EventType::new("oauth2_token_obtained", "Triggered when access token is obtained", json!({"type": "placeholder", "event_id": "oauth2_token_obtained"})),
+            EventType::new("oauth2_device_code_started", "Triggered when device code flow is initiated", json!({"type": "placeholder", "event_id": "oauth2_device_code_started"})),
+            EventType::new("oauth2_error", "Triggered when OAuth2 error occurs", json!({"type": "placeholder", "event_id": "oauth2_error"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

@@ -16,6 +16,10 @@ pub static SNMP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "snmp_connected",
         "SNMP client successfully connected to agent",
+        json!({
+            "type": "send_snmp_get",
+            "oids": ["1.3.6.1.2.1.1.3.0"]
+        })
     )
     .with_parameters(vec![Parameter {
         name: "remote_addr".to_string(),
@@ -30,6 +34,10 @@ pub static SNMP_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::
     EventType::new(
         "snmp_response_received",
         "Response received from SNMP agent",
+        json!({
+            "type": "send_snmp_getnext",
+            "oids": ["1.3.6.1.2.1.1.1.0"]
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -201,8 +209,8 @@ impl Protocol for SnmpClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("snmp_connected", "Triggered when SNMP client connects to agent"),
-            EventType::new("snmp_response_received", "Triggered when SNMP client receives a response"),
+            EventType::new("snmp_connected", "Triggered when SNMP client connects to agent", json!({"type": "placeholder", "event_id": "snmp_connected"})),
+            EventType::new("snmp_response_received", "Triggered when SNMP client receives a response", json!({"type": "placeholder", "event_id": "snmp_response_received"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

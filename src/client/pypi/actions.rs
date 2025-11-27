@@ -16,6 +16,10 @@ pub static PYPI_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "pypi_connected",
         "PyPI client initialized and ready to interact with Python Package Index",
+        json!({
+            "type": "get_package_info",
+            "package_name": "requests"
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "index_url".to_string(),
@@ -30,6 +34,10 @@ pub static PYPI_PACKAGE_INFO_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "pypi_package_info_received",
         "Package information received from PyPI",
+        json!({
+            "type": "get_package_info",
+            "package_name": "numpy"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -52,6 +60,10 @@ pub static PYPI_SEARCH_RESULTS_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "pypi_search_results_received",
         "Search results received from PyPI",
+        json!({
+            "type": "get_package_info",
+            "package_name": "numpy"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -71,7 +83,7 @@ pub static PYPI_SEARCH_RESULTS_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// PyPI file downloaded event
 pub static PYPI_FILE_DOWNLOADED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("pypi_file_downloaded", "Package file downloaded from PyPI").with_parameters(
+    EventType::new("pypi_file_downloaded", "Package file downloaded from PyPI", json!({"type": "placeholder", "event_id": "pypi_file_downloaded"})).with_parameters(
         vec![
             Parameter {
                 name: "filename".to_string(),
@@ -232,10 +244,10 @@ impl Protocol for PypiClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("pypi_connected", "Triggered when PyPI client is initialized"),
-            EventType::new("pypi_package_info_received", "Triggered when package info is received"),
-            EventType::new("pypi_search_results_received", "Triggered when search results are received"),
-            EventType::new("pypi_file_downloaded", "Triggered when a file is downloaded"),
+            EventType::new("pypi_connected", "Triggered when PyPI client is initialized", json!({"type": "placeholder", "event_id": "pypi_connected"})),
+            EventType::new("pypi_package_info_received", "Triggered when package info is received", json!({"type": "placeholder", "event_id": "pypi_package_info_received"})),
+            EventType::new("pypi_search_results_received", "Triggered when search results are received", json!({"type": "placeholder", "event_id": "pypi_search_results_received"})),
+            EventType::new("pypi_file_downloaded", "Triggered when a file is downloaded", json!({"type": "placeholder", "event_id": "pypi_file_downloaded"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

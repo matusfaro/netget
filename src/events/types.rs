@@ -78,6 +78,10 @@ pub enum UserCommand {
         db_id: Option<u32>,
         query: Option<String>,
     },
+    /// List available simple protocols (slash command: /simple)
+    ListSimple,
+    /// Start a simple protocol server (slash command: /simple <protocol>)
+    StartSimple { protocol: String },
     /// Quit the application (slash command: /quit)
     Quit,
     /// Unknown slash command (error case)
@@ -307,6 +311,19 @@ impl UserCommand {
                     query: Some(rest.to_string()),
                 };
             }
+        }
+
+        // /simple command - start simple protocol or list available protocols
+        if input_lower.starts_with("/simple") {
+            let rest = trimmed[7..].trim();
+            if rest.is_empty() {
+                // List available simple protocols
+                return UserCommand::ListSimple;
+            }
+            // Start specific simple protocol
+            return UserCommand::StartSimple {
+                protocol: rest.to_string(),
+            };
         }
 
         // Unknown slash command - return error, don't send to LLM

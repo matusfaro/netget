@@ -15,6 +15,11 @@ pub static MOUSE_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| 
     EventType::new(
         "mouse_client_connected",
         "A device connected to the BLE mouse",
+        json!({
+            "type": "move_cursor",
+            "dx": 10,
+            "dy": 0
+        })
     )
     .with_parameters(vec![Parameter {
         name: "client_id".to_string(),
@@ -29,6 +34,9 @@ pub static MOUSE_CLIENT_DISCONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(
     EventType::new(
         "mouse_client_disconnected",
         "A device disconnected from the BLE mouse",
+        json!({
+            "type": "list_clients"
+        })
     )
     .with_parameters(vec![Parameter {
         name: "client_id".to_string(),

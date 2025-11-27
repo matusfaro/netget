@@ -25,7 +25,7 @@ impl S3Protocol {
 
 /// S3 request event - triggered when an S3 API request is received
 pub static S3_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("s3_request", "S3 API request received")
+    EventType::new("s3_request", "S3 API request received", json!({"type": "placeholder", "event_id": "s3_request"}))
         .with_parameters(vec![
             Parameter {
                 name: "operation".to_string(),

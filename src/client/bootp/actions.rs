@@ -13,7 +13,7 @@ use std::sync::LazyLock;
 
 /// BOOTP client connected event (sent when UDP socket is bound and ready)
 pub static BOOTP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("bootp_connected", "BOOTP client ready to send requests").with_parameters(vec![
+    EventType::new("bootp_connected", "BOOTP client ready to send requests", json!({"type": "placeholder", "event_id": "bootp_connected"})).with_parameters(vec![
         Parameter {
             name: "server_addr".to_string(),
             type_hint: "string".to_string(),
@@ -25,7 +25,7 @@ pub static BOOTP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| 
 
 /// BOOTP reply received event
 pub static BOOTP_REPLY_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("bootp_reply_received", "BOOTP reply received from server").with_parameters(
+    EventType::new("bootp_reply_received", "BOOTP reply received from server", json!({"type": "placeholder", "event_id": "bootp_reply_received"})).with_parameters(
         vec![
             Parameter {
                 name: "assigned_ip".to_string(),
@@ -143,8 +143,8 @@ impl Protocol for BootpClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("bootp_connected", "Triggered when BOOTP client is ready"),
-            EventType::new("bootp_reply_received", "Triggered when BOOTP reply is received from server"),
+            EventType::new("bootp_connected", "Triggered when BOOTP client is ready", json!({"type": "placeholder", "event_id": "bootp_connected"})),
+            EventType::new("bootp_reply_received", "Triggered when BOOTP reply is received from server", json!({"type": "placeholder", "event_id": "bootp_reply_received"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

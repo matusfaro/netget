@@ -16,6 +16,11 @@ pub static HTTP2_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| 
     EventType::new(
         "http2_connected",
         "HTTP/2 client initialized and ready to send requests",
+        json!({
+            "type": "send_http2_request",
+            "method": "GET",
+            "path": "/api/status"
+        })
     )
     .with_parameters(vec![Parameter {
         name: "base_url".to_string(),
@@ -30,6 +35,12 @@ pub static HTTP2_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock:
     EventType::new(
         "http2_response_received",
         "HTTP/2 response received from server",
+        json!({
+            "type": "send_http2_request",
+            "method": "POST",
+            "path": "/api/data",
+            "body": "{\"key\": \"value\"}"
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -176,8 +187,8 @@ impl Protocol for Http2ClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("http2_connected", "Triggered when HTTP/2 client is initialized"),
-            EventType::new("http2_response_received", "Triggered when HTTP/2 client receives a response"),
+            EventType::new("http2_connected", "Triggered when HTTP/2 client is initialized", json!({"type": "placeholder", "event_id": "http2_connected"})),
+            EventType::new("http2_response_received", "Triggered when HTTP/2 client receives a response", json!({"type": "placeholder", "event_id": "http2_response_received"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

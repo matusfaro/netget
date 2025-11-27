@@ -16,6 +16,14 @@ pub static USB_DEVICE_OPENED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "usb_device_opened",
         "USB device successfully opened and interface claimed",
+        json!({
+            "type": "control_transfer",
+            "request_type": 0x80,
+            "request": 0x06,
+            "value": 0x0100,
+            "index": 0,
+            "length": 18
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -50,6 +58,9 @@ pub static USB_CONTROL_RESPONSE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "usb_control_response",
         "Response received from USB control transfer",
+        json!({
+            "type": "wait_for_more"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -72,6 +83,11 @@ pub static USB_BULK_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| 
     EventType::new(
         "usb_bulk_data_received",
         "Data received from USB bulk endpoint",
+        json!({
+            "type": "bulk_transfer_out",
+            "endpoint": 0x02,
+            "data_hex": "48656c6c6f"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -100,6 +116,9 @@ pub static USB_INTERRUPT_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::ne
     EventType::new(
         "usb_interrupt_data_received",
         "Data received from USB interrupt endpoint",
+        json!({
+            "type": "wait_for_more"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -308,10 +327,10 @@ impl Protocol for UsbClientProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("usb_device_opened", "Triggered when USB device is opened and interface claimed"),
-            EventType::new("usb_control_response", "Triggered when USB control transfer completes"),
-            EventType::new("usb_bulk_data_received", "Triggered when data is received from bulk endpoint"),
-            EventType::new("usb_interrupt_data_received", "Triggered when data is received from interrupt endpoint"),
+            EventType::new("usb_device_opened", "Triggered when USB device is opened and interface claimed", json!({"type": "placeholder", "event_id": "usb_device_opened"})),
+            EventType::new("usb_control_response", "Triggered when USB control transfer completes", json!({"type": "placeholder", "event_id": "usb_control_response"})),
+            EventType::new("usb_bulk_data_received", "Triggered when data is received from bulk endpoint", json!({"type": "placeholder", "event_id": "usb_bulk_data_received"})),
+            EventType::new("usb_interrupt_data_received", "Triggered when data is received from interrupt endpoint", json!({"type": "placeholder", "event_id": "usb_interrupt_data_received"})),
         ]
     }
 

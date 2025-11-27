@@ -16,6 +16,10 @@ pub static TLS_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "tls_client_connected",
         "TLS client successfully completed handshake with server",
+        json!({
+            "type": "send_tls_data",
+            "data": "Hello"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -38,6 +42,10 @@ pub static TLS_CLIENT_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|
     EventType::new(
         "tls_client_data_received",
         "Data received from TLS server (decrypted)",
+        json!({
+            "type": "send_tls_data",
+            "data": "Response"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -183,8 +191,8 @@ impl Protocol for TlsClientProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("tls_client_connected", "Triggered when TLS client completes handshake with server"),
-            EventType::new("tls_client_data_received", "Triggered when TLS client receives decrypted data from server"),
+            EventType::new("tls_client_connected", "Triggered when TLS client completes handshake with server", json!({"type": "placeholder", "event_id": "tls_client_connected"})),
+            EventType::new("tls_client_data_received", "Triggered when TLS client receives decrypted data from server", json!({"type": "placeholder", "event_id": "tls_client_data_received"})),
         ]
     }
 

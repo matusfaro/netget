@@ -12,7 +12,7 @@ use std::sync::LazyLock;
 
 /// Battery level changed event
 pub static BATTERY_LEVEL_CHANGED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("battery_level_changed", "Battery level was updated").with_parameters(vec![
+    EventType::new("battery_level_changed", "Battery level was updated", json!({"type": "placeholder", "event_id": "battery_level_changed"})).with_parameters(vec![
         Parameter {
             name: "level".to_string(),
             type_hint: "string".to_string(),

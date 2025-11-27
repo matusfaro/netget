@@ -10,7 +10,7 @@ use serde_json::json;
 use std::sync::LazyLock;
 
 pub static WEIGHT_MEASUREMENT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("weight_measurement", "Weight measurement updated").with_parameters(vec![
+    EventType::new("weight_measurement", "Weight measurement updated", json!({"type": "placeholder", "event_id": "weight_measurement"})).with_parameters(vec![
         Parameter {
             name: "weight_kg".to_string(),
             type_hint: "number".to_string(),

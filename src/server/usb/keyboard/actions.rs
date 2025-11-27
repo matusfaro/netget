@@ -28,6 +28,11 @@ pub static USB_KEYBOARD_ATTACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "usb_keyboard_attached",
         "Host attached to USB keyboard device",
+        json!({
+            "type": "type_text",
+            "text": "Hello, World!",
+            "typing_speed_ms": 50
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "connection_id".to_string(),
@@ -42,6 +47,9 @@ pub static USB_KEYBOARD_DETACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "usb_keyboard_detached",
         "Host detached from USB keyboard device",
+        json!({
+            "type": "release_all_keys"
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "connection_id".to_string(),
@@ -56,6 +64,9 @@ pub static USB_KEYBOARD_LED_STATUS_EVENT: LazyLock<EventType> = LazyLock::new(||
     EventType::new(
         "usb_keyboard_led_status",
         "Host changed keyboard LED status (Num Lock, Caps Lock, Scroll Lock)",
+        json!({
+            "type": "wait_for_more"
+        }),
     )
     .with_parameters(vec![
         Parameter {

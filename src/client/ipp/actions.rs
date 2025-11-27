@@ -16,6 +16,7 @@ pub static IPP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "ipp_connected",
         "IPP client initialized and ready to send print operations",
+        json!({"type": "get_printer_attributes"}),
     )
     .with_parameters(vec![Parameter {
         name: "printer_uri".to_string(),
@@ -30,6 +31,7 @@ pub static IPP_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::n
     EventType::new(
         "ipp_response_received",
         "IPP operation response received from printer",
+        json!({"type": "get_job_attributes", "job_id": 123}),
     )
     .with_parameters(vec![
         Parameter {
@@ -174,8 +176,8 @@ impl Protocol for IppClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("ipp_connected", "Triggered when IPP client is initialized"),
-            EventType::new("ipp_response_received", "Triggered when IPP client receives a response from the printer"),
+            EventType::new("ipp_connected", "Triggered when IPP client is initialized", json!({"type": "get_printer_attributes"})),
+            EventType::new("ipp_response_received", "Triggered when IPP client receives a response from the printer", json!({"type": "get_job_attributes", "job_id": 123})),
         ]
     }
     fn stack_name(&self) -> &'static str {

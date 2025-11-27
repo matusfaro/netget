@@ -218,6 +218,20 @@ impl EventHandler {
                 );
                 Ok(false)
             }
+            UserCommand::ListSimple => {
+                // This command is only supported in rolling TUI mode
+                ui.add_llm_message(
+                    "Simple protocol command is only supported in rolling TUI mode".to_string(),
+                );
+                Ok(false)
+            }
+            UserCommand::StartSimple { protocol: _ } => {
+                // This command is only supported in rolling TUI mode
+                ui.add_llm_message(
+                    "Simple protocol command is only supported in rolling TUI mode".to_string(),
+                );
+                Ok(false)
+            }
         }
     }
 

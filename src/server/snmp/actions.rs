@@ -252,6 +252,12 @@ pub static SNMP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "snmp_request",
         "SNMP client sent a GET/GETNEXT/GETBULK request",
+        json!({
+            "type": "send_snmp_response",
+            "variables": [
+                {"oid": "1.3.6.1.2.1.1.1.0", "type": "string", "value": "System Description"}
+            ]
+        })
     )
     .with_parameters(vec![
         Parameter {

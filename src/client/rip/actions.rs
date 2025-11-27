@@ -13,7 +13,7 @@ use std::sync::LazyLock;
 
 /// RIP client connected event
 pub static RIP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("rip_connected", "RIP client connected to router").with_parameters(vec![
+    EventType::new("rip_connected", "RIP client connected to router", json!({"type": "placeholder", "event_id": "rip_connected"})).with_parameters(vec![
         Parameter {
             name: "remote_addr".to_string(),
             type_hint: "string".to_string(),
@@ -25,7 +25,7 @@ pub static RIP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// RIP client response received event
 pub static RIP_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("rip_response_received", "RIP response received from router").with_parameters(
+    EventType::new("rip_response_received", "RIP response received from router", json!({"type": "placeholder", "event_id": "rip_response_received"})).with_parameters(
         vec![
             Parameter {
                 name: "version".to_string(),
@@ -131,8 +131,8 @@ impl Protocol for RipClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("rip_connected", "Triggered when RIP client connects to router"),
-            EventType::new("rip_response_received", "Triggered when RIP client receives routing table response"),
+            EventType::new("rip_connected", "Triggered when RIP client connects to router", json!({"type": "placeholder", "event_id": "rip_connected"})),
+            EventType::new("rip_response_received", "Triggered when RIP client receives routing table response", json!({"type": "placeholder", "event_id": "rip_response_received"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

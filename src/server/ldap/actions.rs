@@ -523,7 +523,7 @@ pub static CLOSE_CONNECTION_ACTION: LazyLock<ActionDefinition> =
 
 /// LDAP bind event - triggered when client attempts to authenticate
 pub static LDAP_BIND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("ldap_bind", "LDAP bind (authentication) request received")
+    EventType::new("ldap_bind", "LDAP bind (authentication) request received", json!({"type": "placeholder", "event_id": "ldap_bind"}))
         .with_parameters(vec![
             Parameter {
                 name: "message_id".to_string(),
@@ -558,7 +558,7 @@ pub static LDAP_BIND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// LDAP search event - triggered when client performs a directory search
 pub static LDAP_SEARCH_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("ldap_search", "LDAP search request received")
+    EventType::new("ldap_search", "LDAP search request received", json!({"type": "placeholder", "event_id": "ldap_search"}))
         .with_parameters(vec![
             Parameter {
                 name: "message_id".to_string(),
@@ -593,7 +593,7 @@ pub static LDAP_SEARCH_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// LDAP unbind event - triggered when client closes connection
 pub static LDAP_UNBIND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("ldap_unbind", "LDAP unbind (disconnect) request received")
+    EventType::new("ldap_unbind", "LDAP unbind (disconnect) request received", json!({"type": "placeholder", "event_id": "ldap_unbind"}))
         .with_parameters(vec![Parameter {
             name: "bind_dn".to_string(),
             type_hint: "string".to_string(),

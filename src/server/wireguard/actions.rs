@@ -17,6 +17,12 @@ pub static WIREGUARD_PEER_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| 
     EventType::new(
         "wireguard_peer_request",
         "WireGuard peer requesting authorization",
+        json!({
+            "type": "authorize_peer",
+            "public_key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+            "allowed_ips": ["10.20.30.2/32"],
+            "message": "Peer authorized"
+        }),
     )
 });
 
@@ -25,6 +31,9 @@ pub static WIREGUARD_PEER_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|
     EventType::new(
         "wireguard_peer_connected",
         "WireGuard peer successfully connected",
+        json!({
+            "type": "no_action"
+        }),
     )
 });
 

@@ -16,6 +16,10 @@ pub static TOR_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "tor_connected",
         "Tor client successfully connected through Tor network",
+        json!({
+            "type": "send_tor_data",
+            "data_hex": "48656c6c6f"
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "target".to_string(),
@@ -30,6 +34,10 @@ pub static TOR_CLIENT_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|
     EventType::new(
         "tor_data_received",
         "Data received from destination through Tor",
+        json!({
+            "type": "send_tor_data",
+            "data_hex": "48656c6c6f"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -53,6 +61,10 @@ pub static TOR_BOOTSTRAP_COMPLETE_EVENT: LazyLock<EventType> = LazyLock::new(|| 
     EventType::new(
         "tor_bootstrap_complete",
         "Tor client finished bootstrapping and downloaded network consensus",
+        json!({
+            "type": "send_tor_data",
+            "data_hex": "48656c6c6f"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -204,8 +216,8 @@ impl Protocol for TorClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("tor_connected", "Triggered when Tor client connects through Tor network"),
-            EventType::new("tor_data_received", "Triggered when Tor client receives data from destination"),
+            EventType::new("tor_connected", "Triggered when Tor client connects through Tor network", json!({"type": "placeholder", "event_id": "tor_connected"})),
+            EventType::new("tor_data_received", "Triggered when Tor client receives data from destination", json!({"type": "placeholder", "event_id": "tor_data_received"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

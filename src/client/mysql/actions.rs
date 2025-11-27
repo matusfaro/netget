@@ -16,6 +16,10 @@ pub static MYSQL_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| 
     EventType::new(
         "mysql_connected",
         "MySQL client successfully connected to server",
+        json!({
+            "type": "execute_query",
+            "query": "SELECT * FROM users LIMIT 10"
+        })
     )
     .with_parameters(vec![Parameter {
         name: "remote_addr".to_string(),
@@ -30,6 +34,9 @@ pub static MYSQL_CLIENT_RESULT_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::n
     EventType::new(
         "mysql_result_received",
         "Query result received from MySQL server",
+        json!({
+            "type": "wait_for_more"
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -140,8 +147,8 @@ impl Protocol for MysqlClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("mysql_connected", "Triggered when MySQL client connects to server"),
-            EventType::new("mysql_result_received", "Triggered when MySQL client receives a query result"),
+            EventType::new("mysql_connected", "Triggered when MySQL client connects to server", json!({"type": "placeholder", "event_id": "mysql_connected"})),
+            EventType::new("mysql_result_received", "Triggered when MySQL client receives a query result", json!({"type": "placeholder", "event_id": "mysql_result_received"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

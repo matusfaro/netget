@@ -256,10 +256,10 @@ impl TorrentTrackerProtocol {
 }
 
 pub static TRACKER_ANNOUNCE_REQUEST_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("tracker_announce_request", "BitTorrent announce request"));
+    LazyLock::new(|| EventType::new("tracker_announce_request", "BitTorrent announce request", json!({"type": "placeholder", "event_id": "tracker_announce_request"})));
 
 pub static TRACKER_SCRAPE_REQUEST_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("tracker_scrape_request", "BitTorrent scrape request"));
+    LazyLock::new(|| EventType::new("tracker_scrape_request", "BitTorrent scrape request", json!({"type": "placeholder", "event_id": "tracker_scrape_request"})));
 
 pub static SEND_ANNOUNCE_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
     ActionDefinition {

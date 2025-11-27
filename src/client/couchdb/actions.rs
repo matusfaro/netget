@@ -16,6 +16,7 @@ pub static COUCHDB_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|
     EventType::new(
         "couchdb_connected",
         "CouchDB client successfully connected to server",
+        json!({"type": "list_databases"}),
     )
     .with_parameters(vec![
         Parameter {
@@ -38,6 +39,7 @@ pub static COUCHDB_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLoc
     EventType::new(
         "couchdb_response_received",
         "Response received from CouchDB server",
+        json!({"type": "get_document", "database": "mydb", "doc_id": "user1"}),
     )
     .with_parameters(vec![
         Parameter {
@@ -72,6 +74,7 @@ pub static COUCHDB_CLIENT_CONFLICT_EVENT: LazyLock<EventType> = LazyLock::new(||
     EventType::new(
         "couchdb_conflict",
         "Document update conflict detected (revision mismatch)",
+        json!({"type": "get_document", "database": "mydb", "doc_id": "user1"}),
     )
     .with_parameters(vec![
         Parameter {
@@ -100,6 +103,7 @@ pub static COUCHDB_CLIENT_CHANGE_DETECTED_EVENT: LazyLock<EventType> = LazyLock:
     EventType::new(
         "couchdb_change_detected",
         "Document change detected in changes feed",
+        json!({"type": "get_document", "database": "mydb", "doc_id": "user1"}),
     )
     .with_parameters(vec![
         Parameter {

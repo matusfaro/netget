@@ -17,6 +17,17 @@ pub static BLUETOOTH_BLE_STARTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "bluetooth_ble_started",
         "Bluetooth Low Energy GATT server started and ready for configuration",
+        json!({
+            "type": "add_service",
+            "uuid": "180D",
+            "primary": true,
+            "characteristics": [{
+                "uuid": "2A37",
+                "properties": ["read", "notify"],
+                "permissions": ["readable"],
+                "initial_value": "0048"
+            }]
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -39,6 +50,9 @@ pub static BLUETOOTH_STATE_CHANGED_EVENT: LazyLock<EventType> = LazyLock::new(||
     EventType::new(
         "bluetooth_state_changed",
         "Bluetooth adapter state changed (powered on/off, advertising started/stopped, etc.)",
+        json!({
+            "type": "start_advertising"
+        })
     )
     .with_parameters(vec![Parameter {
         name: "state".to_string(),
@@ -53,6 +67,10 @@ pub static BLUETOOTH_READ_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| 
     EventType::new(
         "bluetooth_read_request",
         "Client is reading from a GATT characteristic - respond with data",
+        json!({
+            "type": "respond_to_read",
+            "value": "0048"
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -75,6 +93,9 @@ pub static BLUETOOTH_WRITE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(||
     EventType::new(
         "bluetooth_write_request",
         "Client wrote data to a GATT characteristic",
+        json!({
+            "type": "respond_to_write"
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -109,6 +130,11 @@ pub static BLUETOOTH_SUBSCRIBE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "bluetooth_subscribe",
         "Client subscribed or unsubscribed from characteristic notifications",
+        json!({
+            "type": "send_notification",
+            "characteristic_uuid": "2A37",
+            "value": "0048"
+        })
     )
     .with_parameters(vec![
         Parameter {

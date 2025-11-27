@@ -691,7 +691,7 @@ fn close_connection_action() -> ActionDefinition {
 // ============================================================================
 
 pub static IRC_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("irc_message_received", "IRC message received from a client")
+    EventType::new("irc_message_received", "IRC message received from a client", json!({"type": "placeholder", "event_id": "irc_message_received"}))
         .with_parameters(vec![Parameter {
             name: "message".to_string(),
             type_hint: "string".to_string(),

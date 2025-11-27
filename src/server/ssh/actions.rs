@@ -424,6 +424,10 @@ pub static SSH_AUTH_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "ssh_auth",
         "SSH authentication request received (username and auth method provided)",
+        json!({
+            "type": "ssh_auth_decision",
+            "allowed": true
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -447,6 +451,10 @@ pub static SSH_BANNER_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "ssh_banner",
         "SSH shell session opened (send welcome banner/greeting)",
+        json!({
+            "type": "ssh_send_banner",
+            "banner": "Welcome to NetGet SSH Server!\n"
+        })
     )
     // No parameters - banner is shown before any data is available
     .with_action(SSH_SEND_BANNER_ACTION.clone())
@@ -457,6 +465,10 @@ pub static SSH_SHELL_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "ssh_shell_command",
         "SSH shell command received from client",
+        json!({
+            "type": "ssh_shell_response",
+            "response": "/home/user\n"
+        })
     )
     .with_parameters(vec![Parameter {
         name: "command".to_string(),
@@ -472,10 +484,7 @@ pub static SSH_SHELL_COMMAND_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// SFTP operation event - triggered when SFTP client performs a filesystem operation
 pub static SFTP_OPERATION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "sftp_operation",
-        "SFTP client requested a filesystem operation"
-    )
+    EventType::new("sftp_operation", "SFTP client requested a filesystem operation", json!({"type": "placeholder", "event_id": "sftp_operation"}))
     .with_parameters(vec![
         Parameter {
             name: "operation".to_string(),

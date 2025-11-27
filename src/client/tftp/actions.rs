@@ -21,7 +21,7 @@ impl TftpClientProtocol {
 
 // Event type constants
 pub static TFTP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("tftp_connected", "TFTP client connected to server")
+    EventType::new("tftp_connected", "TFTP client connected to server", json!({"type": "placeholder", "event_id": "tftp_connected"}))
         .with_parameters(vec![
             Parameter {
                 name: "server_addr".to_string(),
@@ -45,7 +45,7 @@ pub static TFTP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 });
 
 pub static TFTP_CLIENT_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("tftp_data_received", "Received data block from server")
+    EventType::new("tftp_data_received", "Received data block from server", json!({"type": "placeholder", "event_id": "tftp_data_received"}))
         .with_parameters(vec![
             Parameter {
                 name: "block_number".to_string(),
@@ -81,7 +81,7 @@ pub static TFTP_CLIENT_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(
 });
 
 pub static TFTP_CLIENT_ACK_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("tftp_ack_received", "Server acknowledged data block")
+    EventType::new("tftp_ack_received", "Server acknowledged data block", json!({"type": "placeholder", "event_id": "tftp_ack_received"}))
         .with_parameters(vec![
             Parameter {
                 name: "block_number".to_string(),
@@ -93,7 +93,7 @@ pub static TFTP_CLIENT_ACK_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|
 });
 
 pub static TFTP_CLIENT_TRANSFER_COMPLETE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("tftp_transfer_complete", "File transfer completed")
+    EventType::new("tftp_transfer_complete", "File transfer completed", json!({"type": "placeholder", "event_id": "tftp_transfer_complete"}))
         .with_parameters(vec![
             Parameter {
                 name: "total_bytes".to_string(),
@@ -111,7 +111,7 @@ pub static TFTP_CLIENT_TRANSFER_COMPLETE_EVENT: LazyLock<EventType> = LazyLock::
 });
 
 pub static TFTP_CLIENT_ERROR_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("tftp_error", "TFTP error received from server")
+    EventType::new("tftp_error", "TFTP error received from server", json!({"type": "placeholder", "event_id": "tftp_error"}))
         .with_parameters(vec![
             Parameter {
                 name: "error_code".to_string(),

@@ -16,6 +16,10 @@ pub static MSSQL_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| 
     EventType::new(
         "mssql_connected",
         "MSSQL client successfully connected to server",
+        json!({
+            "type": "execute_query",
+            "query": "SELECT @@VERSION"
+        })
     )
     .with_parameters(vec![Parameter {
         name: "remote_addr".to_string(),
@@ -30,6 +34,9 @@ pub static MSSQL_CLIENT_QUERY_RESULT_EVENT: LazyLock<EventType> = LazyLock::new(
     EventType::new(
         "mssql_query_result",
         "Query result received from MSSQL server",
+        json!({
+            "type": "wait_for_more"
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -55,7 +62,7 @@ pub static MSSQL_CLIENT_QUERY_RESULT_EVENT: LazyLock<EventType> = LazyLock::new(
 
 /// MSSQL client error event
 pub static MSSQL_CLIENT_ERROR_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("mssql_error", "Error received from MSSQL server").with_parameters(vec![
+    EventType::new("mssql_error", "Error received from MSSQL server", json!({"type": "placeholder", "event_id": "mssql_error"})).with_parameters(vec![
         Parameter {
             name: "error_number".to_string(),
             type_hint: "number".to_string(),
@@ -139,9 +146,9 @@ impl Protocol for MssqlClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("mssql_connected", "Triggered when MSSQL client connects to server"),
-            EventType::new("mssql_query_result", "Triggered when MSSQL client receives query result"),
-            EventType::new("mssql_error", "Triggered when MSSQL client receives error"),
+            EventType::new("mssql_connected", "Triggered when MSSQL client connects to server", json!({"type": "placeholder", "event_id": "mssql_connected"})),
+            EventType::new("mssql_query_result", "Triggered when MSSQL client receives query result", json!({"type": "placeholder", "event_id": "mssql_query_result"})),
+            EventType::new("mssql_error", "Triggered when MSSQL client receives error", json!({"type": "placeholder", "event_id": "mssql_error"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

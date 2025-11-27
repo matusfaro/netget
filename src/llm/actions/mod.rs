@@ -21,13 +21,152 @@ pub use common::{
 pub use easy_trait::Easy;
 // Export the Easy trait
 pub use protocol_trait::{Protocol, Server};
-// Export the Protocol and Server traits
+// Export StartupExamples for protocol implementations
 pub use summary::{summarize_action, summarize_actions};
 pub use tools::{
     execute_tool, get_all_tool_actions, get_network_event_tool_actions, ToolAction, ToolResult,
 };
 
 use serde::{Deserialize, Serialize};
+
+/// Examples showing how to start a protocol with different handler modes
+///
+/// These examples are required for every protocol and are used in:
+/// - Protocol documentation (shown when user requests docs)
+/// - Prompt templates to guide LLM in creating servers/clients
+///
+/// Each example is a complete `open_server` action JSON that can be
+/// directly executed. The examples must be validated by tests.
+#[derive(Clone, Debug, Serialize)]
+pub struct StartupExamples {
+    /// Complete open_server action with LLM handler mode
+    /// Shows how to start the protocol with LLM-controlled responses
+    pub llm_mode: serde_json::Value,
+
+    /// Complete open_server action with script handler mode
+    /// Shows event_handlers with script type handlers
+    pub script_mode: serde_json::Value,
+
+    /// Complete open_server action with static handler mode
+    /// Shows event_handlers with static type handlers and predefined actions
+    pub static_mode: serde_json::Value,
+}
+
+impl StartupExamples {
+    /// Create new startup examples
+    pub fn new(
+        llm_mode: serde_json::Value,
+        script_mode: serde_json::Value,
+        static_mode: serde_json::Value,
+    ) -> Self {
+        Self {
+            llm_mode,
+            script_mode,
+            static_mode,
+        }
+    }
+
+    /// Validate that all examples are well-formed open_server actions
+    ///
+    /// Returns Ok(()) if valid, Err with description if invalid.
+    /// This is called by parameterized tests to ensure examples stay valid.
+    pub fn validate(&self, protocol_name: &str) -> Result<(), String> {
+        self.validate_example(&self.llm_mode, "llm_mode", protocol_name)?;
+        self.validate_example(&self.script_mode, "script_mode", protocol_name)?;
+        self.validate_example(&self.static_mode, "static_mode", protocol_name)?;
+        Ok(())
+    }
+
+    fn validate_example(
+        &self,
+        example: &serde_json::Value,
+        mode_name: &str,
+        protocol_name: &str,
+    ) -> Result<(), String> {
+        // Must be an object
+        let obj = example.as_object().ok_or_else(|| {
+            format!(
+                "Protocol {} {} example must be a JSON object",
+                protocol_name, mode_name
+            )
+        })?;
+
+        // Must have "type" field
+        let action_type = obj.get("type").and_then(|v| v.as_str()).ok_or_else(|| {
+            format!(
+                "Protocol {} {} example missing 'type' field",
+                protocol_name, mode_name
+            )
+        })?;
+
+        // Type must be "open_server" or "open_client"
+        if action_type != "open_server" && action_type != "open_client" {
+            return Err(format!(
+                "Protocol {} {} example has type '{}', expected 'open_server' or 'open_client'",
+                protocol_name, mode_name, action_type
+            ));
+        }
+
+        // Must have "base_stack" field
+        if !obj.contains_key("base_stack") {
+            return Err(format!(
+                "Protocol {} {} example missing 'base_stack' field",
+                protocol_name, mode_name
+            ));
+        }
+
+        // For script_mode and static_mode, must have event_handlers
+        if mode_name == "script_mode" || mode_name == "static_mode" {
+            let handlers = obj.get("event_handlers").ok_or_else(|| {
+                format!(
+                    "Protocol {} {} example missing 'event_handlers' array",
+                    protocol_name, mode_name
+                )
+            })?;
+
+            if !handlers.is_array() {
+                return Err(format!(
+                    "Protocol {} {} example 'event_handlers' must be an array",
+                    protocol_name, mode_name
+                ));
+            }
+        }
+
+        // For llm_mode, should have instruction
+        if mode_name == "llm_mode" && !obj.contains_key("instruction") {
+            return Err(format!(
+                "Protocol {} llm_mode example missing 'instruction' field",
+                protocol_name
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Convert examples to prompt text for LLM documentation
+    pub fn to_prompt_text(&self) -> String {
+        let mut text = String::new();
+
+        text.push_str("### Starting this Protocol\n\n");
+
+        text.push_str("**LLM Mode** (LLM handles all responses intelligently):\n");
+        text.push_str("```json\n");
+        text.push_str(&serde_json::to_string_pretty(&self.llm_mode).unwrap_or_default());
+        text.push_str("\n```\n\n");
+
+        text.push_str("**Script Mode** (code-based deterministic responses):\n");
+        text.push_str("```json\n");
+        text.push_str(&serde_json::to_string_pretty(&self.script_mode).unwrap_or_default());
+        text.push_str("\n```\n\n");
+
+        text.push_str("**Static Mode** (fixed, unchanging responses):\n");
+        text.push_str("```json\n");
+        text.push_str(&serde_json::to_string_pretty(&self.static_mode).unwrap_or_default());
+        text.push_str("\n```\n\n");
+
+        text
+    }
+}
 
 /// Definition of a configuration parameter for prompt generation
 ///

@@ -177,28 +177,33 @@ pub static SIP_REGISTER_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "sip_register",
         "Client sends REGISTER to register user location",
+        json!({
+            "type": "sip_register",
+            "status_code": 200,
+            "expires": 3600
+        })
     )
 });
 
 /// SIP INVITE event
 pub static SIP_INVITE_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("sip_invite", "Client initiates session with INVITE request"));
+    LazyLock::new(|| EventType::new("sip_invite", "Client initiates session with INVITE request", json!({"type": "placeholder", "event_id": "sip_invite"})));
 
 /// SIP BYE event
 pub static SIP_BYE_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("sip_bye", "Client or server terminates session with BYE"));
+    LazyLock::new(|| EventType::new("sip_bye", "Client or server terminates session with BYE", json!({"type": "placeholder", "event_id": "sip_bye"})));
 
 /// SIP ACK event
 pub static SIP_ACK_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("sip_ack", "Client acknowledges INVITE response"));
+    LazyLock::new(|| EventType::new("sip_ack", "Client acknowledges INVITE response", json!({"type": "placeholder", "event_id": "sip_ack"})));
 
 /// SIP OPTIONS event
 pub static SIP_OPTIONS_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("sip_options", "Client queries server capabilities"));
+    LazyLock::new(|| EventType::new("sip_options", "Client queries server capabilities", json!({"type": "placeholder", "event_id": "sip_options"})));
 
 /// SIP CANCEL event
 pub static SIP_CANCEL_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("sip_cancel", "Client cancels pending INVITE request"));
+    LazyLock::new(|| EventType::new("sip_cancel", "Client cancels pending INVITE request", json!({"type": "placeholder", "event_id": "sip_cancel"})));
 
 // Action definitions
 fn sip_register_action() -> ActionDefinition {

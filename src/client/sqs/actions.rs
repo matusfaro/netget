@@ -16,6 +16,10 @@ pub static SQS_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "sqs_connected",
         "SQS client initialized and ready to interact with queue",
+        json!({
+            "type": "send_message",
+            "message_body": "Processed successfully"
+        })
     )
     .with_parameters(vec![Parameter {
         name: "queue_url".to_string(),
@@ -27,7 +31,7 @@ pub static SQS_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// SQS message received event
 pub static SQS_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("sqs_message_received", "Messages received from SQS queue").with_parameters(
+    EventType::new("sqs_message_received", "Messages received from SQS queue", json!({"type": "placeholder", "event_id": "sqs_message_received"})).with_parameters(
         vec![Parameter {
             name: "messages".to_string(),
             type_hint: "array".to_string(),
@@ -39,7 +43,7 @@ pub static SQS_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// SQS message sent event
 pub static SQS_MESSAGE_SENT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("sqs_message_sent", "Message successfully sent to SQS queue").with_parameters(
+    EventType::new("sqs_message_sent", "Message successfully sent to SQS queue", json!({"type": "placeholder", "event_id": "sqs_message_sent"})).with_parameters(
         vec![Parameter {
             name: "message_id".to_string(),
             type_hint: "string".to_string(),
@@ -235,9 +239,9 @@ impl Protocol for SqsClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("sqs_connected", "Triggered when SQS client connects to queue"),
-            EventType::new("sqs_message_received", "Triggered when messages are received from queue"),
-            EventType::new("sqs_message_sent", "Triggered when message is successfully sent"),
+            EventType::new("sqs_connected", "Triggered when SQS client connects to queue", json!({"type": "placeholder", "event_id": "sqs_connected"})),
+            EventType::new("sqs_message_received", "Triggered when messages are received from queue", json!({"type": "placeholder", "event_id": "sqs_message_received"})),
+            EventType::new("sqs_message_sent", "Triggered when message is successfully sent", json!({"type": "placeholder", "event_id": "sqs_message_sent"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

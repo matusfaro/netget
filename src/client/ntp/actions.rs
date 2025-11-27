@@ -13,7 +13,7 @@ use std::sync::LazyLock;
 
 /// NTP client connected event
 pub static NTP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("ntp_connected", "NTP client ready to query time servers").with_parameters(vec![
+    EventType::new("ntp_connected", "NTP client ready to query time servers", json!({"type": "placeholder", "event_id": "ntp_connected"})).with_parameters(vec![
         Parameter {
             name: "remote_addr".to_string(),
             type_hint: "string".to_string(),
@@ -28,6 +28,7 @@ pub static NTP_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::n
     EventType::new(
         "ntp_response_received",
         "NTP time response received from server",
+        json!({"type": "analyze_response"}),
     )
     .with_parameters(vec![
         Parameter {
@@ -116,8 +117,8 @@ impl Protocol for NtpClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("ntp_connected", "Triggered when NTP client is ready"),
-            EventType::new("ntp_response_received", "Triggered when NTP response is received"),
+            EventType::new("ntp_connected", "Triggered when NTP client is ready", json!({"type": "placeholder", "event_id": "ntp_connected"})),
+            EventType::new("ntp_response_received", "Triggered when NTP response is received", json!({"type": "placeholder", "event_id": "ntp_response_received"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

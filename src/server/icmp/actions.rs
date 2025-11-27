@@ -525,6 +525,14 @@ pub static ICMP_ECHO_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "icmp_echo_request",
         "ICMP Echo Request (ping) received from network",
+        json!({
+            "type": "send_echo_reply",
+            "source_ip": "192.168.1.100",
+            "destination_ip": "192.168.1.50",
+            "identifier": 1234,
+            "sequence": 1,
+            "payload_hex": "48656c6c6f"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -613,6 +621,13 @@ pub static ICMP_OTHER_MESSAGE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "icmp_other_message",
         "Other ICMP message type received (not echo or timestamp)",
+        json!({
+            "type": "send_destination_unreachable",
+            "source_ip": "192.168.1.1",
+            "destination_ip": "192.168.1.50",
+            "code": 1,
+            "original_packet_hex": "4500003c..."
+        }),
     )
     .with_parameters(vec![
         Parameter {

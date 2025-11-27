@@ -418,10 +418,7 @@ fn ignore_request_action() -> ActionDefinition {
 
 /// NTP request event - triggered when NTP client sends a time request
 pub static NTP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "ntp_request",
-        "NTP client sent a time synchronization request"
-    )
+    EventType::new("ntp_request", "NTP client sent a time synchronization request", json!({"type": "placeholder", "event_id": "ntp_request"}))
     .with_parameters(vec![
         Parameter {
             name: "current_time".to_string(),

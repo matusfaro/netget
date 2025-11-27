@@ -16,6 +16,7 @@ pub static IRC_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "irc_connected",
         "IRC client successfully connected to server",
+        json!({"type": "send_privmsg", "target": "#channel", "message": "Hello!"}),
     )
     .with_parameters(vec![
         Parameter {
@@ -38,6 +39,7 @@ pub static IRC_CLIENT_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::ne
     EventType::new(
         "irc_message_received",
         "IRC message received from server or channel",
+        json!({"type": "send_privmsg", "target": "#channel", "message": "Response message"}),
     )
     .with_parameters(vec![
         Parameter {
@@ -230,8 +232,8 @@ impl Protocol for IrcClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("irc_connected", "Triggered when IRC client connects and registers"),
-            EventType::new("irc_message_received", "Triggered when IRC client receives any message"),
+            EventType::new("irc_connected", "Triggered when IRC client connects and registers", json!({"type": "send_privmsg", "target": "#rust", "message": "Hello, channel!"})),
+            EventType::new("irc_message_received", "Triggered when IRC client receives any message", json!({"type": "send_privmsg", "target": "#rust", "message": "Hello, channel!"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

@@ -10,7 +10,7 @@ use serde_json::json;
 use std::sync::LazyLock;
 
 pub static STREAM_STARTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("stream_started", "Data stream started").with_parameters(vec![
+    EventType::new("stream_started", "Data stream started", json!({"type": "placeholder", "event_id": "stream_started"})).with_parameters(vec![
         Parameter {
             name: "stream_id".to_string(),
             type_hint: "string".to_string(),
@@ -27,7 +27,7 @@ pub static STREAM_STARTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 });
 
 pub static STREAM_DATA_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("stream_data", "Stream data packet received").with_parameters(vec![
+    EventType::new("stream_data", "Stream data packet received", json!({"type": "placeholder", "event_id": "stream_data"})).with_parameters(vec![
         Parameter {
             name: "stream_id".to_string(),
             type_hint: "string".to_string(),

@@ -13,7 +13,7 @@ use std::sync::LazyLock;
 
 /// Maven client connected event
 pub static MAVEN_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("maven_connected", "Maven client connected to repository").with_parameters(vec![
+    EventType::new("maven_connected", "Maven client connected to repository", json!({"type": "download_artifact", "group_id": "org.apache.commons", "artifact_id": "commons-lang3", "version": "3.12.0"})).with_parameters(vec![
         Parameter {
             name: "repository_url".to_string(),
             type_hint: "string".to_string(),
@@ -28,6 +28,7 @@ pub static MAVEN_CLIENT_ARTIFACT_DOWNLOADED_EVENT: LazyLock<EventType> = LazyLoc
     EventType::new(
         "maven_artifact_downloaded",
         "Maven artifact successfully downloaded",
+        json!({"type": "download_pom", "group_id": "org.apache.commons", "artifact_id": "commons-collections4", "version": "4.4"}),
     )
     .with_parameters(vec![
         Parameter {
@@ -68,6 +69,7 @@ pub static MAVEN_CLIENT_POM_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(
     EventType::new(
         "maven_pom_received",
         "Maven POM file downloaded and received",
+        json!({"type": "download_artifact", "group_id": "com.google.guava", "artifact_id": "guava", "version": "31.1-jre"}),
     )
     .with_parameters(vec![
         Parameter {
@@ -102,6 +104,7 @@ pub static MAVEN_CLIENT_METADATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock:
     EventType::new(
         "maven_metadata_received",
         "Maven metadata XML received with version information",
+        json!({"type": "download_artifact", "group_id": "com.google.guava", "artifact_id": "guava", "version": "31.1-jre"}),
     )
     .with_parameters(vec![
         Parameter {
@@ -327,10 +330,10 @@ impl Protocol for MavenClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("maven_connected", "Triggered when Maven client connects to repository"),
-            EventType::new("maven_artifact_downloaded", "Triggered when Maven artifact is successfully downloaded"),
-            EventType::new("maven_pom_received", "Triggered when POM file is downloaded and received"),
-            EventType::new("maven_metadata_received", "Triggered when Maven metadata is received"),
+            EventType::new("maven_connected", "Triggered when Maven client connects to repository", json!({"type": "download_artifact", "group_id": "org.apache.commons", "artifact_id": "commons-lang3", "version": "3.12.0"})),
+            EventType::new("maven_artifact_downloaded", "Triggered when Maven artifact is successfully downloaded", json!({"type": "download_pom", "group_id": "org.apache.commons", "artifact_id": "commons-collections4", "version": "4.4"})),
+            EventType::new("maven_pom_received", "Triggered when POM file is downloaded and received", json!({"type": "download_artifact", "group_id": "com.google.guava", "artifact_id": "guava", "version": "31.1-jre"})),
+            EventType::new("maven_metadata_received", "Triggered when Maven metadata is received", json!({"type": "download_artifact", "group_id": "com.google.guava", "artifact_id": "guava", "version": "31.1-jre"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

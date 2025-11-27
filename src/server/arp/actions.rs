@@ -249,6 +249,13 @@ pub static ARP_REQUEST_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "arp_request_received",
         "ARP request or reply packet received from network interface",
+        json!({
+            "type": "send_arp_reply",
+            "sender_mac": "aa:bb:cc:dd:ee:ff",
+            "sender_ip": "192.168.1.100",
+            "target_mac": "11:22:33:44:55:66",
+            "target_ip": "192.168.1.1"
+        })
     )
     .with_parameters(vec![
         Parameter {

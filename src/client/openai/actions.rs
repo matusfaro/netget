@@ -16,6 +16,13 @@ pub static OPENAI_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(||
     EventType::new(
         "openai_connected",
         "OpenAI client initialized and ready to make API requests",
+        json!({
+            "type": "send_chat_completion",
+            "messages": [
+                {"role": "user", "content": "Hello!"}
+            ],
+            "model": "gpt-3.5-turbo"
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "api_endpoint".to_string(),
@@ -30,6 +37,12 @@ pub static OPENAI_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock
     EventType::new(
         "openai_response_received",
         "Response received from OpenAI API",
+        json!({
+            "type": "send_chat_completion",
+            "messages": [
+                {"role": "user", "content": "Follow-up question"}
+            ]
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -212,8 +225,8 @@ impl Protocol for OpenAiClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("openai_connected", "Triggered when OpenAI client is initialized"),
-            EventType::new("openai_response_received", "Triggered when OpenAI client receives a response"),
+            EventType::new("openai_connected", "Triggered when OpenAI client is initialized", json!({"type": "placeholder", "event_id": "openai_connected"})),
+            EventType::new("openai_response_received", "Triggered when OpenAI client receives a response", json!({"type": "placeholder", "event_id": "openai_response_received"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

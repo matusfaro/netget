@@ -16,6 +16,11 @@ pub static WEBDAV_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(||
     EventType::new(
         "webdav_connected",
         "WebDAV client initialized and ready to send requests",
+        json!({
+            "type": "propfind",
+            "path": "/dav/",
+            "depth": "1"
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "base_url".to_string(),
@@ -30,6 +35,11 @@ pub static WEBDAV_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock
     EventType::new(
         "webdav_response_received",
         "WebDAV response received from server",
+        json!({
+            "type": "propfind",
+            "path": "/dav/documents/",
+            "depth": "1"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -306,8 +316,8 @@ impl Protocol for WebdavClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("webdav_connected", "Triggered when WebDAV client is initialized"),
-            EventType::new("webdav_response_received", "Triggered when WebDAV client receives a response"),
+            EventType::new("webdav_connected", "Triggered when WebDAV client is initialized", json!({"type": "placeholder", "event_id": "webdav_connected"})),
+            EventType::new("webdav_response_received", "Triggered when WebDAV client receives a response", json!({"type": "placeholder", "event_id": "webdav_response_received"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

@@ -13,7 +13,7 @@ use tracing::debug;
 
 /// Ollama generate request event
 pub static OLLAMA_GENERATE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("ollama_generate_request", "Received /api/generate request").with_parameters(
+    EventType::new("ollama_generate_request", "Received /api/generate request", json!({"type": "placeholder", "event_id": "ollama_generate_request"})).with_parameters(
         vec![
             Parameter {
                 name: "model".to_string(),
@@ -39,7 +39,7 @@ pub static OLLAMA_GENERATE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(||
 
 /// Ollama chat request event
 pub static OLLAMA_CHAT_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("ollama_chat_request", "Received /api/chat request").with_parameters(vec![
+    EventType::new("ollama_chat_request", "Received /api/chat request", json!({"type": "placeholder", "event_id": "ollama_chat_request"})).with_parameters(vec![
         Parameter {
             name: "model".to_string(),
             type_hint: "string".to_string(),
@@ -63,7 +63,7 @@ pub static OLLAMA_CHAT_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// Ollama models request event
 pub static OLLAMA_MODELS_REQUEST_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("ollama_models_request", "Received /api/tags request"));
+    LazyLock::new(|| EventType::new("ollama_models_request", "Received /api/tags request", json!({"type": "placeholder", "event_id": "ollama_models_request"})));
 
 /// Ollama protocol action handler
 pub struct OllamaProtocol {}
@@ -273,7 +273,7 @@ fn ollama_error_response_action() -> ActionDefinition {
 
 fn get_ollama_event_types() -> Vec<EventType> {
     vec![
-        EventType::new("ollama_generate_request", "Received /api/generate request")
+        EventType::new("ollama_generate_request", "Received /api/generate request", json!({"type": "placeholder", "event_id": "ollama_generate_request"}))
             .with_parameters(vec![
                 Parameter {
                     name: "model".to_string(),
@@ -288,7 +288,7 @@ fn get_ollama_event_types() -> Vec<EventType> {
                     required: true,
                 },
             ]),
-        EventType::new("ollama_chat_request", "Received /api/chat request").with_parameters(vec![
+        EventType::new("ollama_chat_request", "Received /api/chat request", json!({"type": "placeholder", "event_id": "ollama_chat_request"})).with_parameters(vec![
             Parameter {
                 name: "model".to_string(),
                 type_hint: "string".to_string(),
@@ -302,6 +302,6 @@ fn get_ollama_event_types() -> Vec<EventType> {
                 required: true,
             },
         ]),
-        EventType::new("ollama_models_request", "Received /api/tags request"),
+        EventType::new("ollama_models_request", "Received /api/tags request", json!({"type": "placeholder", "event_id": "ollama_models_request"})),
     ]
 }

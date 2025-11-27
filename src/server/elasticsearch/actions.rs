@@ -26,6 +26,15 @@ pub static ELASTICSEARCH_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "elasticsearch_request",
         "Elasticsearch API request received",
+        json!({
+            "type": "send_search_response",
+            "hits": [
+                {"_id": "1", "_index": "products", "_source": {"name": "Widget", "price": 19.99}},
+                {"_id": "2", "_index": "products", "_source": {"name": "Gadget", "price": 29.99}}
+            ],
+            "total": 2,
+            "took": 15
+        }),
     )
     .with_parameters(vec![
         Parameter {

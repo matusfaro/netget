@@ -198,6 +198,13 @@ pub static MDNS_SERVER_STARTUP_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "mdns_server_startup",
         "mDNS server starting - register services for network discovery",
+        json!({
+            "type": "register_mdns_service",
+            "service_type": "_http._tcp.local.",
+            "instance_name": "My Web Server",
+            "port": 8080,
+            "properties": {"path": "/", "version": "1.0"}
+        }),
     )
     // No parameters - just startup notification
     .with_actions(vec![REGISTER_MDNS_SERVICE_ACTION.clone()])

@@ -16,6 +16,7 @@ pub static CASSANDRA_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new
     EventType::new(
         "cassandra_connected",
         "Cassandra client successfully connected to server",
+        json!({"type": "execute_cql_query", "query": "SELECT * FROM system.local"}),
     )
     .with_parameters(vec![Parameter {
         name: "remote_addr".to_string(),
@@ -30,6 +31,7 @@ pub static CASSANDRA_CLIENT_RESULT_RECEIVED_EVENT: LazyLock<EventType> = LazyLoc
     EventType::new(
         "cassandra_result_received",
         "Query result received from Cassandra server",
+        json!({"type": "execute_cql_query", "query": "SELECT * FROM users WHERE id = 1"}),
     )
     .with_parameters(vec![
         Parameter {
@@ -141,8 +143,8 @@ impl Protocol for CassandraClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("cassandra_connected", "Triggered when Cassandra client connects to server"),
-            EventType::new("cassandra_result_received", "Triggered when Cassandra client receives query results"),
+            EventType::new("cassandra_connected", "Triggered when Cassandra client connects to server", json!({"type": "execute_cql_query", "query": "SELECT * FROM system.local"})),
+            EventType::new("cassandra_result_received", "Triggered when Cassandra client receives query results", json!({"type": "execute_cql_query", "query": "SELECT * FROM users WHERE id = 1"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

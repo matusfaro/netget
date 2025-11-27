@@ -367,6 +367,12 @@ pub static MAVEN_ARTIFACT_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| 
     EventType::new(
         "maven_artifact_request",
         "Maven artifact request received from client",
+        json!({
+            "type": "send_maven_artifact",
+            "status": 200,
+            "content_type": "application/java-archive",
+            "body": "UEsDBBQACAgIAAAAIQAAAAAAAAAAAAAAAAA..."
+        }),
     )
     .with_parameters(vec![
         Parameter {

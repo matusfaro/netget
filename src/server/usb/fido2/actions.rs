@@ -18,6 +18,8 @@ use crate::state::app_state::AppState;
 #[cfg(feature = "usb-fido2")]
 use anyhow::{Context, Result};
 #[cfg(feature = "usb-fido2")]
+use serde_json::json;
+#[cfg(feature = "usb-fido2")]
 use std::collections::HashMap;
 #[cfg(feature = "usb-fido2")]
 use std::sync::{Arc, LazyLock};
@@ -32,6 +34,10 @@ pub static FIDO2_DEVICE_ATTACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "fido2_device_attached",
         "FIDO2 security key attached to host",
+        json!({
+            "type": "approve_request",
+            "approval_id": 1
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -60,6 +66,10 @@ pub static FIDO2_REGISTER_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| 
     EventType::new(
         "fido2_register_request",
         "User requested to register new credential",
+        json!({
+            "type": "approve_request",
+            "approval_id": 1
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -94,6 +104,10 @@ pub static FIDO2_AUTHENTICATE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new
     EventType::new(
         "fido2_authenticate_request",
         "User requested to authenticate with credential",
+        json!({
+            "type": "approve_request",
+            "approval_id": 1
+        }),
     )
     .with_parameters(vec![
         Parameter {

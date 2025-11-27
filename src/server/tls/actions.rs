@@ -233,6 +233,10 @@ pub static TLS_CONNECTION_OPENED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "tls_connection_opened",
         "TLS handshake complete, connection established (send initial greeting/banner if needed)",
+        json!({
+            "type": "send_tls_data",
+            "data": "220 Welcome to secure server\r\n"
+        }),
     )
     // No parameters - just connection opened notification
     .with_actions(vec![
@@ -246,6 +250,10 @@ pub static TLS_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "tls_data_received",
         "Data received on TLS connection (implement your application protocol here)",
+        json!({
+            "type": "send_tls_data",
+            "data": "OK Data received\r\n"
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "data".to_string(),

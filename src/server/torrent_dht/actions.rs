@@ -265,13 +265,13 @@ impl TorrentDhtProtocol {
 }
 
 pub static DHT_PING_QUERY_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("dht_ping_query", "DHT ping query"));
+    LazyLock::new(|| EventType::new("dht_ping_query", "DHT ping query", json!({"type": "placeholder", "event_id": "dht_ping_query"})));
 
 pub static DHT_FIND_NODE_QUERY_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("dht_find_node_query", "DHT find_node query"));
+    LazyLock::new(|| EventType::new("dht_find_node_query", "DHT find_node query", json!({"type": "placeholder", "event_id": "dht_find_node_query"})));
 
 pub static DHT_GET_PEERS_QUERY_EVENT: LazyLock<EventType> =
-    LazyLock::new(|| EventType::new("dht_get_peers_query", "DHT get_peers query"));
+    LazyLock::new(|| EventType::new("dht_get_peers_query", "DHT get_peers query", json!({"type": "placeholder", "event_id": "dht_get_peers_query"})));
 
 pub static SEND_PING_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock::new(|| {
     ActionDefinition {

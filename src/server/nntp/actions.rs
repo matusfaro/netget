@@ -286,6 +286,11 @@ pub static NNTP_COMMAND_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "nntp_command_received",
         "NNTP command received from a client",
+        json!({
+            "type": "send_nntp_response",
+            "code": 200,
+            "text": "NetGet NNTP Service Ready"
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "command".to_string(),

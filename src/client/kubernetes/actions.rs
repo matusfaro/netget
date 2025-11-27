@@ -16,6 +16,7 @@ pub static K8S_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "k8s_connected",
         "Kubernetes client connected to cluster API",
+        json!({"type": "k8s_list_pods", "namespace": "default"}),
     )
     .with_parameters(vec![Parameter {
         name: "cluster_url".to_string(),
@@ -30,6 +31,7 @@ pub static K8S_CLIENT_RESOURCE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::n
     EventType::new(
         "k8s_resource_received",
         "Kubernetes resource operation completed",
+        json!({"type": "k8s_list_pods", "namespace": "default"}),
     )
     .with_parameters(vec![
         Parameter {
@@ -305,8 +307,8 @@ impl Protocol for KubernetesClientProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("k8s_connected", "Triggered when Kubernetes client connects to cluster"),
-            EventType::new("k8s_resource_received", "Triggered when Kubernetes operation completes"),
+            EventType::new("k8s_connected", "Triggered when Kubernetes client connects to cluster", json!({"type": "k8s_list_pods", "namespace": "default"})),
+            EventType::new("k8s_resource_received", "Triggered when Kubernetes operation completes", json!({"type": "k8s_list_pods", "namespace": "default"})),
         ]
     }
 

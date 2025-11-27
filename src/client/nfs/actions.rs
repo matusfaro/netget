@@ -16,6 +16,9 @@ pub static NFS_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "nfs_connected",
         "NFS client successfully mounted NFS export",
+        json!({
+            "type": "wait_for_more"
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -35,7 +38,7 @@ pub static NFS_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// NFS client file operation result event
 pub static NFS_CLIENT_OPERATION_RESULT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("nfs_operation_result", "Result of an NFS file operation").with_parameters(vec![
+    EventType::new("nfs_operation_result", "Result of an NFS file operation", json!({"type": "placeholder", "event_id": "nfs_operation_result"})).with_parameters(vec![
         Parameter {
             name: "operation".to_string(),
             type_hint: "string".to_string(),
@@ -267,8 +270,8 @@ impl Protocol for NfsClientProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("nfs_connected", "Triggered when NFS client mounts export"),
-            EventType::new("nfs_operation_result", "Triggered when NFS operation completes"),
+            EventType::new("nfs_connected", "Triggered when NFS client mounts export", json!({"type": "placeholder", "event_id": "nfs_connected"})),
+            EventType::new("nfs_operation_result", "Triggered when NFS operation completes", json!({"type": "placeholder", "event_id": "nfs_operation_result"})),
         ]
     }
 

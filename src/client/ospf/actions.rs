@@ -16,6 +16,9 @@ pub static OSPF_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "ospf_client_connected",
         "OSPF client successfully joined multicast group and ready to query routers",
+        json!({
+            "type": "wait_for_more"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -38,6 +41,9 @@ pub static OSPF_CLIENT_HELLO_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new
     EventType::new(
         "ospf_hello_received",
         "OSPF Hello packet received from router",
+        json!({
+            "type": "wait_for_more"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -108,6 +114,9 @@ pub static OSPF_CLIENT_DD_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(||
     EventType::new(
         "ospf_database_description_received",
         "OSPF Database Description packet received",
+        json!({
+            "type": "wait_for_more"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -148,6 +157,9 @@ pub static OSPF_CLIENT_LSU_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|
     EventType::new(
         "ospf_link_state_update_received",
         "OSPF Link State Update packet received with LSAs",
+        json!({
+            "type": "wait_for_more"
+        }),
     )
     .with_parameters(vec![
         Parameter {

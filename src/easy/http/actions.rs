@@ -28,11 +28,11 @@ pub struct HttpEasyProtocol;
 
 impl Easy for HttpEasyProtocol {
     fn protocol_name(&self) -> &'static str {
-        "http-easy"
+        "http"
     }
 
     fn underlying_protocol(&self) -> &'static str {
-        "http"
+        "HTTP"
     }
 
     fn default_port(&self) -> Option<u16> {
@@ -52,7 +52,7 @@ impl Easy for HttpEasyProtocol {
         // Generate open_server action for HTTP protocol
         Ok(json!({
             "type": "open_server",
-            "protocol": "http",
+            "protocol": "HTTP",
             "port": port,
             "instruction": instruction,
         }))

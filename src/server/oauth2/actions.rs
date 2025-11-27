@@ -371,7 +371,7 @@ fn oauth2_error_response_action() -> ActionDefinition {
 
 /// OAuth2 authorize event - triggered when client requests authorization
 pub static OAUTH2_AUTHORIZE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("oauth2_authorize", "OAuth2 authorization request received")
+    EventType::new("oauth2_authorize", "OAuth2 authorization request received", json!({"type": "placeholder", "event_id": "oauth2_authorize"}))
         .with_parameters(vec![
             Parameter {
                 name: "response_type".to_string(),
@@ -422,7 +422,7 @@ pub static OAUTH2_AUTHORIZE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// OAuth2 token event - triggered when client requests access token
 pub static OAUTH2_TOKEN_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("oauth2_token", "OAuth2 token request received")
+    EventType::new("oauth2_token", "OAuth2 token request received", json!({"type": "placeholder", "event_id": "oauth2_token"}))
         .with_parameters(vec![
             Parameter {
                 name: "grant_type".to_string(),
@@ -499,7 +499,7 @@ pub static OAUTH2_TOKEN_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// OAuth2 introspect event - triggered when token introspection is requested
 pub static OAUTH2_INTROSPECT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("oauth2_introspect", "OAuth2 token introspection request")
+    EventType::new("oauth2_introspect", "OAuth2 token introspection request", json!({"type": "placeholder", "event_id": "oauth2_introspect"}))
         .with_parameters(vec![
             Parameter {
                 name: "token".to_string(),
@@ -524,7 +524,7 @@ pub static OAUTH2_INTROSPECT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// OAuth2 revoke event - triggered when token revocation is requested
 pub static OAUTH2_REVOKE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("oauth2_revoke", "OAuth2 token revocation request").with_parameters(vec![
+    EventType::new("oauth2_revoke", "OAuth2 token revocation request", json!({"type": "placeholder", "event_id": "oauth2_revoke"})).with_parameters(vec![
         Parameter {
             name: "token".to_string(),
             type_hint: "string".to_string(),

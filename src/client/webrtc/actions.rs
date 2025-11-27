@@ -17,6 +17,10 @@ pub static WEBRTC_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(||
     EventType::new(
         "webrtc_connected",
         "WebRTC data channel opened and ready to send messages (deprecated)",
+        json!({
+            "type": "send_message",
+            "message": "Hello, peer!"
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "channel_label".to_string(),
@@ -31,6 +35,11 @@ pub static WEBRTC_CLIENT_CHANNEL_OPENED_EVENT: LazyLock<EventType> = LazyLock::n
     EventType::new(
         "webrtc_channel_opened",
         "WebRTC data channel opened (supports multiple channels)",
+        json!({
+            "type": "send_message",
+            "channel": "netget",
+            "message": "Hello, peer!"
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "channel_label".to_string(),
@@ -45,6 +54,10 @@ pub static WEBRTC_CLIENT_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock:
     EventType::new(
         "webrtc_message_received",
         "Message received from WebRTC peer on data channel",
+        json!({
+            "type": "send_message",
+            "message": "Reply message"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -73,6 +86,9 @@ pub static WEBRTC_CLIENT_SIGNALING_CONNECTED_EVENT: LazyLock<EventType> = LazyLo
     EventType::new(
         "webrtc_signaling_connected",
         "Connected to WebSocket signaling server",
+        json!({
+            "type": "wait_for_more"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -278,10 +294,10 @@ impl Protocol for WebRtcClientProtocol {
 
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("webrtc_connected", "Triggered when WebRTC data channel opens (deprecated)"),
-            EventType::new("webrtc_channel_opened", "Triggered when a WebRTC data channel opens"),
-            EventType::new("webrtc_message_received", "Triggered when a message is received"),
-            EventType::new("webrtc_signaling_connected", "Triggered when connected to signaling server (WebSocket mode)"),
+            EventType::new("webrtc_connected", "Triggered when WebRTC data channel opens (deprecated)", json!({"type": "placeholder", "event_id": "webrtc_connected"})),
+            EventType::new("webrtc_channel_opened", "Triggered when a WebRTC data channel opens", json!({"type": "placeholder", "event_id": "webrtc_channel_opened"})),
+            EventType::new("webrtc_message_received", "Triggered when a message is received", json!({"type": "placeholder", "event_id": "webrtc_message_received"})),
+            EventType::new("webrtc_signaling_connected", "Triggered when connected to signaling server (WebSocket mode)", json!({"type": "placeholder", "event_id": "webrtc_signaling_connected"})),
         ]
     }
 

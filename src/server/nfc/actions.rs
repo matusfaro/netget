@@ -16,6 +16,10 @@ pub static NFC_SERVER_STARTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "nfc_server_started",
         "Virtual NFC tag/card server started (for testing)",
+        json!({
+            "type": "set_ndef_message",
+            "records": [{"type": "text", "language": "en", "text": "Hello NFC!"}]
+        }),
     )
 });
 
@@ -24,6 +28,12 @@ pub static NFC_TAG_SELECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "nfc_tag_selected",
         "Virtual NFC tag application selected by reader",
+        json!({
+            "type": "respond_to_apdu",
+            "data_hex": "D2760000850101",
+            "sw1": "90",
+            "sw2": "00"
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "application_id".to_string(),
@@ -38,6 +48,12 @@ pub static NFC_APDU_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "nfc_apdu_received",
         "APDU command received by virtual NFC tag",
+        json!({
+            "type": "respond_to_apdu",
+            "data_hex": "D2760000850101",
+            "sw1": "90",
+            "sw2": "00"
+        }),
     )
     .with_parameters(vec![
         Parameter {

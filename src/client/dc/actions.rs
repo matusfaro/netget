@@ -16,6 +16,7 @@ pub static DC_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "dc_client_connected",
         "DC client connected to hub and received Lock challenge",
+        json!({"type": "wait_for_more"}),
     )
     .with_parameters(vec![
         Parameter {
@@ -38,6 +39,7 @@ pub static DC_CLIENT_AUTHENTICATED_EVENT: LazyLock<EventType> = LazyLock::new(||
     EventType::new(
         "dc_client_authenticated",
         "DC client successfully authenticated with hub",
+        json!({"type": "send_dc_chat", "message": "Hello everyone!"}),
     )
     .with_parameters(vec![Parameter {
         name: "nickname".to_string(),
@@ -52,6 +54,7 @@ pub static DC_CLIENT_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new
     EventType::new(
         "dc_client_message_received",
         "Received chat message from hub or user",
+        json!({"type": "send_dc_chat", "message": "Hello everyone!"}),
     )
     .with_parameters(vec![
         Parameter {
@@ -83,7 +86,7 @@ pub static DC_CLIENT_MESSAGE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new
 
 /// DC client search result received event
 pub static DC_CLIENT_SEARCH_RESULT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("dc_client_search_result", "Received search result from hub").with_parameters(
+    EventType::new("dc_client_search_result", "Received search result from hub", json!({"type": "placeholder", "event_id": "dc_client_search_result"})).with_parameters(
         vec![
             Parameter {
                 name: "source".to_string(),
@@ -130,6 +133,7 @@ pub static DC_CLIENT_USERLIST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "dc_client_userlist_received",
         "Received list of connected users",
+        json!({"type": "send_dc_chat", "message": "Hello everyone!"}),
     )
     .with_parameters(vec![Parameter {
         name: "users".to_string(),
@@ -141,7 +145,7 @@ pub static DC_CLIENT_USERLIST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// DC client hub info received event
 pub static DC_CLIENT_HUBINFO_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("dc_client_hubinfo_received", "Received hub information").with_parameters(vec![
+    EventType::new("dc_client_hubinfo_received", "Received hub information", json!({"type": "placeholder", "event_id": "dc_client_hubinfo_received"})).with_parameters(vec![
         Parameter {
             name: "hub_name".to_string(),
             type_hint: "string".to_string(),
@@ -159,7 +163,7 @@ pub static DC_CLIENT_HUBINFO_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// DC client kicked event
 pub static DC_CLIENT_KICKED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("dc_client_kicked", "Client was kicked from hub").with_parameters(vec![
+    EventType::new("dc_client_kicked", "Client was kicked from hub", json!({"type": "placeholder", "event_id": "dc_client_kicked"})).with_parameters(vec![
         Parameter {
             name: "nickname".to_string(),
             type_hint: "string".to_string(),
@@ -174,6 +178,7 @@ pub static DC_CLIENT_REDIRECT_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "dc_client_redirect",
         "Client redirected to another hub",
+        json!({"type": "wait_for_more"}),
     )
     .with_parameters(vec![Parameter {
         name: "address".to_string(),
@@ -188,6 +193,7 @@ pub static DC_CLIENT_DISCONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| 
     EventType::new(
         "dc_client_disconnected",
         "DC client disconnected from hub",
+        json!({"type": "wait_for_more"}),
     )
     .with_parameters(vec![
         Parameter {

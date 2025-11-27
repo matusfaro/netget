@@ -16,6 +16,10 @@ pub static POSTGRESQL_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::ne
     EventType::new(
         "postgresql_connected",
         "PostgreSQL client successfully connected to server",
+        json!({
+            "type": "execute_query",
+            "query": "SELECT * FROM users WHERE id = 1"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -44,6 +48,10 @@ pub static POSTGRESQL_CLIENT_QUERY_RESULT_EVENT: LazyLock<EventType> = LazyLock:
     EventType::new(
         "postgresql_query_result",
         "Query result received from PostgreSQL server",
+        json!({
+            "type": "execute_query",
+            "query": "INSERT INTO logs VALUES ('result processed')"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -151,8 +159,8 @@ impl Protocol for PostgresqlClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("postgresql_connected", "Triggered when PostgreSQL client connects to server"),
-            EventType::new("postgresql_query_result", "Triggered when PostgreSQL client receives query results"),
+            EventType::new("postgresql_connected", "Triggered when PostgreSQL client connects to server", json!({"type": "placeholder", "event_id": "postgresql_connected"})),
+            EventType::new("postgresql_query_result", "Triggered when PostgreSQL client receives query results", json!({"type": "placeholder", "event_id": "postgresql_query_result"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

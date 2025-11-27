@@ -16,6 +16,10 @@ pub static SAML_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "saml_connected",
         "SAML client initialized and ready to authenticate",
+        json!({
+            "type": "parse_assertion",
+            "response_xml": "<samlp:Response...>"
+        })
     )
     .with_parameters(vec![Parameter {
         name: "idp_url".to_string(),
@@ -30,6 +34,10 @@ pub static SAML_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::
     EventType::new(
         "saml_response_received",
         "SAML authentication response received from IdP",
+        json!({
+            "type": "parse_assertion",
+            "response_xml": "<samlp:Response...>"
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -166,8 +174,8 @@ impl Protocol for SamlClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("saml_connected", "Triggered when SAML client is initialized"),
-            EventType::new("saml_response_received", "Triggered when SAML client receives an authentication response"),
+            EventType::new("saml_connected", "Triggered when SAML client is initialized", json!({"type": "placeholder", "event_id": "saml_connected"})),
+            EventType::new("saml_response_received", "Triggered when SAML client receives an authentication response", json!({"type": "placeholder", "event_id": "saml_response_received"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

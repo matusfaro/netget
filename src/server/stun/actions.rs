@@ -536,6 +536,11 @@ pub static STUN_BINDING_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "stun_binding_request",
         "STUN binding request received from client",
+        json!({
+            "type": "send_stun_binding_response",
+            "mapped_address": "203.0.113.45:54321",
+            "transaction_id": "0123456789abcdef01234567"
+        })
     )
     .with_parameters(vec![
         Parameter {

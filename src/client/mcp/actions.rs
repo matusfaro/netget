@@ -16,6 +16,7 @@ pub static MCP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "mcp_client_connected",
         "MCP client completed initialization handshake with server",
+        json!({"type": "list_resources"}),
     )
     .with_parameters(vec![
         Parameter {
@@ -44,6 +45,7 @@ pub static MCP_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::n
     EventType::new(
         "mcp_response_received",
         "MCP client received response from server",
+        json!({"type": "call_tool", "name": "search", "arguments": {"query": "test"}}),
     )
     .with_parameters(vec![
         Parameter {
@@ -236,8 +238,8 @@ impl Protocol for McpClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("mcp_client_connected", "Triggered when MCP client completes initialization"),
-            EventType::new("mcp_response_received", "Triggered when MCP client receives a response"),
+            EventType::new("mcp_client_connected", "Triggered when MCP client completes initialization", json!({"type": "list_resources"})),
+            EventType::new("mcp_response_received", "Triggered when MCP client receives a response", json!({"type": "call_tool", "name": "search", "arguments": {"query": "test"}})),
         ]
     }
     fn stack_name(&self) -> &'static str {

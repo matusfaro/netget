@@ -7,16 +7,13 @@ use crate::llm::actions::{
 use crate::protocol::EventType;
 use crate::state::app_state::AppState;
 use anyhow::{anyhow, Result};
-use serde_json::Value as JsonValue;
+use serde_json::{json, Value as JsonValue};
 use std::sync::LazyLock;
 use tracing::{debug, error, info, warn};
 
 /// OpenID Connect request event - triggered when client sends an HTTP request to OIDC server
 pub static OPENID_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new(
-        "openid_request",
-        "HTTP request received by OpenID Connect server"
-    )
+    EventType::new("openid_request", "HTTP request received by OpenID Connect server", json!({"type": "placeholder", "event_id": "openid_request"}))
     .with_parameters(vec![
         Parameter {
             name: "method".to_string(),

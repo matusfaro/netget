@@ -436,6 +436,14 @@ pub static SAML_SP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "saml_sp_request",
         "Received SAML assertion response or metadata request",
+        json!({
+            "type": "process_assertion",
+            "user_id": "john.doe",
+            "attributes": {
+                "email": "john.doe@example.com",
+                "role": "user"
+            }
+        })
     )
     .with_parameters(vec![
         Parameter {

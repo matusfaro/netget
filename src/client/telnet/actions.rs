@@ -16,6 +16,9 @@ pub static TELNET_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(||
     EventType::new(
         "telnet_connected",
         "Telnet client successfully connected to server",
+        json!({
+            "type": "wait_for_more"
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "remote_addr".to_string(),
@@ -27,7 +30,7 @@ pub static TELNET_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(||
 
 /// Telnet client data received event
 pub static TELNET_CLIENT_DATA_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("telnet_data_received", "Data received from Telnet server").with_parameters(
+    EventType::new("telnet_data_received", "Data received from Telnet server", json!({"type": "placeholder", "event_id": "telnet_data_received"})).with_parameters(
         vec![
             Parameter {
                 name: "data".to_string(),
@@ -50,6 +53,9 @@ pub static TELNET_CLIENT_OPTION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "telnet_option_negotiated",
         "Telnet option negotiation occurred",
+        json!({
+            "type": "wait_for_more"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -169,9 +175,9 @@ impl Protocol for TelnetClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("telnet_connected", "Triggered when Telnet client connects to server"),
-            EventType::new("telnet_data_received", "Triggered when Telnet client receives data from server"),
-            EventType::new("telnet_option_negotiated", "Triggered when Telnet option negotiation occurs"),
+            EventType::new("telnet_connected", "Triggered when Telnet client connects to server", json!({"type": "placeholder", "event_id": "telnet_connected"})),
+            EventType::new("telnet_data_received", "Triggered when Telnet client receives data from server", json!({"type": "placeholder", "event_id": "telnet_data_received"})),
+            EventType::new("telnet_option_negotiated", "Triggered when Telnet option negotiation occurs", json!({"type": "placeholder", "event_id": "telnet_option_negotiated"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

@@ -20,6 +20,11 @@ pub static OLLAMA_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(||
     EventType::new(
         "ollama_connected",
         "Ollama client initialized and ready to make API requests",
+        json!({
+            "type": "send_generate_request",
+            "prompt": "What is the capital of France?",
+            "model": "llama2"
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "api_endpoint".to_string(),
@@ -34,6 +39,11 @@ pub static OLLAMA_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock
     EventType::new(
         "ollama_response_received",
         "Response received from Ollama API",
+        json!({
+            "type": "send_generate_request",
+            "prompt": "Tell me more",
+            "model": "llama2"
+        }),
     )
     .with_parameters(vec![
         Parameter {

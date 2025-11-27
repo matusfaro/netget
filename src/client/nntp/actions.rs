@@ -16,6 +16,10 @@ pub static NNTP_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "nntp_connected",
         "NNTP client successfully connected to server",
+        json!({
+            "type": "nntp_group",
+            "group_name": "comp.lang.rust"
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -38,6 +42,9 @@ pub static NNTP_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::
     EventType::new(
         "nntp_response_received",
         "Response received from NNTP server",
+        json!({
+            "type": "wait_for_more"
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -245,8 +252,8 @@ impl Protocol for NntpClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("nntp_connected", "Triggered when NNTP client connects to server"),
-            EventType::new("nntp_response_received", "Triggered when NNTP client receives a response"),
+            EventType::new("nntp_connected", "Triggered when NNTP client connects to server", json!({"type": "placeholder", "event_id": "nntp_connected"})),
+            EventType::new("nntp_response_received", "Triggered when NNTP client receives a response", json!({"type": "placeholder", "event_id": "nntp_response_received"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

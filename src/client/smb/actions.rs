@@ -16,6 +16,10 @@ pub static SMB_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "smb_connected",
         "SMB client successfully connected to server",
+        json!({
+            "type": "list_directory",
+            "path": "smb://server/share"
+        })
     )
     .with_parameters(vec![Parameter {
         name: "share_url".to_string(),
@@ -27,7 +31,7 @@ pub static SMB_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// SMB client directory listed event
 pub static SMB_CLIENT_DIR_LISTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("smb_dir_listed", "SMB directory listing received").with_parameters(vec![
+    EventType::new("smb_dir_listed", "SMB directory listing received", json!({"type": "placeholder", "event_id": "smb_dir_listed"})).with_parameters(vec![
         Parameter {
             name: "path".to_string(),
             type_hint: "string".to_string(),
@@ -45,7 +49,7 @@ pub static SMB_CLIENT_DIR_LISTED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 
 /// SMB client file read event
 pub static SMB_CLIENT_FILE_READ_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("smb_file_read", "SMB file content read from server").with_parameters(vec![
+    EventType::new("smb_file_read", "SMB file content read from server", json!({"type": "placeholder", "event_id": "smb_file_read"})).with_parameters(vec![
         Parameter {
             name: "path".to_string(),
             type_hint: "string".to_string(),
@@ -72,6 +76,10 @@ pub static SMB_CLIENT_FILE_WRITTEN_EVENT: LazyLock<EventType> = LazyLock::new(||
     EventType::new(
         "smb_file_written",
         "SMB file successfully written to server",
+        json!({
+            "type": "read_file",
+            "path": "smb://server/share/file.txt"
+        })
     )
     .with_parameters(vec![
         Parameter {
@@ -91,7 +99,7 @@ pub static SMB_CLIENT_FILE_WRITTEN_EVENT: LazyLock<EventType> = LazyLock::new(||
 
 /// SMB client error event
 pub static SMB_CLIENT_ERROR_EVENT: LazyLock<EventType> = LazyLock::new(|| {
-    EventType::new("smb_error", "SMB operation error").with_parameters(vec![
+    EventType::new("smb_error", "SMB operation error", json!({"type": "placeholder", "event_id": "smb_error"})).with_parameters(vec![
         Parameter {
             name: "error".to_string(),
             type_hint: "string".to_string(),
@@ -300,11 +308,11 @@ impl Protocol for SmbClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("smb_connected", "Triggered when SMB client connects to server"),
-            EventType::new("smb_dir_listed", "Triggered when directory listing is received"),
-            EventType::new("smb_file_read", "Triggered when file content is read"),
-            EventType::new("smb_file_written", "Triggered when file is written"),
-            EventType::new("smb_error", "Triggered when an SMB operation fails"),
+            EventType::new("smb_connected", "Triggered when SMB client connects to server", json!({"type": "placeholder", "event_id": "smb_connected"})),
+            EventType::new("smb_dir_listed", "Triggered when directory listing is received", json!({"type": "placeholder", "event_id": "smb_dir_listed"})),
+            EventType::new("smb_file_read", "Triggered when file content is read", json!({"type": "placeholder", "event_id": "smb_file_read"})),
+            EventType::new("smb_file_written", "Triggered when file is written", json!({"type": "placeholder", "event_id": "smb_file_written"})),
+            EventType::new("smb_error", "Triggered when an SMB operation fails", json!({"type": "placeholder", "event_id": "smb_error"})),
         ]
     }
     fn stack_name(&self) -> &'static str {

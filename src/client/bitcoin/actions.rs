@@ -16,6 +16,7 @@ pub static BITCOIN_CLIENT_CONNECTED_EVENT: LazyLock<EventType> = LazyLock::new(|
     EventType::new(
         "bitcoin_connected",
         "Bitcoin RPC client initialized and ready to execute commands",
+        json!({"type": "execute_rpc", "method": "getblockchaininfo", "params": []}),
     )
     .with_parameters(vec![Parameter {
         name: "rpc_url".to_string(),
@@ -30,6 +31,7 @@ pub static BITCOIN_CLIENT_RESPONSE_RECEIVED_EVENT: LazyLock<EventType> = LazyLoc
     EventType::new(
         "bitcoin_response_received",
         "Response received from Bitcoin Core RPC",
+        json!({"type": "execute_rpc", "method": "getblock", "params": ["00000000839a8e6886ab5951d76f411475428afc90947ee320161bbf18eb6048"]}),
     )
     .with_parameters(vec![
         Parameter {
@@ -304,8 +306,8 @@ impl Protocol for BitcoinClientProtocol {
     }
     fn get_event_types(&self) -> Vec<EventType> {
         vec![
-            EventType::new("bitcoin_connected", "Triggered when Bitcoin RPC client is initialized"),
-            EventType::new("bitcoin_response_received", "Triggered when Bitcoin RPC client receives a response"),
+            EventType::new("bitcoin_connected", "Triggered when Bitcoin RPC client is initialized", json!({"type": "execute_rpc", "method": "getblockchaininfo", "params": []})),
+            EventType::new("bitcoin_response_received", "Triggered when Bitcoin RPC client receives a response", json!({"type": "execute_rpc", "method": "getblock", "params": ["00000000839a8e6886ab5951d76f411475428afc90947ee320161bbf18eb6048"]})),
         ]
     }
     fn stack_name(&self) -> &'static str {
