@@ -285,44 +285,6 @@ pub struct Parameter {
     pub required: bool,
 }
 
-/// Examples for how to start a protocol in different handler modes
-///
-/// Each protocol can provide examples for three handler modes:
-/// - LLM mode: LLM handles all responses intelligently
-/// - Script mode: Code-based deterministic responses
-/// - Static mode: Fixed, unchanging responses
-///
-/// These examples are used in:
-/// - Protocol documentation
-/// - Prompt templates to guide LLM in creating servers
-/// - Validation tests to ensure correctness
-#[derive(Debug, Clone)]
-pub struct StartupExamples {
-    /// Example for LLM-controlled mode (instruction-based)
-    pub llm_mode: serde_json::Value,
-
-    /// Example for script-based mode (event_handlers with type: "script")
-    pub script_mode: serde_json::Value,
-
-    /// Example for static mode (event_handlers with type: "static")
-    pub static_mode: serde_json::Value,
-}
-
-impl StartupExamples {
-    /// Create new startup examples for all three handler modes
-    pub fn new(
-        llm_mode: serde_json::Value,
-        script_mode: serde_json::Value,
-        static_mode: serde_json::Value,
-    ) -> Self {
-        Self {
-            llm_mode,
-            script_mode,
-            static_mode,
-        }
-    }
-}
-
 /// Response from LLM containing array of actions
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ActionResponse {

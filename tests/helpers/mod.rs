@@ -2,6 +2,8 @@
 
 pub mod client;
 pub mod common;
+pub mod event_trigger;
+pub mod example_test_framework;
 pub mod mock;
 pub mod mock_builder;
 pub mod mock_config;
@@ -18,6 +20,8 @@ pub use common::{
     get_available_port, retry, retry_with_backoff, with_aws_sdk_timeout, with_cassandra_timeout,
     with_client_timeout, with_timeout, E2EResult,
 };
+pub use event_trigger::EventTrigger;
+pub use example_test_framework::{ProtocolExampleTest, TestReport};
 pub use mock_config::{MockLlmConfig, MockResponse, MockRule, ResponseGenerator, SerializedMockRule};
 pub use mock_matcher::{LlmContext, MockMatcher};
 pub use ollama_test_builder::OllamaTestBuilder;
