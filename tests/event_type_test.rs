@@ -1,5 +1,6 @@
 use netget::llm::actions::ActionDefinition;
 use netget::protocol::event_type::{format_event_types_for_prompt, EventType};
+use serde_json::json;
 
 #[test]
 fn test_event_type_creation() {
